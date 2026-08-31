@@ -139,6 +139,7 @@ def _stub_sweep(
     check_runs_error=None,
     comments=None,
     running_findings=None,
+    worked_by_head=None,
 ):
     """Stub every network call main() makes; return the per-source call log.
 
@@ -147,6 +148,9 @@ def _stub_sweep(
     `comments` maps PR number -> its GitHub issue comments (default none).
     `running_findings` seeds the finding ids a still-running pr-upkeep run
     already carries, which is what the emission dedupe reads (task t12).
+    `worked_by_head` seeds {head_sha: ids already dispatched at that head} —
+    the second dedupe clause, which is what stops a finding whose run has
+    ENDED being re-dispatched at the same commit (issue #268).
     """
     monkeypatch.setenv("GITHUB_TOKEN", "")
     monkeypatch.setattr(
@@ -176,7 +180,14 @@ def _stub_sweep(
         "fetch_pr_comments",
         lambda token, repository, number: list((comments or {}).get(number, [])),
     )
-    monkeypatch.setattr(sweep, "fetch_running_finding_ids", lambda: set(running_findings or ()))
+    monkeypatch.setattr(
+        sweep,
+        "fetch_dispatched_findings",
+        lambda: (
+            set(running_findings or ()),
+            {head: set(ids) for head, ids in (worked_by_head or {}).items()},
+        ),
+    )
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)
 
     def fake_raise(name, payload, source_key, watermark, **_kw):
@@ -698,21 +709,27 @@ class TestStdlibOnlyImports:
         non_stdlib = {
             root for root in roots if root != "__future__" and root not in sys.stdlib_module_names
         }
-        assert non_stdlib == {"pr_upkeep_jira"}
+        # Exactly the sibling modules the runner is granted a URL + digest
+        # for. A fourth name here means a module the bootstrap would not
+        # fetch, so the sweep would import something that is not on disk.
+        assert non_stdlib == {"pr_upkeep_emit", "pr_upkeep_jira"}
 
-        jira_tree = ast.parse((EXAMPLE_DIR / "pr_upkeep_jira.py").read_text())
-        jira_roots = {
-            (node.module or "").split(".")[0]
-            for node in ast.walk(jira_tree)
-            if isinstance(node, ast.ImportFrom) and not node.level
-        }
-        jira_roots.update(
-            alias.name.split(".")[0]
-            for node in ast.walk(jira_tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        )
-        assert {root for root in jira_roots if root != "__future__"} <= sys.stdlib_module_names
+        # ...and each of those is itself stdlib-only, for the same reason.
+        for sibling in ("pr_upkeep_emit.py", "pr_upkeep_jira.py"):
+            tree = ast.parse((EXAMPLE_DIR / sibling).read_text())
+            roots = {
+                (node.module or "").split(".")[0]
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom) and not node.level
+            }
+            roots.update(
+                alias.name.split(".")[0]
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Import)
+                for alias in node.names
+            )
+            non_stdlib_sibling = {r for r in roots if r != "__future__"} - sys.stdlib_module_names
+            assert non_stdlib_sibling == set(), sibling
 
 
 class TestEmitterMain:

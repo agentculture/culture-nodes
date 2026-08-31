@@ -20,6 +20,7 @@ Split from test_pr_upkeep_sweep.py to keep that file under the 1000-line
 hard limit (tests/lint filelength guard).
 """
 
+import importlib
 import json
 import urllib.error
 
@@ -32,6 +33,8 @@ from tests.test_pr_upkeep_sweep import (  # noqa: F401
     _stub_sweep,
     sweep,
 )
+
+emit = importlib.import_module("pr_upkeep_emit")
 
 GRANT = json.dumps(
     {"cycle": 0, "repositories": [{"github_repo": "owner/repo", "sonar_component": "owner_repo"}]}
@@ -53,7 +56,7 @@ def _qodo_comment():
     return {"user": {"login": "qodo-code-review[bot]"}, "body": body}
 
 
-def _pass(monkeypatch, *, head_sha, running_findings=()):
+def _pass(monkeypatch, *, head_sha, running_findings=(), worked_by_head=None):
     """Stub one sweep cycle over PR 236 at `head_sha`; return its call log."""
     return _stub_sweep(
         monkeypatch,
@@ -61,6 +64,7 @@ def _pass(monkeypatch, *, head_sha, running_findings=()):
         sonar_main={"issues": []},
         comments={PR: [_qodo_comment()]},
         running_findings=running_findings,
+        worked_by_head=worked_by_head,
     )
 
 
@@ -186,57 +190,89 @@ class TestEmissionWatermark:
 class TestUndispatchedFindings:
     def test_splits_by_id_preserving_order(self):
         findings = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        kept, skipped = sweep.undispatched_findings(findings, {"b"})
+        kept, skipped, worked = emit.undispatched_findings(findings, {"b"})
         assert kept == [{"id": "a"}, {"id": "c"}]
         assert skipped == ["b"]
+        assert worked == []
 
     def test_an_empty_running_set_keeps_everything(self):
         findings = [{"id": "a"}]
-        assert sweep.undispatched_findings(findings, set()) == (findings, [])
+        assert emit.undispatched_findings(findings, set()) == (findings, [], [])
+
+    def test_a_finding_worked_at_this_head_is_refused_separately(self):
+        findings = [{"id": "a"}, {"id": "b"}]
+        kept, skipped, worked = emit.undispatched_findings(findings, {"a"}, {"b"})
+        assert kept == []
+        assert (skipped, worked) == (["a"], ["b"])
+
+    def test_in_flight_wins_when_a_finding_is_both(self):
+        """The more actionable state: it may be waiting on a human right now."""
+        kept, skipped, worked = emit.undispatched_findings([{"id": "a"}], {"a"}, {"a"})
+        assert (kept, skipped, worked) == ([], ["a"], [])
 
 
-class TestFetchRunningFindingIds:
-    def test_asks_only_for_running_pr_upkeep_runs(self, monkeypatch):
+class TestDispatchedFindingIds:
+    """The listing -> the two dedupe clauses. Pure: no network in this module."""
+
+    LISTED = {
+        "items": [
+            # working it now, at the current head
+            {"state": "running", "input": {"head_sha": "sha-a", "findings": [{"id": "a"}]}},
+            # ENDED at the current head — clause 2's whole population
+            {"state": "completed", "input": {"head_sha": "sha-a", "findings": [{"id": "b"}]}},
+            # ended at an OLDER head: says nothing about sha-a
+            {"state": "failed", "input": {"head_sha": "sha-old", "findings": [{"id": "c"}]}},
+            # running at an older head: still in flight, so still refused
+            {"state": "running", "input": {"head_sha": "sha-old", "findings": [{"id": "d"}]}},
+            {"input": {"findings": []}},
+            {"input": {}},
+            {"input": ["not an object"]},
+            {},
+        ]
+    }
+
+    def test_in_flight_is_every_running_run_regardless_of_head(self):
+        in_flight, _ = emit.dispatched_finding_ids(self.LISTED)
+        assert in_flight == {"a", "d"}
+
+    def test_worked_is_keyed_by_the_head_it_was_dispatched_against(self):
+        _, by_head = emit.dispatched_finding_ids(self.LISTED)
+        assert by_head == {"sha-a": {"a", "b"}, "sha-old": {"c", "d"}}
+
+    def test_a_malformed_or_absent_listing_is_empty_rather_than_raising(self):
+        for listing in (None, {}, {"items": None}, {"items": []}):
+            assert emit.dispatched_finding_ids(listing) == (set(), {})
+
+    def test_the_query_does_not_filter_to_running_runs(self):
+        """Clause 2 asks about runs that have ENDED; a state=running listing
+        cannot see them, which is exactly how the loop got in."""
+        query = emit.runs_query()
+        assert "workflow_key=pr-upkeep" in query
+        assert "state" not in query
+        assert "limit=500" in query
+
+
+class TestFetchDispatchedFindings:
+    def test_reads_the_run_listing_with_the_event_grant(self, monkeypatch):
         monkeypatch.setenv("NODES_API_URL", "https://nodes.example/")
         monkeypatch.setenv("NODES_EVENT_TOKEN", "event-token")
         seen = {}
 
         def fake_get(url, token=None, **_kw):
             seen["url"], seen["token"] = url, token
-            return {
-                "items": [
-                    {"input": {"findings": [{"id": "a"}, {"id": "b"}]}},
-                    {"input": {"findings": [{"id": "b"}]}},
-                    {"input": {"findings": []}},
-                    {"input": {}},
-                    {},
-                ]
-            }
+            return {"items": [{"state": "running", "input": {"findings": [{"id": "a"}]}}]}
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_running_finding_ids() == {"a", "b"}
+        assert sweep.fetch_dispatched_findings() == ({"a"}, {})
         assert seen["url"].startswith("https://nodes.example/v1alpha1/runs?")
         assert "workflow_key=pr-upkeep" in seen["url"]
-        assert "state=running" in seen["url"]
         assert seen["token"] == "event-token"
-
-    def test_a_non_object_input_is_ignored_rather_than_crashing(self, monkeypatch):
-        monkeypatch.setenv("NODES_API_URL", "https://nodes.example")
-        monkeypatch.setenv("NODES_EVENT_TOKEN", "t")
-        monkeypatch.setattr(
-            sweep,
-            "_get_json",
-            lambda *_a, **_kw: {
-                "items": [{"input": ["not an object"]}, {"input": {"findings": {}}}]
-            },
-        )
-        assert sweep.fetch_running_finding_ids() == set()
 
     def test_requires_the_same_grant_raise_event_requires(self, monkeypatch):
         monkeypatch.delenv("NODES_API_URL", raising=False)
         monkeypatch.delenv("NODES_EVENT_TOKEN", raising=False)
         with pytest.raises(ValueError):
-            sweep.fetch_running_finding_ids()
+            sweep.fetch_dispatched_findings()
 
 
 def test_an_unreadable_runs_list_names_its_stage_and_emits_nothing(monkeypatch, capsys):
@@ -247,7 +283,66 @@ def test_an_unreadable_runs_list_names_its_stage_and_emits_nothing(monkeypatch, 
     def boom():
         raise urllib.error.URLError("connection refused")
 
-    monkeypatch.setattr(sweep, "fetch_running_finding_ids", boom)
+    monkeypatch.setattr(sweep, "fetch_dispatched_findings", boom)
     assert sweep.main() == 1
-    assert "running pr-upkeep runs" in capsys.readouterr().err
+    assert "pr-upkeep runs" in capsys.readouterr().err
     assert calls["events"] == []
+
+
+class TestAFindingWorkedAtThisHeadIsNotDispatchedAgain:
+    """The regression #268's own fix introduced, and the clause that closes it.
+
+    Before #268 the watermark was `{head_sha, newest_comment_at}` — byte
+    identical on every tick — so the control plane answered every repeat with
+    `duplicate=true`. That accident was the only thing stopping a finding
+    being re-dispatched at a commit where it had already been worked. Putting
+    the dispatched finding id in the watermark (which #268 had to do, or a
+    PR's second finding could never go out at an unmoved head) removed the
+    accident: two findings that both end `no_change` would then alternate
+    forever, one billable agent session every 30 minutes, each re-working a
+    finding an actor had already declined.
+    """
+
+    def test_two_ended_runs_at_one_head_do_not_alternate_forever(self, monkeypatch):
+        first = _pass(monkeypatch, head_sha="sha-a")
+        assert sweep.main() == 0
+        assert _emitted_finding_ids(first) == [["pr236-qodo-1"]]
+
+        second = _pass(monkeypatch, head_sha="sha-a", running_findings=["pr236-qodo-1"])
+        assert sweep.main() == 0
+        assert _emitted_finding_ids(second) == [["pr236-qodo-2"]]
+
+        # Both runs have now ENDED — say both answered `no_change`, so both
+        # findings are still open on the source surface. Nothing about the PR
+        # has changed, so nothing new may be dispatched against it.
+        third = _pass(
+            monkeypatch,
+            head_sha="sha-a",
+            worked_by_head={"sha-a": ["pr236-qodo-1", "pr236-qodo-2", "pr236-qodo-3"]},
+        )
+        assert sweep.main() == 0
+        assert third["events"] == [], "a finding worked at this head was dispatched again"
+
+    def test_a_push_makes_them_dispatchable_again(self, monkeypatch):
+        """The refusal is scoped to the commit, not to the finding forever:
+        new code is a new question, so a moved head re-opens all of them."""
+        calls = _pass(
+            monkeypatch,
+            head_sha="sha-b",
+            worked_by_head={"sha-a": ["pr236-qodo-1", "pr236-qodo-2", "pr236-qodo-3"]},
+        )
+        assert sweep.main() == 0
+        assert _emitted_finding_ids(calls) == [["pr236-qodo-1"]]
+
+    def test_the_summary_tells_settled_apart_from_in_flight(self, monkeypatch, capsys):
+        _pass(
+            monkeypatch,
+            head_sha="sha-a",
+            running_findings=["pr236-qodo-1"],
+            worked_by_head={"sha-a": ["pr236-qodo-2", "pr236-qodo-3"]},
+        )
+        assert sweep.main() == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["skipped_findings"] == ["pr236-qodo-1"]
+        assert report["worked_findings"] == ["pr236-qodo-2", "pr236-qodo-3"]
+        assert report["emitted"] == 0

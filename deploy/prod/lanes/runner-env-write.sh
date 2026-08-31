@@ -68,6 +68,8 @@ PR_UPKEEP_SWEEP_SOURCE_URL=${PR_UPKEEP_SWEEP_SOURCE_URL:-"https://raw.githubuser
 PR_UPKEEP_SWEEP_SOURCE_SHA256=${PR_UPKEEP_SWEEP_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/sweep.py" | sha256sum | cut -d' ' -f1)}
 PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_jira.py"}
 PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
+PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=${PR_UPKEEP_SWEEP_EMIT_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_emit.py"}
+PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=${PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_emit.py" | sha256sum | cut -d' ' -f1)}
 # systemd's EnvironmentFile parser is shell-LIKE: it processes backslash
 # escapes in an unquoted value. Measured on thor, unquoted:
 #
@@ -92,7 +94,7 @@ case "$PR_UPKEEP_REPOSITORIES" in
 		exit 1
 		;;
 esac
-if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ]; then
+if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_EMIT_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256" ]; then
 	# Piped over stdin rather than built into the ssh command string: the
 	# repositories value is single-quoted (see above) and interpolating quotes
 	# into a double-quoted remote command is how you get a value that is
@@ -122,6 +124,8 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 		"PR_UPKEEP_SWEEP_SOURCE_SHA256=$PR_UPKEEP_SWEEP_SOURCE_SHA256" \
 		"PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" \
 		"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" \
+		"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=$PR_UPKEEP_SWEEP_EMIT_SOURCE_URL" \
+		"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=$PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256" \
 		"$PR_UPKEEP_REPOSITORIES_LINE"
 	} | ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-state; tmp=~/.culture-nodes/runner.env.new; trap '\''rm -f "$tmp"'\'' EXIT; cat > "$tmp"; mv -f "$tmp" ~/.culture-nodes/runner.env; trap - EXIT'
 	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"

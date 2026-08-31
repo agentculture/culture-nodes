@@ -150,5 +150,7 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
             "PR_UPKEEP_SWEEP_SOURCE_SHA256",
             "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL",
             "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
+            "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256",
         ):
             assert ref in readme, f"the README never names the granted value {ref}"

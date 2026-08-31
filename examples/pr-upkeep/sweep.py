@@ -44,6 +44,13 @@ from base64 import b64encode
 # Exactly what this module calls. The Jira vocabulary — event names, self-echo,
 # watermarks, transition slugs — is pr_upkeep_jira's to own; re-exporting it
 # here made the sweep look like it had opinions about Jira that it does not.
+from pr_upkeep_emit import (
+    FINDINGS_PER_EVENT,
+    dispatched_finding_ids,
+    emission_watermark,
+    runs_query,
+    undispatched_findings,
+)
 from pr_upkeep_jira import fetch_jira_issues, jira_credentials, jira_emissions
 
 # The blast radius used to be one repo pinned in this module. That narrowing
@@ -716,74 +723,19 @@ def raise_event(
         return json.load(response)
 
 
-#: The workflow whose running runs the emission dedupe consults, and the page
-#: size it reads. Past that bound the sweep can only re-emit (the pre-t12
-#: behaviour), never wrongly suppress.
-PR_UPKEEP_WORKFLOW_KEY = "pr-upkeep"
-RUNNING_RUNS_LIMIT = 500
+def fetch_dispatched_findings() -> tuple:
+    """Ask the control plane which findings are already spoken for.
 
-
-def fetch_running_finding_ids() -> set:
-    """Finding ids a still-running pr-upkeep run already carries.
-
-    The watermark says the PR moved, not that a finding is already in flight
-    (README, "Dedupe by finding id"). A triggered run's input IS the event
-    payload, so `input.findings` is exactly what was emitted for it. The read
-    is unauthenticated today; the token rides along so read auth arriving
-    later is a 401 this sweep reports, not a silent behaviour change.
+    The read is one listing; pr_upkeep_emit decides what it means. It is
+    unauthenticated today; the token rides along so read auth arriving later
+    is a 401 this sweep reports, not a silent behaviour change.
     """
     base = os.environ.get("NODES_API_URL")
     token = os.environ.get("NODES_EVENT_TOKEN")
     if not base or not token:
         raise ValueError("NODES_API_URL and NODES_EVENT_TOKEN are required")
-    params = {"workflow_key": PR_UPKEEP_WORKFLOW_KEY, "state": "running"}
-    query = f"{urllib.parse.urlencode(params)}&limit={RUNNING_RUNS_LIMIT}"
-    listed = _get_json(f"{base.rstrip('/')}/v1alpha1/runs?{query}", token)
-    ids = set()
-    for run in (listed or {}).get("items") or []:
-        run_input = run.get("input")
-        findings = run_input.get("findings") if isinstance(run_input, dict) else None
-        for finding in findings if isinstance(findings, list) else []:
-            if isinstance(finding, dict) and finding.get("id"):
-                ids.add(finding["id"])
-    return ids
-
-
-def undispatched_findings(findings: list[dict], running_ids: set) -> tuple:
-    """Split findings into (emit these, ids skipped as already in flight)."""
-    kept, skipped = [], []
-    for finding in findings:
-        if finding.get("id") in running_ids:
-            skipped.append(finding["id"])
-        else:
-            kept.append(finding)
-    return kept, skipped
-
-
-#: How many findings one emitted pr-upkeep fact carries: ONE -- the one the
-#: fix node will actually work ("take the HIGHEST-PRIORITY item ... and work
-#: only that one item"). A fact carrying the whole list made every id on it
-#: undispatchable for as long as the run holding it lived, which is until a
-#: human merges, so a PR got one fix per merge (issue #268; README, "One
-#: finding per fact").
-FINDINGS_PER_EVENT = 1
-
-
-def emission_watermark(head_sha: str, newest_comment_at: str, findings: list[dict]) -> dict:
-    """The cursor guarding one PR's pr-upkeep fact.
-
-    Head sha and newest comment answer *did this PR move*; the dispatched
-    finding id answers *is this a different piece of work*. The finding has to
-    be in here because the control plane's duplicate check is an equality test
-    of the whole watermark against the row stored for this source key
-    (internal/store/postgres/signal.go), so at an unmoved head the second
-    finding would be answered `duplicate=true` and never mint a run. A PR with
-    no findings keeps the two-key watermark it has always had.
-    """
-    watermark = {"head_sha": head_sha, "newest_comment_at": newest_comment_at}
-    if findings:
-        watermark["finding"] = findings[0]["id"]
-    return watermark
+    listed = _get_json(f"{base.rstrip('/')}/v1alpha1/runs?{runs_query()}", token)
+    return dispatched_finding_ids(listed)
 
 
 def _max_prs_per_sweep() -> int:
@@ -868,10 +820,13 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-        with attempting("reading running pr-upkeep runs (control plane)"):
-            running_finding_ids = fetch_running_finding_ids()
+        with attempting("reading pr-upkeep runs (control plane)"):
+            in_flight_findings, findings_worked_by_head = fetch_dispatched_findings()
         emitted = []
         skipped_findings = []
+        # Already dispatched at this PR's current head: settled until the PR
+        # moves, whatever the run decided (#268 clause 2).
+        worked_findings = []
         # Read, not dispatched, not suppressed: outranked this cycle and
         # emittable next one. Separate from skipped_findings so the summary
         # keeps saying WHICH reason a finding is not in flight (#268).
@@ -919,14 +874,17 @@ def main() -> int:
                 pr_sonar = sonar_work_items(
                     fetch_sonar_issues(component, pr=pull["number"]), pr=pull["number"]
                 )
-            findings, skipped = undispatched_findings(
-                prioritise(pr_sonar + qodo_items + check_items), running_finding_ids
+            findings, skipped, worked = undispatched_findings(
+                prioritise(pr_sonar + qodo_items + check_items),
+                in_flight_findings,
+                findings_worked_by_head.get(pull["head_sha"], frozenset()),
             )
             skipped_findings.extend(skipped)
+            worked_findings.extend(worked)
             # Emitting the now-empty list would consume this watermark for a
             # fact the trigger declines, stranding these findings at this head
             # sha. Skipping leaves the position free for a later cycle.
-            if skipped and not findings:
+            if (skipped or worked) and not findings:
                 continue
             dispatched = findings[:FINDINGS_PER_EVENT]
             deferred_findings.extend(f["id"] for f in findings[FINDINGS_PER_EVENT:])
@@ -983,6 +941,7 @@ def main() -> int:
             "sweep": "pr-upkeep",
             "emitted": len(emitted),
             "skipped_findings": skipped_findings,
+            "worked_findings": worked_findings,
             "deferred_findings": deferred_findings,
         },
         sys.stdout,

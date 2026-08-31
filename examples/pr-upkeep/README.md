@@ -33,6 +33,8 @@ means supplying these — it never means editing `workflow.yaml`.
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
 | `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_jira.py` read/replay module is fetched from. |
 | `PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256` | **Granted environment value.** The independently checked sha256 for the Jira module. |
+| `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_emit.py` dedupe/cursor module is fetched from. |
+| `PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256` | **Granted environment value.** Its independently checked sha256. |
 | `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` (required together) enable Jira for that repo. `jira_bot_account_id` is independently optional: the system's own Jira `accountId`, used only to filter self-authored comments out of the comment/resume event (task t9) — see "Jira event vocabulary" below. The cycle index selects exactly one entry per sweep. |
 | `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
 | `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
@@ -50,7 +52,8 @@ supply-chain property, not a portability wart. Fork `sweep.py`, publish your
 copy, and grant its URL and digest:
 
 ```bash
-sha256sum examples/pr-upkeep/sweep.py examples/pr-upkeep/pr_upkeep_jira.py
+sha256sum examples/pr-upkeep/sweep.py examples/pr-upkeep/pr_upkeep_jira.py \
+  examples/pr-upkeep/pr_upkeep_emit.py
 ```
 
 Both values are resolved by the **runner** process, from its own
@@ -240,8 +243,14 @@ Three decisions worth stating:
 One honest limit: findings suppressed at a given head SHA are re-offered
 only once the watermark moves again. If a run in flight ends while the PR
 sits still, its finding waits for the next push or comment. Closing that
-would mean changing the watermark, which this task deliberately did not —
-issue #268, below, is where that changed.
+would mean changing the watermark, which this task deliberately did not.
+
+Issue #268, below, changed the watermark — but **not** this limit. It
+un-strands a *different* finding at an unmoved head; the *same* finding, on a
+stationary PR, whose run has ended, still waits for the next push. That is no
+longer an accident of the cursor either: it is dedupe clause 2, stated
+deliberately, because a run that ended is an answer and re-asking at the same
+commit re-buys it.
 
 ## One finding per fact (issue #268)
 
@@ -278,6 +287,14 @@ Two properties fall out of that shape:
 - **A PR with no findings keeps the two-key watermark it always had**, so
   rolling this out does not re-deliver every clean PR's current head.
 
+On the first tick after the deploy, a PR *with* findings has a stored
+two-key watermark and will be sent a three-key one, which is not a duplicate —
+so it emits. Clause 2 then decides whether that becomes a run: if a previous
+run already carried that finding at this head sha, it is refused as
+`worked_findings`, and only a finding nobody has worked goes out. The rollout
+is therefore quiet by construction rather than by luck, and the first tick is
+worth reading (`worked_findings` will be long).
+
 ### What moved, and why the split is where it is
 
 `sweep.py` sat at 998 of the repo's 1000-line hard limit
@@ -301,8 +318,16 @@ Two guards moved with the code rather than being left behind:
 - `pr_upkeep_jira.py` is asserted to have no control-plane write path at all,
   so "sweep.py is the sole emitter" stays a fact rather than a habit.
 
-`deploy/prod/deploy.sh` derives both digests from the shipped revision, so
-this needs no hand-edited grant — only a redeploy.
+Then the emission concern followed it into `pr_upkeep_emit.py` — both dedupe
+clauses and the cursor — under its own granted URL and digest. Both siblings
+are asserted stdlib-only for the same reason the sweep is: the bootstrap
+fetches exactly the files it has been granted, so an import outside that set
+names a module that will not be on disk in production.
+
+`deploy/prod/deploy.sh` derives all three digests from the shipped revision,
+so this needs no hand-edited grant — only a redeploy. `grant-check.sh` knows
+the two new keys, or the deploy that first grants them would be refused by
+its own preflight (`tests/deploy/grantsafety_test.go` pins that pairing).
 
 `workflow.yaml` is untouched, deliberately: a one-item list satisfies its
 published input contract (`findings` minItems 1), its trigger

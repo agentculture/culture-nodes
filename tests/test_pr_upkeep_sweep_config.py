@@ -3,8 +3,29 @@ it under the 1000-line hard limit (tests/lint filelength guard)."""
 
 import ast
 import json
+import re
 
 from tests.test_pr_upkeep_sweep import EXAMPLE_DIR, FIXTURES, _stub_sweep, sweep  # noqa: F401
+
+#: Every module the sweep-cycle bootstrap fetches, verifies and places next to
+#: sweep.py. The guards below scan ALL of them, so a new sibling cannot become
+#: a place where an unsanctioned environment read hides.
+GRANTED_SOURCES = ("sweep.py", "pr_upkeep_jira.py", "pr_upkeep_emit.py")
+
+
+def test_the_granted_sources_are_every_module_the_bootstrap_fetches():
+    """The list above is a claim about the workflow; read the workflow.
+
+    Without this, adding a fourth fetched module and forgetting to list it
+    would leave the environment-read guard silently narrower than the thing
+    it claims to cover — which is the failure Qodo caught on PR #269 when
+    `pr_upkeep_emit.py` was fetched but not scanned.
+    """
+    workflow = (EXAMPLE_DIR / "sweep-cycle.workflow.yaml").read_text()
+    fetched = set(re.findall(r'\("([a-z_]+\.py)", "PR_UPKEEP_[A-Z_]*SOURCE_URL"', workflow))
+    assert fetched == set(
+        GRANTED_SOURCES
+    ), "the bootstrap fetches a different set of modules than the guards scan"
 
 
 class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
@@ -48,6 +69,19 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         return (EXAMPLE_DIR / "sweep.py").read_text()
 
     @staticmethod
+    def _granted_source():
+        """Every module the deployment fetches and executes, concatenated.
+
+        The environment boundary is a property of the *dispatched script*,
+        which is every file the bootstrap fetches under its own granted
+        URL+SHA pair — not just the one named sweep.py. Adding a module and
+        forgetting it here is how a credential read stops being covered
+        without anyone deleting a test; the module-list test below is what
+        makes that impossible to do quietly.
+        """
+        return "\n".join((EXAMPLE_DIR / name).read_text() for name in GRANTED_SOURCES)
+
+    @staticmethod
     def _prose(text):
         """Wrapped prose as one line, so an assertion about a phrase is not
         really an assertion about where the author's line breaks fell."""
@@ -88,8 +122,14 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         assert "GITHUB_REPO =" not in source
 
     def test_environment_reads_are_exactly_the_deliberately_granted_set(self):
+        # BOTH fetched modules, in one exact set. The Jira credential read
+        # moved into pr_upkeep_jira with the rest of the Jira surface (issue
+        # #268's file-length split), and a guard that kept scanning only
+        # sweep.py would have gone quietly blind to it — an environment read
+        # that stops being covered by moving to the sibling file is exactly
+        # the kind of erosion this set exists to prevent.
         names = set()
-        for node in ast.walk(ast.parse(self._source())):
+        for node in ast.walk(ast.parse(self._granted_source())):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 target = node.func.value
                 if (
@@ -133,5 +173,7 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
             "PR_UPKEEP_SWEEP_SOURCE_SHA256",
             "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL",
             "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
+            "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256",
         ):
             assert ref in readme, f"the README never names the granted value {ref}"

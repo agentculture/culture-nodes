@@ -14,12 +14,26 @@
  *   - A task that declares NO outcomes renders a stated absence, never an
  *     empty row of buttons. `schedule_failing` is an alert, not a choice,
  *     and a page that shows it with nothing to click should say why.
+ *   - `expired` is never a button (issue #265). The compiler implies it in
+ *     every approval node's allowed_outcomes, but it is the outcome the
+ *     control plane records when it READS a fact — a merged PR, a passed
+ *     deadline — and `DecideHumanTask` now refuses it from a decider
+ *     (internal/engine, DecidableOutcomes). A button for it was an offer to
+ *     hand-produce an engine observation.
  *   - Every button is disabled unless a decision could actually be
  *     recorded — a token is held and a decider is named. A decision with no
  *     named decider is not a decision (PRD §10.4).
  *   - The busy task's buttons are disabled while its POST is in flight, so
  *     a double click cannot become two decisions.
  */
+/**
+ * The outcome only the engine reaches, mirroring engine.OutcomeExpired. It is
+ * filtered here rather than server-side because `allowed_outcomes` is the
+ * verbatim record of what the task declared and must stay that way — the
+ * expiry path validates against it.
+ */
+const ENGINE_ONLY_OUTCOME = "expired";
+
 export function OutcomeButtons({
   taskId,
   outcomes,
@@ -35,12 +49,16 @@ export function OutcomeButtons({
   busy: boolean;
   onChoose: (outcome: string) => void;
 }) {
+  const decidable = outcomes.filter((outcome) => outcome !== ENGINE_ONLY_OUTCOME);
   if (outcomes.length === 0) {
     return <p className="muted">needs an outcome set</p>;
   }
+  if (decidable.length === 0) {
+    return <p className="muted">no outcome a person may select</p>;
+  }
   return (
     <div className="inbox-card__outcomes" aria-label={`Outcomes for ${taskId}`}>
-      {outcomes.map((outcome) => (
+      {decidable.map((outcome) => (
         <button
           key={outcome}
           type="button"

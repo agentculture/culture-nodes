@@ -75,7 +75,7 @@ func TestJiraKeyedRunFansOutCommentTransitionAndNotify(t *testing.T) {
 		t.Errorf("jira comment payload = %v, want post_comment on SCRUM-6", comment)
 	}
 	body, _ := comment["comment"].(string)
-	for _, must := range []string{"approved, expired, rejected", "http://thor:18080/tickets/SCRUM-6", "01TASK", "01RUN"} {
+	for _, must := range []string{"options: approved, rejected", "node: human-merges-pr", "http://thor:18080/tickets/SCRUM-6", "01TASK", "01RUN"} {
 		if !strings.Contains(body, must) {
 			t.Errorf("jira comment %q does not contain %q", body, must)
 		}
@@ -91,7 +91,7 @@ func TestJiraKeyedRunFansOutCommentTransitionAndNotify(t *testing.T) {
 
 	notify := payloadFor(t, plan, engine.FanOutChannelNotify)
 	rendered, _ := json.Marshal(notify)
-	for _, must := range []string{"approved, expired, rejected", "http://thor:18080/tickets/SCRUM-6", "SCRUM-6"} {
+	for _, must := range []string{"approved, rejected", "http://thor:18080/tickets/SCRUM-6", "SCRUM-6"} {
 		if !strings.Contains(string(rendered), must) {
 			t.Errorf("notify payload %s does not contain %q", rendered, must)
 		}
@@ -122,7 +122,7 @@ func TestGitHubPRSourcedRunFansOutToNotifyOnlyAndSaysWhy(t *testing.T) {
 		t.Fatalf("channels = %v, want only %s", got, engine.FanOutChannelNotify)
 	}
 	notify, _ := json.Marshal(payloadFor(t, plan, engine.FanOutChannelNotify))
-	for _, must := range []string{"agentculture/culture-nodes#236", "http://thor:18080/runs/01RUN", "approved, expired, rejected"} {
+	for _, must := range []string{"agentculture/culture-nodes#236", "http://thor:18080/runs/01RUN", "approved, rejected", "human-merges-pr"} {
 		if !strings.Contains(string(notify), must) {
 			t.Errorf("notify payload %s does not contain %q", notify, must)
 		}
@@ -232,5 +232,99 @@ func TestTaskWithNoDeclaredOutcomesStillFansOutAndSaysSo(t *testing.T) {
 	rendered, _ := json.Marshal(payloadFor(t, plan, engine.FanOutChannelNotify))
 	if !strings.Contains(string(rendered), "no declared outcomes") {
 		t.Errorf("notify payload %s does not say the task declares no outcomes", rendered)
+	}
+}
+
+// Issue #265, both halves, over every payload the fan-out can produce for an
+// approval: the node is named by its ID (`human-merges-pr`) and not by its
+// kind (`approval`), and `expired` is nowhere in the offered options.
+//
+// `expired` is the deadline/merged-PR outcome the compiler implies for every
+// approval node. It stays in the task's own allowed_outcomes — the expiry
+// path validates against that set — but a person cannot select it, and
+// docs/drive-from-jira.md promises these options are "exactly the answers the
+// engine will accept, not a menu someone wrote by hand". Observed on SCRUM-7:
+// `node: approval` and `options: approved, expired, rejected`.
+func TestFanOutNamesTheNodeIDAndOffersNoEngineOnlyOutcome(t *testing.T) {
+	task := approvalTask("01TASK", "01RUN", "approved", "expired", "rejected")
+	for name, subject := range map[string]engine.RunSubject{
+		"jira": engine.SubjectOfRunInput(json.RawMessage(`{"source":"jira","id":"SCRUM-7"}`)),
+		"pr":   engine.SubjectOfRunInput(json.RawMessage(`{"source":"github_pr","repository":"o/r","number":267}`)),
+		"none": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, intent := range engine.PlanHumanTaskFanOut(task, subject, "http://thor:18080") {
+				payload := string(intent.Payload)
+				if strings.Contains(payload, engine.OutcomeExpired) {
+					t.Errorf("%s payload offers the engine-only outcome %q: %s",
+						intent.Channel, engine.OutcomeExpired, payload)
+				}
+				if intent.Channel == engine.FanOutChannelJiraTransition {
+					continue // carries the board target, not the task's identity
+				}
+				if !strings.Contains(payload, "human-merges-pr") {
+					t.Errorf("%s payload does not name the node id: %s", intent.Channel, payload)
+				}
+				if strings.Contains(payload, `"approval"`) || strings.Contains(payload, "node: approval") {
+					t.Errorf("%s payload names the node by kind: %s", intent.Channel, payload)
+				}
+			}
+		})
+	}
+}
+
+// A task whose only declared outcome is the engine's own says so, rather than
+// borrowing the "no declared outcomes" wording — the two are different facts
+// and a reader sent to the page deserves to know which one they are meeting.
+func TestTaskWhoseOnlyOutcomeIsEngineOnlySaysNobodyMaySelectOne(t *testing.T) {
+	task := approvalTask("01TASK", "01RUN", "expired")
+	rendered, _ := json.Marshal(payloadFor(t,
+		engine.PlanHumanTaskFanOut(task, engine.RunSubject{}, ""), engine.FanOutChannelNotify))
+	if !strings.Contains(string(rendered), "no outcome a person may select") {
+		t.Errorf("notify payload %s does not say the task offers nothing selectable", rendered)
+	}
+	if strings.Contains(string(rendered), "no declared outcomes") {
+		t.Errorf("notify payload %s conflates an engine-only outcome with none at all", rendered)
+	}
+}
+
+// The node id comes from the request's audit block. A row written before that
+// block existed still has to render something, and its kind is the honest
+// fallback.
+func TestHumanTaskNodeIDFallsBackToTheKindWithoutAnAudit(t *testing.T) {
+	for name, tc := range map[string]struct {
+		request string
+		want    string
+	}{
+		"audit names the node": {`{"audit":{"node_id":"needs-human"}}`, "needs-human"},
+		"no audit":             {`{"allowed_outcomes":["approved"]}`, "approval"},
+		"empty request":        {``, "approval"},
+		"malformed request":    {`{`, "approval"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := engine.HumanTask{ID: "01TASK", RunID: "01RUN", Kind: "approval",
+				Request: json.RawMessage(tc.request)}
+			if got := engine.HumanTaskNodeID(task); got != tc.want {
+				t.Errorf("HumanTaskNodeID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecidableOutcomesDropsOnlyTheEngineOnlyOutcome(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in, want []string
+	}{
+		"implied approval set": {[]string{"approved", "expired", "rejected"}, []string{"approved", "rejected"}},
+		"nothing to drop":      {[]string{"approved", "changes_required"}, []string{"approved", "changes_required"}},
+		"only the engine's":    {[]string{"expired"}, nil},
+		"empty":                {nil, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := engine.DecidableOutcomes(tc.in)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("DecidableOutcomes(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
 	}
 }

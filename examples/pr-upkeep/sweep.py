@@ -18,28 +18,15 @@ the digest it also grants (`PR_UPKEEP_SWEEP_SOURCE_SHA256`), so a deployment
 that is not this one runs ITS copy of this script — with its own two
 constants — rather than ours (task t16).
 
-Each PR watermark is its head SHA plus newest comment timestamp. Each Jira
-history watermark is its last consumed changelog id plus comment id. The
-control plane advances that watermark in the same transaction that appends
-the signal event, so restarting this process cannot report the same position
-twice.
+Each PR watermark is its head SHA plus newest comment timestamp, and carries
+the finding being dispatched (issue #268). The control plane advances that
+watermark in the same transaction that appends the signal event, so
+restarting this process cannot report the same position twice.
 
-A Jira issue's current state and "a comment appeared" are DIFFERENT facts
-and now carry DIFFERENT event names (task t9, #118 step 1's only remaining
-structural gap in the sweep): every fetched issue raises a
-`pr-upkeep.jira.transitioned.<status-slug>` event (see
-`jira_transition_event_name`) on its own `:status` source key, so a
-workflow trigger subscribed to a specific transition never receives a
-comment. A fresh comment separately raises `pr-upkeep.jira.comment` on its
-own `:comment` source key — structurally a different name, never a
-suffix or prefix of the other, so the two cannot be confused by a CEL
-`onEvent` match. Both facts are attempted every sweep pass for every
-fetched issue, same as `pr-upkeep.pr`; the control plane's watermark
-equality dedup — not this process — is what makes an unchanged status or an
-already-seen comment a silent no-op rather than a repeat delivery.
-
-Self-echo uses configured identity or the actor marker, which also correlates
-answers to question ids. See the README for source budgets and deduplication.
+What a Jira fact is — its name, its cursor position, its watermark, and how
+a self-echo is told from a person's comment — belongs to `pr_upkeep_jira`;
+this module reads that module's list and emits it. See the README for source
+budgets and deduplication.
 """
 
 from __future__ import annotations
@@ -54,19 +41,20 @@ import urllib.parse
 import urllib.request
 from base64 import b64encode
 
-from pr_upkeep_jira import (
-    JIRA_CHANGELOG_EVENT_NAME,
-    JIRA_COMMENT_EVENT_NAME,
-    JIRA_RATE_LIMIT_PER_WINDOW,
-    JIRA_RESOLVED_LOOKBACK_DAYS,
-    fetch_jira_issues,
-    jira_comment_is_self_echo,
-    jira_history_facts,
-    jira_question_id_for_answer,
-    jira_transition_event_name,
-    jira_watermark,
-    jira_work_items,
+# Exactly what this module calls. The Jira vocabulary — event names, self-echo,
+# watermarks, transition slugs — is pr_upkeep_jira's to own; re-exporting it
+# here made the sweep look like it had opinions about Jira that it does not.
+from pr_upkeep_emit import (
+    FINDINGS_PER_EVENT,
+    RUNS_MAX_PAGES,
+    RUNS_PAGE_LIMIT,
+    dispatched_finding_ids,
+    emission_watermark,
+    next_run_cursor,
+    runs_query,
+    undispatched_findings,
 )
+from pr_upkeep_jira import fetch_jira_issues, jira_credentials, jira_emissions
 
 # The blast radius used to be one repo pinned in this module. That narrowing
 # existed because fetch_open_pulls enumerates EVERY open PR and then reads
@@ -738,48 +726,51 @@ def raise_event(
         return json.load(response)
 
 
-#: The workflow whose running runs the emission dedupe consults, and the page
-#: size it reads. Past that bound the sweep can only re-emit (the pre-t12
-#: behaviour), never wrongly suppress.
-PR_UPKEEP_WORKFLOW_KEY = "pr-upkeep"
-RUNNING_RUNS_LIMIT = 500
+def fetch_dispatched_findings(repository: str = "") -> tuple:
+    """Ask the control plane which findings are already spoken for.
 
+    The read is the run listing followed across its pages — the listing is
+    cursor-paginated and newest-first, and clause 2 asks about runs that have
+    ENDED, which are precisely the ones a single newest-first page loses
+    first. Stopping at one page lets a finding already worked at an unmoved
+    head be dispatched, and paid for, a second time.
 
-def fetch_running_finding_ids() -> set:
-    """Finding ids a still-running pr-upkeep run already carries.
-
-    The watermark says the PR moved, not that a finding is already in flight
-    (README, "Dedupe by finding id"). A triggered run's input IS the event
-    payload, so `input.findings` is exactly what was emitted for it. The read
-    is unauthenticated today; the token rides along so read auth arriving
-    later is a 401 this sweep reports, not a silent behaviour change.
+    pr_upkeep_emit decides what the pages mean; this function only reads them.
+    The read is unauthenticated today; the token rides along so read auth
+    arriving later is a 401 this sweep reports, not a silent behaviour change.
     """
     base = os.environ.get("NODES_API_URL")
     token = os.environ.get("NODES_EVENT_TOKEN")
     if not base or not token:
         raise ValueError("NODES_API_URL and NODES_EVENT_TOKEN are required")
-    params = {"workflow_key": PR_UPKEEP_WORKFLOW_KEY, "state": "running"}
-    query = f"{urllib.parse.urlencode(params)}&limit={RUNNING_RUNS_LIMIT}"
-    listed = _get_json(f"{base.rstrip('/')}/v1alpha1/runs?{query}", token)
-    ids = set()
-    for run in (listed or {}).get("items") or []:
-        run_input = run.get("input")
-        findings = run_input.get("findings") if isinstance(run_input, dict) else None
-        for finding in findings if isinstance(findings, list) else []:
-            if isinstance(finding, dict) and finding.get("id"):
-                ids.add(finding["id"])
-    return ids
-
-
-def undispatched_findings(findings: list[dict], running_ids: set) -> tuple:
-    """Split findings into (emit these, ids skipped as already in flight)."""
-    kept, skipped = [], []
-    for finding in findings:
-        if finding.get("id") in running_ids:
-            skipped.append(finding["id"])
-        else:
-            kept.append(finding)
-    return kept, skipped
+    runs_url = f"{base.rstrip('/')}/v1alpha1/runs?"
+    pages, cursor, truncated = [], "", False
+    for _ in range(RUNS_MAX_PAGES):
+        page = _get_json(f"{runs_url}{runs_query(cursor=cursor)}", token)
+        pages.append(page)
+        cursor = next_run_cursor(page)
+        if not cursor:
+            break
+    else:
+        truncated = True
+        # Said out loud rather than swallowed: past this bound the dedupe is
+        # reading a window, not the population, so clause 2 stops being a
+        # guarantee. The failure direction is re-emission, never wrong
+        # suppression, but re-emission is what costs money (#268).
+        print(
+            "pr-upkeep sweep: the pr-upkeep run listing did not end within "
+            f"{RUNS_MAX_PAGES} pages of {RUNS_PAGE_LIMIT}, so runs older than "
+            f"the newest {RUNS_MAX_PAGES * RUNS_PAGE_LIMIT} were NOT read this "
+            "cycle: a finding one of them already worked at an unmoved head "
+            "can be dispatched again",
+            file=sys.stderr,
+        )
+        # ...and in the machine-readable summary as well as on stderr. The
+        # stderr line is for whoever opens the node's output; `dedupe_complete`
+        # is for whatever reads the report, which is the surface an operator
+        # actually watches. A degradation only one of those two can see is a
+        # degradation that gets noticed the month after it starts costing.
+    return (*dispatched_finding_ids(pages, repository), truncated)
 
 
 def _max_prs_per_sweep() -> int:
@@ -864,10 +855,21 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-        with attempting("reading running pr-upkeep runs (control plane)"):
-            running_finding_ids = fetch_running_finding_ids()
+        with attempting("reading pr-upkeep runs (control plane)"):
+            (
+                in_flight_findings,
+                findings_worked_by_head,
+                dedupe_truncated,
+            ) = fetch_dispatched_findings(github_repo)
         emitted = []
         skipped_findings = []
+        # Already dispatched at this PR's current head: settled until the PR
+        # moves, whatever the run decided (#268 clause 2).
+        worked_findings = []
+        # Read, not dispatched, not suppressed: outranked this cycle and
+        # emittable next one. Separate from skipped_findings so the summary
+        # keeps saying WHICH reason a finding is not in flight (#268).
+        deferred_findings = []
         # Closed PRs are a separate bounded read. The immutable merged_at
         # value is the watermark, so two passes append exactly one fact.
         with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
@@ -911,21 +913,26 @@ def main() -> int:
                 pr_sonar = sonar_work_items(
                     fetch_sonar_issues(component, pr=pull["number"]), pr=pull["number"]
                 )
-            findings, skipped = undispatched_findings(
-                prioritise(pr_sonar + qodo_items + check_items), running_finding_ids
+            findings, skipped, worked = undispatched_findings(
+                prioritise(pr_sonar + qodo_items + check_items),
+                in_flight_findings,
+                findings_worked_by_head.get(pull["head_sha"], frozenset()),
             )
             skipped_findings.extend(skipped)
+            worked_findings.extend(worked)
             # Emitting the now-empty list would consume this watermark for a
             # fact the trigger declines, stranding these findings at this head
             # sha. Skipping leaves the position free for a later cycle.
-            if skipped and not findings:
+            if (skipped or worked) and not findings:
                 continue
+            dispatched = findings[:FINDINGS_PER_EVENT]
+            deferred_findings.extend(f["id"] for f in findings[FINDINGS_PER_EVENT:])
             payload = {
                 "source": "github_pr",
                 "repository": github_repo,
                 "number": pull["number"],
                 "head_sha": pull["head_sha"],
-                "findings": findings,
+                "findings": dispatched,
             }
             with attempting(f"emitting pr-upkeep.pr for #{pull['number']} (control plane)"):
                 emitted.append(
@@ -933,46 +940,29 @@ def main() -> int:
                         "pr-upkeep.pr",
                         payload,
                         f"github:{github_repo}:pr:{pull['number']}",
-                        {
-                            "head_sha": pull["head_sha"],
-                            "newest_comment_at": newest_comment_timestamp(comments),
-                        },
+                        emission_watermark(
+                            pull["head_sha"], newest_comment_timestamp(comments), dispatched
+                        ),
                     )
                 )
 
-        jira_items = []
+        # What a Jira fact IS belongs to pr_upkeep_jira (jira_emissions); this
+        # loop is the sweep's half of the split -- naming the stage a failure
+        # happened at, and being the one place that writes to the control
+        # plane.
         if repository.get("jira_site"):
-            email = os.environ.get("JIRA_ACCOUNT_EMAIL")
-            jira_token = os.environ.get("JIRA_API_TOKEN")
-            if not email or not jira_token:
-                raise ValueError(
-                    "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are both required "
-                    "when Jira is configured"
-                )
             site, project = repository["jira_site"], repository["jira_project"]
-            bot_account_id = repository.get("jira_bot_account_id") or ""
+            email, jira_token = jira_credentials()
             with attempting(f"reading {project} issues (Jira {site})"):
                 jira_payload = fetch_jira_issues(site, project, email, jira_token)
-            jira_items = jira_work_items(jira_payload, site=site, project=project)
-            by_key = {issue.get("key"): issue for issue in jira_payload.get("issues", [])}
-            for item in jira_items:
-                issue = by_key.get(item["id"], {})
-                for name, payload, watermark, position_kind, position_id in jira_history_facts(
-                    issue, bot_account_id, item
-                ):
-                    with attempting(f"emitting {name} for {item['id']} (control plane)"):
-                        emitted.append(
-                            raise_event(
-                                name,
-                                payload,
-                                (
-                                    f"jira:{site}:{item['id']}:history:"
-                                    f"{position_kind}:{position_id}"
-                                ),
-                                watermark,
-                                subject=item["id"],
-                            )
-                        )
+            for fact in jira_emissions(
+                jira_payload,
+                site=site,
+                project=project,
+                bot_account_id=repository.get("jira_bot_account_id") or "",
+            ):
+                with attempting(f"emitting {fact['name']} for {fact['subject']} (control plane)"):
+                    emitted.append(raise_event(**fact))
     except SweepFailure as failure:
         # The stage is the whole point: four unrelated surfaces used to fail
         # with the same unattributable message. The cause keeps its own type
@@ -986,7 +976,17 @@ def main() -> int:
         print(f"sweep failed at an unattributed step: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     json.dump(
-        {"sweep": "pr-upkeep", "emitted": len(emitted), "skipped_findings": skipped_findings},
+        {
+            "sweep": "pr-upkeep",
+            "emitted": len(emitted),
+            "skipped_findings": skipped_findings,
+            "worked_findings": worked_findings,
+            # False means the dedupe read a window rather than the whole run
+            # population, so "already worked at this head" is not a guarantee
+            # this cycle.
+            "dedupe_complete": not dedupe_truncated,
+            "deferred_findings": deferred_findings,
+        },
         sys.stdout,
         indent=2,
     )

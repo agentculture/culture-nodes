@@ -147,18 +147,25 @@ describe("Decisions pending tab", () => {
     expect(screen.getByText("task-000")).toBeInTheDocument();
   });
 
+  // `expired` is declared on every approval task (the compiler implies it)
+  // and is never a button: it is the outcome the control plane records when
+  // it reads a fact, and DecideHumanTask refuses it from a decider (#265).
   it.each([
-    ["approval", ["approved", "expired", "rejected"]],
-    ["trigger_remint_exhausted", []],
-  ])("renders only accepted outcomes for %s", async (kind, outcomes) => {
+    ["approval", ["approved", "expired", "rejected"], ["approved", "rejected"]],
+    ["trigger_remint_exhausted", [], []],
+    ["approval", ["expired"], []],
+  ])("renders only selectable outcomes for %s", async (kind, outcomes, selectable) => {
     mockListHumanTasks.mockResolvedValue({
       items: [task(0, { kind, request: { allowed_outcomes: outcomes } })],
     });
     await renderPending();
     const card = await screen.findByTestId("pending-task-task-000");
-    expect(within(card).queryAllByRole("button")).toHaveLength(outcomes.length);
+    const buttons = within(card).queryAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual(selectable);
     if (outcomes.length === 0) {
       expect(within(card).getByText("needs an outcome set")).toBeInTheDocument();
+    } else if (selectable.length === 0) {
+      expect(within(card).getByText("no outcome a person may select")).toBeInTheDocument();
     }
   });
 });

@@ -50,6 +50,8 @@ def _run_block(tmp_path: Path, *, shell_api_url: str | None = None) -> subproces
         "PR_UPKEEP_SWEEP_SOURCE_SHA256": "a" * 64,
         "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL": "https://example.test/jira.py",
         "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256": "b" * 64,
+        "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL": "https://example.test/emit.py",
+        "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256": "c" * 64,
     }
     if shell_api_url is not None:
         env["NODES_API_URL"] = shell_api_url

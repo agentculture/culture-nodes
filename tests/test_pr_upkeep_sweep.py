@@ -77,6 +77,11 @@ def _load_sweep():
 
 sweep = _load_sweep()
 
+# The Jira half is its own fetched module and its own responsibility; tests
+# about Jira vocabulary read it there rather than through a re-export the
+# sweep does not use (issue #268's file-length split).
+import pr_upkeep_jira as jira  # noqa: E402 — needs EXAMPLE_DIR on sys.path, set above
+
 
 @pytest.fixture(autouse=True)
 def repository_grant(monkeypatch):
@@ -134,6 +139,7 @@ def _stub_sweep(
     check_runs_error=None,
     comments=None,
     running_findings=None,
+    worked_by_head=None,
 ):
     """Stub every network call main() makes; return the per-source call log.
 
@@ -142,6 +148,11 @@ def _stub_sweep(
     `comments` maps PR number -> its GitHub issue comments (default none).
     `running_findings` seeds the finding ids a still-running pr-upkeep run
     already carries, which is what the emission dedupe reads (task t12).
+    The third element of the stubbed answer is `dedupe_truncated`, always
+    False here: these tests read a complete listing.
+    `worked_by_head` seeds {head_sha: ids already dispatched at that head} —
+    the second dedupe clause, which is what stops a finding whose run has
+    ENDED being re-dispatched at the same commit (issue #268).
     """
     monkeypatch.setenv("GITHUB_TOKEN", "")
     monkeypatch.setattr(
@@ -171,7 +182,15 @@ def _stub_sweep(
         "fetch_pr_comments",
         lambda token, repository, number: list((comments or {}).get(number, [])),
     )
-    monkeypatch.setattr(sweep, "fetch_running_finding_ids", lambda: set(running_findings or ()))
+    monkeypatch.setattr(
+        sweep,
+        "fetch_dispatched_findings",
+        lambda *_a, **_kw: (
+            set(running_findings or ()),
+            {head: set(ids) for head, ids in (worked_by_head or {}).items()},
+            False,
+        ),
+    )
     monkeypatch.setattr(sweep, "fetch_check_runs", fake_checks)
 
     def fake_raise(name, payload, source_key, watermark, **_kw):
@@ -240,7 +259,7 @@ def test_jira_watermark_carries_issue_and_comment_positions():
             "comment": {"comments": [{"id": "30001", "updated_at": "2026-08-15T02:00:00Z"}]},
         },
     }
-    assert sweep.jira_watermark(issue) == {
+    assert jira.jira_watermark(issue) == {
         "changelog_id": "20002",
         "comment_id": "30001",
     }
@@ -693,21 +712,27 @@ class TestStdlibOnlyImports:
         non_stdlib = {
             root for root in roots if root != "__future__" and root not in sys.stdlib_module_names
         }
-        assert non_stdlib == {"pr_upkeep_jira"}
+        # Exactly the sibling modules the runner is granted a URL + digest
+        # for. A fourth name here means a module the bootstrap would not
+        # fetch, so the sweep would import something that is not on disk.
+        assert non_stdlib == {"pr_upkeep_emit", "pr_upkeep_jira"}
 
-        jira_tree = ast.parse((EXAMPLE_DIR / "pr_upkeep_jira.py").read_text())
-        jira_roots = {
-            (node.module or "").split(".")[0]
-            for node in ast.walk(jira_tree)
-            if isinstance(node, ast.ImportFrom) and not node.level
-        }
-        jira_roots.update(
-            alias.name.split(".")[0]
-            for node in ast.walk(jira_tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        )
-        assert {root for root in jira_roots if root != "__future__"} <= sys.stdlib_module_names
+        # ...and each of those is itself stdlib-only, for the same reason.
+        for sibling in ("pr_upkeep_emit.py", "pr_upkeep_jira.py"):
+            tree = ast.parse((EXAMPLE_DIR / sibling).read_text())
+            roots = {
+                (node.module or "").split(".")[0]
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom) and not node.level
+            }
+            roots.update(
+                alias.name.split(".")[0]
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Import)
+                for alias in node.names
+            )
+            non_stdlib_sibling = {r for r in roots if r != "__future__"} - sys.stdlib_module_names
+            assert non_stdlib_sibling == set(), sibling
 
 
 class TestEmitterMain:
@@ -811,13 +836,13 @@ class TestEmitterMain:
         assert names[0] == "pr-upkeep.jira.transitioned.to-do"
         assert names[-2:] == [
             "pr-upkeep.jira.transitioned.to-do",
-            sweep.JIRA_COMMENT_EVENT_NAME,
+            jira.JIRA_COMMENT_EVENT_NAME,
         ]
 
         # A trigger subscribed to one name structurally cannot receive an
         # event bearing the other name.
         transitions = {n for n in names if n.startswith("pr-upkeep.jira.transitioned.")}
-        comments = {n for n in names if n == sweep.JIRA_COMMENT_EVENT_NAME}
+        comments = {n for n in names if n == jira.JIRA_COMMENT_EVENT_NAME}
         assert transitions
         assert comments
         assert transitions.isdisjoint(comments)
@@ -854,14 +879,14 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         names = [name for name, *_rest in calls["events"]]
-        assert names.count(sweep.JIRA_COMMENT_EVENT_NAME) == 1
+        assert names.count(jira.JIRA_COMMENT_EVENT_NAME) == 1
 
         # The watermark computation itself (what a future delivery would
         # use) is unaffected by the skip: it already sits past the bot's
         # own comment, so a later real reply is compared against THIS
         # position, not replayed against what preceded the bot's question.
         issue = payload["issues"][0]
-        assert sweep.jira_watermark(issue)["comment_id"] == "30001"
+        assert jira.jira_watermark(issue)["comment_id"] == "30001"
 
     def test_a_clean_pr_still_emits_its_new_head(self, monkeypatch, capsys):
         _stub_sweep(

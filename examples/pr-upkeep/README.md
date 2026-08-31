@@ -7,6 +7,13 @@ at a time through a human-gated fix/review cycle. Every loop iteration
 passes a person; the flow can propose, fix, and review — it can never
 merge.
 
+This file is the **graph's** documentation: what the nodes are and why they
+are shaped this way. The **operator's** half — what one tick does, how to read
+one after the fact, and the recipe for changing the sweep — is
+[`docs/operations/pr-upkeep-lane.md`](../../docs/operations/pr-upkeep-lane.md).
+The person-facing half, for a reader who only ever sees a Jira ticket, is
+[`docs/drive-from-jira.md`](../../docs/drive-from-jira.md).
+
 ## Deployment configuration
 
 Everything this example needs from the world outside its graph, and where
@@ -26,6 +33,8 @@ means supplying these — it never means editing `workflow.yaml`.
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
 | `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_jira.py` read/replay module is fetched from. |
 | `PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256` | **Granted environment value.** The independently checked sha256 for the Jira module. |
+| `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_emit.py` dedupe/cursor module is fetched from. |
+| `PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256` | **Granted environment value.** Its independently checked sha256. |
 | `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` (required together) enable Jira for that repo. `jira_bot_account_id` is independently optional: the system's own Jira `accountId`, used only to filter self-authored comments out of the comment/resume event (task t9) — see "Jira event vocabulary" below. The cycle index selects exactly one entry per sweep. |
 | `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
 | `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
@@ -43,7 +52,8 @@ supply-chain property, not a portability wart. Fork `sweep.py`, publish your
 copy, and grant its URL and digest:
 
 ```bash
-sha256sum examples/pr-upkeep/sweep.py examples/pr-upkeep/pr_upkeep_jira.py
+sha256sum examples/pr-upkeep/sweep.py examples/pr-upkeep/pr_upkeep_jira.py \
+  examples/pr-upkeep/pr_upkeep_emit.py
 ```
 
 Both values are resolved by the **runner** process, from its own
@@ -87,13 +97,14 @@ item.
 - [`workflow.yaml`](workflow.yaml) is v2 of the upkeep workflow. It starts a
   run for each `pr-upkeep.pr` event whose payload is from a GitHub PR and has
   at least one finding. The event payload is the run input, so the repository,
-  PR identity, head SHA, and prioritised findings are durable before an actor
-  starts.
+  PR identity, head SHA, and the finding are durable before an actor starts.
+  One event carries **one** finding — the highest-priority one still
+  undispatched (see "One finding per fact" below).
 - **fix** is the agent node. Actor affinity selects the security developer
-  when the event contains a security finding and the general developer
-  otherwise. The actor takes only the highest-priority finding and either
-  reports `completed` after opening or updating a PR, or `no_change` when a
-  fix would be inappropriate.
+  when the finding on the event is a security finding and the general
+  developer otherwise. The actor works that finding and either reports
+  `completed` after opening or updating a PR, or `no_change` when a fix would
+  be inappropriate.
 - **human-merges-pr** is the approval node reached by `fix.completed`. A
   platform maintainer decides the merge outcome; `approved`, `rejected`, and
   `expired` are all terminal for this run.
@@ -229,10 +240,164 @@ Three decisions worth stating:
   failure. The read hits the same host the emission POSTs to, so a control
   plane that cannot answer it could not have accepted the events either.
 
-One honest limit: findings suppressed at a given head SHA are re-offered
+One honest limit: the runs list is cursor-paginated and newest-first, and
+the sweep follows `next_cursor` for at most `RUNS_MAX_PAGES` pages of
+`RUNS_PAGE_LIMIT`. A run history longer than that is read as a window rather
+than as the population, and a finding answered by a run past the bound can be
+dispatched again — reported on stderr when it happens, never silently.
+
+Another: findings suppressed at a given head SHA are re-offered
 only once the watermark moves again. If a run in flight ends while the PR
 sits still, its finding waits for the next push or comment. Closing that
 would mean changing the watermark, which this task deliberately did not.
+
+Issue #268, below, changed the watermark — but **not** this limit. It
+un-strands a *different* finding at an unmoved head; the *same* finding, on a
+stationary PR, whose run has ended, still waits for the next push. That is no
+longer an accident of the cursor either: it is dedupe clause 2, stated
+deliberately, because a run that ended is an answer and re-asking at the same
+commit re-buys it.
+
+## One finding per fact (issue #268)
+
+The dedupe above reads *every* id on a running run's `input.findings`. The
+fix node works exactly one — "take the HIGHEST-PRIORITY item from the
+prioritised findings list and work only that one item" — so a fact carrying
+the whole list named N findings, worked one, and made the other N-1
+undispatchable for as long as that run lived. And a pr-upkeep run lives until
+a human merges: it parks on `human-merges-pr`. Net effect, measured on PR
+\#267 (run `01M19YG9ZJ…` carried `pr267-qodo-1` and `pr267-qodo-2`, worked
+`-1`, parked): **one fix per PR per merge**, with the second finding worked by
+hand in-session.
+
+A fact now carries exactly the finding it dispatches — `findings` is a
+one-item list — so the run's input is an honest statement of what is in
+flight, which is what the dedupe was already assuming it was. Findings that
+lost the priority ordering are reported separately from suppressed ones, as
+`deferred_findings`: they are emittable next cycle, not waiting on anything.
+
+That alone is not enough, and the second half is easy to miss. The control
+plane's duplicate check is an **equality test** of the submitted watermark
+against the one row stored for this source key
+(`internal/store/postgres/signal.go`, `deliverSignalEventTx`). At an unchanged
+head SHA with no new comments, the second finding's fact carries a byte-
+identical watermark, is answered `duplicate=true`, and never mints a run — the
+dedupe fix undone one layer down. So the dispatched finding id joins the
+watermark (`emission_watermark`): head SHA and newest comment answer *did this
+PR move*, the finding id answers *is this a different piece of work*.
+
+Two properties fall out of that shape:
+
+- **A PR with N findings gets N fixes before its merge**, one per tick, in
+  priority order — not N dispatched at once. (It does *not* promise only one
+  fix session ever touches a PR: if a fix outlasts the tick, the next
+  dispatch overlaps it. See the recipe's "one tick, precisely".)
+- **A PR with no findings keeps the two-key watermark it always had**, so
+  rolling this out does not re-deliver every clean PR's current head.
+
+### The clause the old cursor was enforcing by accident
+
+Adding the finding to the cursor removed something nobody had written down.
+When the watermark was `{head_sha, newest_comment_at}` it was byte-identical
+on every tick, so `duplicate=true` suppressed not only "this finding again"
+but **"anything again, at this commit"** — including a finding whose run had
+already ended. Make the cursors differ per finding and that goes away: two
+findings that both end `no_change` alternate forever, one billable agent
+session every 30 minutes, each re-working a finding an actor already declined.
+
+So the implied rule is now a stated one, in `pr_upkeep_emit.py`, and a
+finding is emitted only when **both** clauses hold:
+
+1. **no run is working it**, at any head sha — a second dispatch of a finding
+   in flight is a second `human-merges-pr` approval for one change (the t12
+   clause);
+2. **no run has already worked it at THIS head sha**, whatever that run
+   decided — `no_change`, a rejected fix and a technical failure are all
+   answers, and re-asking at the same commit re-buys an answer already given.
+
+Clause 2 is scoped to the commit, not the finding: a push is new code, so a
+moved head re-opens every finding on the PR. The net contract is the old one
+plus exactly what #268 wanted — **nothing new until the PR moves, except a
+finding nobody has worked yet**.
+
+Answering clause 2 is why the run listing is no longer filtered to
+`state=running`: the runs it asks about are precisely the ones that have
+ended. Four consequences follow, all four caught by a Qodo review of PR #269
+before they shipped — and the first fixed by **this loop itself**, which
+picked the finding up off #269 and pushed the commit:
+
+- **The listing is followed to the end.** It is cursor-paginated and
+  newest-first, so ended runs are exactly what a single page drops, and a
+  dropped run's finding becomes eligible again at the same head. Past a page
+  bound the sweep says so — on stderr *and* as `dedupe_complete: false` in the
+  report — because past it clause 2 is a window rather than a guarantee.
+- **In flight means non-terminal, not `running`.** `waiting` is a real state
+  and a future control plane may add more, so anything outside
+  `completed / failed / cancelled` counts as in flight. A finding wrongly held
+  back appears in `skipped_findings` where a reader sees it; a finding wrongly
+  released is a second billable session nobody sees.
+- **The answer is scoped to the repository being swept.** Finding ids carry a
+  PR number and an index, never a repository, so a fork and its upstream —
+  which share commit shas by construction — would otherwise answer each
+  other's questions.
+- **The environment-read guard scans every fetched module.** The helper
+  written to stop coverage escaping by moving code between files did not list
+  the file the code then moved into; a test now reads the bootstrap's own
+  source tuples, so the guard's list and the workflow cannot drift.
+
+The tick's summary keeps the refusals apart — `skipped_findings` (in flight,
+possibly waiting on a person right now) and `worked_findings` (settled until
+the PR moves) — because a reader acts on them differently.
+
+On the first tick after the deploy, a PR *with* findings has a stored
+two-key watermark and will be sent a three-key one, which is not a duplicate —
+so it emits. Clause 2 then decides whether that becomes a run: if a previous
+run already carried that finding at this head sha, it is refused as
+`worked_findings`, and only a finding nobody has worked goes out. The rollout
+is therefore quiet by construction rather than by luck, and the first tick is
+worth reading (`worked_findings` will be long).
+
+### What moved, and why the split is where it is
+
+`sweep.py` sat at 998 of the repo's 1000-line hard limit
+(`tests/lint`), so this change did not fit until something left. What left is
+the Jira half: `pr_upkeep_jira.py` — already a separately fetched module under
+its own granted URL and digest — now owns **what a Jira fact is**
+(`jira_emissions` shapes each `raise_event` call; `jira_credentials` reads the
+two granted Basic-auth halves), and `sweep.py` keeps the half that is actually
+the sweep's: naming the stage a failure happened at, and being the **sole**
+writer to the control plane. The Jira event vocabulary moved with it, out of
+the sweep's module docstring and out of its import list — re-exporting names
+nothing in the file called made the sweep look like it had opinions about Jira
+that it does not.
+
+Two guards moved with the code rather than being left behind:
+
+- the exact-set environment-read guard now AST-scans **both** fetched modules
+  (`tests/test_pr_upkeep_sweep_config.py`), because a credential read that
+  escapes coverage by moving one file over is exactly the erosion that set
+  exists to stop;
+- `pr_upkeep_jira.py` is asserted to have no control-plane write path at all,
+  so "sweep.py is the sole emitter" stays a fact rather than a habit.
+
+Then the emission concern followed it into `pr_upkeep_emit.py` — both dedupe
+clauses and the cursor — under its own granted URL and digest. Both siblings
+are asserted stdlib-only for the same reason the sweep is: the bootstrap
+fetches exactly the files it has been granted, so an import outside that set
+names a module that will not be on disk in production.
+
+`deploy/prod/deploy.sh` derives all three digests from the shipped revision,
+so this needs no hand-edited grant — only a redeploy. `grant-check.sh` knows
+the two new keys, or the deploy that first grants them would be refused by
+its own preflight (`tests/deploy/grantsafety_test.go` pins that pairing).
+
+`workflow.yaml` is untouched, deliberately: a one-item list satisfies its
+published input contract (`findings` minItems 1), its trigger
+(`size(event.payload.findings) > 0`), and its fix instruction verbatim — so
+this ships by deploying the sweep, with no workflow republish. Its
+`security-findings` affinity rule gets sharper for free: `findings.exists(f,
+f.kind == "security")` now asks whether the finding *being dispatched* is a
+security finding, rather than whether any finding on the PR is.
 
 ## The cross-machine handoff (issue #74)
 

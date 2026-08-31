@@ -52,6 +52,37 @@ import (
 // name the compiler implies for every approval node.
 const OutcomeExpired = "expired"
 
+// DecidableOutcomes is the subset of a task's allowed outcomes a PERSON may
+// select: everything except `expired` (issue #265).
+//
+// `expired` is in allowed_outcomes because the compiler implies it for every
+// approval node, and it has to stay there: checkOutcome judges a decision
+// against what the request declares, and ExpireHumanTask routes its own
+// resolution through that same check. But nobody chooses it. It is what the
+// control plane records when it READS a fact — the sweep's pr.merged, or a
+// passed deadline — so offering it on a decision surface invites a person to
+// hand-produce an outcome that is supposed to mean "the engine observed
+// this", which is the ledger authority model inverted (PRD §10.4).
+//
+// This is the one definition of that subset. The fan-out renders it
+// (humantaskfanout.go), DecideHumanTask refuses anything outside it
+// (humandecision.go), and the web surfaces filter with the same rule
+// (web/src/components/OutcomeButtons.tsx) — the stored allowed_outcomes is
+// never rewritten.
+//
+// A nil or empty input returns nil, and so does a set that is only
+// `expired`: callers distinguish "declared nothing" from "declared nothing
+// choosable" by comparing against the input they passed.
+func DecidableOutcomes(outcomes []string) []string {
+	var decidable []string
+	for _, outcome := range outcomes {
+		if outcome != OutcomeExpired {
+			decidable = append(decidable, outcome)
+		}
+	}
+	return decidable
+}
+
 // HumanTaskExpiryReasonPRMerged is the one reason this engine expires a task
 // on its own today: the pull request the task is an approval for has already
 // been merged, which the control plane learns from the sweep's `pr.merged`

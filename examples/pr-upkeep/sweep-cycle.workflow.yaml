@@ -31,6 +31,8 @@
 #   PR_UPKEEP_SWEEP_SOURCE_SHA256          the digest the bootstrap refuses
 #                                          to run without.
 #   PR_UPKEEP_SWEEP_JIRA_SOURCE_URL        where pr_upkeep_jira.py is fetched.
+#   PR_UPKEEP_SWEEP_EMIT_SOURCE_URL        where pr_upkeep_emit.py is fetched.
+#   PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256     its independently verified digest.
 #   PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256     its independently verified digest.
 #   PR_UPKEEP_REPOSITORIES                 the swept repositories document
 #                                          (github_repo, sonar_component,
@@ -96,6 +98,8 @@ spec:
           - PR_UPKEEP_SWEEP_SOURCE_SHA256
           - PR_UPKEEP_SWEEP_JIRA_SOURCE_URL
           - PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256
+          - PR_UPKEEP_SWEEP_EMIT_SOURCE_URL
+          - PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256
           - PR_UPKEEP_REPOSITORIES
           - GITHUB_TOKEN
           - SONAR_TOKEN
@@ -111,6 +115,7 @@ spec:
             sources = (
                 ("sweep.py", "PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256"),
                 ("pr_upkeep_jira.py", "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL", "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256"),
+                ("pr_upkeep_emit.py", "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL", "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256"),
             )
             directory = tempfile.mkdtemp()
             for filename, url_ref, digest_ref in sources:

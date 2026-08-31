@@ -1,0 +1,204 @@
+{
+  "slug": "two-fixes-upkeep-dispatch-and-decidable-outcomes",
+  "title": "two-fixes-upkeep-dispatch-and-decidable-outcomes",
+  "schema_version": 5,
+  "status": "drafting",
+  "created": "2026-08-31T04:14:15Z",
+  "updated": "2026-08-31T04:18:07Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "pr-upkeep dispatches every finding on a PR, and a human decision surface offers only outcomes a human may choose",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "examples/pr-upkeep/sweep.py emits at most ONE finding per PR per cycle: the highest-priority id left after undispatched_findings filters the running set, so a run's input.findings names exactly the finding its fix node will work (workflow.yaml's fix instruction already says 'take the highest-priority item and work only that one')",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "the emitted watermark for a PR gains the dispatched finding id beside head_sha/newest_comment_at: signal.go's duplicate check is an equality test on the whole watermark jsonb for (namespace_id, source_key), so without it a second finding at an unchanged head SHA is answered duplicate=true and never mints a run",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "assumption",
+      "text": "adding a field to the watermark can only make MORE watermarks distinct, never fewer, so no currently-emitting case stops emitting (signal.go deliverSignalEventTx equality read)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "examples/pr-upkeep/workflow.yaml is NOT edited: the single-finding payload satisfies its published 2.1.0 contract (findings array minItems 1), the trigger condition size(findings)>0, and the fix instruction verbatim - so the fix deploys by shipping sweep.py alone, with no workflow republish on prod",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "internal/engine/humantaskfanout.go renders the node ID from the task request's audit.node_id (humantask.go humanTaskAudit.NodeID) instead of task.Kind, falling back to the kind when a legacy request carries no audit",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "the fan-out's option list omits 'expired': OutcomeExpired is reachable only by internal/engine/humantaskexpiry.go reading the sweep's pr.merged fact, never by a person choosing it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "human_tasks.request.allowed_outcomes stays verbatim (approved/expired/rejected): humandecision.go checkOutcome judges a decision against what was presented AND humantaskexpiry.go routes its own expiry through that same set - filtering the stored set would break the expiry path",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "one shared engine rule names the outcomes a person may select (allowed minus 'expired'); the fan-out renders it and DecideHumanTask refuses outcome=expired when its expiry reason is nil, so ExpireHumanTask keeps working",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "web/src/components/OutcomeButtons.tsx filters 'expired' at the one place all three surfaces (Inbox, Decisions, TicketView) render outcome buttons, keeping its stated promise that a surface offers exactly what DecideHumanTask accepts",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "examples/pr-upkeep/sweep.py (fetch_running_finding_ids, undispatched_findings, main's per-PR emission)",
+      "finding": "the dedupe reads input.findings off every running pr-upkeep run, and the emitted payload carries the whole surviving list - so one parked run suppresses every finding it never worked",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "internal/store/postgres/signal.go deliverSignalEventTx",
+      "finding": "duplicate detection is an equality test of the submitted watermark against the single stored row for (namespace_id, source_key); an unchanged head SHA + comment timestamp is answered duplicate=true, so the second finding needs the watermark to differ",
+      "seeds": [
+        "c3",
+        "c4"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "examples/pr-upkeep/workflow.yaml (pr-upkeep 2.1.0)",
+      "finding": "input contract requires findings minItems 1, the trigger requires size>0, and the fix node's literal instruction already takes only the highest-priority item - a one-item list satisfies all three, and the security affinity rule becomes exact rather than 'any finding is security'",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "internal/engine/humantaskfanout.go PlanHumanTaskFanOut",
+      "finding": "the Jira comment renders 'node: %s' from task.Kind and the option list from renderOptions(HumanTaskOptions(task)) unfiltered; the notify embed repeats the same list and titles itself by kind",
+      "seeds": [
+        "c6",
+        "c7"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "internal/engine/humantask.go humanTaskAudit + humantaskexpiry.go",
+      "finding": "the node id is already on the task as request.audit.node_id, and 'expired' is written into allowed_outcomes by the compiler's implied approval set while only ExpireHumanTask reaches it",
+      "seeds": [
+        "c6",
+        "c8"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "web/src/components/OutcomeButtons.tsx + Inbox/Decisions/TicketView",
+      "finding": "three surfaces render one button per allowed_outcome through one component whose doc promises 'exactly what DecideHumanTask accepts and nothing else' - today that includes an 'expired' button a person can click",
+      "seeds": []
+    },
+    {
+      "id": "s7",
+      "surface": "internal/engine/humandecision.go checkOutcome / DecideHumanTask",
+      "finding": "the public human decision path accepts outcome=expired because it validates against the stored allowed_outcomes; the engine's own expiry builds the same humanTaskDecision with expiry != nil, so a guard could distinguish them",
+      "seeds": []
+    },
+    {
+      "id": "s8",
+      "surface": "tests/test_pr_upkeep_sweep_dedupe.py + examples/pr-upkeep/README.md 'Dedupe by finding id'",
+      "finding": "the multi-finding emission is pinned by name (test_a_moved_watermark_alone_re_emits_every_open_finding, _emitted_finding_ids) and described in README lines 195-225 - both are part of the change, not collateral",
+      "seeds": []
+    },
+    {
+      "id": "s9",
+      "surface": "resolution of q1/q2",
+      "finding": "operator chose the all-three-surfaces fix for #265 and the sweep.py-only single-finding+watermark fix for #268",
+      "seeds": [
+        "c9",
+        "c10"
+      ]
+    }
+  ],
+  "lapses": []
+}

@@ -289,6 +289,15 @@ wave against the remaining subscription window.
   every other repo is offered it, not enrolled by this work. Do not cite this
   section as an org mandate.
 
+- **pr-upkeep is the repeat process, and it has a recipe.** It is the one
+  loop that runs on a clock against this repo itself, so a change to it is a
+  change to a live process, not to a sample. Three documents divide it and all
+  three are kept true: `examples/pr-upkeep/README.md` is the graph,
+  `docs/operations/pr-upkeep-lane.md` is the operator recipe (one tick, how to
+  read it, how to change the sweep), `docs/drive-from-jira.md` is what a
+  person on a ticket sees. Change the loop's behaviour and you update the
+  recipe in the same PR — the cadence claim ("a PR with N findings takes N
+  ticks") is the kind of sentence that silently stops being true.
 - **Nodes dogfooding reflex**: when a scoped task is delegable, assign it
   through the system instead of doing it in-session — invoke the
   `/nodes-operator` skill and run its `assign <actor> "instruction" --yes`

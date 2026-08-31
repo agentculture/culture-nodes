@@ -3,11 +3,31 @@
 This sibling module owns the emitter's Jira GET surface and converts the
 fully paginated changelog/comment history into cursor-positioned facts.  It
 has no control-plane write path; ``sweep.py`` remains the sole event emitter.
+
+A Jira history watermark is its last consumed changelog id plus comment id.
+
+A Jira issue's current state and "a comment appeared" are DIFFERENT facts and
+carry DIFFERENT event names (task t9, #118 step 1's only remaining structural
+gap in the sweep): every fetched issue raises a
+``pr-upkeep.jira.transitioned.<status-slug>`` event (see
+``jira_transition_event_name``) on its own ``:status`` source key, so a
+workflow trigger subscribed to a specific transition never receives a comment.
+A fresh comment separately raises ``pr-upkeep.jira.comment`` on its own
+``:comment`` source key — structurally a different name, never a suffix or
+prefix of the other, so the two cannot be confused by a CEL ``onEvent`` match.
+Both facts are attempted every sweep pass for every fetched issue, same as
+``pr-upkeep.pr``; the control plane's watermark equality dedup — not the
+sweep process — is what makes an unchanged status or an already-seen comment a
+silent no-op rather than a repeat delivery.
+
+Self-echo uses configured identity or the actor marker, which also correlates
+answers to question ids.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -72,9 +92,7 @@ def jira_work_items(payload: dict, *, site: str, project: str) -> list[dict]:
                 "line": None,
                 "title": fields.get("summary") or "",
                 "description": full_description[:JIRA_DESCRIPTION_MAX_CHARS],
-                "description_truncated": (
-                    len(full_description) > JIRA_DESCRIPTION_MAX_CHARS
-                ),
+                "description_truncated": (len(full_description) > JIRA_DESCRIPTION_MAX_CHARS),
                 "status": status,
                 "details_url": f"https://{site}/browse/{urllib.parse.quote(key)}",
             }
@@ -240,6 +258,57 @@ def _history_id_key(value: object) -> tuple[int, int | str]:
     return (0, int(text)) if text.isdigit() else (1, text)
 
 
+def jira_credentials() -> tuple[str, str]:
+    """The two separately granted Jira Cloud Basic-auth values.
+
+    They are granted environment values and never run input, argv, output, or
+    fixture data — so reading them belongs with the Jira surface that uses
+    them, not in the sweep's orchestration. A Jira-configured repository with
+    only one of the pair set is a stated refusal, not a half-configured read.
+    """
+    email = os.environ.get("JIRA_ACCOUNT_EMAIL")
+    token = os.environ.get("JIRA_API_TOKEN")
+    if not email or not token:
+        raise ValueError(
+            "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are both required when Jira is configured"
+        )
+    return email, token
+
+
+def jira_emissions(
+    payload: dict, *, site: str, project: str, bot_account_id: str = ""
+) -> list[dict]:
+    """One Jira search response -> the facts the sweep should raise for it.
+
+    Each entry is a complete `raise_event` keyword call: what the fact is
+    called, its payload, the cursor position it sits at, its watermark, and
+    the ticket it correlates to. Shaping them here rather than inside the
+    sweep's main loop is the single-responsibility split this module was
+    named for — the sweep sweeps and emits, this module decides what a Jira
+    fact IS. It stays free of any control-plane write path: `sweep.py`
+    remains the sole emitter, and it is handed a list, not a connection.
+    """
+    by_key = {issue.get("key"): issue for issue in payload.get("issues", [])}
+    facts = []
+    for item in jira_work_items(payload, site=site, project=project):
+        issue = by_key.get(item["id"], {})
+        for name, event, watermark, position_kind, position_id in jira_history_facts(
+            issue, bot_account_id, item
+        ):
+            facts.append(
+                {
+                    "name": name,
+                    "payload": event,
+                    "source_key": (
+                        f"jira:{site}:{item['id']}:history:{position_kind}:{position_id}"
+                    ),
+                    "watermark": watermark,
+                    "subject": item["id"],
+                }
+            )
+    return facts
+
+
 def jira_watermark(issue: dict) -> dict:
     histories = (issue.get("changelog") or {}).get("histories") or []
     comments = ((issue.get("fields") or {}).get("comment") or {}).get("comments") or []
@@ -279,21 +348,23 @@ def jira_history_facts(
             }
         ],
     }
-    timeline = [
-        (creation["created"], -1, _history_id_key(creation["id"]), "changelog", creation)
-    ] + [
-        (str(h.get("created") or ""), 0, _history_id_key(h.get("id")), "changelog", h)
-        for h in histories
-    ] + [
-        (
-            str(c.get("created") or c.get("updated") or ""),
-            1,
-            _history_id_key(c.get("id")),
-            "comment",
-            c,
-        )
-        for c in comments
-    ]
+    timeline = (
+        [(creation["created"], -1, _history_id_key(creation["id"]), "changelog", creation)]
+        + [
+            (str(h.get("created") or ""), 0, _history_id_key(h.get("id")), "changelog", h)
+            for h in histories
+        ]
+        + [
+            (
+                str(c.get("created") or c.get("updated") or ""),
+                1,
+                _history_id_key(c.get("id")),
+                "comment",
+                c,
+            )
+            for c in comments
+        ]
+    )
     timeline.sort(key=lambda entry: entry[:3])
 
     facts = []

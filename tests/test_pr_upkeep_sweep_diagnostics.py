@@ -103,7 +103,7 @@ def test_a_failure_outside_every_attempting_block_says_it_is_unattributed(monkey
     monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda *a, **k: [])
     # The finding-id dedupe read runs ahead of both; stub it for the same
     # reason (task t12).
-    monkeypatch.setattr(sweep, "fetch_running_finding_ids", lambda: set())
+    monkeypatch.setattr(sweep, "fetch_dispatched_findings", lambda *_a, **_kw: (set(), {}, False))
     # A pure transform between two fetches — inside main's try, inside no
     # `attempting` block.
     monkeypatch.setattr(

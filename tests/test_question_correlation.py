@@ -23,7 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_pr_upkeep_sweep import sweep  # noqa: F401 — loads the example dir onto sys.path
+# noqa: F401 — importing sweep loads the example dir onto sys.path
+from tests.test_pr_upkeep_sweep import sweep  # noqa: F401
 
 jira = importlib.import_module("pr_upkeep_jira")
 
@@ -144,11 +145,11 @@ class TestEmitterConsistency:
             },
             "changelog": {"histories": []},
         }
-        facts = sweep.jira_history_facts(issue, "712020:bot")
+        facts = jira.jira_history_facts(issue, "712020:bot")
         comment_facts = [
             payload
             for name, payload, _wm, kind, _pid in facts
-            if name == sweep.JIRA_COMMENT_EVENT_NAME
+            if name == jira.JIRA_COMMENT_EVENT_NAME
         ]
         # The bot's own marked question was suppressed at the emitter; only
         # the human answer became a fact, and it correlates.
@@ -175,11 +176,11 @@ class TestEmitterConsistency:
             },
             "changelog": {"histories": []},
         }
-        facts = sweep.jira_history_facts(issue, "712020:bot")
+        facts = jira.jira_history_facts(issue, "712020:bot")
         (payload,) = [
             payload
             for name, payload, _wm, _kind, _pid in facts
-            if name == sweep.JIRA_COMMENT_EVENT_NAME
+            if name == jira.JIRA_COMMENT_EVENT_NAME
         ]
         assert correlation.originating_question_id(payload) == ""
         assert correlation.answer_for(payload, QUESTION_ID) is None

@@ -18,28 +18,15 @@ the digest it also grants (`PR_UPKEEP_SWEEP_SOURCE_SHA256`), so a deployment
 that is not this one runs ITS copy of this script — with its own two
 constants — rather than ours (task t16).
 
-Each PR watermark is its head SHA plus newest comment timestamp. Each Jira
-history watermark is its last consumed changelog id plus comment id. The
-control plane advances that watermark in the same transaction that appends
-the signal event, so restarting this process cannot report the same position
-twice.
+Each PR watermark is its head SHA plus newest comment timestamp, and carries
+the finding being dispatched (issue #268). The control plane advances that
+watermark in the same transaction that appends the signal event, so
+restarting this process cannot report the same position twice.
 
-A Jira issue's current state and "a comment appeared" are DIFFERENT facts
-and now carry DIFFERENT event names (task t9, #118 step 1's only remaining
-structural gap in the sweep): every fetched issue raises a
-`pr-upkeep.jira.transitioned.<status-slug>` event (see
-`jira_transition_event_name`) on its own `:status` source key, so a
-workflow trigger subscribed to a specific transition never receives a
-comment. A fresh comment separately raises `pr-upkeep.jira.comment` on its
-own `:comment` source key — structurally a different name, never a
-suffix or prefix of the other, so the two cannot be confused by a CEL
-`onEvent` match. Both facts are attempted every sweep pass for every
-fetched issue, same as `pr-upkeep.pr`; the control plane's watermark
-equality dedup — not this process — is what makes an unchanged status or an
-already-seen comment a silent no-op rather than a repeat delivery.
-
-Self-echo uses configured identity or the actor marker, which also correlates
-answers to question ids. See the README for source budgets and deduplication.
+What a Jira fact is — its name, its cursor position, its watermark, and how
+a self-echo is told from a person's comment — belongs to `pr_upkeep_jira`;
+this module reads that module's list and emits it. See the README for source
+budgets and deduplication.
 """
 
 from __future__ import annotations
@@ -54,19 +41,10 @@ import urllib.parse
 import urllib.request
 from base64 import b64encode
 
-from pr_upkeep_jira import (
-    JIRA_CHANGELOG_EVENT_NAME,
-    JIRA_COMMENT_EVENT_NAME,
-    JIRA_RATE_LIMIT_PER_WINDOW,
-    JIRA_RESOLVED_LOOKBACK_DAYS,
-    fetch_jira_issues,
-    jira_comment_is_self_echo,
-    jira_history_facts,
-    jira_question_id_for_answer,
-    jira_transition_event_name,
-    jira_watermark,
-    jira_work_items,
-)
+# Exactly what this module calls. The Jira vocabulary — event names, self-echo,
+# watermarks, transition slugs — is pr_upkeep_jira's to own; re-exporting it
+# here made the sweep look like it had opinions about Jira that it does not.
+from pr_upkeep_jira import fetch_jira_issues, jira_credentials, jira_emissions
 
 # The blast radius used to be one repo pinned in this module. That narrowing
 # existed because fetch_open_pulls enumerates EVERY open PR and then reads
@@ -782,6 +760,32 @@ def undispatched_findings(findings: list[dict], running_ids: set) -> tuple:
     return kept, skipped
 
 
+#: How many findings one emitted pr-upkeep fact carries: ONE -- the one the
+#: fix node will actually work ("take the HIGHEST-PRIORITY item ... and work
+#: only that one item"). A fact carrying the whole list made every id on it
+#: undispatchable for as long as the run holding it lived, which is until a
+#: human merges, so a PR got one fix per merge (issue #268; README, "One
+#: finding per fact").
+FINDINGS_PER_EVENT = 1
+
+
+def emission_watermark(head_sha: str, newest_comment_at: str, findings: list[dict]) -> dict:
+    """The cursor guarding one PR's pr-upkeep fact.
+
+    Head sha and newest comment answer *did this PR move*; the dispatched
+    finding id answers *is this a different piece of work*. The finding has to
+    be in here because the control plane's duplicate check is an equality test
+    of the whole watermark against the row stored for this source key
+    (internal/store/postgres/signal.go), so at an unmoved head the second
+    finding would be answered `duplicate=true` and never mint a run. A PR with
+    no findings keeps the two-key watermark it has always had.
+    """
+    watermark = {"head_sha": head_sha, "newest_comment_at": newest_comment_at}
+    if findings:
+        watermark["finding"] = findings[0]["id"]
+    return watermark
+
+
 def _max_prs_per_sweep() -> int:
     raw = os.environ.get("PR_UPKEEP_MAX_PRS_PER_SWEEP")
     if raw is None:
@@ -868,6 +872,10 @@ def main() -> int:
             running_finding_ids = fetch_running_finding_ids()
         emitted = []
         skipped_findings = []
+        # Read, not dispatched, not suppressed: outranked this cycle and
+        # emittable next one. Separate from skipped_findings so the summary
+        # keeps saying WHICH reason a finding is not in flight (#268).
+        deferred_findings = []
         # Closed PRs are a separate bounded read. The immutable merged_at
         # value is the watermark, so two passes append exactly one fact.
         with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
@@ -920,12 +928,14 @@ def main() -> int:
             # sha. Skipping leaves the position free for a later cycle.
             if skipped and not findings:
                 continue
+            dispatched = findings[:FINDINGS_PER_EVENT]
+            deferred_findings.extend(f["id"] for f in findings[FINDINGS_PER_EVENT:])
             payload = {
                 "source": "github_pr",
                 "repository": github_repo,
                 "number": pull["number"],
                 "head_sha": pull["head_sha"],
-                "findings": findings,
+                "findings": dispatched,
             }
             with attempting(f"emitting pr-upkeep.pr for #{pull['number']} (control plane)"):
                 emitted.append(
@@ -933,46 +943,29 @@ def main() -> int:
                         "pr-upkeep.pr",
                         payload,
                         f"github:{github_repo}:pr:{pull['number']}",
-                        {
-                            "head_sha": pull["head_sha"],
-                            "newest_comment_at": newest_comment_timestamp(comments),
-                        },
+                        emission_watermark(
+                            pull["head_sha"], newest_comment_timestamp(comments), dispatched
+                        ),
                     )
                 )
 
-        jira_items = []
+        # What a Jira fact IS belongs to pr_upkeep_jira (jira_emissions); this
+        # loop is the sweep's half of the split -- naming the stage a failure
+        # happened at, and being the one place that writes to the control
+        # plane.
         if repository.get("jira_site"):
-            email = os.environ.get("JIRA_ACCOUNT_EMAIL")
-            jira_token = os.environ.get("JIRA_API_TOKEN")
-            if not email or not jira_token:
-                raise ValueError(
-                    "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are both required "
-                    "when Jira is configured"
-                )
             site, project = repository["jira_site"], repository["jira_project"]
-            bot_account_id = repository.get("jira_bot_account_id") or ""
+            email, jira_token = jira_credentials()
             with attempting(f"reading {project} issues (Jira {site})"):
                 jira_payload = fetch_jira_issues(site, project, email, jira_token)
-            jira_items = jira_work_items(jira_payload, site=site, project=project)
-            by_key = {issue.get("key"): issue for issue in jira_payload.get("issues", [])}
-            for item in jira_items:
-                issue = by_key.get(item["id"], {})
-                for name, payload, watermark, position_kind, position_id in jira_history_facts(
-                    issue, bot_account_id, item
-                ):
-                    with attempting(f"emitting {name} for {item['id']} (control plane)"):
-                        emitted.append(
-                            raise_event(
-                                name,
-                                payload,
-                                (
-                                    f"jira:{site}:{item['id']}:history:"
-                                    f"{position_kind}:{position_id}"
-                                ),
-                                watermark,
-                                subject=item["id"],
-                            )
-                        )
+            for fact in jira_emissions(
+                jira_payload,
+                site=site,
+                project=project,
+                bot_account_id=repository.get("jira_bot_account_id") or "",
+            ):
+                with attempting(f"emitting {fact['name']} for {fact['subject']} (control plane)"):
+                    emitted.append(raise_event(**fact))
     except SweepFailure as failure:
         # The stage is the whole point: four unrelated surfaces used to fail
         # with the same unattributable message. The cause keeps its own type
@@ -986,7 +979,12 @@ def main() -> int:
         print(f"sweep failed at an unattributed step: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     json.dump(
-        {"sweep": "pr-upkeep", "emitted": len(emitted), "skipped_findings": skipped_findings},
+        {
+            "sweep": "pr-upkeep",
+            "emitted": len(emitted),
+            "skipped_findings": skipped_findings,
+            "deferred_findings": deferred_findings,
+        },
         sys.stdout,
         indent=2,
     )

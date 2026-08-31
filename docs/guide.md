@@ -221,4 +221,7 @@ helm uninstall nodes          # k8s
   [`adapters/claude-code/README.md`](../adapters/claude-code/README.md),
   [`adapters/codex/README.md`](../adapters/codex/README.md) — running a real
   external agent against a workflow, one per backend.
+- [`docs/operations/pr-upkeep-lane.md`](operations/pr-upkeep-lane.md) — the
+  repeating loop, as an operator recipe: what one clock-driven tick does, how
+  to read it, and what changes when you edit the sweep.
 - [`deploy/compose/README.md`](../deploy/compose/README.md) — the local compose profile in full, including the code-runner boundary and the `agents` profile.

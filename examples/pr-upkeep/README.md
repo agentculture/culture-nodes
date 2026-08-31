@@ -7,6 +7,13 @@ at a time through a human-gated fix/review cycle. Every loop iteration
 passes a person; the flow can propose, fix, and review — it can never
 merge.
 
+This file is the **graph's** documentation: what the nodes are and why they
+are shaped this way. The **operator's** half — what one tick does, how to read
+one after the fact, and the recipe for changing the sweep — is
+[`docs/operations/pr-upkeep-lane.md`](../../docs/operations/pr-upkeep-lane.md).
+The person-facing half, for a reader who only ever sees a Jira ticket, is
+[`docs/drive-from-jira.md`](../../docs/drive-from-jira.md).
+
 ## Deployment configuration
 
 Everything this example needs from the world outside its graph, and where
@@ -87,13 +94,14 @@ item.
 - [`workflow.yaml`](workflow.yaml) is v2 of the upkeep workflow. It starts a
   run for each `pr-upkeep.pr` event whose payload is from a GitHub PR and has
   at least one finding. The event payload is the run input, so the repository,
-  PR identity, head SHA, and prioritised findings are durable before an actor
-  starts.
+  PR identity, head SHA, and the finding are durable before an actor starts.
+  One event carries **one** finding — the highest-priority one still
+  undispatched (see "One finding per fact" below).
 - **fix** is the agent node. Actor affinity selects the security developer
-  when the event contains a security finding and the general developer
-  otherwise. The actor takes only the highest-priority finding and either
-  reports `completed` after opening or updating a PR, or `no_change` when a
-  fix would be inappropriate.
+  when the finding on the event is a security finding and the general
+  developer otherwise. The actor works that finding and either reports
+  `completed` after opening or updating a PR, or `no_change` when a fix would
+  be inappropriate.
 - **human-merges-pr** is the approval node reached by `fix.completed`. A
   platform maintainer decides the merge outcome; `approved`, `rejected`, and
   `expired` are all terminal for this run.
@@ -232,7 +240,77 @@ Three decisions worth stating:
 One honest limit: findings suppressed at a given head SHA are re-offered
 only once the watermark moves again. If a run in flight ends while the PR
 sits still, its finding waits for the next push or comment. Closing that
-would mean changing the watermark, which this task deliberately did not.
+would mean changing the watermark, which this task deliberately did not —
+issue #268, below, is where that changed.
+
+## One finding per fact (issue #268)
+
+The dedupe above reads *every* id on a running run's `input.findings`. The
+fix node works exactly one — "take the HIGHEST-PRIORITY item from the
+prioritised findings list and work only that one item" — so a fact carrying
+the whole list named N findings, worked one, and made the other N-1
+undispatchable for as long as that run lived. And a pr-upkeep run lives until
+a human merges: it parks on `human-merges-pr`. Net effect, measured on PR
+\#267 (run `01M19YG9ZJ…` carried `pr267-qodo-1` and `pr267-qodo-2`, worked
+`-1`, parked): **one fix per PR per merge**, with the second finding worked by
+hand in-session.
+
+A fact now carries exactly the finding it dispatches — `findings` is a
+one-item list — so the run's input is an honest statement of what is in
+flight, which is what the dedupe was already assuming it was. Findings that
+lost the priority ordering are reported separately from suppressed ones, as
+`deferred_findings`: they are emittable next cycle, not waiting on anything.
+
+That alone is not enough, and the second half is easy to miss. The control
+plane's duplicate check is an **equality test** of the submitted watermark
+against the one row stored for this source key
+(`internal/store/postgres/signal.go`, `deliverSignalEventTx`). At an unchanged
+head SHA with no new comments, the second finding's fact carries a byte-
+identical watermark, is answered `duplicate=true`, and never mints a run — the
+dedupe fix undone one layer down. So the dispatched finding id joins the
+watermark (`emission_watermark`): head SHA and newest comment answer *did this
+PR move*, the finding id answers *is this a different piece of work*.
+
+Two properties fall out of that shape:
+
+- **A PR with N findings gets N fixes before its merge**, one per tick, in
+  priority order — not N parallel agents on one branch.
+- **A PR with no findings keeps the two-key watermark it always had**, so
+  rolling this out does not re-deliver every clean PR's current head.
+
+### What moved, and why the split is where it is
+
+`sweep.py` sat at 998 of the repo's 1000-line hard limit
+(`tests/lint`), so this change did not fit until something left. What left is
+the Jira half: `pr_upkeep_jira.py` — already a separately fetched module under
+its own granted URL and digest — now owns **what a Jira fact is**
+(`jira_emissions` shapes each `raise_event` call; `jira_credentials` reads the
+two granted Basic-auth halves), and `sweep.py` keeps the half that is actually
+the sweep's: naming the stage a failure happened at, and being the **sole**
+writer to the control plane. The Jira event vocabulary moved with it, out of
+the sweep's module docstring and out of its import list — re-exporting names
+nothing in the file called made the sweep look like it had opinions about Jira
+that it does not.
+
+Two guards moved with the code rather than being left behind:
+
+- the exact-set environment-read guard now AST-scans **both** fetched modules
+  (`tests/test_pr_upkeep_sweep_config.py`), because a credential read that
+  escapes coverage by moving one file over is exactly the erosion that set
+  exists to stop;
+- `pr_upkeep_jira.py` is asserted to have no control-plane write path at all,
+  so "sweep.py is the sole emitter" stays a fact rather than a habit.
+
+`deploy/prod/deploy.sh` derives both digests from the shipped revision, so
+this needs no hand-edited grant — only a redeploy.
+
+`workflow.yaml` is untouched, deliberately: a one-item list satisfies its
+published input contract (`findings` minItems 1), its trigger
+(`size(event.payload.findings) > 0`), and its fix instruction verbatim — so
+this ships by deploying the sweep, with no workflow republish. Its
+`security-findings` affinity rule gets sharper for free: `findings.exists(f,
+f.kind == "security")` now asks whether the finding *being dispatched* is a
+security finding, rather than whether any finding on the PR is.
 
 ## The cross-machine handoff (issue #74)
 

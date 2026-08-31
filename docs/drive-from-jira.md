@@ -160,7 +160,7 @@ once:
 
    task: 01M16FX0BWK9X6TKE9BHAAW88Y
    run: 01M16GMQMWYCA0EW0V7MHHQFWN
-   node: approval
+   node: human-merges-pr
    options: approved, rejected
    decide: http://<origin>/tickets/SCRUM-6
    ```
@@ -172,9 +172,18 @@ once:
 3. **A Discord post** in the team channel, carrying the same options, the same
    link, the run id, and the ticket key.
 
-The options listed are exactly the answers the engine will accept — not a
-menu someone wrote by hand. A task that is an alert rather than a choice says
-so instead of offering an empty list.
+The `node:` line names the workflow node by its **id**, so the comment can be
+traced back to a line in the graph — not by its kind, which would say only
+that some approval somewhere is waiting.
+
+The options listed are exactly the answers a person may give — not a menu
+someone wrote by hand. That is narrower than the task's declared outcome set
+by exactly one entry: `expired` is implied for every approval node and is
+never offered, because it is what the control plane records when it *reads* a
+fact (the pull request was already merged, the deadline passed), not something
+a decider chooses. Trying to submit it is refused. A task that is an alert
+rather than a choice says so instead of offering an empty list, and so does a
+task whose only outcome is that engine-only one.
 
 **No message in any of these three channels ever contains the decision
 token.** A Jira comment and a Discord post are readable by everyone who can
@@ -296,8 +305,10 @@ The page is read-only until you hold a **decision token**.
 That is the whole ceremony. Three things it will do that are worth expecting:
 
 - **Only real options are offered.** The buttons are built from what that
-  particular task declared, so there is no way to submit an answer the engine
-  would then reject.
+  particular task declared, minus the engine's own `expired`, so there is no
+  way to submit an answer the engine would then reject — and no way to
+  hand-produce the outcome that is supposed to mean the control plane observed
+  something.
 - **A stale page is refused, not silently applied.** The page submits the
   version of the run it showed you. If the run moved on while you were
   reading, the decision is refused and nothing is written — reload, read the

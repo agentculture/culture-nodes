@@ -77,6 +77,11 @@ def _load_sweep():
 
 sweep = _load_sweep()
 
+# The Jira half is its own fetched module and its own responsibility; tests
+# about Jira vocabulary read it there rather than through a re-export the
+# sweep does not use (issue #268's file-length split).
+import pr_upkeep_jira as jira  # noqa: E402 — needs EXAMPLE_DIR on sys.path, set above
+
 
 @pytest.fixture(autouse=True)
 def repository_grant(monkeypatch):
@@ -240,7 +245,7 @@ def test_jira_watermark_carries_issue_and_comment_positions():
             "comment": {"comments": [{"id": "30001", "updated_at": "2026-08-15T02:00:00Z"}]},
         },
     }
-    assert sweep.jira_watermark(issue) == {
+    assert jira.jira_watermark(issue) == {
         "changelog_id": "20002",
         "comment_id": "30001",
     }
@@ -811,13 +816,13 @@ class TestEmitterMain:
         assert names[0] == "pr-upkeep.jira.transitioned.to-do"
         assert names[-2:] == [
             "pr-upkeep.jira.transitioned.to-do",
-            sweep.JIRA_COMMENT_EVENT_NAME,
+            jira.JIRA_COMMENT_EVENT_NAME,
         ]
 
         # A trigger subscribed to one name structurally cannot receive an
         # event bearing the other name.
         transitions = {n for n in names if n.startswith("pr-upkeep.jira.transitioned.")}
-        comments = {n for n in names if n == sweep.JIRA_COMMENT_EVENT_NAME}
+        comments = {n for n in names if n == jira.JIRA_COMMENT_EVENT_NAME}
         assert transitions
         assert comments
         assert transitions.isdisjoint(comments)
@@ -854,14 +859,14 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         names = [name for name, *_rest in calls["events"]]
-        assert names.count(sweep.JIRA_COMMENT_EVENT_NAME) == 1
+        assert names.count(jira.JIRA_COMMENT_EVENT_NAME) == 1
 
         # The watermark computation itself (what a future delivery would
         # use) is unaffected by the skip: it already sits past the bot's
         # own comment, so a later real reply is compared against THIS
         # position, not replayed against what preceded the bot's question.
         issue = payload["issues"][0]
-        assert sweep.jira_watermark(issue)["comment_id"] == "30001"
+        assert jira.jira_watermark(issue)["comment_id"] == "30001"
 
     def test_a_clean_pr_still_emits_its_new_head(self, monkeypatch, capsys):
         _stub_sweep(

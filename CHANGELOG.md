@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.0] - 2026-08-31
+
+### Fixed
+
+- pr-upkeep dispatches every finding on a PR, not one per merge (#268). A `pr-upkeep.pr` fact now carries the single finding the fix node will work, so the t12 dedupe — which reads every id off a running run's `input.findings` — stops suppressing findings that run never touched while it sits parked on `human-merges-pr`. The dispatched finding id joins the watermark, because the control plane's duplicate check is an equality test of the whole watermark against the row stored for that source key: without it the second finding at an unmoved head SHA is answered `duplicate=true` and never mints a run. Observed on PR #267, where the second Qodo finding was worked by hand. `workflow.yaml` is unchanged — a one-item list satisfies its published contract, trigger and instruction — so this ships by deploying the sweep.
+- A human decision surface offers only outcomes a person may give (#265). The Jira comment and Discord post name the approval node by its **id** (`human-merges-pr`) rather than its kind, and `expired` is filtered from every offered option list — it is what the control plane records when it reads a fact (a merged PR, a passed deadline), so offering it invited a decider to hand-produce an engine observation. One rule, `engine.DecidableOutcomes`, is rendered by the fan-out, enforced by `DecideHumanTask` (which now refuses `expired` from a decider while `ExpireHumanTask` still routes it), and applied by the web `OutcomeButtons`. The stored `allowed_outcomes` is never rewritten — the expiry path validates against it.
+
+### Added
+
+- `docs/operations/pr-upkeep-lane.md` — the operator recipe for the repeating loop: what one clock-driven tick does (one PR, one finding, every 30 minutes), how to read a tick's three finding lists as three different states, what the decision that reaches a person may and may not offer, and the recipe for changing the sweep (which of the two fetched modules owns what, why no workflow republish is needed, and that `deploy.sh` derives both digests). Linked from the tour, the example's README, and CLAUDE.md, which now says the loop's behaviour and its recipe change in the same PR.
+
+### Changed
+
+- `examples/pr-upkeep/pr_upkeep_jira.py` owns what a Jira fact *is* (`jira_emissions`, `jira_credentials`) and the Jira event vocabulary; `sweep.py` keeps naming failure stages and remains the sole event emitter. The sweep sat at 998 of the repo's 1000-line hard limit, so the split was the precondition for #268 rather than a tidy-up. The exact-set environment-read guard now AST-scans both fetched modules, and `pr_upkeep_jira` is asserted to have no control-plane write path.
+- The sweep's stdout summary distinguishes `deferred_findings` (outranked this cycle, emittable next) from `skipped_findings` (held by a running run).
+
 ## [0.45.3] - 2026-08-30
 
 ### Changed

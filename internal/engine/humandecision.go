@@ -287,6 +287,10 @@ func (d *humanTaskDecision) loadWorkflow(ctx context.Context) error {
 // than re-deriving the set from the live node. For a pinned, immutable
 // workflow version the two cannot actually differ, but judging the decision
 // against what was presented is the more honest check to make.
+//
+// "What was shown" is the decidable subset, not the raw set: the surfaces
+// render DecidableOutcomes, so that is what this judges a human decision
+// against.
 func (d *humanTaskDecision) checkOutcome() error {
 	var request humanTaskRequest
 	if len(d.task.Request) > 0 {
@@ -294,12 +298,23 @@ func (d *humanTaskDecision) checkOutcome() error {
 			return fmt.Errorf("engine: decode human task %s request: %w", d.task.ID, err)
 		}
 	}
-	for _, allowed := range request.AllowedOutcomes {
-		if allowed == d.req.Outcome {
+	// A PERSON may select only the decidable subset (issue #265). `expired`
+	// sits in allowed_outcomes for every approval node the compiler expands,
+	// and the engine's own expiry routes through this same check — so the
+	// two are told apart by d.expiry, which only ExpireHumanTask sets, and
+	// never by rewriting the stored set. Without this a decider could hand-
+	// produce the outcome that is supposed to mean "the control plane read a
+	// fact", which inverts the authority model (PRD §10.4).
+	allowed := request.AllowedOutcomes
+	if d.expiry == nil {
+		allowed = DecidableOutcomes(allowed)
+	}
+	for _, candidate := range allowed {
+		if candidate == d.req.Outcome {
 			return nil
 		}
 	}
-	return &OutcomeNotAllowedError{HumanTaskID: d.task.ID, Outcome: d.req.Outcome, Allowed: request.AllowedOutcomes}
+	return &OutcomeNotAllowedError{HumanTaskID: d.task.ID, Outcome: d.req.Outcome, Allowed: allowed}
 }
 
 // humanTaskDecisionRecordType is the ledger record type a human decision's

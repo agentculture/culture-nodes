@@ -579,3 +579,50 @@ class TestJiraSelfEcho:
             }
         }
         assert jira.jira_watermark(issue)["comment_id"] == "30001"
+
+
+class TestJiraEmissions:
+    """The seam the file-length split of issue #268 created: pr_upkeep_jira
+    decides what a Jira fact IS, sweep.py names the failure stage and does the
+    one write. Neither half may grow the other's job — a module that shaped a
+    fact AND posted it would be two responsibilities again, and the sweep's
+    "sole event emitter" property is what the runner grant is written against.
+    """
+
+    def test_shapes_one_complete_raise_event_call_per_fact(self, jira_payload):
+        facts = jira.jira_emissions(jira_payload, site="team.example.com", project="EX")
+        assert facts, "the recorded search response yields no facts at all"
+        for fact in facts:
+            assert set(fact) == {"name", "payload", "source_key", "watermark", "subject"}
+            position = f"jira:team.example.com:{fact['subject']}:history:"
+            assert fact["source_key"].startswith(position)
+            assert fact["name"].startswith("pr-upkeep.jira.")
+
+    def test_every_fact_correlates_to_its_own_ticket(self, jira_payload):
+        keys = {issue["key"] for issue in jira_payload["issues"]}
+        facts = jira.jira_emissions(jira_payload, site="team.example.com", project="EX")
+        assert {fact["subject"] for fact in facts} <= keys
+
+    def test_it_has_no_write_path_of_its_own(self):
+        source = (EXAMPLE_DIR / "pr_upkeep_jira.py").read_text()
+        assert "urlopen" in source, "this assertion is about WRITES, and reads must still exist"
+        for forbidden in ["v1alpha1/events", 'method="POST"', "NODES_EVENT_TOKEN"]:
+            assert forbidden not in source, (
+                f"pr_upkeep_jira reaches the control plane ({forbidden!r}); sweep.py is the "
+                "sole emitter and the runner grant is written against that"
+            )
+
+
+class TestJiraCredentials:
+    def test_returns_the_two_granted_halves(self, monkeypatch):
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        assert jira.jira_credentials() == ("robot@example.com", "fixture-token")
+
+    @pytest.mark.parametrize("missing", ["JIRA_ACCOUNT_EMAIL", "JIRA_API_TOKEN"])
+    def test_half_a_grant_is_a_stated_refusal_not_an_anonymous_read(self, monkeypatch, missing):
+        monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+        monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+        monkeypatch.delenv(missing)
+        with pytest.raises(ValueError, match="JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN"):
+            jira.jira_credentials()

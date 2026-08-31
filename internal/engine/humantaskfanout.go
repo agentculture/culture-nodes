@@ -198,11 +198,39 @@ func HumanTaskOptions(task HumanTask) []string {
 	return request.AllowedOutcomes
 }
 
-func renderOptions(options []string) string {
-	if len(options) == 0 {
-		return "(no declared outcomes; open the page to see what this task asks for)"
+// HumanTaskNodeID is the workflow node this task is FOR — `needs-human`, not
+// `approval` (issue #265). The kind says what sort of thing the node is; the
+// id says which node, and a message that names only the kind cannot be traced
+// back to a line in the workflow by the person reading it. It is already on
+// the task, in the request's audit block (humantask.go), which is why this
+// needs no extra column or join.
+//
+// A request that carries no audit falls back to the kind: an older row is
+// better described imprecisely than not at all.
+func HumanTaskNodeID(task HumanTask) string {
+	var request humanTaskRequest
+	if len(task.Request) > 0 {
+		if err := json.Unmarshal(task.Request, &request); err == nil && request.Audit.NodeID != "" {
+			return request.Audit.NodeID
+		}
 	}
-	return strings.Join(options, ", ")
+	return task.Kind
+}
+
+// renderOptions states what the reader may choose. It takes both sets because
+// the two empty cases mean different things and a message that conflates them
+// would send someone to a page to look for buttons that are not there:
+// `declared` empty is a task that is an alert rather than a choice
+// (schedule_failing), while `decidable` empty with `declared` non-empty is a
+// task whose only declared outcome is one the engine reaches by itself.
+func renderOptions(declared, decidable []string) string {
+	switch {
+	case len(declared) == 0:
+		return "(no declared outcomes; open the page to see what this task asks for)"
+	case len(decidable) == 0:
+		return "(no outcome a person may select; this task resolves when the control plane expires it)"
+	}
+	return strings.Join(decidable, ", ")
 }
 
 // PlanHumanTaskFanOut is the whole decision: which messages this task owes.
@@ -212,7 +240,15 @@ func renderOptions(options []string) string {
 // in id order posts the comment before moving the board — a reader who sees
 // the status change has already had the comment explaining it.
 func PlanHumanTaskFanOut(task HumanTask, subject RunSubject, base string) []HumanTaskFanOut {
-	options := HumanTaskOptions(task)
+	declared := HumanTaskOptions(task)
+	// What this message offers is what a person may actually choose, which is
+	// not the whole declared set: `expired` is the engine's own outcome
+	// (DecidableOutcomes). docs/drive-from-jira.md promises these options are
+	// "exactly the answers the engine will accept — not a menu someone wrote
+	// by hand", and an `expired` a decider cannot pick broke that promise
+	// (issue #265).
+	options := DecidableOutcomes(declared)
+	nodeID := HumanTaskNodeID(task)
 	page := DecisionPageURL(base, subject, task.RunID)
 	plan := make([]HumanTaskFanOut, 0, 3)
 
@@ -220,7 +256,7 @@ func PlanHumanTaskFanOut(task HumanTask, subject RunSubject, base string) []Huma
 		comment := fmt.Sprintf(
 			"culture-nodes is waiting on a decision.\n\n"+
 				"task: %s\nrun: %s\nnode: %s\noptions: %s\ndecide: %s",
-			task.ID, task.RunID, task.Kind, renderOptions(options), page)
+			task.ID, task.RunID, nodeID, renderOptions(declared, options), page)
 		plan = append(plan,
 			fanOut(FanOutChannelJiraComment, map[string]any{
 				"verb": "post_comment", "issue": subject.JiraIssue, "comment": comment,
@@ -235,9 +271,10 @@ func PlanHumanTaskFanOut(task HumanTask, subject RunSubject, base string) []Huma
 	// naming a subject, which is why it is the fan-out's floor rather than
 	// one more conditional branch.
 	fields := []map[string]any{
-		{"name": "Options", "value": renderOptions(options)},
+		{"name": "Options", "value": renderOptions(declared, options)},
 		{"name": "Decide", "value": page},
 		{"name": "Run", "value": task.RunID},
+		{"name": "Node", "value": nodeID},
 	}
 	if subject.JiraIssue != "" {
 		fields = append(fields, map[string]any{"name": "Ticket", "value": subject.JiraIssue})

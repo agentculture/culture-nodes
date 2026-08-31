@@ -48,6 +48,17 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         return (EXAMPLE_DIR / "sweep.py").read_text()
 
     @staticmethod
+    def _granted_source():
+        """Every module the deployment fetches and executes, concatenated.
+
+        The environment boundary is a property of the *dispatched script*,
+        which is two files under two granted URL+SHA pairs, not one.
+        """
+        return "\n".join(
+            (EXAMPLE_DIR / name).read_text() for name in ("sweep.py", "pr_upkeep_jira.py")
+        )
+
+    @staticmethod
     def _prose(text):
         """Wrapped prose as one line, so an assertion about a phrase is not
         really an assertion about where the author's line breaks fell."""
@@ -88,8 +99,14 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         assert "GITHUB_REPO =" not in source
 
     def test_environment_reads_are_exactly_the_deliberately_granted_set(self):
+        # BOTH fetched modules, in one exact set. The Jira credential read
+        # moved into pr_upkeep_jira with the rest of the Jira surface (issue
+        # #268's file-length split), and a guard that kept scanning only
+        # sweep.py would have gone quietly blind to it — an environment read
+        # that stops being covered by moving to the sibling file is exactly
+        # the kind of erosion this set exists to prevent.
         names = set()
-        for node in ast.walk(ast.parse(self._source())):
+        for node in ast.walk(ast.parse(self._granted_source())):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 target = node.func.value
                 if (

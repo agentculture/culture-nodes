@@ -3,6 +3,7 @@ package engine_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -219,6 +220,65 @@ func TestDecideHumanTaskRejectsOutcomeNotAllowed(t *testing.T) {
 	status, responseIsNull, _ := f.humanTaskRow(taskID)
 	if status != engine.HumanTaskStatusPending {
 		t.Errorf("human_tasks.status = %q after a refused decision, want %q (nothing written)", status, engine.HumanTaskStatusPending)
+	}
+	if !responseIsNull {
+		t.Error("human_tasks.response is set after a refused decision")
+	}
+	if records := f.ledgerRecords(dispatch.RunID); len(records) != 0 {
+		t.Errorf("%d ledger records after a refused decision, want 0", len(records))
+	}
+}
+
+// TestDecideHumanTaskRefusesTheEngineOnlyOutcome pins issue #265's other
+// half: `expired` is in an approval task's allowed_outcomes (the compiler
+// implies it for every approval node) but a PERSON may not select it. It is
+// what the control plane records when it reads a fact — a merged PR, a passed
+// deadline — so a decider choosing it would hand-produce an engine
+// observation, which is the ledger authority model inverted (PRD §10.4).
+//
+// The engine's own expiry path is not affected and is proved separately by
+// TestMergedPRFactExpiresThePendingApprovalAndCompletesTheRun: it reaches the
+// same outcome through ExpireHumanTask, which carries an expiry reason.
+func TestDecideHumanTaskRefusesTheEngineOnlyOutcome(t *testing.T) {
+	f := newFixture(t, "approval.workflow.yaml")
+	_, dispatch := advanceToReview(t, f)
+	taskID := dispatch.NextHumanTaskID
+
+	// The task really does declare it — otherwise this test would pass for
+	// the wrong reason, refusing an outcome that was never on the row.
+	var request string
+	if err := f.store.Pool().QueryRow(f.ctx,
+		`SELECT request::text FROM human_tasks WHERE id = $1`, taskID).Scan(&request); err != nil {
+		t.Fatalf("read human_tasks.request %s: %v", taskID, err)
+	}
+	if !strings.Contains(request, engine.OutcomeExpired) {
+		t.Fatalf("human task request does not declare %q, so this test proves nothing: %s",
+			engine.OutcomeExpired, request)
+	}
+
+	approver := f.insertActorKind("approver", "human")
+	_, err := f.decide(engine.HumanTaskDecisionRequest{
+		HumanTaskID:           taskID,
+		Outcome:               engine.OutcomeExpired,
+		DeciderActorID:        approver,
+		ExpectedLedgerVersion: 0,
+	})
+	if !errors.Is(err, engine.ErrOutcomeNotAllowed) {
+		t.Fatalf("DecideHumanTask(outcome=%q) error = %v, want ErrOutcomeNotAllowed",
+			engine.OutcomeExpired, err)
+	}
+	var outcomeErr *engine.OutcomeNotAllowedError
+	if errors.As(err, &outcomeErr) {
+		for _, allowed := range outcomeErr.Allowed {
+			if allowed == engine.OutcomeExpired {
+				t.Errorf("the refusal still lists %q as allowed: %v", engine.OutcomeExpired, outcomeErr.Allowed)
+			}
+		}
+	}
+
+	status, responseIsNull, _ := f.humanTaskRow(taskID)
+	if status != engine.HumanTaskStatusPending {
+		t.Errorf("human_tasks.status = %q after a refused decision, want %q", status, engine.HumanTaskStatusPending)
 	}
 	if !responseIsNull {
 		t.Error("human_tasks.response is set after a refused decision")

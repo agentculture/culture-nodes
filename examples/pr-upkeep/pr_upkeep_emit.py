@@ -40,12 +40,23 @@ from __future__ import annotations
 
 import urllib.parse
 
-#: The workflow whose runs the dedupe consults, and how many it reads. Past
-#: this bound the sweep can only re-emit (the pre-t12 behaviour), never
-#: wrongly suppress — a listing that cannot see a run cannot claim its
-#: finding is in flight.
+#: The workflow whose runs the dedupe consults, one page and at most how many
+#: pages of it. The control plane's run listing is cursor-paginated and
+#: newest-first, capped at 500 rows a page (`parseLimit(r, 50, 500)` in
+#: internal/api/runs.go), so ONE page is not the population clause 2 asks
+#: about: a PR can sit at an unmoved head while newer runs push the run that
+#: already worked its finding off the first page, and that finding is then
+#: dispatched — and paid for — a second time. The dedupe therefore follows
+#: `next_cursor` (`next_run_cursor`) instead of reading one page.
+#:
+#: The page bound is what keeps a growing run history from turning every tick
+#: into an unbounded walk. Past it the sweep can only re-emit (the pre-t12
+#: behaviour), never wrongly suppress — a listing that cannot see a run cannot
+#: claim its finding is in flight — and the sweep says on stderr that it
+#: stopped early, because past that point clause 2 is no longer guaranteed.
 PR_UPKEEP_WORKFLOW_KEY = "pr-upkeep"
-RUNS_LIMIT = 500
+RUNS_PAGE_LIMIT = 500
+RUNS_MAX_PAGES = 20
 
 #: How many findings one emitted pr-upkeep fact carries: ONE — the one the fix
 #: node will actually work ("take the HIGHEST-PRIORITY item ... and work only
@@ -61,43 +72,68 @@ FINDINGS_PER_EVENT = 1
 RUN_STATE_RUNNING = "running"
 
 
-def runs_query(limit: int = RUNS_LIMIT) -> str:
-    """The query string for the run listing the dedupe needs.
+def runs_query(limit: int = RUNS_PAGE_LIMIT, cursor: str = "") -> str:
+    """The query string for one page of the run listing the dedupe needs.
 
     Deliberately NOT filtered to `state=running`: clause 2 is a question about
     runs that have ENDED, and a listing that cannot see them cannot answer it.
+
+    `cursor` is a `next_cursor` handed straight back — the control plane calls
+    it opaque and refuses anything it did not mint, so it is passed through
+    url-encoded and never parsed here.
     """
     params = {"workflow_key": PR_UPKEEP_WORKFLOW_KEY}
+    if cursor:
+        params["cursor"] = cursor
     return f"{urllib.parse.urlencode(params)}&limit={limit}"
 
 
-def dispatched_finding_ids(listed: dict | None) -> tuple[set, dict]:
-    """One run listing -> (ids being worked now, {head_sha: ids worked there}).
+def next_run_cursor(listed: dict | None) -> str:
+    """The cursor for the page after `listed`, or "" when it is the last one.
+
+    A listing that omits `next_cursor`, or answers with something that is not
+    a string, ends the walk: the alternative is a paging loop driven by a
+    value the control plane never minted.
+    """
+    cursor = (listed or {}).get("next_cursor") if isinstance(listed, dict) else None
+    return cursor if isinstance(cursor, str) else ""
+
+
+def dispatched_finding_ids(listed: dict | list | None) -> tuple[set, dict]:
+    """The run listing -> (ids being worked now, {head_sha: ids worked there}).
+
+    Takes one page or every page of the listing, because a page boundary is
+    an artefact of how the listing is read and says nothing about a finding:
+    both clauses are answered over the union.
 
     A triggered run's input IS the event payload, so `input.findings` is
     exactly what was dispatched for it and `input.head_sha` is the commit it
     was dispatched against. Malformed rows are skipped rather than raising:
     this is a dedupe, and one unreadable run must not stop a whole tick.
     """
+    pages = [listed] if isinstance(listed, dict) else (listed or [])
     in_flight: set = set()
     by_head: dict = {}
-    for run in (listed or {}).get("items") or []:
-        run_input = run.get("input")
-        if not isinstance(run_input, dict):
+    for page in pages:
+        if not isinstance(page, dict):
             continue
-        findings = run_input.get("findings")
-        ids = {
-            finding["id"]
-            for finding in (findings if isinstance(findings, list) else [])
-            if isinstance(finding, dict) and finding.get("id")
-        }
-        if not ids:
-            continue
-        if run.get("state") == RUN_STATE_RUNNING:
-            in_flight |= ids
-        head_sha = run_input.get("head_sha")
-        if isinstance(head_sha, str) and head_sha:
-            by_head.setdefault(head_sha, set()).update(ids)
+        for run in page.get("items") or []:
+            run_input = run.get("input")
+            if not isinstance(run_input, dict):
+                continue
+            findings = run_input.get("findings")
+            ids = {
+                finding["id"]
+                for finding in (findings if isinstance(findings, list) else [])
+                if isinstance(finding, dict) and finding.get("id")
+            }
+            if not ids:
+                continue
+            if run.get("state") == RUN_STATE_RUNNING:
+                in_flight |= ids
+            head_sha = run_input.get("head_sha")
+            if isinstance(head_sha, str) and head_sha:
+                by_head.setdefault(head_sha, set()).update(ids)
     return in_flight, by_head
 
 

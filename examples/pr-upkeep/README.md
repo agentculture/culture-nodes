@@ -240,7 +240,13 @@ Three decisions worth stating:
   failure. The read hits the same host the emission POSTs to, so a control
   plane that cannot answer it could not have accepted the events either.
 
-One honest limit: findings suppressed at a given head SHA are re-offered
+One honest limit: the runs list is cursor-paginated and newest-first, and
+the sweep follows `next_cursor` for at most `RUNS_MAX_PAGES` pages of
+`RUNS_PAGE_LIMIT`. A run history longer than that is read as a window rather
+than as the population, and a finding answered by a run past the bound can be
+dispatched again — reported on stderr when it happens, never silently.
+
+Another: findings suppressed at a given head SHA are re-offered
 only once the watermark moves again. If a run in flight ends while the PR
 sits still, its finding waits for the next push or comment. Closing that
 would mean changing the watermark, which this task deliberately did not.

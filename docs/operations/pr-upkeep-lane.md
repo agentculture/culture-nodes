@@ -63,7 +63,11 @@ It has two consequences worth holding in your head when you watch the lane:
   answer, and the sweep does not re-buy it. A push re-opens every finding on
   the PR, because new code is a new question. This is the second dedupe
   clause; until it was stated, the old byte-identical watermark had been
-  enforcing it by accident.
+  enforcing it by accident. Answering it means reading the runs that have
+  *ended*, so the sweep walks the whole `pr-upkeep` run listing by
+  `next_cursor` rather than its newest page — and if the listing does not end
+  within the page bound, it says so on stderr, because past that point the
+  clause is a window rather than a guarantee.
 - **A finding is not blocked by the run before it.** Previously a fact
   carried the whole findings list, the dedupe read every id off the running
   run's `input.findings`, and that run then sat parked on `human-merges-pr`

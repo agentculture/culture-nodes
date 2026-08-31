@@ -46,8 +46,11 @@ from base64 import b64encode
 # here made the sweep look like it had opinions about Jira that it does not.
 from pr_upkeep_emit import (
     FINDINGS_PER_EVENT,
+    RUNS_MAX_PAGES,
+    RUNS_PAGE_LIMIT,
     dispatched_finding_ids,
     emission_watermark,
+    next_run_cursor,
     runs_query,
     undispatched_findings,
 )
@@ -726,16 +729,42 @@ def raise_event(
 def fetch_dispatched_findings() -> tuple:
     """Ask the control plane which findings are already spoken for.
 
-    The read is one listing; pr_upkeep_emit decides what it means. It is
-    unauthenticated today; the token rides along so read auth arriving later
-    is a 401 this sweep reports, not a silent behaviour change.
+    The read is the run listing followed across its pages — the listing is
+    cursor-paginated and newest-first, and clause 2 asks about runs that have
+    ENDED, which are precisely the ones a single newest-first page loses
+    first. Stopping at one page lets a finding already worked at an unmoved
+    head be dispatched, and paid for, a second time.
+
+    pr_upkeep_emit decides what the pages mean; this function only reads them.
+    The read is unauthenticated today; the token rides along so read auth
+    arriving later is a 401 this sweep reports, not a silent behaviour change.
     """
     base = os.environ.get("NODES_API_URL")
     token = os.environ.get("NODES_EVENT_TOKEN")
     if not base or not token:
         raise ValueError("NODES_API_URL and NODES_EVENT_TOKEN are required")
-    listed = _get_json(f"{base.rstrip('/')}/v1alpha1/runs?{runs_query()}", token)
-    return dispatched_finding_ids(listed)
+    runs_url = f"{base.rstrip('/')}/v1alpha1/runs?"
+    pages, cursor = [], ""
+    for _ in range(RUNS_MAX_PAGES):
+        page = _get_json(f"{runs_url}{runs_query(cursor=cursor)}", token)
+        pages.append(page)
+        cursor = next_run_cursor(page)
+        if not cursor:
+            break
+    else:
+        # Said out loud rather than swallowed: past this bound the dedupe is
+        # reading a window, not the population, so clause 2 stops being a
+        # guarantee. The failure direction is re-emission, never wrong
+        # suppression, but re-emission is what costs money (#268).
+        print(
+            "pr-upkeep sweep: the pr-upkeep run listing did not end within "
+            f"{RUNS_MAX_PAGES} pages of {RUNS_PAGE_LIMIT}, so runs older than "
+            f"the newest {RUNS_MAX_PAGES * RUNS_PAGE_LIMIT} were NOT read this "
+            "cycle: a finding one of them already worked at an unmoved head "
+            "can be dispatched again",
+            file=sys.stderr,
+        )
+    return dispatched_finding_ids(pages)
 
 
 def _max_prs_per_sweep() -> int:

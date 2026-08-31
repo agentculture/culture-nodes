@@ -250,6 +250,48 @@ class TestDispatchedFindingIds:
         assert "workflow_key=pr-upkeep" in query
         assert "state" not in query
         assert "limit=500" in query
+        assert "cursor" not in query
+
+    def test_a_cursor_is_handed_back_url_encoded_and_unparsed(self):
+        """`next_cursor` is opaque and the control plane refuses anything it
+        did not mint, so the only safe handling is pass-through."""
+        query = emit.runs_query(cursor="b3Bh/cXVl+1")
+        assert "cursor=b3Bh%2FcXVl%2B1" in query
+        assert "workflow_key=pr-upkeep" in query
+
+    def test_the_pages_of_one_listing_are_read_as_one_population(self):
+        """A page boundary is an artefact of the read, not a fact about a
+        finding: the run that already worked one may sit on any page."""
+        pages = [
+            {
+                "items": [
+                    {"state": "running", "input": {"head_sha": "sha-a", "findings": [{"id": "a"}]}}
+                ]
+            },
+            {
+                "items": [
+                    {
+                        "state": "completed",
+                        "input": {"head_sha": "sha-a", "findings": [{"id": "b"}]},
+                    }
+                ]
+            },
+        ]
+        assert emit.dispatched_finding_ids(pages) == ({"a"}, {"sha-a": {"a", "b"}})
+
+    def test_a_malformed_page_is_skipped_rather_than_raising(self):
+        assert emit.dispatched_finding_ids([None, "not a page", {}]) == (set(), {})
+
+
+class TestNextRunCursor:
+    """Where the next page is, or that there is none."""
+
+    def test_a_listing_with_a_cursor_asks_for_the_next_page(self):
+        assert emit.next_run_cursor({"items": [], "next_cursor": "cur-2"}) == "cur-2"
+
+    def test_an_exhausted_or_unreadable_listing_ends_the_walk(self):
+        for listing in (None, {}, {"next_cursor": ""}, {"next_cursor": 7}, []):
+            assert emit.next_run_cursor(listing) == ""
 
 
 class TestFetchDispatchedFindings:
@@ -267,6 +309,58 @@ class TestFetchDispatchedFindings:
         assert seen["url"].startswith("https://nodes.example/v1alpha1/runs?")
         assert "workflow_key=pr-upkeep" in seen["url"]
         assert seen["token"] == "event-token"
+
+    def test_follows_next_cursor_until_the_listing_ends(self, monkeypatch):
+        """The bug this closes: an ended run that has fallen off the newest
+        page stops suppressing its finding, and the answer is re-bought."""
+        monkeypatch.setenv("NODES_API_URL", "https://nodes.example/")
+        monkeypatch.setenv("NODES_EVENT_TOKEN", "event-token")
+        pages = [
+            {
+                "items": [
+                    {"state": "running", "input": {"head_sha": "sha-a", "findings": [{"id": "a"}]}}
+                ],
+                "next_cursor": "cur-2",
+            },
+            {
+                "items": [
+                    {
+                        "state": "completed",
+                        "input": {"head_sha": "sha-a", "findings": [{"id": "b"}]},
+                    }
+                ],
+            },
+        ]
+        urls = []
+
+        def fake_get(url, token=None, **_kw):
+            urls.append(url)
+            return pages[len(urls) - 1]
+
+        monkeypatch.setattr(sweep, "_get_json", fake_get)
+        assert sweep.fetch_dispatched_findings() == ({"a"}, {"sha-a": {"a", "b"}})
+        assert len(urls) == 2
+        assert "cursor" not in urls[0]
+        assert "cursor=cur-2" in urls[1]
+
+    def test_a_listing_that_never_ends_stops_at_the_page_bound_and_says_so(
+        self, monkeypatch, capsys
+    ):
+        """Past the bound the dedupe reads a window, not the population. The
+        failure direction is re-emission, which is the one that costs money,
+        so it is reported rather than swallowed."""
+        monkeypatch.setenv("NODES_API_URL", "https://nodes.example/")
+        monkeypatch.setenv("NODES_EVENT_TOKEN", "event-token")
+        urls = []
+
+        def fake_get(url, token=None, **_kw):
+            urls.append(url)
+            return {"items": [], "next_cursor": f"cur-{len(urls)}"}
+
+        monkeypatch.setattr(sweep, "_get_json", fake_get)
+        assert sweep.fetch_dispatched_findings() == (set(), {})
+        assert len(urls) == emit.RUNS_MAX_PAGES
+        assert "were NOT read this cycle" in capsys.readouterr().err
 
     def test_requires_the_same_grant_raise_event_requires(self, monkeypatch):
         monkeypatch.delenv("NODES_API_URL", raising=False)

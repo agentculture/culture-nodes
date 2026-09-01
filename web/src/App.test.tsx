@@ -24,6 +24,7 @@ vi.mock("./api/client", async (importOriginal) => {
     listActors: vi.fn(pending),
     listPlanImports: vi.fn(pending),
     getVersion: vi.fn(pending),
+    getWhoami: vi.fn(pending),
     getTicket: vi.fn(pending),
     getRun: vi.fn(pending),
     getLedger: vi.fn(pending),

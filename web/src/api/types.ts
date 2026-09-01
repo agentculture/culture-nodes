@@ -856,3 +856,36 @@ export interface Version {
   revision_is_dirty?: boolean;
   staleness: string;
 }
+
+/**
+ * `GET /v1alpha1/whoami` (task t9, internal/api/whoami.go): who the
+ * Cloudflare edge says is here, and which registered actor that identity is
+ * bound to. `email` is display only — the binding key is provider + subject
+ * (an Access login's stable user id, or a service token's common_name) —
+ * so nothing in the browser ever looks an actor up by email.
+ */
+export interface WhoamiPrincipal {
+  provider: string;
+  subject: string;
+  email?: string;
+  common_name?: string;
+}
+
+/** A verified login with a live actor binding: the only state that can write. */
+export interface WhoamiBound {
+  principal: WhoamiPrincipal;
+  actor_id: string;
+  roles: string[];
+  unbound?: false;
+}
+
+/**
+ * A verified login with NO actor bound — never a silent viewer: every write
+ * is refused server-side (403 `unbound`) and the page says so by name.
+ */
+export interface WhoamiUnbound {
+  principal: WhoamiPrincipal;
+  unbound: true;
+}
+
+export type Whoami = WhoamiBound | WhoamiUnbound;

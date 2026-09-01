@@ -131,6 +131,22 @@
   border-bottom: 1px dotted var(--line);
 }
 
+/* Who is here (task t9): read from whoami, never typed. A non-bound state
+   is named in the same slot so "signed out" and "unbound" are visibly
+   different facts. */
+.app-header__identity {
+  color: var(--ink-soft);
+}
+
+.app-header__identity[data-identity-status="bound"] {
+  color: var(--ink);
+}
+
+.app-header__identity[data-identity-status="unbound"],
+.app-header__identity[data-identity-status="unauthenticated"] {
+  color: var(--accent-strong);
+}
+
 /* The ticket opener in the nav: there is no ticket list to link to, so the
    nav entry IS a key field (task t27). */
 .app-header__ticket {
@@ -2422,28 +2438,27 @@ button.timeline__node {
   margin-top: 1.5rem;
 }
 
-.inbox-token {
+/* The accountable identity line (task t9) sits where the token panel and
+   the free-text decider field used to: who a write will be recorded as, or
+   why it cannot be — never an input. */
+.identity-line {
   background: color-mix(in srgb, var(--surface) 55%, transparent);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 0.85rem 1rem;
+  padding: 0.65rem 1rem;
   margin: 1rem 0;
 }
 
-.inbox-token__entry {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
+.identity-line[data-identity-status="unbound"],
+.identity-line[data-identity-status="unauthenticated"] {
+  border-color: var(--accent-strong);
 }
 
-.inbox-token__entry input {
-  flex: 1 1 12rem;
-  min-width: 8rem;
-}
-
-.inbox-token__state {
-  margin: 0.5rem 0 0;
+/* The full-page identity states (IdentityGate): an unbound login, or no
+   login at all. Plain prose on the rail — there is nothing to click but the
+   recipe and the sign-in origin. */
+.identity-state p {
+  max-width: 60ch;
 }
 
 .inbox-list {

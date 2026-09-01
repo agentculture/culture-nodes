@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError, decideHumanTask, getTicket, postTicketReply } from "../api/client";
-import {
-  clearDecisionToken,
-  getDecisionToken,
-  setDecisionActorID,
-  setDecisionToken,
-} from "../api/decision-token";
 import type { TicketFrameData, TicketPendingTask, TicketProjection } from "../api/types";
-import DeciderActorField, { useDeciderActorID } from "../components/DeciderActorField";
 import ErrorNotice from "../components/ErrorNotice";
+import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
+import { useWhoami } from "../hooks/useWhoami";
 
 function newSubmissionID(): string {
   const raw = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -61,17 +56,16 @@ export function TicketView() {
   const { id = "" } = useParams();
   const [projection, setProjection] = useState<TicketProjection | null>(null);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
-  const [token, setToken] = useState(() => getDecisionToken() ?? "");
-  const [replier, setReplier] = useState("");
+  // Who replies and who decides is the signed-in principal's actor (task
+  // t9, spec c8) — one fact from whoami, shown on the page, never typed.
+  const whoami = useWhoami();
+  const actorId = whoami.status === "bound" ? whoami.actorId : null;
   const [text, setText] = useState("");
   const [questionID, setQuestionID] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [sent, setSent] = useState(false);
-  // The Decisions section's own state (task t18). The decider id is
-  // remembered across sittings, the token is not — see api/decision-token.ts
-  // for why those two are stored differently.
-  const [decider, setDecider] = useDeciderActorID();
+  // The Decisions section's own state (task t18).
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<ApiError | null>(null);
 
@@ -122,20 +116,18 @@ export function TicketView() {
    * this operator read is no longer the frame they would be deciding.
    */
   async function decide(task: TicketPendingTask, outcome: string) {
-    if (!projection || !token || !decider.trim()) return;
-    // Remember the TRIMMED id: what is stored is what was submitted.
-    setDecisionActorID(decider.trim());
+    if (!projection || actorId === null) return;
     setDeciding(task.id);
     setDecideError(null);
     try {
       await decideHumanTask(task.id, {
         outcome,
-        decider_actor_id: decider.trim(),
+        decider_actor_id: actorId,
         // A task with a decision schema gets a schema-valid payload; one
         // without gets none, rather than an invented empty object.
         response: task.decision_schema_ref ? { outcome } : undefined,
         expected_ledger_version: task.ledger_version,
-      }, token);
+      });
       setProjection((current) => current && ({
         ...current,
         pending_tasks: (current.pending_tasks ?? []).filter((item) => item.id !== task.id),
@@ -147,15 +139,9 @@ export function TicketView() {
     }
   }
 
-  function holdToken(next: string) {
-    setToken(next);
-    if (next) setDecisionToken(next);
-    else clearDecisionToken();
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!projection || frozen || !token || !replier.trim() || !text.trim()) return;
+    if (!projection || frozen || actorId === null || !text.trim()) return;
     setSubmitting(true);
     setSubmitError(null);
     setSent(false);
@@ -165,10 +151,10 @@ export function TicketView() {
         // error, 500) reuses it, so the server resumes the row instead of
         // minting a second reply and a second engine fact.
         id: submissionID.current,
-        replier: replier.trim(),
+        replier: actorId,
         text: text.trim(),
         ...(questionID ? { question_id: questionID } : {}),
-      }, token);
+      });
       setProjection({ ...projection, replies: [...projection.replies, reply] });
       setText("");
       submissionID.current = newSubmissionID();
@@ -213,12 +199,11 @@ export function TicketView() {
         <section aria-labelledby="decisions-title" className="ticket-decisions">
           <h2 id="decisions-title">Decisions</h2>
           <p className="muted">
-            Each option below is one the engine will accept for that task. Hold
-            the decision token in the reply form and name yourself here to
-            enable them — the token authenticates the deployment, so who
-            decided is a separate, explicit claim.
+            Each option below is one the engine will accept for that task. A
+            decision is recorded under the signed-in identity — nothing to
+            type, nothing to hold.
           </p>
-          <DeciderActorField id="ticket-decider-actor" value={decider} onChange={setDecider} />
+          <SignedInAs verb="Deciding" whoami={whoami} />
           {decideError ? <ErrorNotice error={decideError} /> : null}
           <ul className="ticket-decisions__list">
             {pendingTasks.map((task) => (
@@ -229,7 +214,7 @@ export function TicketView() {
                 <OutcomeButtons
                   taskId={task.id}
                   outcomes={task.allowed_outcomes}
-                  disabled={!token || !decider.trim()}
+                  disabled={actorId === null}
                   busy={deciding === task.id}
                   onChoose={(outcome) => void decide(task, outcome)}
                 />
@@ -270,11 +255,7 @@ export function TicketView() {
 
       <form className="ticket-reply-form" onSubmit={submit} aria-labelledby="reply-title">
         <h2 id="reply-title">Reply</h2>
-        <p className="muted">The decision token stays in this tab’s session storage.</p>
-        <label htmlFor="ticket-token">Decision token</label>
-        <input id="ticket-token" type="password" autoComplete="off" value={token} onChange={(event) => holdToken(event.target.value)} disabled={frozen} />
-        <label htmlFor="ticket-replier">Your name</label>
-        <input id="ticket-replier" value={replier} onChange={(event) => setReplier(event.target.value)} required disabled={frozen} />
+        <SignedInAs verb="Replying" whoami={whoami} />
         <label htmlFor="ticket-question">Question (optional)</label>
         <select id="ticket-question" value={questionID} onChange={(event) => setQuestionID(event.target.value)} disabled={frozen}>
           <option value="">General reply</option>
@@ -282,7 +263,7 @@ export function TicketView() {
         </select>
         <label htmlFor="ticket-reply">Reply text</label>
         <textarea id="ticket-reply" rows={5} value={text} onChange={(event) => setText(event.target.value)} required disabled={frozen} />
-        <button type="submit" disabled={frozen || submitting || !token || !replier.trim() || !text.trim()}>{submitting ? "Sending…" : "Send reply"}</button>
+        <button type="submit" disabled={frozen || submitting || actorId === null || !text.trim()}>{submitting ? "Sending…" : "Send reply"}</button>
         {sent ? <p role="status" className="ticket-reply-form__success">Reply sent.</p> : null}
         {submitError ? <p role="alert">{submitError.message}. {submitError.remediation}</p> : null}
       </form>

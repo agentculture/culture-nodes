@@ -3,8 +3,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Decisions from "./Decisions";
-import { getLedger, getRun, listHumanTasks, listPendingDecisions } from "../api/client";
+import { getLedger, getRun, getWhoami, listHumanTasks, listPendingDecisions } from "../api/client";
 import type { HumanTask } from "../api/types";
+import { WHOAMI_ACTOR_ID, WHOAMI_BOUND, WHOAMI_UNBOUND } from "../fixtures/whoami-fixture";
+import { resetWhoamiForTests } from "../hooks/useWhoami";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -12,6 +14,7 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     getLedger: vi.fn(),
     getRun: vi.fn(),
+    getWhoami: vi.fn(),
     listHumanTasks: vi.fn(),
     listPendingDecisions: vi.fn(),
   };
@@ -21,6 +24,7 @@ const mockListHumanTasks = vi.mocked(listHumanTasks);
 const mockListPendingDecisions = vi.mocked(listPendingDecisions);
 const mockGetLedger = vi.mocked(getLedger);
 const mockGetRun = vi.mocked(getRun);
+const mockGetWhoami = vi.mocked(getWhoami);
 
 function task(index: number, overrides: Partial<HumanTask> = {}): HumanTask {
   return {
@@ -47,8 +51,9 @@ async function renderPending() {
 }
 
 beforeEach(() => {
-  window.localStorage.clear();
-  window.sessionStorage.clear();
+  resetWhoamiForTests();
+  mockGetWhoami.mockReset();
+  mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
   mockListHumanTasks.mockReset();
   mockListPendingDecisions.mockReset();
   mockListPendingDecisions.mockResolvedValue({ items: [], record_count: 0 });
@@ -92,7 +97,7 @@ describe("Decisions pending tab", () => {
     expect(screen.queryByText("task-000")).not.toBeInTheDocument();
   });
 
-  it("posts the matching option under the held token and removes the item", async () => {
+  it("posts the matching option as the signed-in actor, with no Authorization header, and removes the item", async () => {
     mockListHumanTasks.mockResolvedValue({ items: [task(0)] });
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ human_task_id: "task-000", outcome: "approved" }), {
@@ -104,23 +109,34 @@ describe("Decisions pending tab", () => {
     const user = userEvent.setup();
     await renderPending();
     await screen.findByText("task-000");
-    await user.type(screen.getByLabelText("Decision token"), "held-secret");
-    await user.click(screen.getByRole("button", { name: "Hold token" }));
-    await user.type(screen.getByLabelText("Decider actor id"), "actor-human-ori");
+    await waitFor(() => expect(screen.getByRole("button", { name: "approved" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "approved" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/v1alpha1/human-tasks/task-000/decision");
-    expect(init.headers.authorization).toBe("Bearer held-secret");
+    expect(Object.keys(init.headers).map((key: string) => key.toLowerCase())).not.toContain("authorization");
     expect(JSON.parse(init.body)).toEqual({
       outcome: "approved",
-      decider_actor_id: "actor-human-ori",
+      decider_actor_id: WHOAMI_ACTOR_ID,
       response: { outcome: "approved" },
       expected_ledger_version: 12,
     });
     expect(screen.queryByText("task-000")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("nodes.human-decision-actor-id")).toBe("actor-human-ori");
+  });
+
+  it("keeps every outcome disabled for an unbound login and lets nothing leave the browser", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_UNBOUND);
+    mockListHumanTasks.mockResolvedValue({ items: [task(0)] });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await renderPending();
+    await screen.findByText("task-000");
+    await waitFor(() => expect(mockGetWhoami).toHaveBeenCalled());
+    const approve = screen.getByRole("button", { name: "approved" });
+    expect(approve).toBeDisabled();
+    await userEvent.click(approve);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("clamps the page after deciding the only item on the last page", async () => {
@@ -137,9 +153,7 @@ describe("Decisions pending tab", () => {
     await renderPending();
     await screen.findByText("Page 1 of 2");
     await user.click(screen.getByRole("button", { name: "Next page" }));
-    await user.type(screen.getByLabelText("Decision token"), "held-secret");
-    await user.click(screen.getByRole("button", { name: "Hold token" }));
-    await user.type(screen.getByLabelText("Decider actor id"), "actor-human-ori");
+    await waitFor(() => expect(screen.getByRole("button", { name: "approved" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "approved" }));
 
     expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();

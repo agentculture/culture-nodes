@@ -23,6 +23,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The Done criteria no longer contradict the measurement (Qodo #1 on PR #272).
+  The user decision recorded in c32/c15 — a merge raises a `Ticket done?`
+  human node and only that node's `done` outcome plans the Done transition —
+  had never been propagated to c27, c29(e) and h7, which still read as if the
+  merge itself moved the ticket. A compliant implementation could not have
+  satisfied the prod measurement without breaking the human gate. The
+  after-state, the (e) success signal and h7 now measure from the human `done`
+  outcome; the frame claims carry the prior text as revisions.
+
 ## [0.46.1] - 2026-09-01
 
 ### Added

@@ -235,6 +235,17 @@ DISCORD_WEBHOOK_URL optional
 # control plane.
 NODES_ACTOR_REGISTRATION_TOKEN_SECRET optional
 NODES_EVENT_TOKEN_SECRET optional
+
+# Jira's loopback-only webhook is a closed optional feature. Both delivery
+# credentials may be absent; the route then answers 401. The Jira read tuple
+# may likewise be absent because it is consulted only after authentication.
+NODES_JIRA_WEBHOOK_SECRET optional
+NODES_JIRA_WEBHOOK_TOKEN optional
+JIRA_ACCOUNT_EMAIL optional
+JIRA_API_TOKEN optional
+JIRA_API_BASE optional
+JIRA_SITE optional
+JIRA_BOT_ACCOUNT_ID optional
 NODES_ADHOC_RUN_TOKEN_SECRET optional
 
 # Cloudflare Access is one all-or-nothing listener tuple. With all three

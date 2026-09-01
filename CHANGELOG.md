@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.46.3] - 2026-09-02
+
+- Add the loopback-only Jira system-webhook wake-up, authenticated by HMAC
+  or URL token, which hydrates Jira and replays sweep-compatible facts.
+
 ## [0.46.2] - 2026-09-02
 
 - Move correlated open PR tickets to In Review and require an approver's

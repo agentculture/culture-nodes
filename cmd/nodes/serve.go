@@ -62,6 +62,11 @@ const envActorRegistrationSecret = "NODES_ACTOR_REGISTRATION_TOKEN_SECRET"
 // an error: delivery is simply refused with 401 until an operator sets it.
 const envEventTokenSecret = "NODES_EVENT_TOKEN_SECRET"
 
+const (
+	envJiraWebhookSecret = "NODES_JIRA_WEBHOOK_SECRET"
+	envJiraWebhookToken  = "NODES_JIRA_WEBHOOK_TOKEN"
+)
+
 // envAdhocRunSecret is the bearer secret POST /v1alpha1/adhoc-runs requires
 // (api.WithAdhocRunSecret) — task t19's ad-hoc lane, gated by the t15
 // auth-hardening pass (spec c27). Its own secret for the same
@@ -272,6 +277,11 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		return 0, err
 	}
 	opts = append(opts, api.WithEventTokenSecret(eventTokenSecret))
+	opts = append(opts, api.WithJiraWebhook(
+		os.Getenv(envJiraWebhookSecret), os.Getenv(envJiraWebhookToken),
+		os.Getenv("JIRA_API_BASE"), os.Getenv("JIRA_SITE"), os.Getenv("JIRA_PROJECT"),
+		os.Getenv("JIRA_ACCOUNT_EMAIL"), os.Getenv("JIRA_API_TOKEN"), os.Getenv("JIRA_BOT_ACCOUNT_ID"),
+	))
 
 	adhocRunSecret, err := authSecretFromEnv(envAdhocRunSecret)
 	if err != nil {

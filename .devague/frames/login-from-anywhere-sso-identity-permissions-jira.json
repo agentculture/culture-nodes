@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-01T19:09:28Z",
-  "updated": "2026-09-01T21:45:57Z",
+  "updated": "2026-09-01T21:48:02Z",
   "claims": [
     {
       "id": "c1",
@@ -960,6 +960,18 @@
       "id": "c51",
       "kind": "decision",
       "text": "Jira push uses a system webhook rather than an Automation rule: the tenant's 1,000 Automation runs/month come from a Premium trial that ends soon, so the receiver accepts a webhook at a dedicated path exempted from Access by a path-scoped Bypass policy and verifies a shared secret on every delivery",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c52",
+      "kind": "decision",
+      "text": "The system's Jira identity is a Jira Cloud service account (Atlassian admin, Directory, Service accounts), not a bot user built on a person's account: it has its own accountId and API token, cannot log in interactively, and is managed centrally; the engine sees no difference (JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN pair, jira_bot_account_id = its accountId), so the provisioning recipe stays the same with the account created as a service account. If the site's plan does not offer service accounts, fall back to a dedicated bot user",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],

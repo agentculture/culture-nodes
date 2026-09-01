@@ -32,6 +32,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The spec's authentication requirement said the control plane maps the
+  `email` claim (interactive SSO) or the `common_name` claim (service token)
+  to a registered actor, while the same spec's `actor_identities` boundary and
+  the user-confirmed identity decision key the binding on `(provider, subject)`
+  and forbid an email key — so an implementer had two incompatible identity
+  keys and no rule joining them, and a service principal (whose Access
+  assertion carries no user `sub`) had no defined resolution at all. The
+  requirement (frame claim `c3`, amended with the superseded text kept as a
+  revision) now states one claim-to-binding algorithm: the lookup key is
+  `(provider, subject)`, interactive logins bind as `cloudflare_access` +
+  `sub` and service tokens as `cloudflare_access_service_token` +
+  `common_name`, `email` is a display hint that is never a lookup key, and a
+  verified token matching no binding is unbound rather than silently a viewer
+  (Qodo finding 1 on #271).
+
 ## [0.46.0] - 2026-08-31
 
 ### Fixed

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-01T19:09:28Z",
-  "updated": "2026-09-01T20:25:09Z",
+  "updated": "2026-09-01T20:35:24Z",
   "claims": [
     {
       "id": "c1",
@@ -46,7 +46,7 @@
     {
       "id": "c3",
       "kind": "requirement",
-      "text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and maps the email claim (interactive SSO) or common_name claim (service token) to a registered actor; the Go runtime does this with the standard library (crypto/rsa, encoding/json, net/http), honouring the zero-third-party-dependency rule",
+      "text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and then resolves the registered actor by one claim-to-binding algorithm: the lookup key is the (provider, subject) pair of the actor_identities binding, where an interactive SSO login is provider cloudflare_access with subject the verified sub claim, and a service token is provider cloudflare_access_service_token with subject the verified common_name claim (a service-token assertion carries no user sub); the email claim is carried as a display hint only and is never a lookup key, and a verified token whose (provider, subject) matches no binding is unbound \u2014 never resolved by email, never a silent viewer; the Go runtime does this with the standard library (crypto/rsa, encoding/json, net/http), honouring the zero-third-party-dependency rule",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -60,7 +60,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and maps the email claim (interactive SSO) or common_name claim (service token) to a registered actor; the Go runtime does this with the standard library (crypto/rsa, encoding/json, net/http), honouring the zero-third-party-dependency rule",
+          "kind": "requirement",
+          "reason": "Qodo review on PR #271 (High/Security, 'Identity binding key conflicts'): the mapping clause keyed the actor lookup on email or common_name, which contradicts c49's actor_identities boundary and c37's confirmed (provider, subject) key that forbids an email key and leaves service principals unresolvable"
+        }
+      ]
     },
     {
       "id": "c4",

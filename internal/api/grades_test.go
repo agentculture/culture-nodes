@@ -188,7 +188,7 @@ func TestCreateGradeUnknownRunOrActorIs404(t *testing.T) {
 	evaluatedActor := f.insertActor("evaluated")
 
 	t.Run("unknown_run", func(t *testing.T) {
-		resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/does-not-exist/grades"),
+		resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/does-not-exist/grades"), decisionAuthSecret,
 			createGradeReq{Rating: 3, Rationale: "x", EvaluatedActorID: evaluatedActor, GradingActorID: graderAgent}, nil)
 		requireStatus(t, resp, body, http.StatusNotFound)
 		decodeAPIError(t, body)

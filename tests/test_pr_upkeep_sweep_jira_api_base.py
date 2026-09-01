@@ -74,7 +74,7 @@ class TestTheGrantedBaseIsReadLikeTheCredentialPair:
             "http://api.atlassian.com/ex/jira/abc",  # not https
             "api.atlassian.com/ex/jira/abc",  # no scheme
             "https:///ex/jira/abc",  # no host
-            "https://user:pw@api.atlassian.com/ex/jira/abc",  # credentials in the URL
+            "https://user:placeholder@example.com/ex/jira/abc",  # credentials in the URL
             "https://api.atlassian.com/ex/jira/abc?x=1",  # a query
             "https://api.atlassian.com/ex/jira/abc#f",  # a fragment
         ],

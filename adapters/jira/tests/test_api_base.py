@@ -72,7 +72,7 @@ def test_trailing_slashes_and_whitespace_are_trimmed(suffix):
         "http://api.atlassian.com/ex/jira/abc",
         "api.atlassian.com/ex/jira/abc",
         "https:///ex/jira/abc",
-        "https://user:pw@api.atlassian.com/ex/jira/abc",
+        "https://user:placeholder@example.com/ex/jira/abc",
         "https://api.atlassian.com/ex/jira/abc?x=1",
         "https://api.atlassian.com/ex/jira/abc#f",
     ],

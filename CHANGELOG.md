@@ -2,20 +2,7 @@
 
 ## [0.46.3] - 2026-09-02
 
-- Add the loopback-only Jira system-webhook wake-up, authenticated by HMAC
-  or URL token, which hydrates Jira and replays sweep-compatible facts.
-
-## [0.46.2] - 2026-09-02
-
-- Move correlated open PR tickets to In Review and require an approver's
-  evidence-informed human decision before moving merged work to Done.
-
-All notable changes to this project will be documented in this file.
-
-Format follows [Keep a Changelog](https://keepachangelog.com/). This project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [0.46.2] - 2026-09-02
+### Added
 
 ### Changed
 
@@ -25,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completions now derive credential party kind from storage, reject ledger
   origins that differ from the credential's registered actor, record the
   mismatch diagnostic, and refuse redispatch.
+
+### Fixed
 
 ## [0.46.1] - 2026-09-01
 

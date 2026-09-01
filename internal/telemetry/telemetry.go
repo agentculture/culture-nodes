@@ -94,8 +94,9 @@ type Provider struct {
 	tracer trace.Tracer
 	meter  metric.Meter
 
-	instruments map[Seam]*seamInstruments
-	shutdown    func(context.Context) error
+	instruments  map[Seam]*seamInstruments
+	authRefusals metric.Int64Counter
+	shutdown     func(context.Context) error
 }
 
 // seamInstruments are the metric instruments one seam records through,
@@ -187,6 +188,11 @@ func newProvider(tracer trace.Tracer, meter metric.Meter) (*Provider, error) {
 		instruments: make(map[Seam]*seamInstruments, len(seams)),
 		shutdown:    func(context.Context) error { return nil },
 	}
+	authRefusals, err := meter.Int64Counter("api.auth_refusals.count", metric.WithDescription("principal refusals by reason"))
+	if err != nil {
+		return nil, fmt.Errorf("telemetry: build auth refusal counter: %w", err)
+	}
+	p.authRefusals = authRefusals
 	for _, seam := range seams {
 		count, err := meter.Int64Counter(
 			string(seam)+".count",
@@ -206,6 +212,14 @@ func newProvider(tracer trace.Tracer, meter metric.Meter) (*Provider, error) {
 		p.instruments[seam] = &seamInstruments{count: count, duration: duration}
 	}
 	return p, nil
+}
+
+// RecordAuthRefusal increments the refusal counter with a closed reason class.
+func (p *Provider) RecordAuthRefusal(ctx context.Context, reason string) {
+	if p == nil || p.authRefusals == nil {
+		return
+	}
+	p.authRefusals.Add(ctx, 1, metric.WithAttributes(KeyAuthRefusalReason.String(reason)))
 }
 
 // Shutdown flushes and releases any exporter resources New constructed.

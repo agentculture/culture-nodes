@@ -33,14 +33,13 @@ Two listeners, on purpose (spec c43 / finding s35):
 | `127.0.0.1:18081` on thor (loopback) | only `cloudflared` on the same host, i.e. traffic that came through Cloudflare Access | yes — this is the only place an Access JWT means anything |
 | `0.0.0.0:18080` on thor (LAN, published by `compose.thor.yml` as `18080:8080`) | the sweep, both workers, the bridges, and anyone on the LAN/tailnet | no — a JWT captured on the plaintext LAN cannot be replayed here |
 
-The loopback port is **introduced by task t8** as `NODES_ACCESS_LISTEN`. This
-document fixes its value: **t8 must bind `127.0.0.1:18081`** on thor — the
-control plane listens on a second port inside the container and
-`compose.thor.yml` publishes it as `127.0.0.1:18081:<container port>` (a
-loopback-only publish, never `18081:<port>`, which would put it on every
-interface). Until t8 lands, the tunnel's origin is a closed port and
-`https://nodes.culture.dev` answers with a Cloudflare 502 — that is the
-expected state of a half-deployed cycle, not a tunnel fault.
+The loopback port is configured by task t8 with
+`NODES_ACCESS_LISTEN=127.0.0.1:8081` inside the API container.
+`compose.thor.yml` publishes it as `127.0.0.1:18081:8081` (a loopback-only
+publish, never `18081:8081`, which would put it on every interface). Set
+`NODES_ACCESS_TEAM_DOMAIN` and `NODES_ACCESS_AUD` in the same `prod.env`
+change; the server refuses a partial three-variable tuple, while all three
+unset leaves the Access feature off and preserves the LAN-only behaviour.
 
 TLS terminates at Cloudflare's edge. Nothing here adds `ListenAndServeTLS`,
 certificates or a reverse proxy to `cmd/nodes/serve.go` (spec c26).

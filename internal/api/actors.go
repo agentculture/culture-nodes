@@ -364,6 +364,9 @@ func (s *Server) handleRegisterActor(w http.ResponseWriter, r *http.Request) err
 // and a present-but-wrong bearer token is refused 401 after a fixed-cost
 // digest comparison.
 func (s *Server) requireActorRegistrationAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.actorRegistrationSecret) == 0 {
 		return unauthorized(
 			"configure the server with an actor registration secret (NODES_ACTOR_REGISTRATION_TOKEN_SECRET) to enable actor registration",

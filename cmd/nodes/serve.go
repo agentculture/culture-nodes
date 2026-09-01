@@ -17,6 +17,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/artifacts"
 	artifactpg "github.com/agentculture/culture-nodes/internal/artifacts/postgres"
 	artifacts3 "github.com/agentculture/culture-nodes/internal/artifacts/s3"
+	"github.com/agentculture/culture-nodes/internal/auth"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -90,6 +91,12 @@ const envInboundIssuanceSecret = "NODES_INBOUND_ISSUANCE_TOKEN_SECRET"
 // everyone on the mesh reads. Unset is not an error: store writes are
 // simply refused with 401 until an operator sets it.
 const envStoreWriteSecret = "NODES_STORE_TOKEN_SECRET"
+
+const (
+	envAccessListen     = "NODES_ACCESS_LISTEN"
+	envAccessTeamDomain = "NODES_ACCESS_TEAM_DOMAIN"
+	envAccessAudience   = "NODES_ACCESS_AUD"
+)
 
 const (
 	envArtifactS3Endpoint  = "NODES_ARTIFACT_S3_ENDPOINT"
@@ -203,6 +210,22 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 		opts = append(opts, api.WithWebAssets(assets))
 	}
 	opts = append(opts, api.WithTelemetry(telemetryProvider))
+	accessAddr := os.Getenv(envAccessListen)
+	accessDomain := os.Getenv(envAccessTeamDomain)
+	accessAudience := os.Getenv(envAccessAudience)
+	configuredAccess := 0
+	for _, value := range []string{accessAddr, accessDomain, accessAudience} {
+		if value != "" {
+			configuredAccess++
+		}
+	}
+	if configuredAccess != 0 && configuredAccess != 3 {
+		return 0, envError("configuring the Access listener", errors.New("incomplete Access configuration"),
+			"set NODES_ACCESS_LISTEN, NODES_ACCESS_TEAM_DOMAIN, and NODES_ACCESS_AUD together, or unset all three")
+	}
+	if configuredAccess == 3 {
+		opts = append(opts, api.WithPrincipalVerifier(auth.New(accessDomain, accessAudience)))
+	}
 
 	// A callback token secret is optional here for the same reason it is
 	// optional on the worker side (cmd/nodes/worker.go's callbackConfig): a
@@ -277,13 +300,23 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	}
 
 	httpServer := &http.Server{Addr: addr, Handler: srv.Handler()}
-	serverErrs := make(chan error, 1)
+	serverErrs := make(chan error, 2)
 	go func() {
 		clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: API listening on %s", verb, addr))
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErrs <- err
 		}
 	}()
+	var accessServer *http.Server
+	if configuredAccess == 3 {
+		accessServer = &http.Server{Addr: accessAddr, Handler: srv.AccessHandler()}
+		go func() {
+			clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: Access API listening on %s", verb, accessAddr))
+			if err := accessServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverErrs <- err
+			}
+		}()
+	}
 
 	var schedulerErrs chan error
 	var workerErrs chan error
@@ -337,6 +370,11 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	defer cancelShutdown()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return 0, envError("shutting down the API server", err, "a client may still be mid-request; the process will now exit anyway")
+	}
+	if accessServer != nil {
+		if err := accessServer.Shutdown(shutdownCtx); err != nil {
+			return 0, envError("shutting down the Access API server", err, "a client may still be mid-request; the process will now exit anyway")
+		}
 	}
 
 	clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: shut down cleanly", verb))

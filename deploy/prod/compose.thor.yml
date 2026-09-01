@@ -140,6 +140,10 @@ services:
       NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
       NODES_EVENT_TOKEN_SECRET: ${NODES_EVENT_TOKEN_SECRET:-}
       NODES_ADHOC_RUN_TOKEN_SECRET: ${NODES_ADHOC_RUN_TOKEN_SECRET:-}
+      # Cloudflare Access is accepted only on this container-side loopback-origin listener.
+      NODES_ACCESS_LISTEN: ${NODES_ACCESS_LISTEN:-}
+      NODES_ACCESS_TEAM_DOMAIN: ${NODES_ACCESS_TEAM_DOMAIN:-}
+      NODES_ACCESS_AUD: ${NODES_ACCESS_AUD:-}
       # The dial-in credential issuance lane (issue #111's dial-in half):
       # POST /v1alpha1/inbound/credentials mints the token a bridge presents
       # when it dials out, so no operator invents one. Same closed-by-default
@@ -169,6 +173,7 @@ services:
       # (spec c43; docs/operations/nodes-culture-dev.md). This line stays
       # exactly as it is, and tests/deploy/nodesculturedev_test.go pins it.
       - "18080:8080"
+      - "127.0.0.1:18081:8081"
     depends_on:
       migrate:
         condition: service_completed_successfully

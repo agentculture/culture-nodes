@@ -189,6 +189,9 @@ func evidenceManifestFrom(evidence storeEvidenceIn) postgres.EvidenceManifest {
 // registry is an internal, mesh-private surface and "everyone on the mesh
 // reads" is the q6 decision; writing the catalog is a distinct standing.
 func (s *Server) requireStoreWriteAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.storeWriteSecret) == 0 {
 		return unauthorized(
 			"configure the server with a store write secret (NODES_STORE_TOKEN_SECRET) to enable store writes",

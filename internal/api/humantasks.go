@@ -113,6 +113,9 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 // a human decide a proposed claim. All three write human-authority records
 // into the ledger on whoever presents the token.
 func (s *Server) requireDecisionAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.decisionAuthSecret) == 0 {
 		return unauthorized(
 			"configure the server with a decision auth secret (NODES_HUMAN_DECISION_TOKEN_SECRET) to enable human decisions",

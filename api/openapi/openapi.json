@@ -3870,6 +3870,12 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "cloudflareAccessJwt": {
+        "description": "Cloudflare Access RS256 assertion, honoured only on the configured NODES_ACCESS_LISTEN listener and bound by stable provider/subject.",
+        "in": "header",
+        "name": "Cf-Access-Jwt-Assertion",
+        "type": "apiKey"
+      },
       "decisionBearerAuth": {
         "description": "The shared secret configured as NODES_HUMAN_DECISION_TOKEN_SECRET. Used by the three operations that record a human decision — POST /v1alpha1/human-tasks/{id}/decision and the two review operations (POST /v1alpha1/runs/{id}/reviews, POST /v1alpha1/reviews/{id}/commit) — because all three write human-authority records into the ledger on whoever presents the token. Every other operation in this API is authless by phase-1 design (spec decision c45).",
         "scheme": "bearer",
@@ -3904,7 +3910,7 @@
     }
   },
   "info": {
-    "description": "The Culture Nodes control-plane API (docs/initial-design/culture-nodes-prd-spec.md §12.1, §15.1): workflow publication, run orchestration, the append-only work ledger, and review transactions. group: nodes.culture.dev/v1alpha1.\nPhase 1 runs authless by design (spec decision c45): this API carries no authentication or authorization of its own and is meant to run behind a private network. Every operation is reachable by anyone who can reach the listener. Do not expose this API on a public network without a fronting proxy that adds authentication.\nEvery error response uses the Error schema below — the same {code, message, remediation} shape internal/clifmt.CliError renders for the CLI — with the HTTP status line carrying the specific condition. The two reverse-transport routes are the documented exception: POST /v1alpha1/inbound/poll and POST /v1alpha1/inbound/{id}/complete are not mounted through the wrapper that renders Error, so their 400/401 refusals are `text/plain` while their 500s still carry Error. Each of those responses says so where it is declared.",
+    "description": "The Culture Nodes control-plane API (docs/initial-design/culture-nodes-prd-spec.md §12.1, §15.1): workflow publication, run orchestration, the append-only work ledger, and review transactions. group: nodes.culture.dev/v1alpha1.\nHuman identity is a Cloudflare Access JWT accepted only on the dedicated loopback-origin Access listener. The verified provider/subject is bound to an actor and roles. Viewer permits every GET and both SSE streams; approver additionally permits human decisions, reviews/commits, ticket replies/frame/freeze, and grades; namespace_administrator includes those permissions plus actor administration, workflow publication/validation, workflow generation, run mutation, namespaces, schedules, preflight acknowledgement, plan imports, store writes, and inbound credential issuance/revocation. Transition bearer and machine credentials remain documented on their routes.\nEvery error response uses the Error schema below — the same {code, message, remediation} shape internal/clifmt.CliError renders for the CLI — with the HTTP status line carrying the specific condition. The two reverse-transport routes are the documented exception: POST /v1alpha1/inbound/poll and POST /v1alpha1/inbound/{id}/complete are not mounted through the wrapper that renders Error, so their 400/401 refusals are `text/plain` while their 500s still carry Error. Each of those responses says so where it is declared.",
     "license": {
       "name": "Apache-2.0"
     },
@@ -7129,6 +7135,82 @@
         "tags": [
           "operations"
         ]
+      }
+    },
+    "/v1alpha1/whoami": {
+      "get": {
+        "operationId": "whoami",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "actor_id": {
+                      "type": "string"
+                    },
+                    "principal": {
+                      "properties": {
+                        "common_name": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "subject"
+                      ],
+                      "type": "object"
+                    },
+                    "roles": {
+                      "items": {
+                        "enum": [
+                          "viewer",
+                          "approver",
+                          "namespace_administrator"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "unbound": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "principal"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The bound principal, or a verified unbound principal."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No verified principal was supplied."
+          }
+        },
+        "security": [
+          {
+            "cloudflareAccessJwt": []
+          }
+        ],
+        "summary": "Resolve the current Access principal and actor binding"
       }
     },
     "/v1alpha1/workflow-generations": {

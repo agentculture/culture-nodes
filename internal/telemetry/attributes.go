@@ -57,6 +57,8 @@ const (
 	// without a separate metrics query. Operation.End sets this
 	// automatically; instrumented call sites never need to construct it.
 	KeyDurationMs = attribute.Key("duration_ms")
+	// KeyAuthRefusalReason is the closed refusal class, never credential data.
+	KeyAuthRefusalReason = attribute.Key("auth_refusal_reason")
 )
 
 // AllowedAttributeKeys is every key an instrumented call site, or this
@@ -67,6 +69,7 @@ var AllowedAttributeKeys = []attribute.Key{
 	KeyTechStatus, KeyOutcome, KeyNodeRunState, KeyRunState, KeyDisposition,
 	KeyAttemptNumber,
 	KeyDurationMs,
+	KeyAuthRefusalReason,
 }
 
 // RunID, NodeID, AttemptID, and ActorID are the id-category constructors.

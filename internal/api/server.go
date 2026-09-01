@@ -172,7 +172,8 @@ type Server struct {
 	// doc's "Logging" section. Set unconditionally in NewServer, so a
 	// Server built through it never has a nil logger; WithLogger replaces
 	// it.
-	log *slog.Logger
+	log               *slog.Logger
+	principalVerifier principalVerifier
 }
 
 // Option configures a Server.
@@ -447,6 +448,10 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 // (see errors.go); streamRunEvents manages its own response lifecycle
 // because it writes a streaming body rather than one JSON document.
 func (s *Server) Handler() http.Handler {
+	return s.principalMiddleware(false, s.routes())
+}
+
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /v1alpha1/workflows/validate", s.wrap(s.handleValidateWorkflow))
@@ -541,6 +546,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/version", s.wrap(s.handleVersion))
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
+	mux.HandleFunc("GET /v1alpha1/whoami", s.wrap(s.handleWhoami))
 
 	// The actor callback surface (PRD §13.1's callback.url, §13.4's event
 	// ingest) is not part of the nodes.culture.dev/v1alpha1 group above: it

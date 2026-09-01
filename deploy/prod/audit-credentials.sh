@@ -237,6 +237,13 @@ NODES_ACTOR_REGISTRATION_TOKEN_SECRET optional
 NODES_EVENT_TOKEN_SECRET optional
 NODES_ADHOC_RUN_TOKEN_SECRET optional
 
+# Cloudflare Access is one all-or-nothing listener tuple. With all three
+# absent the feature is off and the LAN listener behaves exactly as before;
+# cmd/nodes refuses a partial tuple at startup.
+NODES_ACCESS_LISTEN optional
+NODES_ACCESS_TEAM_DOMAIN optional
+NODES_ACCESS_AUD optional
+
 # The dial-in credential issuance secret (issue #111's dial-in half). Same
 # closed-by-default reasoning: unset, POST /v1alpha1/inbound/credentials
 # refuses 401 and nothing else changes — a bridge that already holds an

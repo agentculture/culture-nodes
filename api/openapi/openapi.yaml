@@ -9,11 +9,16 @@ info:
     §12.1, §15.1): workflow publication, run orchestration, the append-only work
     ledger, and review transactions. group: nodes.culture.dev/v1alpha1.
 
-    Phase 1 runs authless by design (spec decision c45): this API carries no
-    authentication or authorization of its own and is meant to run behind a
-    private network. Every operation is reachable by anyone who can reach the
-    listener. Do not expose this API on a public network without a fronting
-    proxy that adds authentication.
+    Human identity is a Cloudflare Access JWT accepted only on the dedicated
+    loopback-origin Access listener. The verified provider/subject is bound to
+    an actor and roles. Viewer permits every GET and both SSE streams;
+    approver additionally permits human decisions, reviews/commits, ticket
+    replies/frame/freeze, and grades; namespace_administrator includes those
+    permissions plus actor administration, workflow publication/validation,
+    workflow generation, run mutation, namespaces, schedules, preflight
+    acknowledgement, plan imports, store writes, and inbound credential
+    issuance/revocation. Transition bearer and machine credentials remain
+    documented on their routes.
 
     Every error response uses the Error schema below — the same
     {code, message, remediation} shape internal/clifmt.CliError renders for
@@ -3059,6 +3064,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/whoami:
+    get:
+      operationId: whoami
+      summary: Resolve the current Access principal and actor binding
+      security:
+        - cloudflareAccessJwt: []
+      responses:
+        "200":
+          description: The bound principal, or a verified unbound principal.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [principal]
+                properties:
+                  principal:
+                    type: object
+                    required: [provider, subject]
+                    properties:
+                      provider: {type: string}
+                      subject: {type: string}
+                      email: {type: string}
+                      common_name: {type: string}
+                  actor_id: {type: string}
+                  roles:
+                    type: array
+                    items: {type: string, enum: [viewer, approver, namespace_administrator]}
+                  unbound: {type: boolean}
+        "401":
+          description: No verified principal was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1alpha1/version:
     get:
       operationId: version
@@ -3164,6 +3204,13 @@ components:
         type: string
 
   securitySchemes:
+    cloudflareAccessJwt:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: >-
+        Cloudflare Access RS256 assertion, honoured only on the configured
+        NODES_ACCESS_LISTEN listener and bound by stable provider/subject.
     decisionBearerAuth:
       type: http
       scheme: bearer

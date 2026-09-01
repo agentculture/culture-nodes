@@ -203,6 +203,9 @@ func (s *Server) handleRevokeInboundCredential(w http.ResponseWriter, r *http.Re
 // same fixed-cost shape requireActorRegistrationAuth uses: both sides are
 // hashed first so the comparison cannot leak the secret's length.
 func (s *Server) requireInboundIssuanceAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.inboundIssuanceSecret) == 0 {
 		return unauthorized(
 			"configure the server with a dial-in issuance secret (NODES_INBOUND_ISSUANCE_TOKEN_SECRET) to enable credential issuance",

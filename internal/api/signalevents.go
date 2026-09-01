@@ -259,6 +259,9 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 // (closed by default), and a present-but-wrong bearer token is refused 401
 // after a fixed-cost digest comparison.
 func (s *Server) requireEventAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.eventTokenSecret) == 0 {
 		return unauthorized(
 			"configure the server with an event token secret (NODES_EVENT_TOKEN_SECRET) to enable inbound event delivery",

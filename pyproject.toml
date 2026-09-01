@@ -74,3 +74,9 @@ skips = ["B101", "B404", "B603"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+# Behavioral tests (tests/behavioral/README.md): select with `-m behavioral`,
+# deselect with `-m "not behavioral"`. Deliberately NOT excluded here — CI
+# inherits addopts, so excluding by default would change what tests.yml runs.
+markers = [
+    "behavioral: promised behavior a devague obligation cites (see tests/behavioral/README.md)",
+]

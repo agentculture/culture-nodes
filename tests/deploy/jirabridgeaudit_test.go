@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-// The Jira credential may be relayed into the actor-owned env file, but no
-// control-plane, compose, runner, or committed config may consume it.
+// Jira write authority remains actor-only. The control-plane API may hold the
+// same read-only Basic-auth pair as the sweep solely for t16's loopback
+// webhook hydration; workers, runners, and bridge configs still may not.
 func TestJiraCredentialIsActorOnly(t *testing.T) {
 	root := repoRootDir(t)
 	for _, rel := range []string{
-		"deploy/prod/compose.thor.yml",
 		"deploy/prod/compose.orin.yml",
 		"deploy/prod/nodes-runner.service",
 		"deploy/prod/codex-bridge.json.template",
@@ -24,6 +24,14 @@ func TestJiraCredentialIsActorOnly(t *testing.T) {
 		if strings.Contains(string(raw), "JIRA_ACCOUNT_EMAIL") || strings.Contains(string(raw), "JIRA_API_TOKEN") {
 			t.Errorf("%s gives Jira authority to a non-Jira-actor runtime", rel)
 		}
+	}
+	thorRaw, err := os.ReadFile(filepath.Join(root, "deploy/prod/compose.thor.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	thor := string(thorRaw)
+	if strings.Count(thor, "      JIRA_ACCOUNT_EMAIL: ${") != 1 || strings.Count(thor, "      JIRA_API_TOKEN: ${") != 1 {
+		t.Error("compose.thor.yml must grant the Jira read pair exactly once, to the API webhook hydrator")
 	}
 	// The sweep KEEPS its Jira READ pair: fetching a backlog is not a
 	// real-world act, and #76/#106 deliberately place that read in the

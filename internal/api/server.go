@@ -174,6 +174,7 @@ type Server struct {
 	// it.
 	log               *slog.Logger
 	principalVerifier principalVerifier
+	jiraWebhook       jiraWebhookConfig
 }
 
 // Option configures a Server.
@@ -311,6 +312,13 @@ func WithEventTokenSecret(secret string) Option {
 		if secret != "" {
 			s.eventTokenSecret = []byte(secret)
 		}
+	}
+}
+
+// WithJiraWebhook configures the loopback-only Jira system webhook wake-up.
+func WithJiraWebhook(secret, token, apiBase, site, project, email, apiToken, botAccountID string) Option {
+	return func(s *Server) {
+		s.jiraWebhook = jiraWebhookConfig{secret: []byte(secret), token: []byte(token), apiBase: apiBase, site: site, project: project, email: email, apiToken: apiToken, botAccountID: botAccountID}
 	}
 }
 
@@ -584,6 +592,13 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", spaHandler(s.webAssets))
 	}
 
+	return mux
+}
+
+func (s *Server) accessRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1alpha1/webhooks/jira", s.wrap(s.handleJiraWebhook))
+	mux.Handle("/", s.routes())
 	return mux
 }
 

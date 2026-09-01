@@ -81,7 +81,7 @@ func WithPrincipalVerifier(verifier principalVerifier) Option {
 // Only this handler considers Cf-Access-Jwt-Assertion; Handler deliberately
 // ignores that header so a JWT observed on the LAN is useless there.
 func (s *Server) AccessHandler() http.Handler {
-	return s.principalMiddleware(true, s.routes())
+	return s.principalMiddleware(true, s.accessRoutes())
 }
 
 func (s *Server) principalMiddleware(accessListener bool, next http.Handler) http.Handler {
@@ -164,7 +164,7 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 		return routePolicy{}, false
 	}
 	// Machine-authenticated surfaces retain their dedicated credentials.
-	if path == "/v1alpha1/events" || path == "/v1alpha1/inbound/poll" || (strings.HasPrefix(path, "/v1alpha1/inbound/") && strings.HasSuffix(path, "/complete")) || strings.Contains(path, "/attempts/") || strings.HasPrefix(path, "/callbacks/") {
+	if path == "/v1alpha1/events" || path == "/v1alpha1/webhooks/jira" || path == "/v1alpha1/inbound/poll" || (strings.HasPrefix(path, "/v1alpha1/inbound/") && strings.HasSuffix(path, "/complete")) || strings.Contains(path, "/attempts/") || strings.HasPrefix(path, "/callbacks/") {
 		return routePolicy{}, false
 	}
 	if strings.HasSuffix(path, "/suite-verdicts") || strings.HasSuffix(path, "/gate-reports") {

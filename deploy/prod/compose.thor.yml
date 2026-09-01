@@ -140,6 +140,17 @@ services:
       NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
       NODES_EVENT_TOKEN_SECRET: ${NODES_EVENT_TOKEN_SECRET:-}
       NODES_ADHOC_RUN_TOKEN_SECRET: ${NODES_ADHOC_RUN_TOKEN_SECRET:-}
+      # Jira system webhooks enter only through the Access listener. Either
+      # HMAC secret or URL token authenticates the wake-up; Jira credentials
+      # hydrate authoritative history before any fact is delivered.
+      NODES_JIRA_WEBHOOK_SECRET: ${NODES_JIRA_WEBHOOK_SECRET:-}
+      NODES_JIRA_WEBHOOK_TOKEN: ${NODES_JIRA_WEBHOOK_TOKEN:-}
+      JIRA_ACCOUNT_EMAIL: ${JIRA_ACCOUNT_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      JIRA_API_BASE: ${JIRA_API_BASE:-}
+      JIRA_SITE: ${JIRA_SITE:-}
+      JIRA_PROJECT: ${JIRA_PROJECT:-SCRUM}
+      JIRA_BOT_ACCOUNT_ID: ${JIRA_BOT_ACCOUNT_ID:-}
       # Cloudflare Access is accepted only on this container-side loopback-origin listener.
       NODES_ACCESS_LISTEN: ${NODES_ACCESS_LISTEN:-}
       NODES_ACCESS_TEAM_DOMAIN: ${NODES_ACCESS_TEAM_DOMAIN:-}

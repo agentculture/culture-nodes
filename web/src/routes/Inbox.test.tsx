@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Inbox from "./Inbox";
-import { ApiError, getLedger, listHumanTasks } from "../api/client";
+import { ApiError, getLedger, getWhoami, listHumanTasks } from "../api/client";
 import {
   DECIDED_TASK,
   DECISION_RESULT,
@@ -11,8 +11,15 @@ import {
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
 } from "../fixtures/human-tasks-fixture";
+import {
+  WHOAMI_ACTOR_ID,
+  WHOAMI_BOUND,
+  WHOAMI_EMAIL,
+  WHOAMI_UNBOUND,
+} from "../fixtures/whoami-fixture";
 import { getAgentState, resetAgentState } from "../agent-state/store";
 import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
+import { resetWhoamiForTests } from "../hooks/useWhoami";
 
 /** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
 class FakeEventSource {
@@ -67,21 +74,21 @@ class FakeEventSource {
 
 /**
  * The stub-API pattern Workflows.test.tsx established, with one deliberate
- * difference: `decideHumanTask` is NOT mocked. The acceptance for t14 is a
- * component test asserting the POST body *and the Authorization header* a
- * submission actually sends, so the decision path runs the real client
- * helper against a stubbed global `fetch` — the reads (list, ledger) stay
- * module-mocked like every other route test.
+ * difference: `decideHumanTask` is NOT mocked. The acceptance for t14 was a
+ * component test asserting the POST body a submission actually sends — and,
+ * since task t9, that NO Authorization header rides along with it — so the
+ * decision path runs the real client helper against a stubbed global
+ * `fetch`; the reads (list, ledger, whoami) stay module-mocked like every
+ * other route test.
  */
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, listHumanTasks: vi.fn(), getLedger: vi.fn() };
+  return { ...actual, listHumanTasks: vi.fn(), getLedger: vi.fn(), getWhoami: vi.fn() };
 });
 
 const mockListHumanTasks = vi.mocked(listHumanTasks);
 const mockGetLedger = vi.mocked(getLedger);
-
-const TOKEN = "sekrit-decision-token";
+const mockGetWhoami = vi.mocked(getWhoami);
 
 function renderInbox() {
   return render(
@@ -126,19 +133,16 @@ async function findPendingCard() {
   ) as HTMLElement;
 }
 
-async function holdToken(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText("Decision token"), TOKEN);
-  await user.click(screen.getByRole("button", { name: "Hold token" }));
-}
-
-/** Fill the full decision form on the rich pending task's card. */
+/**
+ * Fill the full decision form on the rich pending task's card. There is no
+ * decider to type (task t9): the decider is whoever whoami says is signed in.
+ */
 async function fillDecision(
   user: ReturnType<typeof userEvent.setup>,
   card: HTMLElement,
   { payload, note }: { payload?: string; note?: string } = {},
 ) {
   await user.click(within(card).getByRole("radio", { name: "approved" }));
-  await user.type(within(card).getByLabelText("Decider actor id"), "ori");
   if (payload !== undefined) {
     // user-event's type() parses `{`/`[` as keyboard descriptors; paste the
     // JSON instead of escaping every brace.
@@ -153,8 +157,9 @@ async function fillDecision(
 beforeEach(() => {
   mockListHumanTasks.mockReset();
   mockGetLedger.mockReset();
-  window.sessionStorage.clear();
-  window.localStorage.clear();
+  mockGetWhoami.mockReset();
+  mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
+  resetWhoamiForTests();
   resetAgentState();
 });
 
@@ -285,41 +290,26 @@ describe("Inbox decided task rendering", () => {
   });
 });
 
-describe("Inbox token retention (risk r1)", () => {
-  it("holds the token in sessionStorage only — never localStorage, never a cookie — and shows it held", async () => {
+/**
+ * Identity is derived, never typed (task t9, spec c8). The token panel and
+ * the free-text decider field are gone; the decider is the actor whoami
+ * binds the signed-in principal to, and an unbound login can decide nothing.
+ */
+describe("Inbox identity (task t9)", () => {
+  it("offers no token field and no decider field, and says who is deciding", async () => {
     resolveFixture();
-    const user = userEvent.setup();
     renderInbox();
     await screen.findByText(PENDING_TASK.id);
 
-    expect(screen.getByText(/no token held/i)).toBeInTheDocument();
-    await holdToken(user);
-
-    expect(
-      window.sessionStorage.getItem("nodes.human-decision-token"),
-    ).toBe(TOKEN);
-    expect(window.localStorage.length).toBe(0);
-    expect(document.cookie).toBe("");
-    expect(screen.getByText(/token held/i)).toBeInTheDocument();
-    // The credential never renders back into the page.
-    expect(screen.queryByText(TOKEN)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/token/i)).toBeNull();
+    expect(screen.queryByLabelText(/decider/i)).toBeNull();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(await screen.findByText(/deciding as/i)).toHaveTextContent(WHOAMI_EMAIL);
+    expect(screen.getByText(/deciding as/i)).toHaveTextContent(WHOAMI_ACTOR_ID);
   });
 
-  it("clears the token from sessionStorage via the clear affordance", async () => {
-    resolveFixture();
-    const user = userEvent.setup();
-    renderInbox();
-    await screen.findByText(PENDING_TASK.id);
-    await holdToken(user);
-
-    await user.click(screen.getByRole("button", { name: "Clear token" }));
-    expect(
-      window.sessionStorage.getItem("nodes.human-decision-token"),
-    ).toBeNull();
-    expect(screen.getByText(/no token held/i)).toBeInTheDocument();
-  });
-
-  it("refuses to submit without a token: the form is disabled and no request leaves the browser", async () => {
+  it("refuses to submit for an unbound login: the form is disabled and no request leaves the browser", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_UNBOUND);
     resolveFixture();
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
@@ -338,7 +328,7 @@ describe("Inbox token retention (risk r1)", () => {
 });
 
 describe("Inbox decision submission", () => {
-  it("POSTs the decision with the bearer token, the chosen outcome, the payload+note response, and the ledger guard", async () => {
+  it("POSTs the decision with no Authorization header, the chosen outcome, the payload+note response, the signed-in decider and the ledger guard", async () => {
     resolveFixture();
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
@@ -346,11 +336,15 @@ describe("Inbox decision submission", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await holdToken(user);
     await fillDecision(user, card, {
       payload: '{"release_ok": true}',
       note: "ship it",
     });
+    await waitFor(() =>
+      expect(
+        within(card).getByRole("button", { name: "Submit decision" }),
+      ).toBeEnabled(),
+    );
     await user.click(
       within(card).getByRole("button", { name: "Submit decision" }),
     );
@@ -361,11 +355,11 @@ describe("Inbox decision submission", () => {
     expect(url).toBe(`/v1alpha1/human-tasks/${PENDING_TASK.id}/decision`);
     expect(init.method).toBe("POST");
     expect(
-      (init.headers as Record<string, string>).authorization,
-    ).toBe(`Bearer ${TOKEN}`);
+      Object.keys(init.headers as Record<string, string>).map((key) => key.toLowerCase()),
+    ).not.toContain("authorization");
     expect(JSON.parse(init.body as string)).toEqual({
       outcome: "approved",
-      decider_actor_id: "ori",
+      decider_actor_id: WHOAMI_ACTOR_ID,
       response: { release_ok: true, note: "ship it" },
       expected_ledger_version: LEDGER_VERSION,
     });
@@ -380,7 +374,6 @@ describe("Inbox decision submission", () => {
     await within(card).findByText(String(LEDGER_VERSION));
     const listCallsBefore = mockListHumanTasks.mock.calls.length;
 
-    await holdToken(user);
     await fillDecision(user, card);
     await user.click(
       within(card).getByRole("button", { name: "Submit decision" }),
@@ -400,7 +393,6 @@ describe("Inbox decision submission", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await holdToken(user);
     await fillDecision(user, card, { payload: "{not json" });
     await user.click(
       within(card).getByRole("button", { name: "Submit decision" }),
@@ -427,7 +419,6 @@ describe("Inbox decision submission", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await holdToken(user);
     await fillDecision(user, card);
     await user.click(
       within(card).getByRole("button", { name: "Submit decision" }),

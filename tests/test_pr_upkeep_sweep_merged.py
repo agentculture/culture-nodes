@@ -6,6 +6,94 @@ import json
 from tests.test_pr_upkeep_sweep import EXAMPLE_DIR, FIXTURES, _stub_sweep, sweep  # noqa: F401
 
 
+def test_open_pr_fact_uses_branch_then_body_ticket_key_and_project_prefix():
+    branch = sweep.opened_pr_fact(
+        {
+            "number": 41,
+            "state": "open",
+            "created_at": "2026-09-02T08:00:00Z",
+            "html_url": "https://github.com/o/r/pull/41",
+            "head": {"ref": "SCRUM-41-review"},
+            "body": "ADR-0002 must not win",
+        },
+        "o/r",
+        "SCRUM",
+    )
+    body = sweep.opened_pr_fact(
+        {
+            "number": 42,
+            "state": "open",
+            "created_at": "2026-09-02T09:00:00Z",
+            "html_url": "https://github.com/o/r/pull/42",
+            "head": {"ref": "plain-branch"},
+            "body": "Delivers SCRUM-42",
+        },
+        "o/r",
+        "SCRUM",
+    )
+
+    assert branch == {
+        "source": "github_pr",
+        "repository": "o/r",
+        "number": 41,
+        "url": "https://github.com/o/r/pull/41",
+        "opened_at": "2026-09-02T08:00:00Z",
+        "issue_key": "SCRUM-41",
+    }
+    assert body["issue_key"] == "SCRUM-42"
+    assert sweep.opened_pr_fact({**branch, "state": "closed"}, "o/r", "SCRUM") is None
+
+
+def test_open_pr_fact_is_emitted_once_per_pr_by_its_durable_watermark(monkeypatch, capsys):
+    monkeypatch.setenv(
+        "PR_UPKEEP_REPOSITORIES",
+        json.dumps(
+            {
+                "repositories": [
+                    {
+                        "github_repo": "owner/repo",
+                        "sonar_component": "owner_repo",
+                        "jira_site": "team.example.com",
+                        "jira_project": "SCRUM",
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
+    pull = {
+        "number": 41,
+        "state": "open",
+        "created_at": "2026-09-02T08:00:00Z",
+        "html_url": "https://github.com/owner/repo/pull/41",
+        "head": {"ref": "SCRUM-41-review"},
+        "head_sha": "sha41",
+        "body": "",
+    }
+    _stub_sweep(monkeypatch, pulls=[pull], sonar_main={"issues": []})
+    monkeypatch.setattr(sweep, "fetch_jira_issues", lambda *_args: {"issues": []})
+    cursors, events = {}, []
+
+    def dedup(name, payload, source_key, watermark, **kwargs):
+        encoded = json.dumps(watermark, sort_keys=True)
+        duplicate = cursors.get(source_key) == encoded
+        cursors[source_key] = encoded
+        if not duplicate:
+            events.append((name, payload, source_key, watermark, kwargs))
+        return {"duplicate": duplicate}
+
+    monkeypatch.setattr(sweep, "raise_event", dedup)
+    assert sweep.main() == 0
+    assert sweep.main() == 0
+    opened = [event for event in events if event[0] == "pr.opened"]
+    assert len(opened) == 1
+    assert opened[0][2] == "github:owner/repo:pr:41:opened"
+    assert opened[0][3] == {"opened_at": "2026-09-02T08:00:00Z"}
+    assert opened[0][4]["subject"] == "SCRUM-41"
+    capsys.readouterr()
+
+
 def test_merged_pr_fact_uses_branch_then_body_ticket_key():
     branch = sweep.merged_pr_fact(
         {

@@ -172,7 +172,9 @@ type Server struct {
 	// doc's "Logging" section. Set unconditionally in NewServer, so a
 	// Server built through it never has a nil logger; WithLogger replaces
 	// it.
-	log *slog.Logger
+	log               *slog.Logger
+	principalVerifier principalVerifier
+	jiraWebhook       jiraWebhookConfig
 }
 
 // Option configures a Server.
@@ -313,6 +315,13 @@ func WithEventTokenSecret(secret string) Option {
 	}
 }
 
+// WithJiraWebhook configures the loopback-only Jira system webhook wake-up.
+func WithJiraWebhook(secret, token, apiBase, site, project, email, apiToken, botAccountID string) Option {
+	return func(s *Server) {
+		s.jiraWebhook = jiraWebhookConfig{secret: []byte(secret), token: []byte(token), apiBase: apiBase, site: site, project: project, email: email, apiToken: apiToken, botAccountID: botAccountID}
+	}
+}
+
 // WithAdhocRunSecret configures the bearer secret POST /v1alpha1/adhoc-runs
 // requires (see requireAdhocRunAuth in adhoc.go). Omitting it (or passing
 // "") leaves every ad-hoc run refused with 401 rather than
@@ -447,6 +456,10 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 // (see errors.go); streamRunEvents manages its own response lifecycle
 // because it writes a streaming body rather than one JSON document.
 func (s *Server) Handler() http.Handler {
+	return s.principalMiddleware(false, s.routes())
+}
+
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /v1alpha1/workflows/validate", s.wrap(s.handleValidateWorkflow))
@@ -541,6 +554,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/version", s.wrap(s.handleVersion))
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
+	mux.HandleFunc("GET /v1alpha1/whoami", s.wrap(s.handleWhoami))
 
 	// The actor callback surface (PRD §13.1's callback.url, §13.4's event
 	// ingest) is not part of the nodes.culture.dev/v1alpha1 group above: it
@@ -578,6 +592,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /", spaHandler(s.webAssets))
 	}
 
+	return mux
+}
+
+func (s *Server) accessRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1alpha1/webhooks/jira", s.wrap(s.handleJiraWebhook))
+	mux.Handle("/", s.routes())
 	return mux
 }
 

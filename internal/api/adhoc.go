@@ -197,6 +197,9 @@ func adhocWorkflowName(actorRef string) string {
 // auth-hardening gate (spec c27) requires every mutating surface this batch
 // added to refuse unauthenticated requests.
 func (s *Server) requireAdhocRunAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.adhocRunSecret) == 0 {
 		return unauthorized(
 			"configure the server with an ad-hoc run secret (NODES_ADHOC_RUN_TOKEN_SECRET) to enable ad-hoc runs",

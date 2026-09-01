@@ -77,6 +77,9 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 			"send a JSON body matching DecideHumanTaskRequest: {outcome, decider_actor_id, expected_ledger_version}",
 			"decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.DeciderActorID, warning = principalActor(r, "decider_actor_id", req.DeciderActorID)
 	if req.Outcome == "" {
 		return badRequest("outcome is required", "outcome must not be empty")
 	}
@@ -95,7 +98,7 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 	if err != nil {
 		return classify(err)
 	}
-	writeJSON(w, http.StatusOK, humanTaskDecisionResultOut(id, result))
+	writeJSONWithWarning(w, http.StatusOK, humanTaskDecisionResultOut(id, result), warning)
 	return nil
 }
 
@@ -113,6 +116,9 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 // a human decide a proposed claim. All three write human-authority records
 // into the ledger on whoever presents the token.
 func (s *Server) requireDecisionAuth(r *http.Request) error {
+	if _, ok := PrincipalFromContext(r.Context()); ok {
+		return nil
+	}
 	if len(s.decisionAuthSecret) == 0 {
 		return unauthorized(
 			"configure the server with a decision auth secret (NODES_HUMAN_DECISION_TOKEN_SECRET) to enable human decisions",

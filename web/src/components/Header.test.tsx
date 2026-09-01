@@ -3,15 +3,24 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import Header from "./Header";
-import { getVersion } from "../api/client";
-import type { Version } from "../api/types";
+import { ApiError, getVersion, getWhoami } from "../api/client";
+import type { Version, Whoami } from "../api/types";
+import {
+  WHOAMI_BOUND,
+  WHOAMI_EMAIL,
+  WHOAMI_SERVICE_TOKEN,
+  WHOAMI_UNBOUND,
+  WHOAMI_UNBOUND_EMAIL,
+} from "../fixtures/whoami-fixture";
+import { resetWhoamiForTests } from "../hooks/useWhoami";
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, getVersion: vi.fn() };
+  return { ...actual, getVersion: vi.fn(), getWhoami: vi.fn() };
 });
 
 const mockGetVersion = vi.mocked(getVersion);
+const mockGetWhoami = vi.mocked(getWhoami);
 
 const STAMPED: Version = {
   version: "0.42.0",
@@ -27,10 +36,15 @@ beforeEach(() => {
   // those tests exercise the nav and nothing else; the version tests below
   // resolve it explicitly.
   mockGetVersion.mockReturnValue(new Promise<Version>(() => {}));
+  // Likewise the identity readout (task t9): default to never settling; the
+  // identity tests below resolve it explicitly.
+  resetWhoamiForTests();
+  mockGetWhoami.mockReturnValue(new Promise<Whoami>(() => {}));
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  resetWhoamiForTests();
 });
 
 /**
@@ -208,6 +222,68 @@ describe("Header docs link and version readout (task t27)", () => {
     await waitFor(() =>
       expect(screen.getByText("version unavailable")).toBeInTheDocument(),
     );
+  });
+});
+
+/**
+ * The signed-in readout (task t9, spec c8): the header renders who the
+ * Cloudflare edge says is here, read from `GET /v1alpha1/whoami`. There is
+ * no login form and no token field anywhere — Access is the login.
+ */
+describe("Header signed-in readout (task t9)", () => {
+  it("says who is signed in, by email, for a bound Access login", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
+    renderHeader();
+    await waitFor(() =>
+      expect(document.getElementById("app-header-identity")).toHaveTextContent(
+        `signed in as ${WHOAMI_EMAIL}`,
+      ),
+    );
+    expect(document.getElementById("app-header-identity")).toHaveAttribute(
+      "data-identity-status",
+      "bound",
+    );
+  });
+
+  it("names a service token by its common_name when there is no email", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_SERVICE_TOKEN);
+    renderHeader();
+    await waitFor(() =>
+      expect(document.getElementById("app-header-identity")).toHaveTextContent(
+        "signed in as ops-cli",
+      ),
+    );
+  });
+
+  it("marks an unbound login as such rather than presenting it as signed in", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_UNBOUND);
+    renderHeader();
+    await waitFor(() =>
+      expect(document.getElementById("app-header-identity")).toHaveAttribute(
+        "data-identity-status",
+        "unbound",
+      ),
+    );
+    expect(document.getElementById("app-header-identity")).toHaveTextContent(
+      WHOAMI_UNBOUND_EMAIL,
+    );
+    expect(document.getElementById("app-header-identity")).toHaveTextContent(
+      /no actor bound/,
+    );
+  });
+
+  it("says not signed in on a 401, and offers no token field or login form", async () => {
+    mockGetWhoami.mockRejectedValue(
+      new ApiError(401, "request refused", "authenticate with a bound principal"),
+    );
+    renderHeader();
+    await waitFor(() =>
+      expect(document.getElementById("app-header-identity")).toHaveTextContent(
+        "not signed in",
+      ),
+    );
+    expect(screen.queryByLabelText(/token/i)).toBeNull();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
   });
 });
 

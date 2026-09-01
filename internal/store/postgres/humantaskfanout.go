@@ -119,6 +119,7 @@ FROM human_tasks ht
 JOIN runs r ON r.id = ht.run_id AND r.namespace_id = ht.namespace_id
 WHERE ht.namespace_id = $1
   AND ht.status = $2
+  AND ht.kind <> 'ticket_done' -- t15: the Ticket done? task is raised BY the merge; it must never be expired by it
   AND r.input->>'source' = 'github_pr'
   AND EXISTS (
     SELECT 1 FROM signal_events se
@@ -158,6 +159,7 @@ SELECT DISTINCT ht.namespace_id
 FROM human_tasks ht
 JOIN runs r ON r.id = ht.run_id AND r.namespace_id = ht.namespace_id
 WHERE ht.status = $1
+  AND ht.kind <> 'ticket_done' -- t15: the Ticket done? task is raised BY the merge; it must never be expired by it
   AND r.input->>'source' = 'github_pr'
   AND EXISTS (
     SELECT 1 FROM signal_events se

@@ -38,7 +38,55 @@ The net effect is exactly the old contract plus the one thing #268 wanted:
 
 from __future__ import annotations
 
+import re
 import urllib.parse
+
+_ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
+
+
+def _correlated_issue_key(pull: dict, jira_project: str | None = None) -> str | None:
+    head = (pull.get("head") or {}).get("ref") or ""
+    pattern = _ISSUE_KEY_RE
+    if jira_project:
+        pattern = re.compile(r"(?<![A-Z0-9])(" + re.escape(jira_project) + r"-\d+)(?![A-Z0-9])")
+    match = pattern.search(head) or pattern.search(pull.get("body") or "")
+    return match.group(1) if match else None
+
+
+def opened_pr_fact(pull: dict, repository: str, jira_project: str | None = None) -> dict | None:
+    """Build the once-per-PR board fact for a correlatable open PR."""
+    if pull.get("state") not in (None, "open"):
+        return None
+    issue_key = _correlated_issue_key(pull, jira_project)
+    opened_at = pull.get("created_at")
+    if not issue_key or not opened_at:
+        return None
+    return {
+        "source": "github_pr",
+        "repository": repository,
+        "number": pull.get("number"),
+        "url": pull.get("html_url") or "",
+        "opened_at": opened_at,
+        "issue_key": issue_key,
+    }
+
+
+def merged_pr_fact(pull: dict, repository: str, jira_project: str | None = None) -> dict | None:
+    """Build the freeze fact, correlating by head branch first, then body."""
+    if not pull.get("merged_at"):
+        return None
+    issue_key = _correlated_issue_key(pull, jira_project)
+    if not issue_key:
+        return None
+    return {
+        "source": "github_pr",
+        "repository": repository,
+        "number": pull.get("number"),
+        "url": pull.get("html_url") or "",
+        "merged_at": pull["merged_at"],
+        "issue_key": issue_key,
+    }
+
 
 #: The workflow whose runs the dedupe consults, one page and at most how many
 #: pages of it. The control plane's run listing is cursor-paginated and

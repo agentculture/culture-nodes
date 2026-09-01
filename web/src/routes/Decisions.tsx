@@ -11,18 +11,13 @@ import {
   listHumanTasks,
   listPendingDecisions,
 } from "../api/client";
-import {
-  clearDecisionToken,
-  getDecisionToken,
-  setDecisionActorID,
-  setDecisionToken,
-} from "../api/decision-token";
 import type { HumanTask, PendingDecisionRun, ReviewCommitResult } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
-import DeciderActorField, { useDeciderActorID } from "../components/DeciderActorField";
 import ErrorNotice from "../components/ErrorNotice";
+import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import { useWhoami } from "../hooks/useWhoami";
 
 /**
  * Events that can change what is awaiting a decision: a new record appended,
@@ -54,10 +49,12 @@ const REFRESH_DEBOUNCE_MS = 4000;
  *   - The rationale is required by the form, as it is by the API. A
  *     confirmation with no stated reason cannot be told apart from an unread
  *     one.
- *   - The reviewer is typed in, never inferred. The token authenticates the
- *     deployment, not the person; who decided is a separate, explicit claim,
+ *   - The reviewer is the signed-in principal's actor, never typed (task
+ *     t9, spec c8). Until then the token authenticated the deployment and
+ *     the page asked for a reviewer id in free text; now Cloudflare Access
+ *     verifies the person, `useWhoami` says which actor they are bound to,
  *     and the API refuses any reviewer the registry does not record as a
- *     human.
+ *     human — a login bound to an agent actor still cannot confirm.
  *   - The record payload is rendered in full. A decider must read the claim,
  *     including the qualifying half of it — the same reason the operator's
  *     ledger output stopped truncating.
@@ -138,8 +135,7 @@ function PendingDecisionsView() {
   const [versions, setVersions] = useState<Record<string, number>>({});
   const [tickets, setTickets] = useState<Record<string, string>>({});
   const [page, setPage] = useState(0);
-  const [actorID, setActorID] = useDeciderActorID();
-  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const whoami = useWhoami();
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -213,21 +209,20 @@ function PendingDecisionsView() {
     const runID = item.type === "task" ? item.task.run_id : item.group.run_id;
     grouped.set(runID, [...(grouped.get(runID) ?? []), item]);
   }
-  const token = tokenHeld ? getDecisionToken() : null;
+  const actorId = whoami.status === "bound" ? whoami.actorId : null;
 
   async function choose(task: HumanTask, outcome: string) {
     const ledgerVersion = versions[task.run_id];
-    if (!token || !actorID.trim() || ledgerVersion === undefined) return;
-    setDecisionActorID(actorID.trim());
+    if (actorId === null || ledgerVersion === undefined) return;
     setSubmitting(task.id);
     setError(null);
     try {
       await decideHumanTask(task.id, {
         outcome,
-        decider_actor_id: actorID.trim(),
+        decider_actor_id: actorId,
         response: task.request.decision_schema_ref ? { outcome } : undefined,
         expected_ledger_version: ledgerVersion,
-      }, token);
+      });
       setTasks((current) => current?.filter((item) => item.id !== task.id) ?? []);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
@@ -239,8 +234,7 @@ function PendingDecisionsView() {
   return (
     <section className="view-rail decisions-view">
       <h1>Pending decisions</h1>
-      <TokenPanel held={tokenHeld} onHold={(value) => { setDecisionToken(value); setTokenHeld(true); }} onClear={() => { clearDecisionToken(); setTokenHeld(false); }} />
-      <DeciderActorField id="pending-decider-actor" value={actorID} onChange={setActorID} />
+      <SignedInAs verb="Deciding" whoami={whoami} />
       {error ? <ErrorNotice error={error} /> : null}
       {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
         <>
@@ -255,7 +249,7 @@ function PendingDecisionsView() {
                     <OutcomeButtons
                       taskId={item.task.id}
                       outcomes={item.task.request.allowed_outcomes ?? []}
-                      disabled={!token || !actorID.trim() || versions[item.task.run_id] === undefined}
+                      disabled={actorId === null || versions[item.task.run_id] === undefined}
                       busy={submitting === item.task.id}
                       onChoose={(outcome) => void choose(item.task, outcome)}
                     />
@@ -308,7 +302,7 @@ function ProposedClaimsView() {
   // indistinguishable from the click having done nothing.
   const [recorded, setRecorded] = useState<RecordedDecision[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
-  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const whoami = useWhoami();
   const [reloadKey, setReloadKey] = useState(0);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastReload = useRef(0);
@@ -360,7 +354,7 @@ function ProposedClaimsView() {
     return () => controller.abort();
   }, [reloadKey]);
 
-  const token = tokenHeld ? getDecisionToken() : null;
+  const actorId = whoami.status === "bound" ? whoami.actorId : null;
 
   return (
     <section className="view-rail decisions-view">
@@ -371,17 +365,7 @@ function ProposedClaimsView() {
         recorded as its own ledger record naming who decided and why.
       </p>
 
-      <TokenPanel
-        held={tokenHeld}
-        onHold={(value) => {
-          setDecisionToken(value);
-          setTokenHeld(true);
-        }}
-        onClear={() => {
-          clearDecisionToken();
-          setTokenHeld(false);
-        }}
-      />
+      <SignedInAs verb="Reviewing" whoami={whoami} />
 
       {error ? <ErrorNotice error={error} /> : null}
 
@@ -419,7 +403,7 @@ function ProposedClaimsView() {
               <RunDecisionCard
                 key={group.run_id}
                 group={group}
-                token={token}
+                actorId={actorId}
                 onDecided={(entry) => {
                   setRecorded((current) => [entry, ...current]);
                   setReloadKey((key) => key + 1);
@@ -430,67 +414,6 @@ function ProposedClaimsView() {
         </>
       )}
     </section>
-  );
-}
-
-/**
- * Token entry, indicator, and clear affordance — the same contract the Inbox
- * states (risk r1, api/decision-token.ts): the input is `type="password"`,
- * its draft is dropped the moment the token is held, and the held value is
- * never rendered back into the page.
- */
-function TokenPanel({
-  held,
-  onHold,
-  onClear,
-}: {
-  held: boolean;
-  onHold: (token: string) => void;
-  onClear: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-  return (
-    <div className="inbox-token" id="decisions-token">
-      <div className="inbox-token__entry">
-        <label htmlFor="decision-token-input">Decision token</label>
-        <input
-          id="decision-token-input"
-          type="password"
-          autoComplete="off"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button
-          type="button"
-          className="author-workflow__button"
-          disabled={draft === ""}
-          onClick={() => {
-            onHold(draft);
-            setDraft("");
-          }}
-        >
-          Hold token
-        </button>
-        {held ? (
-          <button
-            type="button"
-            className="author-workflow__button"
-            onClick={onClear}
-          >
-            Clear token
-          </button>
-        ) : null}
-      </div>
-      <p
-        className="inbox-token__state muted"
-        id="decision-token-state"
-        data-token-held={held}
-      >
-        {held
-          ? "token held — this tab only; cleared when the tab closes"
-          : "no token held — decisions are disabled until one is entered"}
-      </p>
-    </div>
   );
 }
 
@@ -514,34 +437,33 @@ interface RecordedDecision {
  */
 function RunDecisionCard({
   group,
-  token,
+  actorId,
   onDecided,
 }: {
   group: PendingDecisionRun;
-  token: string | null;
+  /** The signed-in principal's actor, or null when nothing can be recorded. */
+  actorId: string | null;
   onDecided: (entry: RecordedDecision) => void;
 }) {
   const [selected, setSelected] = useState<string[]>(() =>
     group.records.map((record) => record.id),
   );
   const [verdict, setVerdict] = useState<"confirm" | "reject">("confirm");
-  const [reviewer, setReviewer] = useState("");
   const [rationale, setRationale] = useState("");
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [result, setResult] = useState<ReviewCommitResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const canSubmit =
-    token !== null &&
+    actorId !== null &&
     !submitting &&
     result === null &&
     selected.length > 0 &&
-    reviewer.trim() !== "" &&
     rationale.trim() !== "";
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit || token === null) return;
+    if (!canSubmit || actorId === null) return;
 
     setSubmitError(null);
     setSubmitting(true);
@@ -551,27 +473,19 @@ function RunDecisionCard({
       // run moved since the list loaded, the API refuses the commit with a
       // 409 and writes nothing, which is the correct outcome — the frame
       // this operator read is no longer the frame they would be deciding.
-      const review = await createReview(
-        group.run_id,
-        {
-          record_ids: selected,
-          ledger_version: group.ledger_version,
-          reviewer_actor_id: reviewer.trim(),
-        },
-        token,
-      );
+      const review = await createReview(group.run_id, {
+        record_ids: selected,
+        ledger_version: group.ledger_version,
+        reviewer_actor_id: actorId,
+      });
       const decisions: Record<string, "confirm" | "reject"> = {};
       for (const id of selected) decisions[id] = verdict;
 
-      const committed = await commitReview(
-        review.id,
-        {
-          decisions,
-          expected_ledger_version: group.ledger_version,
-          rationale: rationale.trim(),
-        },
-        token,
-      );
+      const committed = await commitReview(review.id, {
+        decisions,
+        expected_ledger_version: group.ledger_version,
+        rationale: rationale.trim(),
+      });
       setResult(committed);
       onDecided({
         reviewId: committed.review_id,
@@ -657,17 +571,6 @@ function RunDecisionCard({
               reject
             </label>
           </fieldset>
-          <div className="inbox-card__field">
-            <label htmlFor={`reviewer-${group.run_id}`}>
-              Reviewer actor id
-            </label>
-            <input
-              id={`reviewer-${group.run_id}`}
-              type="text"
-              value={reviewer}
-              onChange={(event) => setReviewer(event.target.value)}
-            />
-          </div>
           <div className="inbox-card__field">
             <label htmlFor={`rationale-${group.run_id}`}>
               Why (recorded on the decision)

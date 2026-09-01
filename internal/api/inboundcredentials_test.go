@@ -169,6 +169,47 @@ func TestIssueInboundCredentialRevealsOnceAndNeverStoresOrLogsIt(t *testing.T) {
 	}
 }
 
+func TestDialInCompletionRefusesLedgerOriginDifferentFromCredentialActor(t *testing.T) {
+	f := newIssuanceFixture(t)
+	actorKey := "test/bound-dialin-" + store.NewULID()
+	authenticatedActor := store.NewULID()
+	otherActor := store.NewULID()
+	for id, key := range map[string]string{authenticatedActor: actorKey, otherActor: "test/other-" + store.NewULID()} {
+		if _, err := f.store.Pool().Exec(context.Background(), `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol) VALUES($1,$2,$3,1,'agent','http')`, id, f.nsID, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	issued := f.issue(actorKey)
+	credential := issued["credential"].(string)
+	envelopeID := store.NewULID()
+	if _, err := f.store.Pool().Exec(context.Background(), `INSERT INTO inbound_actor_mailbox(id,namespace_id,actor_key,attempt_id,request) VALUES($1,$2,$3,$4,'{}')`, envelopeID, f.nsID, actorKey, "attempt-"+envelopeID); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"status":200,"body":{"outcome":"completed","output":{},"ledger_delta":{"records":[{"record_type":"claim","origin":{"kind":"agent","actor_id":"` + otherActor + `"},"authority":"proposed","data":{}}]}}}`
+	req, err := http.NewRequest(http.MethodPost, f.url("/v1alpha1/inbound/"+envelopeID+"/complete"), strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
+	req.Header.Set("X-Culture-Nodes-Actor-Key", actorKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+	var status int
+	var diagnostic string
+	if err := f.store.Pool().QueryRow(context.Background(), `SELECT response_status,response::text FROM inbound_actor_mailbox WHERE id=$1`, envelopeID).Scan(&status, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusUnprocessableEntity || !strings.Contains(diagnostic, otherActor) || !strings.Contains(diagnostic, authenticatedActor) {
+		t.Fatalf("stored refusal = status %d diagnostic %s", status, diagnostic)
+	}
+}
+
 // TestIssueInboundCredentialRefusesAnOperatorSuppliedValue is acceptance
 // criterion 1's refusal: a caller cannot register a credential it invented,
 // under any of the names it might reach for.

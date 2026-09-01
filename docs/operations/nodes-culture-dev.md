@@ -33,14 +33,13 @@ Two listeners, on purpose (spec c43 / finding s35):
 | `127.0.0.1:18081` on thor (loopback) | only `cloudflared` on the same host, i.e. traffic that came through Cloudflare Access | yes — this is the only place an Access JWT means anything |
 | `0.0.0.0:18080` on thor (LAN, published by `compose.thor.yml` as `18080:8080`) | the sweep, both workers, the bridges, and anyone on the LAN/tailnet | no — a JWT captured on the plaintext LAN cannot be replayed here |
 
-The loopback port is **introduced by task t8** as `NODES_ACCESS_LISTEN`. This
-document fixes its value: **t8 must bind `127.0.0.1:18081`** on thor — the
-control plane listens on a second port inside the container and
-`compose.thor.yml` publishes it as `127.0.0.1:18081:<container port>` (a
-loopback-only publish, never `18081:<port>`, which would put it on every
-interface). Until t8 lands, the tunnel's origin is a closed port and
-`https://nodes.culture.dev` answers with a Cloudflare 502 — that is the
-expected state of a half-deployed cycle, not a tunnel fault.
+The loopback port is configured by task t8 with
+`NODES_ACCESS_LISTEN=127.0.0.1:8081` inside the API container.
+`compose.thor.yml` publishes it as `127.0.0.1:18081:8081` (a loopback-only
+publish, never `18081:8081`, which would put it on every interface). Set
+`NODES_ACCESS_TEAM_DOMAIN` and `NODES_ACCESS_AUD` in the same `prod.env`
+change; the server refuses a partial three-variable tuple, while all three
+unset leaves the Access feature off and preserves the LAN-only behaviour.
 
 TLS terminates at Cloudflare's edge. Nothing here adds `ListenAndServeTLS`,
 certificates or a reverse proxy to `cmd/nodes/serve.go` (spec c26).
@@ -258,6 +257,37 @@ ss -ltn '( sport = :18081 )'                                  # 127.0.0.1:18081 
 The last line is the c43 property in one command: if `18081` is ever bound
 on anything but loopback, the JWT-replay split is gone.
 
+## Jira system webhook and path-scoped Access Bypass
+
+Task t16 claims spec c42 and c51 and satisfies honesty conditions h14 and
+h37: the push is explicitly only a wake-up, and the five-minute reconciler is
+not removed before sustained production evidence exists.
+
+Create a second Cloudflare Access policy on the existing application with
+**Action: Bypass**, **Include: Everyone**, and restrict it to the path
+`/v1alpha1/webhooks/jira`. Do not widen the path: the API mounts this receiver
+only on `NODES_ACCESS_LISTEN`; the LAN `NODES_LISTEN` listener answers 404.
+The receiver independently authenticates every delivery with either Jira's
+`X-Hub-Signature` HMAC and `NODES_JIRA_WEBHOOK_SECRET`, or the URL token and
+`NODES_JIRA_WEBHOOK_TOKEN`. With neither configured it stays closed (401).
+
+In Jira open **Settings → System → WebHooks**, register:
+
+- URL: `https://nodes.culture.dev/v1alpha1/webhooks/jira?token=...`
+- events: issue created, updated, and deleted; comment created and updated
+- JQL: `project = SCRUM`
+- secret: `NODES_JIRA_WEBHOOK_SECRET`, if this Jira tenant offers webhook
+  secrets (the signature takes precedence over the URL token).
+
+This is a wake-up, not an event authority: the control plane re-reads the
+issue changelog and comments with `JIRA_ACCOUNT_EMAIL` and `JIRA_API_TOKEN`
+(`JIRA_API_BASE` overrides `https://<JIRA_SITE>`), then replays the same facts
+and cumulative watermarks as the PR-upkeep sweep. Decision c51 remains: use no
+Jira Automation rules. Keep the sweep at five minutes as reconciliation until
+one full week of push runs is green; only then make a separate scheduling
+decision. Applying the Bypass policy and registering the Jira webhook are
+operator hand-turns and must be recorded on the cycle issue.
+
 ## Hand-turn ledger for this document
 
 Each of these is a manual operator step and gets an issue, or a comment on
@@ -278,6 +308,9 @@ the cycle's issue, when it is applied:
 7. `remove-secret.sh NODES_UI_BASE_URL` on thor and orin, re-run
    `install-secrets.sh`, redeploy (step 5).
 8. Run the verification pair of `curl`s and paste both bodies on the issue.
+9. Add the path-scoped Access Bypass policy for the Jira receiver.
+10. Register and test the Jira system webhook and record which authentication
+    mode the tenant supplies.
 
 Adding a person later is a further hand-turn on the Access policy (one of
 c46's three places) and is counted the same way.

@@ -204,6 +204,13 @@ gap in the sweep):
   answer comment. The watermark position is unfiltered, so it already sits
   past the actor's own comment once a real reply lands.
 
+The GitHub lifecycle vocabulary is separate. A correlatable open PR raises
+`pr.opened` with `source=github_pr`, repository, number, URL, `opened_at`, and
+`issue_key`; its immutable opening timestamp is the durable once-per-PR
+watermark. A correlatable merge raises `pr.merged` with the same identity and
+`merged_at`. Both correlations prefer the head branch and then the body, and
+when `jira_project` is configured they accept only that project's keys.
+
 ## Dedupe by finding id (spec c7/h6)
 
 The watermark answers *did this PR move* — head SHA plus newest comment

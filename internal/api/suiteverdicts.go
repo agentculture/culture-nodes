@@ -103,6 +103,9 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 			"send a JSON body matching CreateSuiteVerdictRequest: {suite, exit_code, commit_sha, validator_actor_id}",
 			"decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.ValidatorActorID, warning = principalActor(r, "validator_actor_id", req.ValidatorActorID)
 	if req.ExitCode == nil {
 		return badRequest(
 			"send the suite's exit_code explicitly; an omitted one is not a passing one",
@@ -176,10 +179,10 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 	// bound is counted over.
 	routing, routingErr := s.routeGateFailure(ctx, id, appended, req, records, measured)
 
-	writeJSON(w, http.StatusCreated, suiteVerdictResult{
+	writeJSONWithWarning(w, http.StatusCreated, suiteVerdictResult{
 		Verdict:      appended,
 		Routing:      routing,
 		RoutingError: routingErr,
-	})
+	}, warning)
 	return nil
 }

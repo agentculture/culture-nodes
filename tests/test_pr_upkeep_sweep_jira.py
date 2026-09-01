@@ -450,6 +450,31 @@ class TestJiraSelfEcho:
         assert jira.jira_comment_is_self_echo(comments, "") is False
         assert jira.jira_comment_is_self_echo(comments, None) is False
 
+    @pytest.mark.parametrize("status", ["In Review", "Done"])
+    def test_engine_board_moves_authored_by_bot_are_transition_self_echoes(self, status):
+        issue = {
+            "key": "SCRUM-15",
+            "fields": {
+                "created": "2026-09-02T08:00:00Z",
+                "status": {"name": status},
+                "comment": {"comments": []},
+            },
+            "changelog": {
+                "histories": [
+                    {
+                        "id": "50001",
+                        "created": "2026-09-02T08:01:00Z",
+                        "author": {"accountId": "bot-1"},
+                        "items": [{"field": "status", "toString": status}],
+                    }
+                ]
+            },
+        }
+
+        facts = jira.jira_history_facts(issue, "bot-1")
+
+        assert all(fact[1].get("changelog_id") != "50001" for fact in facts)
+
     def test_actor_marker_filters_self_echo_when_bot_identity_is_unconfigured(self):
         comments = [
             {

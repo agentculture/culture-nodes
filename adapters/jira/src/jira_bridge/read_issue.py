@@ -10,6 +10,8 @@ from base64 import b64encode
 from dataclasses import dataclass
 from typing import Any
 
+from .rest import api_root
+
 VERB = "read_issue"
 DESCRIPTION_MAX_CHARS = 4000
 _ISSUE = re.compile(r"^[A-Z][A-Z0-9_]*-[1-9][0-9]*$")
@@ -123,14 +125,13 @@ def read(
     token: str,
     *,
     opener=urllib.request.urlopen,
+    api_base: str = "",
 ) -> ReadResult:
-    if not site or "/" in site or ":" in site:
+    root = api_root(site, api_base)
+    if root is None:
         return ReadResult(False, 0, error="JIRA_SITE must be a host name")
     auth = b64encode(f"{email}:{token}".encode()).decode("ascii")
-    url = (
-        f"https://{site}/rest/api/3/issue/{request.issue}"
-        f"?fields={_FIELDS}&expand=renderedFields"
-    )
+    url = f"{root}/rest/api/3/issue/{request.issue}?fields={_FIELDS}&expand=renderedFields"
     req = urllib.request.Request(
         url,
         headers={

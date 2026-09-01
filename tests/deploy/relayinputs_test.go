@@ -117,17 +117,23 @@ func relayingScripts(t *testing.T) []string {
 	}
 }
 
-// envDefaultExpansion matches the ONE idiom these scripts use to read a value
-// that may come from outside: `${NAME:-...}`, `${NAME-...}`, `${NAME:=...}`.
+// envDefaultExpansion matches the idioms these scripts use to read a value
+// that may come from outside: `${NAME:-...}`, `${NAME-...}`, `${NAME:=...}`,
+// and the alternate form `${NAME+...}`.
 //
-// That idiom is the whole definition, and deliberately so. All three scripts
-// run under `set -u`, so a name that could come from the environment MUST
-// carry a default or the script aborts on an unset one -- which makes the
-// defaulted names an exhaustive list rather than a heuristic. Matching bare
-// `$NAME` instead would sweep in every variable the scripts assign themselves
+// Those idioms are the whole definition, and deliberately so. All three
+// scripts run under `set -u`, so a name that could come from the environment
+// MUST carry one of them or the script aborts on an unset one -- which makes
+// the list exhaustive rather than heuristic. Matching bare `$NAME` instead
+// would sweep in every variable the scripts assign themselves
 // (`POSTGRES_PASSWORD=$(gen)` and its five siblings), and those are minted
 // here, not relayed.
-var envDefaultExpansion = regexp.MustCompile(`\$\{([A-Z][A-Z0-9_]*):?[-=]`)
+//
+// `+` joined the set at task t21: the Jira lane has to tell an UNSET
+// JIRA_API_BASE (leave the host's alone) from a SET-and-empty one (clear it),
+// which `:-` cannot express. A guard that only knew `:-` would have let that
+// read past unclassified -- silently, since `set -u` is satisfied either way.
+var envDefaultExpansion = regexp.MustCompile(`\$\{([A-Z][A-Z0-9_]*):?[-=+]`)
 
 // environmentDerivedNames returns every name *path* can only obtain from the
 // environment that invoked it.
@@ -176,6 +182,7 @@ var nonCredentialKnobs = map[string]string{
 	"CLAUDE_PUSH_ACTOR_KEY":     "actor key whose registered host receives the push credential",
 	"HUMAN_INBOX_ACTOR_KEY":     "actor key whose registered host receives the human-inbox secret",
 	"HUMAN_INBOX_HOST":          "bootstrap override for the human-inbox host, before an actor row exists",
+	"JIRA_API_BASE":             "REST base the Jira credential authenticates at (the Atlassian gateway for a scoped service-account token); it decides WHERE the pair is sent and is a published address, never a secret",
 	"NODES_API_URL":             "control-plane base URL the actor registry is read from",
 	"NODES_UI_BASE_URL":         "origin the ticket page is served from; it is written INTO prod.env and is a published address by construction — every Jira reader of a page-link comment sees it",
 	"NODES_API_TIMEOUT_SECONDS": "how long an actor-registry read may take",

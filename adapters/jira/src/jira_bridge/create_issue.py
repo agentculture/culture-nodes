@@ -18,6 +18,8 @@ from base64 import b64encode
 from dataclasses import dataclass
 from typing import Any
 
+from .rest import api_root
+
 VERB = "create_issue"
 _PROJECT = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
@@ -98,8 +100,10 @@ def create(
     token: str,
     *,
     opener=urllib.request.urlopen,
+    api_base: str = "",
 ) -> CreateResult:
-    if not site or "/" in site or ":" in site:
+    root = api_root(site, api_base)
+    if root is None:
         return CreateResult(False, 0, error="JIRA_SITE must be a host name")
     auth = b64encode(f"{email}:{token}".encode()).decode("ascii")
     fields: dict[str, Any] = {
@@ -110,7 +114,7 @@ def create(
     if issue.description:
         fields["description"] = _adf(issue.description)
     req = urllib.request.Request(
-        f"https://{site}/rest/api/3/issue",
+        f"{root}/rest/api/3/issue",
         data=json.dumps({"fields": fields}).encode(),
         headers={
             "Authorization": f"Basic {auth}",

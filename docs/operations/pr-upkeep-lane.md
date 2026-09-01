@@ -140,7 +140,7 @@ whose sha256 does not match:
 | File | Owns |
 | --- | --- |
 | `examples/pr-upkeep/sweep.py` | sweeping: which repo, which PRs, which findings, naming the stage a failure happened at — and it is the **sole** writer to the control plane |
-| `examples/pr-upkeep/pr_upkeep_jira.py` | the Jira surface: what a Jira fact *is* (`jira_emissions`), its cursor position and watermark, self-echo, and the granted Basic-auth pair (`jira_credentials`) |
+| `examples/pr-upkeep/pr_upkeep_jira.py` | the Jira surface: what a Jira fact *is* (`jira_emissions`), its cursor position and watermark, self-echo, the granted Basic-auth pair (`jira_credentials`), and the granted REST base those two authenticate at (`jira_api_base` — a scoped service-account token is accepted only at the Atlassian gateway; browse links stay on the site host) |
 | `examples/pr-upkeep/pr_upkeep_emit.py` | what goes out this tick: both dedupe clauses (`dispatched_finding_ids`, `undispatched_findings`) and the cursor a fact is emitted under (`emission_watermark`). Pure — no credential, no socket; the sweep hands it the run listing |
 
 That split is enforced, not merely intended: `tests/test_pr_upkeep_sweep_jira.py`
@@ -153,9 +153,20 @@ be on disk in production.
 
 The recipe for a sweep change:
 
-1. Edit the file that owns the concern. `sweep.py` runs close to the repo's
-   1000-line hard limit (`tests/lint`), so a change that does not fit is
-   telling you a concern belongs in a module of its own — that is how
+1. Edit the file that owns the concern. A change that reads a NEW granted
+   environment value is the same shape of change as a new sibling file, and
+   costs the same four edits: the name in `ALLOWED_ENVIRONMENT_READS`
+   (`tests/test_pr_upkeep_sweep_config.py` holds an exact set, not a subset),
+   `environmentRefs` in `sweep-cycle.workflow.yaml`, the README's grant table,
+   and whichever deploy lane writes it — `install-secrets.sh` for anything
+   sitting in `runner-secrets.env`. The runner boundary refuses an operation
+   by NAME before it runs, so a granted name the deployment does not carry
+   fails every sweep in 1ms rather than degrading. `JIRA_API_BASE` (task t21)
+   is the worked example.
+
+   `sweep.py` runs close to the repo's 1000-line hard limit
+   (`tests/lint`), so a change that does not fit is telling you a concern
+   belongs in a module of its own — that is how
    `pr_upkeep_jira.py` got `jira_emissions` and `pr_upkeep_emit.py` got the
    dedupe. A new sibling needs its URL + digest pair in
    `deploy/prod/lanes/runner-env-write.sh`, the bootstrap's source list and

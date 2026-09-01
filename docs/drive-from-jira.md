@@ -24,6 +24,24 @@ Two things to know before anything else:
   question"](#answering-a-question-do-it-on-the-page) section below is the
   whole of it.
 
+  Where that account is a **Jira Cloud service account with a scoped API
+  token**, one deployment detail follows and there is no way around it: a
+  scoped token is accepted only at the Atlassian **gateway** base,
+  `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/...`. The site URL
+  answers `401` for it. So the deployment grants `JIRA_API_BASE` alongside the
+  account email and token — for the sweep, for the Jira bridge actor's four
+  verbs, and for the operator skills — and every REST call is built from it.
+  Read the cloud id off the site itself:
+
+  ```sh
+  curl -s https://<your-site>.atlassian.net/_edge/tenant_info
+  ```
+
+  Nothing you see as a person changes. **Browse links always use the site
+  host** — `https://<your-site>.atlassian.net/browse/SCRUM-5` — in ticket
+  back-links, page-link comments and the report. The gateway serves the API;
+  it never serves the board.
+
 ## What a ticket must contain
 
 | Field | Needed? | What culture-nodes does with it |

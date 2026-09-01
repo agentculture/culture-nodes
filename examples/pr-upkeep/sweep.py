@@ -56,7 +56,7 @@ from pr_upkeep_emit import (
     runs_query,
     undispatched_findings,
 )
-from pr_upkeep_jira import fetch_jira_issues, jira_credentials, jira_emissions
+from pr_upkeep_jira import fetch_jira_issues, jira_api_base, jira_credentials, jira_emissions
 
 # The blast radius used to be one repo pinned in this module. That narrowing
 # existed because fetch_open_pulls enumerates EVERY open PR and then reads
@@ -940,8 +940,9 @@ def main() -> int:
         if repository.get("jira_site"):
             site, project = repository["jira_site"], repository["jira_project"]
             email, jira_token = jira_credentials()
+            base = jira_api_base()
             with attempting(f"reading {project} issues (Jira {site})"):
-                jira_payload = fetch_jira_issues(site, project, email, jira_token)
+                jira_payload = fetch_jira_issues(site, project, email, jira_token, base)
             for fact in jira_emissions(
                 jira_payload,
                 site=site,

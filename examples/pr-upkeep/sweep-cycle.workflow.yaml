@@ -44,6 +44,11 @@
 #                                          per sweep.py's own handling).
 #   JIRA_ACCOUNT_EMAIL / JIRA_API_TOKEN    Jira READ pair (the c5-preserved
 #                                          custody: reads stay in the sweep).
+#   JIRA_API_BASE                          optional REST base the pair
+#                                          authenticates at. A scoped Jira
+#                                          Cloud service-account token is
+#                                          accepted only at the Atlassian
+#                                          gateway; empty means the site URL.
 #   NODES_API_URL / NODES_EVENT_TOKEN      where facts are appended.
 #
 #   THE SCHEDULE (the whole point — one POST, seeded per deployment):
@@ -105,6 +110,7 @@ spec:
           - SONAR_TOKEN
           - JIRA_ACCOUNT_EMAIL
           - JIRA_API_TOKEN
+          - JIRA_API_BASE
           - NODES_API_URL
           - NODES_EVENT_TOKEN
         argv:

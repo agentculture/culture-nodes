@@ -9,6 +9,26 @@ prefix. It exposes no generic Jira request surface.
 The bridge reads `JIRA_ACCOUNT_EMAIL` and `JIRA_API_TOKEN` directly from its
 own process environment. Those values are deliberately not valid JSON config
 keys and must never be placed in control-plane or runner configuration.
+
+`JIRA_API_BASE` is optional and read the same way — environment only, refused
+as a config-file key, because it decides where the credential is *sent*. It is
+the REST base all four verbs build their URLs from: `<JIRA_API_BASE>/rest/api/3/...`
+when set, `https://<JIRA_SITE>/rest/api/3/...` when empty. **A Jira Cloud
+service account with a scoped API token requires it**: a scoped token is
+accepted only at the Atlassian gateway, and the site URL answers `401` for it.
+The gateway base is `https://api.atlassian.com/ex/jira/<cloudId>`, and the
+cloud id comes from the site itself:
+
+```sh
+curl -s https://<your-site>.atlassian.net/_edge/tenant_info
+```
+
+An unscoped token needs no base. The value is validated when the process
+starts — https only, no query or fragment, trailing slashes trimmed — so a
+typo is a named configuration failure rather than an unattributable `401`
+from four verbs. `JIRA_SITE` stays the browse host and is still required to
+be a bare host name whenever no base is granted.
+
 `JIRA_TRANSITION_PROJECT_PREFIX` and `JIRA_TRANSITION_TARGET` set the transition
 custody boundary when the process starts; for example, `SCRUM-` and `Done`.
 `JIRA_CREATE_PROJECTS` (or the `create_projects` config list) sets the

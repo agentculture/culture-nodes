@@ -35,6 +35,11 @@ d1-d3 and every hand-turn are recorded on the plan and on #273.
   policy (t13); SSE keepalive through the tunnel (t3); the
   `/validate-delivery` convention and obligations (t5).
 
+- `JIRA_API_BASE`: the sweep, all four jira bridge verbs, both operator skills and
+  the deploy lanes read an optional gateway base so a scoped service-account token
+  (deviation d1) authenticates through `api.atlassian.com/ex/jira/<cloudId>`;
+  browse links keep the site host (t21).
+
 ### Changed
 
 - Bound human write origins to the resolved principal across ticket replies,

@@ -134,24 +134,17 @@ async function findPendingCard() {
 }
 
 /**
- * Fill the full decision form on the rich pending task's card. There is no
- * decider to type (task t9): the decider is whoever whoami says is signed in.
+ * Take the decision on the rich pending task's card. Since task t12 that is
+ * one click on the shared `OutcomeButtons` — no radio to select, no submit to
+ * press, and (task t9) no decider to type: the decider is whoever whoami says
+ * is signed in.
  */
-async function fillDecision(
+async function decide(
   user: ReturnType<typeof userEvent.setup>,
   card: HTMLElement,
-  { payload, note }: { payload?: string; note?: string } = {},
+  outcome = "approved",
 ) {
-  await user.click(within(card).getByRole("radio", { name: "approved" }));
-  if (payload !== undefined) {
-    // user-event's type() parses `{`/`[` as keyboard descriptors; paste the
-    // JSON instead of escaping every brace.
-    await user.click(within(card).getByLabelText(/Decision payload/));
-    await user.paste(payload);
-  }
-  if (note !== undefined) {
-    await user.type(within(card).getByLabelText(/Note/), note);
-  }
+  await user.click(within(card).getByRole("button", { name: outcome }));
 }
 
 beforeEach(() => {
@@ -214,10 +207,16 @@ describe("Inbox pending task rendering", () => {
     // The §8.8 waiting vocabulary: glyph + word, same chip as everywhere.
     expect(scoped.getByText("waiting")).toBeInTheDocument();
     expect(scoped.getByText("⏸")).toBeInTheDocument();
-    // Allowed outcomes are the form's choices.
-    for (const outcome of PENDING_TASK.request.allowed_outcomes!) {
-      expect(scoped.getByRole("radio", { name: outcome })).toBeInTheDocument();
+    // Allowed outcomes are the buttons, `expired` filtered (task t12/#265):
+    // it is the outcome the control plane records when it READS a fact, and
+    // DecideHumanTask refuses it from a decider.
+    for (const outcome of PENDING_TASK.request.allowed_outcomes!.filter(
+      (outcome) => outcome !== "expired",
+    )) {
+      expect(scoped.getByRole("button", { name: outcome })).toBeInTheDocument();
     }
+    expect(scoped.queryByRole("button", { name: "expired" })).toBeNull();
+    expect(scoped.queryAllByRole("radio")).toHaveLength(0);
     expect(
       scoped.getByText("schemas/decisions/release-signoff.json"),
     ).toBeInTheDocument();
@@ -284,9 +283,7 @@ describe("Inbox decided task rendering", () => {
     expect(
       card.querySelector(`time[datetime="${DECIDED_TASK.resolved_at}"]`),
     ).toBeInTheDocument();
-    expect(
-      scoped.queryByRole("button", { name: "Submit decision" }),
-    ).not.toBeInTheDocument();
+    expect(scoped.queryAllByRole("button")).toHaveLength(0);
   });
 });
 
@@ -317,37 +314,26 @@ describe("Inbox identity (task t9)", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await fillDecision(user, card);
-    const submit = within(card).getByRole("button", {
-      name: "Submit decision",
-    });
-    expect(submit).toBeDisabled();
-    await user.click(submit);
+    const approve = within(card).getByRole("button", { name: "approved" });
+    expect(approve).toBeDisabled();
+    await user.click(approve);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 describe("Inbox decision submission", () => {
-  it("POSTs the decision with no Authorization header, the chosen outcome, the payload+note response, the signed-in decider and the ledger guard", async () => {
+  it("POSTs the decision with no Authorization header, the chosen outcome, the schema-shaped response, the signed-in decider and the ledger guard", async () => {
     resolveFixture();
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
     renderInbox();
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
-
-    await fillDecision(user, card, {
-      payload: '{"release_ok": true}',
-      note: "ship it",
-    });
     await waitFor(() =>
-      expect(
-        within(card).getByRole("button", { name: "Submit decision" }),
-      ).toBeEnabled(),
+      expect(within(card).getByRole("button", { name: "approved" })).toBeEnabled(),
     );
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
-    );
+
+    await decide(user, card);
 
     await screen.findByText(/decision recorded/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -360,7 +346,10 @@ describe("Inbox decision submission", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       outcome: "approved",
       decider_actor_id: WHOAMI_ACTOR_ID,
-      response: { release_ok: true, note: "ship it" },
+      // A task with a decision schema gets a schema-valid payload; one
+      // without gets none, rather than an invented empty object — the same
+      // derivation the Decisions queue and the ticket page make.
+      response: { outcome: "approved" },
       expected_ledger_version: LEDGER_VERSION,
     });
   });
@@ -374,10 +363,10 @@ describe("Inbox decision submission", () => {
     await within(card).findByText(String(LEDGER_VERSION));
     const listCallsBefore = mockListHumanTasks.mock.calls.length;
 
-    await fillDecision(user, card);
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
+    await waitFor(() =>
+      expect(within(card).getByRole("button", { name: "approved" })).toBeEnabled(),
     );
+    await decide(user, card);
 
     await screen.findByText(/decision recorded/i);
     expect(mockListHumanTasks.mock.calls.length).toBeGreaterThan(
@@ -385,22 +374,31 @@ describe("Inbox decision submission", () => {
     );
   });
 
-  it("refuses an unparseable decision payload locally: no request leaves the browser", async () => {
+  // Task t12 replaced the hand-rolled form — free-text JSON payload, note and
+  // all — with the shared OutcomeButtons, so there is no longer a field a
+  // decider can put unparseable JSON into. The response is derived from the
+  // task's own decision schema instead, as it already was on the other two
+  // decision surfaces.
+  it("offers no free-text payload or note field at all", async () => {
     resolveFixture();
+    renderInbox();
+    const card = await findPendingCard();
+    expect(within(card).queryByLabelText(/Decision payload/)).toBeNull();
+    expect(within(card).queryByLabelText(/^Note/)).toBeNull();
+    expect(card.querySelectorAll("textarea, input")).toHaveLength(0);
+  });
+
+  it("holds every outcome until the run's ledger version has been read", async () => {
+    resolveFixture();
+    mockGetLedger.mockReturnValue(new Promise(() => {}));
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
     renderInbox();
     const card = await findPendingCard();
-    await within(card).findByText(String(LEDGER_VERSION));
 
-    await fillDecision(user, card, { payload: "{not json" });
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
-    );
-
-    expect(
-      await within(card).findByText(/not valid JSON/),
-    ).toBeInTheDocument();
+    const approve = within(card).getByRole("button", { name: "approved" });
+    expect(approve).toBeDisabled();
+    await user.click(approve);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -419,10 +417,10 @@ describe("Inbox decision submission", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await fillDecision(user, card);
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
+    await waitFor(() =>
+      expect(within(card).getByRole("button", { name: "approved" })).toBeEnabled(),
     );
+    await decide(user, card);
 
     expect(
       await within(card).findByText(/not valid for this deployment/),

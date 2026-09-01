@@ -1,10 +1,29 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, decideHumanTask, getTicket, postTicketReply } from "../api/client";
-import type { TicketFrameData, TicketPendingTask, TicketProjection } from "../api/types";
+import {
+  ApiError,
+  decideHumanTask,
+  getTicket,
+  postTicketReply,
+  postTicketReviews,
+} from "../api/client";
+import type {
+  PendingDecisionRun,
+  TicketFrameData,
+  TicketPendingTask,
+  TicketProjection,
+  TicketReviewRun,
+  TicketReviewRunResult,
+} from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
+import RunDecisionCard, {
+  confirmAllVerdicts,
+  recordsWithVerdict,
+  type RecordVerdict,
+  type RunVerdicts,
+} from "../components/RunDecisionCard";
 import { useWhoami } from "../hooks/useWhoami";
 
 function newSubmissionID(): string {
@@ -105,8 +124,34 @@ export function TicketView() {
   ), [decisions]);
 
   const pendingTasks: TicketPendingTask[] = projection?.pending_tasks ?? [];
+  // The ticket's undecided ledger claims, grouped by run and quoted at the
+  // version THIS response read (task t14, spec c11). Absent from a control
+  // plane older than t14, which is a "nothing to decide here" — not an error.
+  const pendingRecords: PendingDecisionRun[] = projection?.pending_records ?? [];
 
   const submissionID = useRef(newSubmissionID());
+
+  /**
+   * Re-read ONE run's group after its review conflicted (decision c40).
+   *
+   * A conflict means the ledger moved under the decider and nothing was
+   * written, so the only useful answer is the records at the version they are
+   * at NOW. The whole ticket is re-read because that is the only route that
+   * serves `pending_records` — but only the named group is swapped in, so a
+   * neighbouring run that just committed keeps its result on screen instead of
+   * silently vanishing under a refresh.
+   */
+  async function reloadRecordGroup(runID: string) {
+    const fresh = await getTicket(id);
+    const group = (fresh.pending_records ?? []).find((item) => item.run_id === runID);
+    setProjection((current) => {
+      if (!current) return current;
+      const groups = (current.pending_records ?? []).flatMap((item) =>
+        item.run_id === runID ? (group ? [group] : []) : [item],
+      );
+      return { ...current, pending_records: groups };
+    });
+  }
 
   /**
    * Record one decision (task t18, spec c6). The ledger version submitted is
@@ -224,8 +269,28 @@ export function TicketView() {
         </section>
       ) : null}
 
-      <section aria-labelledby="claims-title">
-        <h2 id="claims-title">Claims</h2>
+      {pendingRecords.length ? (
+        <TicketClaimReviews
+          ticketId={projection.ticket_id}
+          groups={pendingRecords}
+          actorId={actorId}
+          whoami={whoami}
+          onReloadGroup={reloadRecordGroup}
+        />
+      ) : null}
+
+      {/* Frame claims are the custody checkout's, not this page's (spec c13,
+          honesty condition h20): internal/devague.MapFrameClaims still has no
+          production caller and the live path is an opaque frame_json blob, so
+          the page states each claim and the confirmation state it arrived
+          with, and offers nothing to change it. The claims this page DOES
+          decide are the ledger records above. */}
+      <section aria-labelledby="claims-title" id="ticket-frame-claims">
+        <h2 id="claims-title">Frame claims</h2>
+        <p className="muted">
+          Read-only: a frame claim is confirmed in the custody checkout, not
+          here. What this page decides is the ledger records above.
+        </p>
         {claims.length ? <ol className="ticket-cards">{claims.map((claim, index) => {
           const key = claim.id ?? claim.ref ?? String(index);
           return <li key={key} data-claim-id={key}><div><strong>{claim.id ?? claim.ref ?? `Claim ${index + 1}`}</strong><StateLabel state={claim.state ?? claim.status} /></div><p>{claim.text ?? claim.title ?? claim.claim ?? "No claim text supplied"}</p></li>;
@@ -266,6 +331,259 @@ export function TicketView() {
         <button type="submit" disabled={frozen || submitting || actorId === null || !text.trim()}>{submitting ? "Sending…" : "Send reply"}</button>
         {sent ? <p role="status" className="ticket-reply-form__success">Reply sent.</p> : null}
         {submitError ? <p role="alert">{submitError.message}. {submitError.remediation}</p> : null}
+      </form>
+    </section>
+  );
+}
+
+/**
+ * The ticket's claim-deciding half (task t12, spec c11, decision c40).
+ *
+ * `pending_records` arrives grouped by run because that is how the ledger
+ * decides: a review is opened against ONE run at ONE stated version
+ * (PRD §10.8). A person deciding a ticket should not have to know that, so
+ * this renders one rationale and one submit over every group, and
+ * `POST /v1alpha1/tickets/{id}/reviews` commits one review per run in the
+ * order sent.
+ *
+ * Three properties it refuses to fudge, all of them the /decisions view's:
+ *
+ *   - The rationale is required by the form, as it is by the API. A
+ *     confirmation with no stated reason cannot be told apart from an unread
+ *     one.
+ *   - The reviewer is the signed-in principal's actor, never typed (task t9).
+ *   - The version submitted for a group is the one the API SERVED that group
+ *     at, never a fresh read. If the run moved since this page rendered, the
+ *     control plane reports `conflict` for it, writes nothing, and every other
+ *     run still commits — so partial success is reported per run rather than
+ *     collapsed into one banner, and only the conflicted group offers a
+ *     reload.
+ *
+ * And the property the whole surface exists to state: a review NAMES records.
+ * A confirmed claim still reads `proposed` afterwards, with the review beside
+ * it, which is what the committed groups below render.
+ */
+function TicketClaimReviews({
+  ticketId,
+  groups,
+  actorId,
+  whoami,
+  onReloadGroup,
+}: {
+  ticketId: string;
+  groups: PendingDecisionRun[];
+  /** The signed-in principal's actor, or null when nothing can be recorded. */
+  actorId: string | null;
+  whoami: ReturnType<typeof useWhoami>;
+  onReloadGroup: (runID: string) => Promise<void>;
+}) {
+  // Keyed by record id rather than by run, so a group reloaded at a new
+  // version keeps the verdicts already chosen for the records that survived
+  // it, and a record that is new to the page starts at the default.
+  const [chosen, setChosen] = useState<RunVerdicts>({});
+  const [rationale, setRationale] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<ApiError | null>(null);
+  // What was sent and what came back, paired: the API answers one result per
+  // submitted run "in the order submitted", so the pairing is by index. It is
+  // kept because the response names a run, not the records — and marking a
+  // record as decided when this page cannot say it was in a committed review
+  // would be the page inventing a fact.
+  const [sent, setSent] = useState<TicketReviewRun[]>([]);
+  const [results, setResults] = useState<TicketReviewRunResult[]>([]);
+  const [reloading, setReloading] = useState<string | null>(null);
+
+  const verdicts: RunVerdicts = Object.assign(
+    {},
+    ...groups.map((group) => confirmAllVerdicts(group)),
+    chosen,
+  );
+
+  /** The records this page can honestly say a committed review named. */
+  function reviewedIn(runID: string): string[] {
+    return results.flatMap((result, index) =>
+      result.status === "committed" && sent[index]?.run_id === runID
+        ? sent[index].records
+        : [],
+    );
+  }
+
+  // What a submit would send: every record still carrying a verdict and NOT
+  // already named by a committed review. Leaving the decided ones in would
+  // re-submit them at a version the commit itself moved past, so a second
+  // click on a partly-committed ticket would manufacture a conflict on work
+  // that already landed.
+  const decided = new Set(groups.flatMap((group) => reviewedIn(group.run_id)));
+  const batch: TicketReviewRun[] = groups.flatMap((group) =>
+    (["confirm", "reject"] as const).flatMap((verdict) => {
+      const records = recordsWithVerdict(group, verdicts, verdict).filter(
+        (id) => !decided.has(id),
+      );
+      if (records.length === 0) return [];
+      return [{
+        run_id: group.run_id,
+        expected_ledger_version: group.ledger_version,
+        records,
+        verdict: verdict === "confirm" ? ("confirmed" as const) : ("rejected" as const),
+      }];
+    }),
+  );
+  // A run whose records need both answers is two reviews at one version, and
+  // the ledger will only take the first — so the page says that BEFORE the
+  // click rather than letting it arrive as a surprise conflict.
+  const splitRuns = groups
+    .filter((group) =>
+      batch.filter((entry) => entry.run_id === group.run_id).length > 1,
+    )
+    .map((group) => group.run_id);
+
+  const canSubmit =
+    actorId !== null && !submitting && batch.length > 0 && rationale.trim() !== "";
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit || actorId === null) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const result = await postTicketReviews(ticketId, {
+        runs: batch,
+        rationale: rationale.trim(),
+        reviewer_actor_id: actorId,
+      });
+      // Appended, not replaced: a ticket decided in two passes (one run
+      // conflicted, was reloaded, and was recorded again) must keep the first
+      // pass's committed outcomes on screen.
+      setSent((current) => [...current, ...batch]);
+      setResults((current) => [...current, ...result.runs]);
+    } catch (cause) {
+      setSubmitError(
+        cause instanceof ApiError
+          ? cause
+          : new ApiError(0, String(cause), "check the browser console"),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function reload(runID: string) {
+    setReloading(runID);
+    setSubmitError(null);
+    try {
+      await onReloadGroup(runID);
+      // The results for THIS run go with the version they were measured
+      // against; every other run's outcome stands.
+      setResults((current) => current.filter((_, index) => sent[index]?.run_id !== runID));
+      setSent((current) => current.filter((entry) => entry.run_id !== runID));
+    } catch (cause) {
+      setSubmitError(
+        cause instanceof ApiError
+          ? cause
+          : new ApiError(0, String(cause), "check the browser console"),
+      );
+    } finally {
+      setReloading(null);
+    }
+  }
+
+  return (
+    <section aria-labelledby="ticket-claims-title" className="ticket-claim-reviews">
+      <h2 id="ticket-claims-title">Claims awaiting a decision</h2>
+      <p className="muted">
+        An agent saying it is done is a completion claim, not evidence. Say
+        what you found for each record below; the decision is recorded as its
+        own ledger record naming who decided and why, and the record it names
+        does not change.
+      </p>
+      <SignedInAs verb="Deciding" whoami={whoami} />
+
+      <ul className="decisions-list" id="ticket-pending-records">
+        {groups.map((group) => {
+          const runResults = results.filter(
+            (_, index) => sent[index]?.run_id === group.run_id,
+          );
+          return (
+            <RunDecisionCard
+              key={group.run_id}
+              group={group}
+              verdicts={verdicts}
+              onVerdictChange={(recordId: string, verdict: RecordVerdict) =>
+                setChosen((current) => ({ ...current, [recordId]: verdict }))
+              }
+              disabled={actorId === null || submitting}
+              reviewedRecordIds={reviewedIn(group.run_id)}
+            >
+              {splitRuns.includes(group.run_id) ? (
+                <p className="muted">
+                  This run has both confirmations and rejections. A run is
+                  reviewed at one ledger version, so the confirmations commit
+                  first and the rejections come back as a conflict — reload
+                  this group and record them again.
+                </p>
+              ) : null}
+              {runResults.length ? (
+                <div
+                  className="inbox-card__result"
+                  data-testid={`review-result-${group.run_id}`}
+                  role="status"
+                >
+                  {runResults.map((result, index) => (
+                    <p key={`${result.run_id}-${index}`}>
+                      {result.status === "committed" ? (
+                        <>
+                          decision recorded — review <code>{result.review_id}</code>;
+                          this run&apos;s ledger is now at version{" "}
+                          {result.ledger_version}. The records decided are
+                          unchanged: a review names them, it never rewrites
+                          them.
+                        </>
+                      ) : (
+                        <>
+                          {result.status} — {result.message ?? "nothing was written"}
+                        </>
+                      )}
+                    </p>
+                  ))}
+                  {runResults.some((result) => result.status === "conflict") ? (
+                    <button
+                      type="button"
+                      className="author-workflow__button"
+                      disabled={reloading === group.run_id}
+                      onClick={() => void reload(group.run_id)}
+                    >
+                      {reloading === group.run_id
+                        ? "Reloading this group…"
+                        : "Reload this group"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </RunDecisionCard>
+          );
+        })}
+      </ul>
+
+      <form className="inbox-card__form" onSubmit={submit}>
+        <div className="inbox-card__field">
+          <label htmlFor="ticket-review-rationale">
+            Why (recorded on every decision)
+          </label>
+          <textarea
+            id="ticket-review-rationale"
+            rows={2}
+            value={rationale}
+            onChange={(event) => setRationale(event.target.value)}
+          />
+        </div>
+        {submitError ? <ErrorNotice error={submitError} /> : null}
+        <button
+          type="submit"
+          className="author-workflow__button author-workflow__button--primary"
+          disabled={!canSubmit}
+        >
+          {submitting ? "Recording…" : "Record decisions"}
+        </button>
       </form>
     </section>
   );

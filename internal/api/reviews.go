@@ -51,6 +51,9 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) erro
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send a JSON body matching CreateReviewRequest: {record_ids, ledger_version, reviewer_actor_id}", "decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.ReviewerActorID, warning = principalActor(r, "reviewer_actor_id", req.ReviewerActorID)
 	if req.ReviewerActorID == "" {
 		return badRequest(
 			"name the human actor who will decide this review in reviewer_actor_id; GET /v1alpha1/actors lists the registered ones",
@@ -62,7 +65,7 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return classify(err)
 	}
-	writeJSON(w, http.StatusCreated, reviewRequestOut(created))
+	writeJSONWithWarning(w, http.StatusCreated, reviewRequestOut(created), warning)
 	return nil
 }
 
@@ -86,6 +89,16 @@ func (s *Server) handleCommitReview(w http.ResponseWriter, r *http.Request) erro
 	}
 
 	id := r.PathValue("id")
+	// origin: asserted — the immutable review request must still name the committing principal
+	if p, ok := PrincipalFromContext(r.Context()); ok && !p.Synthetic {
+		review, err := s.Ledger.ReviewRequest(r.Context(), id)
+		if err != nil {
+			return classify(err)
+		}
+		if review.ReviewerActorID != p.ActorID {
+			return badRequest("commit the review as the principal it is bound to", "review %s belongs to reviewer %s, authenticated actor is %s", id, review.ReviewerActorID, p.ActorID)
+		}
+	}
 
 	var req commitReviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

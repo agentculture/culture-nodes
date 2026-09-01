@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.2] - 2026-09-02
+
+### Changed
+
+- Bound human write origins to the resolved principal across ticket replies,
+  frames and freezes, human-task decisions, reviews, grades, suite verdicts,
+  and gate reports while preserving transition-bearer behavior. Dial-in
+  completions now derive credential party kind from storage, reject ledger
+  origins that differ from the credential's registered actor, record the
+  mismatch diagnostic, and refuse redispatch.
+
 ## [0.46.1] - 2026-09-01
 
 ### Added

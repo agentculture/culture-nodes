@@ -744,8 +744,9 @@ func (l *Ledger) appendReviewRecords(ctx context.Context, tx Tx, req ReviewReque
 		}
 
 		rec, err := l.appendThrough(ctx, tx, Record{
-			RecordType:     RecordReview,
-			RunID:          req.RunID,
+			RecordType: RecordReview,
+			RunID:      req.RunID,
+			// origin: asserted — CommitReview checked the immutable request's reviewer registry identity
 			Origin:         Origin{Kind: OriginHuman, ActorID: req.ReviewerActorID},
 			Authority:      verdict.authority(),
 			SubjectRef:     NullableID(targetID),

@@ -19,6 +19,32 @@ type InboundEnvelope struct {
 	Request   json.RawMessage `json:"request"`
 }
 
+type InboundParty struct {
+	Kind    string
+	Key     string
+	ActorID string
+}
+
+// ResolveInboundParty derives identity from the credential row presented on
+// the transport; callers must not guess its party kind from the route.
+func (s *Store) ResolveInboundParty(ctx context.Context, namespaceID, partyKey string) (InboundParty, error) {
+	var p InboundParty
+	err := s.pool.QueryRow(ctx, `SELECT ia.party_kind,ia.party_key,COALESCE(a.id,'')
+		FROM inbound_authentication ia
+		LEFT JOIN actors a ON ia.party_kind='actor' AND a.namespace_id=$1 AND a.actor_key=ia.party_key
+		WHERE ia.party_key=$2`, namespaceID, partyKey).Scan(&p.Kind, &p.Key, &p.ActorID)
+	if err != nil {
+		return InboundParty{}, fmt.Errorf("postgres: resolve inbound party: %w", err)
+	}
+	return p, nil
+}
+
+func (s *Store) RefuseInboundIdentity(ctx context.Context, namespaceID, actorKey, id, detail string) error {
+	payload, _ := json.Marshal(map[string]any{"error": map[string]any{"class": "identity_mismatch", "detail": detail}})
+	// origin: asserted — the credential-bound actor is checked before this terminal mailbox response
+	return s.CompleteInbound(ctx, namespaceID, actorKey, id, 422, payload)
+}
+
 func (s *Store) TouchInboundActor(ctx context.Context, namespaceID, actorKey string) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO inbound_actor_presence(namespace_id, actor_key, last_seen_at)
 		VALUES ($1,$2,now()) ON CONFLICT(namespace_id,actor_key)

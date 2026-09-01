@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -11,6 +12,36 @@ import (
 	"github.com/agentculture/culture-nodes/internal/auth"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
+
+func principalActor(r *http.Request, field, supplied string) (string, string) {
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok || p.Synthetic || p.ActorID == "" {
+		return supplied, ""
+	}
+	if supplied != "" && supplied != p.ActorID {
+		return p.ActorID, field + " overridden from " + supplied + " to authenticated actor " + p.ActorID
+	}
+	return p.ActorID, ""
+}
+
+func writeJSONWithWarning(w http.ResponseWriter, status int, value any, warning string) {
+	if warning == "" {
+		writeJSON(w, status, value)
+		return
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		return
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		return
+	}
+	out["warning"] = warning
+	writeJSON(w, http.StatusOK, out)
+}
 
 const accessAssertionHeader = "Cf-Access-Jwt-Assertion"
 

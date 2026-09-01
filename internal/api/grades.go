@@ -50,6 +50,9 @@ type createGradeRequest struct {
 // naming the rule or the violated schema pointer; this handler never
 // re-implements those checks.
 func (s *Server) handleCreateGrade(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireDecisionAuth(r); err != nil {
+		return err
+	}
 	id := r.PathValue("id")
 	ctx := r.Context()
 
@@ -63,6 +66,9 @@ func (s *Server) handleCreateGrade(w http.ResponseWriter, r *http.Request) error
 			"send a JSON body matching CreateGradeRequest: {rating, rationale, evaluated_actor_id, grading_actor_id}",
 			"decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.GradingActorID, warning = principalActor(r, "grading_actor_id", req.GradingActorID)
 	if req.GradingActorID == "" {
 		return badRequest("grading_actor_id names the actor recording the grade", "grading_actor_id is required")
 	}
@@ -121,6 +127,7 @@ func (s *Server) handleCreateGrade(w http.ResponseWriter, r *http.Request) error
 	appended, err := s.Ledger.Append(ctx, ledger.Record{
 		RecordType: ledger.RecordGrade,
 		RunID:      id,
+		// origin: resolved from principal
 		Origin:     ledger.Origin{Kind: origin, ActorID: req.GradingActorID},
 		Authority:  authority,
 		SubjectRef: ledger.NullableID(req.EvaluatedActorID),
@@ -130,6 +137,6 @@ func (s *Server) handleCreateGrade(w http.ResponseWriter, r *http.Request) error
 		return classify(err)
 	}
 
-	writeJSON(w, http.StatusCreated, appended)
+	writeJSONWithWarning(w, http.StatusCreated, appended, warning)
 	return nil
 }

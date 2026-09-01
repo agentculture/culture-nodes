@@ -135,6 +135,40 @@ func TestBadAssertionLoggedOnceWithoutToken(t *testing.T) {
 	}
 }
 
+func TestPrincipalOverridesTicketFrameOriginAndWarns(t *testing.T) {
+	s := requireStore(t)
+	nsID := pgtest.MustNamespace(t, s, "principal-frame-origin").ID
+	bound := insertPrincipalTestActor(t, s, nsID, "bound-frame-author")
+	other := insertPrincipalTestActor(t, s, nsID, "body-frame-author")
+	if _, err := s.BindIdentity(context.Background(), nsID, "cloudflare-access", "frame-sub", bound, []string{"approver"}); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := api.NewServer(s, nsID, api.WithPrincipalVerifier(verifierFunc(func(context.Context, string) (auth.Principal, error) {
+		return auth.Principal{Subject: "frame-sub", Kind: auth.PrincipalInteractive}, nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1alpha1/tickets/SCRUM-10/frame",
+		strings.NewReader(`{"frame":{"state":"ready"},"posted_by":"`+other+`"}`))
+	req.Header.Set("Cf-Access-Jwt-Assertion", "assertion")
+	rr := httptest.NewRecorder()
+	srv.AccessHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 override response: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"warning"`) || !strings.Contains(rr.Body.String(), other) {
+		t.Fatalf("override response lacks warning naming supplied actor: %s", rr.Body.String())
+	}
+	var stored string
+	if err := s.Pool().QueryRow(context.Background(), `SELECT posted_by FROM ticket_frames WHERE namespace_id=$1 AND ticket_id='SCRUM-10'`, nsID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != bound {
+		t.Fatalf("stored posted_by = %q, want principal actor %q", stored, bound)
+	}
+}
+
 func insertPrincipalTestActor(t *testing.T, s *postgres.Store, nsID, key string) string {
 	t.Helper()
 	id := store.NewULID()

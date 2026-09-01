@@ -145,6 +145,9 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send {replier, text, question_id?}", "decode ticket reply: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.Replier, warning = principalActor(r, "replier", req.Replier)
 	if req.Replier == "" || req.Text == "" {
 		return badRequest("replier and text are required", "empty ticket reply")
 	}
@@ -211,7 +214,7 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	if err = tx.Commit(r.Context()); err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusCreated, TicketReplyOut{ID: replyID, Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID, SignalEventID: delivery.Event.ID, CreatedAt: delivery.Event.CreatedAt})
+	writeJSONWithWarning(w, http.StatusCreated, TicketReplyOut{ID: replyID, Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID, SignalEventID: delivery.Event.ID, CreatedAt: delivery.Event.CreatedAt}, warning)
 	return nil
 }
 
@@ -223,6 +226,9 @@ func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) erro
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send {merged_pr, frozen_by}", "decode freeze: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.FrozenBy, warning = principalActor(r, "frozen_by", req.FrozenBy)
 	if req.FrozenBy == "" {
 		req.FrozenBy = "human"
 	}
@@ -247,14 +253,14 @@ func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSONWithWarning(w, http.StatusOK, map[string]any{
 		"ticket_id":      ticketID,
 		"frozen":         true,
 		"merged_pr":      req.MergedPR,
 		"ticket_status":  req.TicketStatus,
 		"cancelled_runs": effect.Cancelled,
 		"parked_runs":    effect.Parked,
-	})
+	}, warning)
 	return nil
 }
 
@@ -266,6 +272,9 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send {frame, posted_by}", "decode ticket frame: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.PostedBy, warning = principalActor(r, "posted_by", req.PostedBy)
 	if len(req.Frame) == 0 || !json.Valid(req.Frame) || req.PostedBy == "" {
 		return badRequest("frame must be valid JSON and posted_by is required", "invalid ticket frame request")
 	}
@@ -289,7 +298,7 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 	if err := tx.Commit(r.Context()); err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusCreated, out)
+	writeJSONWithWarning(w, http.StatusCreated, out, warning)
 	return nil
 }
 

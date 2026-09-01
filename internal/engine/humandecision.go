@@ -390,9 +390,10 @@ func (d *humanTaskDecision) recordDecision(ctx context.Context) error {
 		RecordType: humanTaskDecisionRecordType,
 		RunID:      d.run.ID,
 		NodeRunID:  ledger.NullableID(d.nodeRun.ID),
-		Origin:     ledger.Origin{Kind: ledger.OriginHuman, ActorID: d.req.DeciderActorID},
-		Authority:  ledger.AuthorityProposed,
-		Data:       data,
+		// origin: asserted — the API resolves the decider from its principal
+		Origin:    ledger.Origin{Kind: ledger.OriginHuman, ActorID: d.req.DeciderActorID},
+		Authority: ledger.AuthorityProposed,
+		Data:      data,
 	})
 	if err != nil {
 		return err

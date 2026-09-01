@@ -71,12 +71,21 @@ ORIN=${2:-orin}
 # on a Jira ticket is clickable. Set nowhere, it rendered `/tickets/SCRUM-N`:
 # a path with no origin, which Jira shows as text.
 #
-# Resolved HERE, once, and installed on BOTH hosts. It is thor's origin on
-# both, deliberately: orin runs a worker and serves no API, but the engine
-# renders this comment inside whichever process minted the run — so a value
-# present on thor only would make the link's correctness depend on which
-# worker claimed the node, the same divergence #224 records for the actor
-# tokens.
+# Resolved HERE, once, and installed on BOTH hosts with the SAME value,
+# deliberately: orin runs a worker and serves no API, but the engine renders
+# this comment inside whichever process minted the run — so a value present
+# on thor only would make the link's correctness depend on which worker
+# claimed the node, the same divergence #224 records for the actor tokens.
+#
+# Since the login-from-anywhere cycle (task t19, spec c44) the default is the
+# PUBLIC name the page is served under behind Cloudflare Access,
+# https://nodes.culture.dev — a link a person off the LAN can open. It is
+# therefore NOT derived from $THOR any more: the host this deploy was told
+# about is where the API listens for MACHINES (NODES_API_URL,
+# NODES_CALLBACK_BASE_URL keep their LAN forms), not where a person is sent.
+# See docs/operations/nodes-culture-dev.md, "Step 5", which also names the
+# hand-turn this add-if-absent lane needs on a host that already carries the
+# old LAN value.
 #
 # It is a non-secret address, which is why it may ride the argv to the remote
 # shell alongside HOST/DB_HOST/PROFILES.
@@ -84,12 +93,8 @@ UI_BASE_URL=${NODES_UI_BASE_URL:-}
 if [ -n "$UI_BASE_URL" ]; then
   UI_BASE_URL_SOURCE="exported for this run"
 else
-  # The API origin this deploy already knows: the control-plane host it was
-  # invoked with (`install-secrets.sh [thor-host] [orin-host]`), not the
-  # literal name `thor`, so an operator who addresses the machine by IP or
-  # tailscale name gets links that resolve the way their ssh does.
-  UI_BASE_URL="http://$THOR:18080"
-  UI_BASE_URL_SOURCE="defaulted to the control-plane API origin"
+  UI_BASE_URL="https://nodes.culture.dev"
+  UI_BASE_URL_SOURCE="defaulted to the public SSO origin"
 fi
 # A trailing slash is what an operator types; the renderer trims it too, but a
 # normalised value is what the next reader of prod.env sees.
@@ -335,11 +340,11 @@ install_env "$ORIN" "$common
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_ORIN}"
 
 # Announced before the lane runs, because the two branches at the top of this
-# file (exported versus defaulted) produce
-# identically-shaped prod.env lines and only one of them is reachable from
-# outside the LAN: an operator reading the deploy log has no other way to tell
-# a defaulted LAN address from an origin they chose. See deploy/prod/README.md,
-# "Ticket page links are LAN addresses".
+# file (exported versus defaulted) produce identically-shaped prod.env lines:
+# an operator reading the deploy log has no other way to tell the public SSO
+# origin the script chose from an origin they exported (a LAN or tailscale
+# address for a deployment without the tunnel, say). See deploy/prod/README.md,
+# "Ticket page links are the public SSO origin".
 echo "ticket page links: NODES_UI_BASE_URL=$UI_BASE_URL ($UI_BASE_URL_SOURCE) — every Jira page-link comment will read $UI_BASE_URL/tickets/<KEY>"
 
 # thor's database is the bundled compose service `postgres`; orin reaches the

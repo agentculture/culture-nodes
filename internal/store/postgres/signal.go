@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -573,12 +574,32 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: append event: %w", err)
 	}
 	ev.CreatedAt = tsValue(createdAt)
+	if in.Name == "pr.opened" {
+		var opened struct {
+			IssueKey string `json:"issue_key"`
+		}
+		if err := json.Unmarshal(ev.Payload, &opened); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: decode pr.opened: %w", err)
+		}
+		if opened.IssueKey == "" {
+			return SignalDelivery{}, errors.New("postgres: DeliverSignalEvent: pr.opened issue_key is required")
+		}
+		intent := engine.PlanPROpenedTransition(opened.IssueKey)
+		if _, err := tx.Exec(ctx, `INSERT INTO jira_ticket_report_outbox
+			(id,namespace_id,trigger_event_id,phase,target_actor_key,issue_key,payload)
+			VALUES($1,$2,$3,'in-review',$4,$5,$6)`, store.NewULID(), in.NamespaceID, ev.ID,
+			JiraTicketReporterActorKey, opened.IssueKey, intent.Payload); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: plan In Review: %w", err)
+		}
+	}
 	// A merged-PR fact is also the durable freeze transition for the ticket
 	// projection. It is applied in the fact transaction, so consumers never
 	// observe the merge without the corresponding frozen page.
 	if in.Name == "pr.merged" {
 		var merged struct {
-			IssueKey string `json:"issue_key"`
+			IssueKey   string `json:"issue_key"`
+			Repository string `json:"repository"`
+			Number     int    `json:"number"`
 		}
 		if err := json.Unmarshal(ev.Payload, &merged); err != nil {
 			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: decode pr.merged: %w", err)
@@ -590,6 +611,29 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 			VALUES($1,$2,$3,'pr.merged',$4) ON CONFLICT(namespace_id,ticket_id) DO UPDATE SET
 			merged_pr=EXCLUDED.merged_pr,frozen_by=EXCLUDED.frozen_by,signal_event_id=EXCLUDED.signal_event_id`, in.NamespaceID, merged.IssueKey, ev.Payload, ev.ID); err != nil {
 			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: freeze ticket: %w", err)
+		}
+		request, _ := json.Marshal(map[string]any{
+			"title": "Ticket done?", "instruction": "Check the filed validate-delivery evidence first, then decide whether this ticket is done.",
+			"allowed_outcomes": []string{"done", "not_yet"}, "approver_ref": "role/approver",
+			"audience": map[string]any{"role": "approver"}, "issue_key": merged.IssueKey,
+		})
+		var ticketRunID string
+		if err := tx.QueryRow(ctx, `SELECT id FROM runs WHERE namespace_id=$1 AND
+			(subject=$2 OR input->>'id'=$2 OR input->>'issue_key'=$2 OR
+			 (input->>'repository'=$3 AND input->>'number'=$4))
+			ORDER BY created_at DESC,id DESC LIMIT 1`, in.NamespaceID, merged.IssueKey,
+			merged.Repository, strconv.Itoa(merged.Number)).Scan(&ticketRunID); err != nil {
+			if isNoRows(err) {
+				return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: pr.merged ticket %s has no run for Ticket done task", merged.IssueKey)
+			}
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: find Ticket done run: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO human_tasks
+			(id,namespace_id,run_id,node_run_id,kind,status,request,source_signal_event_id)
+			VALUES($1,$2,$3,NULL,'ticket_done',$4,$5,$6)
+			ON CONFLICT (source_signal_event_id) WHERE source_signal_event_id IS NOT NULL DO NOTHING`,
+			store.NewULID(), in.NamespaceID, ticketRunID, engine.HumanTaskStatusPending, request, ev.ID); err != nil {
+			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: raise Ticket done task: %w", err)
 		}
 	}
 	if in.SourceKey != "" {

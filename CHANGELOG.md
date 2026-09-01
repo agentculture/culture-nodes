@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.46.2] - 2026-09-02
+
+- Move correlated open PR tickets to In Review and require an approver's
+  evidence-informed human decision before moving merged work to Done.
+
 All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project

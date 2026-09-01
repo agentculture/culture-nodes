@@ -220,6 +220,64 @@ func TestMergedPRFactExpiresThePendingApprovalAndCompletesTheRun(t *testing.T) {
 	}
 }
 
+// t15: merge freezes immediately but Done remains a human authority boundary.
+func TestMergedPRRaisesOneTicketDoneTaskAndDoneDecisionQueuesTransition(t *testing.T) {
+	f := newFixture(t, "approval-subject.workflow.yaml")
+	f.createRun(`{"source":"jira","id":"SCRUM-15"}`)
+	if _, err := f.store.Pool().Exec(f.ctx, `DELETE FROM human_task_fanout_outbox WHERE namespace_id=$1`, f.ns.ID); err != nil {
+		t.Fatalf("clear fixture fan-out: %v", err)
+	}
+	fact := json.RawMessage(`{"source":"github_pr","repository":"agentculture/culture-nodes","number":415,"url":"https://github.com/agentculture/culture-nodes/pull/415","merged_at":"2026-09-02T10:00:00Z","issue_key":"SCRUM-15"}`)
+	in := storepg.DeliverSignalEventInput{
+		NamespaceID: f.ns.ID, Name: "pr.merged", Payload: fact, Emitter: "pr-upkeep-sweep",
+		SourceKey: "github:agentculture/culture-nodes:pr:415:merged",
+		Watermark: json.RawMessage(`{"merged_at":"2026-09-02T10:00:00Z"}`), Subject: "SCRUM-15",
+	}
+	if _, err := f.store.DeliverSignalEvent(f.ctx, in); err != nil {
+		t.Fatalf("deliver pr.merged: %v", err)
+	}
+	if _, err := f.store.DeliverSignalEvent(f.ctx, in); err != nil {
+		t.Fatalf("redeliver pr.merged: %v", err)
+	}
+
+	var taskID, request string
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT id, request::text FROM human_tasks
+		WHERE namespace_id=$1 AND kind='ticket_done'`, f.ns.ID).Scan(&taskID, &request); err != nil {
+		t.Fatalf("read Ticket done task: %v", err)
+	}
+	for _, want := range []string{"Ticket done?", "done", "not_yet", "approver", "validate-delivery", "SCRUM-15"} {
+		if !strings.Contains(request, want) {
+			t.Errorf("task request %s does not contain %q", request, want)
+		}
+	}
+	var taskCount, transitionCount int
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT count(*) FROM human_tasks
+		WHERE namespace_id=$1 AND kind='ticket_done'`, f.ns.ID).Scan(&taskCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT count(*) FROM human_task_fanout_outbox
+		WHERE namespace_id=$1 AND payload->>'verb'='transition_issue'`, f.ns.ID).Scan(&transitionCount); err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 1 || transitionCount != 0 {
+		t.Fatalf("after merge (tasks=%d, transitions=%d), want (1, 0)", taskCount, transitionCount)
+	}
+
+	if _, err := f.engine.DecideHumanTask(f.ctx, engine.HumanTaskDecisionRequest{
+		HumanTaskID: taskID, Outcome: "done", DeciderActorID: f.insertActorKind("done-approver", "human"),
+	}); err != nil {
+		t.Fatalf("DecideHumanTask(done): %v", err)
+	}
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT count(*) FROM human_task_fanout_outbox
+		WHERE namespace_id=$1 AND payload->>'verb'='transition_issue' AND payload->>'target'='Done'`,
+		f.ns.ID).Scan(&transitionCount); err != nil {
+		t.Fatal(err)
+	}
+	if transitionCount != 1 {
+		t.Fatalf("Done transition intents = %d, want 1", transitionCount)
+	}
+}
+
 // An expiry is a derived record with an engine origin, never a confirmed
 // human decision: nobody chose this, and the ledger must not read as if
 // someone did.

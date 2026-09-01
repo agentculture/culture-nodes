@@ -328,3 +328,22 @@ func TestDecidableOutcomesDropsOnlyTheEngineOnlyOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestTicketLifecycleTransitionPlansRequireTheRightEvidence(t *testing.T) {
+	opened := engine.PlanPROpenedTransition("SCRUM-15")
+	payload := payloadFor(t, []engine.HumanTaskFanOut{opened}, engine.FanOutChannelJiraTransition)
+	if payload["target"] != engine.JiraReviewStatus {
+		t.Fatalf("PR-opened target = %v, want %q", payload["target"], engine.JiraReviewStatus)
+	}
+	if got := engine.PlanTicketDoneTransition("SCRUM-15", "not_yet"); got != nil {
+		t.Fatalf("not_yet planned transition %+v, want none", got)
+	}
+	done := engine.PlanTicketDoneTransition("SCRUM-15", "done")
+	if done == nil {
+		t.Fatal("done planned no transition")
+	}
+	payload = payloadFor(t, []engine.HumanTaskFanOut{*done}, engine.FanOutChannelJiraTransition)
+	if payload["target"] != engine.JiraDoneStatus {
+		t.Fatalf("done target = %v, want %q", payload["target"], engine.JiraDoneStatus)
+	}
+}

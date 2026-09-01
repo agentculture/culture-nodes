@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.1] - 2026-09-01
+
+### Added
+
+- Spec for the login-from-anywhere cycle: `docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`
+  — nodes.culture.dev behind Cloudflare Access (the chat.agentculture.org
+  pattern, provisioned with cultureflare; tunnel unit on thor), a principal
+  middleware in `internal/auth` verifying the Access JWT with the standard
+  library, an `actor_identities` binding table with two roles first
+  (approver, namespace administrator), ledger origin stamped from the
+  authenticated caller on every write and on dial-in completions
+  (#117/#183/#6 custody), the ticket page as the decision surface (#255),
+  a jira `read_issue` verb (#257), a four-target transition allowlist with
+  Done as a human actor node after live validation (#256), page replies
+  carrying the signed-in identity (#235), Jira push over polling as the last
+  wave, and a human-welcoming UX uplift whose findings aggregate on #270.
+  Scoped with `/scope` (45 cited surfaces), converged in `/think`, and
+  pressure-tested with a rigorous `/challenge` pass (eight findings, all
+  adjudicated). Issues #6, #111, #235, #255, #256, #257.
+- `/validate-delivery` vendored verbatim from devague (0.23.0), the
+  execution-to-evidence leg between `/assign-to-workforce` and
+  `/summarize-delivery`; row added to `docs/skill-sources.md`.
+
+### Changed
+
+### Fixed
+
+- The spec's authentication requirement said the control plane maps the
+  `email` claim (interactive SSO) or the `common_name` claim (service token)
+  to a registered actor, while the same spec's `actor_identities` boundary and
+  the user-confirmed identity decision key the binding on `(provider, subject)`
+  and forbid an email key — so an implementer had two incompatible identity
+  keys and no rule joining them, and a service principal (whose Access
+  assertion carries no user `sub`) had no defined resolution at all. The
+  requirement (frame claim `c3`, amended with the superseded text kept as a
+  revision) now states one claim-to-binding algorithm: the lookup key is
+  `(provider, subject)`, interactive logins bind as `cloudflare-access` +
+  `sub` and service tokens as `cloudflare-service-token` +
+  `common_name`, `email` is a display hint that is never a lookup key, and a
+  verified token matching no binding is unbound rather than silently a viewer
+  (Qodo finding 1 on #271).
+
 ## [0.46.0] - 2026-08-31
 
 ### Fixed

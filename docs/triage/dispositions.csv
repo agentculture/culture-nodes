@@ -160,3 +160,4 @@ issue,bucket,disposition,evidence_pointer
 262,finish work,runner-service registry records the runner revision and the actor view shows it (split from #10 item 3),issue #262
 265,finish work,fan-out renders only decidable outcomes and names the node id (fix in internal/engine/humantaskfanout.go PlanHumanTaskFanOut),issue #265 / docs/audits/2026-08-30-measurement-sitting.md
 268,finish work,run input names the single finding the fix node works so the rest stay emittable (or the dedupe ignores runs parked on approval),issue #268 / PR #267
+270,large bets,human-welcoming web UX — guided visual decision surfaces; in the login-from-anywhere cycle (spec c25/c39); findings aggregate here,issue #270 / docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md

@@ -1,21 +1,39 @@
 # Changelog
 
-## [0.46.3] - 2026-09-02
+## [0.47.0] - 2026-09-02
 
-- Add the loopback-only Jira system-webhook wake-up, authenticated by HMAC
-  or URL token, which hydrates Jira and replays sweep-compatible facts.
+The login-from-anywhere cycle (spec `docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`,
+plan PR #272, tracking ticket SCRUM-8; issues #6 #111 #235 #255 #256 #257 #270).
+Built through culture-nodes itself: 8 codex packages, 4 developer-actor
+packages, 6 worktree subagents, TDD-gated merges by the operator; deviations
+d1-d3 and every hand-turn are recorded on the plan and on #273.
 
-## [0.46.2] - 2026-09-02
+### Added
 
-- Move correlated open PR tickets to In Review and require an approver's
-  evidence-informed human decision before moving merged work to Done.
-
-All notable changes to this project will be documented in this file.
-
-Format follows [Keep a Changelog](https://keepachangelog.com/). This project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [0.46.2] - 2026-09-02
+- Human identity from Cloudflare Access at the edge: `internal/auth` verifies
+  the Access JWT with the standard library (t1), `actor_identities` binds
+  provider+subject to a registered actor with roles (t2), one principal
+  middleware gates every mutating route with a loopback listener for the
+  tunnel, `GET /v1alpha1/whoami`, and classified refusal telemetry (t8); the
+  browser takes identity from whoami and every token panel and free-text
+  identity field is gone (t9).
+- Ledger origin from the authenticated caller on every write route and on
+  dial-in completions (t10); merge-gate and developer lanes authenticate as
+  their own agent actor (t11).
+- The ticket page decides everything: pending records at the served ledger
+  version, one review per run, reply identity (t14, t12); a human-welcoming
+  first screen with a flow rail, a first-visit page, Inbox/Decisions demoted
+  (t17).
+- Jira: `read_issue` bridge verb (t20); four-target transition allowlist
+  managed by the deploy lane with the custody record superseded (t4); In
+  Review on an open PR and a "Ticket done?" human node on merge — Done is
+  never automatic (t15); a system-webhook receiver that hydrates and replays
+  through the sweep's own seam (t16); `JIRA_API_BASE` for scoped
+  service-account tokens (t21, deviation d1).
+- Edge and deploy: `cloudflared-nodes.service`, loopback origin, public
+  `NODES_UI_BASE_URL` (t19); people recipe, `bind-identity.sh`, 8h session
+  policy (t13); SSE keepalive through the tunnel (t3); the
+  `/validate-delivery` convention and obligations (t5).
 
 ### Changed
 
@@ -25,6 +43,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completions now derive credential party kind from storage, reject ledger
   origins that differ from the credential's registered actor, record the
   mismatch diagnostic, and refuse redispatch.
+
+### Fixed
 
 ## [0.46.1] - 2026-09-01
 

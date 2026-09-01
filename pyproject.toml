@@ -1,6 +1,6 @@
 [project]
 name = "culture-nodes"
-version = "0.46.3"
+version = "0.47.0"
 description = "A workflow front and framework for Culture. Composes mesh agents and their verbs into node-based workflows — define a graph of nodes, run it across the Culture mesh, and inspect what each node did."
 readme = "README.md"
 license = "Apache-2.0"

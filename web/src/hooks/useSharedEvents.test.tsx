@@ -255,3 +255,78 @@ describe("useSharedEvents (task t27, c48/h41)", () => {
     }
   });
 });
+
+/**
+ * Task t3 (login-from-anywhere cycle): the cross-run stream now writes an
+ * SSE comment line every 25 s while idle (internal/api/events.go). A
+ * browser's EventSource never dispatches comment frames, so the manager has
+ * nothing to filter; these tests pin the two properties the keepalive
+ * protects at the manager boundary — a body-less frame is inert, and a
+ * proxy dropping an idle connection is recovered from with the resume
+ * cursor intact.
+ */
+describe("useSharedEvents keepalive tolerance and forced drop (task t3)", () => {
+  it("drops a body-less frame without touching listeners or the resume cursor", () => {
+    const seen: SharedEvent[] = [];
+    const statuses: Array<[SharedStreamStatus, string | null]> = [];
+    render(
+      <Subscriber
+        types={[RUN_CREATED]}
+        onEvent={(e) => seen.push(e)}
+        report={(s, id) => statuses.push([s, id])}
+      />,
+    );
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+    act(() => source.emit(RUN_CREATED, { run_id: "run-1" }, "01EVENT1"));
+    expect(seen).toHaveLength(1);
+    expect(statuses[statuses.length - 1]).toEqual(["live", "01EVENT1"]);
+
+    // The nearest thing to a comment line the manager could ever be handed.
+    act(() => source.onmessage?.({ data: "", lastEventId: "", type: "message" }));
+    act(() => source.onmessage?.({ data: ": keepalive", lastEventId: "", type: "message" }));
+
+    expect(seen).toHaveLength(1);
+    expect(statuses[statuses.length - 1]).toEqual(["live", "01EVENT1"]);
+
+    act(() => source.emit(RUN_CREATED, { run_id: "run-2" }, "01EVENT2"));
+    expect(seen.map((e) => e.id)).toEqual(["01EVENT1", "01EVENT2"]);
+  });
+
+  it("reopens a dropped idle connection from the last real event id", () => {
+    vi.useFakeTimers();
+    try {
+      const seen: SharedEvent[] = [];
+      const statuses: SharedStreamStatus[] = [];
+      render(
+        <Subscriber
+          types={[RUN_CREATED]}
+          onEvent={(e) => seen.push(e)}
+          report={(s) => statuses.push(s)}
+        />,
+      );
+      const first = FakeEventSource.instances[0];
+      act(() => first.open());
+      act(() => first.emit(RUN_CREATED, { run_id: "run-1" }, "01EVENT5"));
+      expect(first.url).not.toContain("from=");
+
+      act(() => first.fail());
+      expect(statuses[statuses.length - 1]).toBe("reconnecting");
+      expect(FakeEventSource.instances).toHaveLength(1); // 1 s backoff first
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(FakeEventSource.instances).toHaveLength(2);
+      const second = FakeEventSource.instances[1];
+      expect(second.url).toContain("from=01EVENT5");
+
+      act(() => second.open());
+      expect(statuses[statuses.length - 1]).toBe("live");
+      act(() => second.emit(RUN_CREATED, { run_id: "run-2" }, "01EVENT6"));
+      expect(seen.map((e) => e.id)).toEqual(["01EVENT5", "01EVENT6"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

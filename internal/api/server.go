@@ -24,6 +24,16 @@ import (
 // point is answered purely from durable state — see events.go).
 const defaultEventPollInterval = 500 * time.Millisecond
 
+// DefaultSSEKeepaliveInterval is how often both SSE handlers (events.go)
+// write an SSE comment line while the stream is idle, so a proxy in the
+// path never mistakes a quiet-but-live stream for a dead connection.
+// Cloudflare closes idle proxied connections at ~100 s; 25 s leaves margin
+// for a missed tick and the write itself. Comment lines are invisible to
+// every SSE consumer by specification (a browser EventSource never
+// dispatches them), so this changes no event name or payload. Injectable
+// through WithSSEKeepaliveInterval so tests do not sleep 25 s.
+const DefaultSSEKeepaliveInterval = 25 * time.Second
+
 // Server implements the Culture Nodes control-plane API
 // (api/openapi/openapi.yaml). It is bound to one namespace at construction
 // (see the package doc's "Single namespace" section).
@@ -147,8 +157,9 @@ type Server struct {
 	// minted here, never invented by an operator.
 	inboundIssuanceSecret []byte
 
-	pollInterval time.Duration
-	webAssets    fs.FS
+	pollInterval      time.Duration
+	keepaliveInterval time.Duration
+	webAssets         fs.FS
 
 	// telemetry instruments the engine's completion transaction (wired into
 	// Engine at construction, below) and the actor callback ingest route
@@ -173,6 +184,18 @@ func WithPollInterval(d time.Duration) Option {
 	return func(s *Server) {
 		if d > 0 {
 			s.pollInterval = d
+		}
+	}
+}
+
+// WithSSEKeepaliveInterval replaces the SSE handlers' idle keepalive
+// interval (DefaultSSEKeepaliveInterval). It exists so tests can observe
+// keepalives in milliseconds rather than waiting out 25 s; a non-positive
+// value keeps the default.
+func WithSSEKeepaliveInterval(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.keepaliveInterval = d
 		}
 	}
 }
@@ -381,6 +404,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		artifactInvocationStore: callbackStore,
 		artifactRunnerOps:       store,
 		pollInterval:            defaultEventPollInterval,
+		keepaliveInterval:       DefaultSSEKeepaliveInterval,
 		log:                     slog.Default(),
 	}
 	s.inboundAuthenticator, err = actors.NewInboundAuthenticator(store, actors.DefaultInboundAuthenticationConfig, nil)

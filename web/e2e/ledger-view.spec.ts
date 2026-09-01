@@ -40,8 +40,9 @@ test("computes a projection from the picker", async ({ page }) => {
 });
 
 test("the run list links into the run view", async ({ page }) => {
-  await page.goto("/");
-  await expect(page).toHaveURL(/\/runs$/);
+  // `/` is the first-visit page for a signed-in person since task t17, so
+  // this walk starts at the run list itself. What `/` does is e2e/home.spec.ts.
+  await page.goto("/runs");
   await expect
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");

@@ -9,9 +9,11 @@ import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
 import IdentityGate from "./components/IdentityGate";
+import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
+import Home from "./routes/Home";
 import Inbox from "./routes/Inbox";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
@@ -86,6 +88,25 @@ function RouteWatcher() {
   return null;
 }
 
+/**
+ * What `/` is (task t17, spec c25).
+ *
+ * It used to be a redirect to `/runs` — a table of engine rows, which is
+ * right for an operator and wrong for the person a Jira comment just sent
+ * here. A signed-in person now lands on the page that says what is waiting
+ * on a human; everyone else keeps the run table, because a LAN reader with
+ * no Access identity has no "your work" to show and a redirect is a better
+ * answer than an empty page.
+ *
+ * `loading` renders Home rather than redirecting: bouncing to /runs and then
+ * back the moment whoami answers is two navigations a person can see.
+ */
+function Landing() {
+  const whoami = useWhoami();
+  if (whoami.status === "bound" || whoami.status === "loading") return <Home />;
+  return <Navigate to="/runs" replace />;
+}
+
 export function App() {
   return (
     <>
@@ -100,7 +121,7 @@ export function App() {
             view, a missing one sees "sign in required" above it. */}
         <IdentityGate>
         <Routes>
-          <Route path="/" element={<Navigate to="/runs" replace />} />
+          <Route path="/" element={<Landing />} />
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />

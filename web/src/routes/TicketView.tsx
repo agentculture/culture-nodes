@@ -18,6 +18,8 @@ import type {
 import ErrorNotice from "../components/ErrorNotice";
 import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
+import TicketFlowRail from "../components/TicketFlowRail";
+import { ticketFlow } from "../domain/ticket-flow";
 import RunDecisionCard, {
   confirmAllVerdicts,
   recordsWithVerdict,
@@ -129,6 +131,13 @@ export function TicketView() {
   // plane older than t14, which is a "nothing to decide here" — not an error.
   const pendingRecords: PendingDecisionRun[] = projection?.pending_records ?? [];
 
+  // Where the ticket is in the loop, derived from this projection alone
+  // (domain/ticket-flow.ts). Recomputed only when the projection changes.
+  const flow = useMemo(
+    () => (projection ? ticketFlow(projection) : null),
+    [projection],
+  );
+
   const submissionID = useRef(newSubmissionID());
 
   /**
@@ -215,13 +224,13 @@ export function TicketView() {
   if (loadError) {
     return <section className="view-rail"><h1>Ticket {id}</h1><p role="alert">{loadError.message}. {loadError.remediation}</p></section>;
   }
-  if (!projection) return <section className="view-rail"><h1>Ticket {id}</h1><p>Loading ticket projection…</p></section>;
+  if (!projection || !flow) return <section className="view-rail"><h1>Ticket {id}</h1><p>Loading ticket projection…</p></section>;
 
   return (
     <section className="view-rail ticket-view" data-ticket-id={projection.ticket_id}>
       <header className="ticket-view__head">
         <div>
-          <p className="eyebrow">Ticket conversation</p>
+          <p className="eyebrow">Ticket</p>
           <h1>{projection.ticket_id}</h1>
         </div>
         {ticketURL ? <a id="ticket-jira-link" href={ticketURL}>Open in Jira</a> : null}
@@ -235,7 +244,14 @@ export function TicketView() {
         </div>
       ) : null}
 
-      {/* Decisions first, because they are the only thing on this page that
+      {/* Where the ticket is, before anything a person has to read (task
+          t17, issue #270). The first screen used to open on a page-title-
+          sized key and then three paragraphs of prose; a person arriving
+          from a Jira link could not tell whether the thing had even started
+          without scrolling. */}
+      <TicketFlowRail flow={flow} ticketId={projection.ticket_id} />
+
+      {/* Decisions next, because they are the only thing on this page that
           is waiting on the reader. A Jira comment that names this ticket's
           options links here (task t11); before t18 it linked to a page that
           listed the task and offered nothing to click. A frozen ticket has
@@ -243,19 +259,19 @@ export function TicketView() {
       {pendingTasks.length ? (
         <section aria-labelledby="decisions-title" className="ticket-decisions">
           <h2 id="decisions-title">Decisions</h2>
-          <p className="muted">
-            Each option below is one the engine will accept for that task. A
-            decision is recorded under the signed-in identity — nothing to
-            type, nothing to hold.
-          </p>
           <SignedInAs verb="Deciding" whoami={whoami} />
           {decideError ? <ErrorNotice error={decideError} /> : null}
           <ul className="ticket-decisions__list">
             {pendingTasks.map((task) => (
-              <li className="inbox-card" key={task.id} data-human-task-id={task.id}>
-                <code>{task.id}</code> · {task.kind} · run{" "}
-                <Link to={`/runs/${encodeURIComponent(task.run_id)}`}>{task.run_id}</Link>
-                {task.deadline ? <> · due <time dateTime={task.deadline}>{task.deadline}</time></> : null}
+              <li className="inbox-card decision-card" key={task.id} data-human-task-id={task.id}>
+                <p className="decision-card__kind">{task.kind}</p>
+                <p className="decision-card__meta muted">
+                  run{" "}
+                  <Link to={`/runs/${encodeURIComponent(task.run_id)}`}>{task.run_id}</Link>
+                  {task.deadline ? <> · due <time dateTime={task.deadline}>{task.deadline}</time></> : null}
+                  {" · "}
+                  <code>{task.id}</code>
+                </p>
                 <OutcomeButtons
                   taskId={task.id}
                   outcomes={task.allowed_outcomes}
@@ -279,59 +295,208 @@ export function TicketView() {
         />
       ) : null}
 
-      {/* Frame claims are the custody checkout's, not this page's (spec c13,
-          honesty condition h20): internal/devague.MapFrameClaims still has no
-          production caller and the live path is an opaque frame_json blob, so
-          the page states each claim and the confirmation state it arrived
-          with, and offers nothing to change it. The claims this page DOES
-          decide are the ledger records above. */}
-      <section aria-labelledby="claims-title" id="ticket-frame-claims">
-        <h2 id="claims-title">Frame claims</h2>
-        <p className="muted">
-          Read-only: a frame claim is confirmed in the custody checkout, not
-          here. What this page decides is the ledger records above.
+      {pendingTasks.length === 0 && pendingRecords.length === 0 ? (
+        <p className="ticket-view__clear" data-testid="ticket-nothing-pending">
+          Nothing on this ticket is waiting on a person.
         </p>
-        {claims.length ? <ol className="ticket-cards">{claims.map((claim, index) => {
-          const key = claim.id ?? claim.ref ?? String(index);
-          return <li key={key} data-claim-id={key}><div><strong>{claim.id ?? claim.ref ?? `Claim ${index + 1}`}</strong><StateLabel state={claim.state ?? claim.status} /></div><p>{claim.text ?? claim.title ?? claim.claim ?? "No claim text supplied"}</p></li>;
-        })}</ol> : <p className="muted">No frame claims have been posted.</p>}
-      </section>
+      ) : null}
 
-      <section aria-labelledby="questions-title">
-        <h2 id="questions-title">Questions and decisions</h2>
-        {questions.length ? <ol className="ticket-cards">{questions.map((question, index) => {
-          const key = question.id ?? String(index);
-          const decision = question.id ? decisionByQuestion.get(question.id) : undefined;
-          return <li key={key}><div><strong>{question.id ?? `Question ${index + 1}`}</strong><StateLabel state={question.state ?? question.status} /></div><p>{question.text ?? question.question ?? "No question text supplied"}</p>{question.answer !== undefined ? <p><b>Answer:</b> {display(question.answer)}</p> : null}{decision ? <p><b>Decision:</b> {decision.text ?? decision.decision ?? decision.outcome}</p> : null}</li>;
-        })}</ol> : <p className="muted">No questions have been posted.</p>}
-        {decisions.filter((item) => !item.question_id).map((decision, index) => <p key={decision.id ?? index}><b>Decision:</b> {decision.text ?? decision.decision ?? decision.outcome}</p>)}
-      </section>
+      <TicketDetail
+        projection={projection}
+        claims={claims}
+        questions={questions}
+        decisions={decisions}
+        decisionByQuestion={decisionByQuestion}
+        frozen={frozen}
+        whoami={whoami}
+        actorId={actorId}
+        text={text}
+        setText={setText}
+        questionID={questionID}
+        setQuestionID={setQuestionID}
+        submitting={submitting}
+        submitError={submitError}
+        sent={sent}
+        onSubmit={submit}
+      />
+    </section>
+  );
+}
 
-      <section aria-labelledby="runs-title">
-        <h2 id="runs-title">Runs and reports</h2>
-        {projection.runs.length ? <ul className="ticket-rows">{projection.runs.map((run) => <li key={run.id}><Link to={`/runs/${encodeURIComponent(run.id)}`}>{run.name ?? run.id}</Link><StateLabel state={run.state} /></li>)}</ul> : <p className="muted">No runs for this ticket.</p>}
-        {projection.ticket_reports.length ? <ul className="ticket-rows">{projection.ticket_reports.map((report) => <li key={report.id}><span>{report.phase} report · {report.run_id}</span><StateLabel state={report.status} /></li>)}</ul> : null}
-      </section>
+/** The three panels a person reads AFTER deciding — never before. */
+const TABS = [
+  { id: "claims", label: "Claims & questions" },
+  { id: "runs", label: "Runs & reports" },
+  { id: "thread", label: "Conversation" },
+] as const;
 
-      <section aria-labelledby="replies-title">
-        <h2 id="replies-title">Reply thread</h2>
-        {projection.replies.length ? <ol className="ticket-replies">{projection.replies.map((reply) => <li key={reply.id}><p>{reply.text}</p><small>{reply.replier}{reply.question_id ? ` · ${reply.question_id}` : ""} · <time dateTime={reply.created_at}>{reply.created_at}</time></small></li>)}</ol> : <p className="muted">No replies yet.</p>}
-      </section>
+type TabId = (typeof TABS)[number]["id"];
 
-      <form className="ticket-reply-form" onSubmit={submit} aria-labelledby="reply-title">
-        <h2 id="reply-title">Reply</h2>
-        <SignedInAs verb="Replying" whoami={whoami} />
-        <label htmlFor="ticket-question">Question (optional)</label>
-        <select id="ticket-question" value={questionID} onChange={(event) => setQuestionID(event.target.value)} disabled={frozen}>
-          <option value="">General reply</option>
-          {questions.filter((question) => question.id).map((question) => <option key={question.id} value={question.id}>{question.id}: {question.text ?? question.question}</option>)}
-        </select>
-        <label htmlFor="ticket-reply">Reply text</label>
-        <textarea id="ticket-reply" rows={5} value={text} onChange={(event) => setText(event.target.value)} required disabled={frozen} />
-        <button type="submit" disabled={frozen || submitting || actorId === null || !text.trim()}>{submitting ? "Sending…" : "Send reply"}</button>
-        {sent ? <p role="status" className="ticket-reply-form__success">Reply sent.</p> : null}
-        {submitError ? <p role="alert">{submitError.message}. {submitError.remediation}</p> : null}
-      </form>
+/**
+ * Everything the ticket page used to stack under the decision, behind a tab
+ * strip (task t17, issue #270).
+ *
+ * The content did not change and nothing was retired: frame claims are still
+ * read-only with their arrival state, runs and reports still link out, the
+ * reply thread and its form are still the whole conversation. What changed is
+ * that a person meets one of the three at a time instead of all three at
+ * once — the operator's "blocks of text and lists" was a description of the
+ * stack, not of any one section.
+ *
+ * `claims` is the default panel because it is the ticket's subject matter;
+ * a person who came to decide has already been offered the decision above,
+ * and a person who came to read starts at what the ticket is about.
+ */
+function TicketDetail({
+  projection,
+  claims,
+  questions,
+  decisions,
+  decisionByQuestion,
+  frozen,
+  whoami,
+  actorId,
+  text,
+  setText,
+  questionID,
+  setQuestionID,
+  submitting,
+  submitError,
+  sent,
+  onSubmit,
+}: {
+  projection: TicketProjection;
+  claims: NonNullable<TicketFrameData["claims"]>;
+  questions: TicketQuestion[];
+  decisions: TicketDecision[];
+  decisionByQuestion: Map<string | undefined, TicketDecision>;
+  frozen: boolean;
+  whoami: ReturnType<typeof useWhoami>;
+  actorId: string | null;
+  text: string;
+  setText: (value: string) => void;
+  questionID: string;
+  setQuestionID: (value: string) => void;
+  submitting: boolean;
+  submitError: ApiError | null;
+  sent: boolean;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  const [tab, setTab] = useState<TabId>("claims");
+
+  // Left/Right moves between tabs and focuses the one it lands on, which is
+  // the tablist pattern's whole point: three panels behind one tab stop
+  // rather than three more stops on the way to the reply box.
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const index = TABS.findIndex((entry) => entry.id === tab);
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    const next = TABS[(index + delta + TABS.length) % TABS.length];
+    setTab(next.id);
+    document.getElementById(`ticket-tab-${next.id}`)?.focus();
+  }
+
+  return (
+    <section className="ticket-detail" aria-labelledby="ticket-detail-title">
+      <h2 className="sr-only" id="ticket-detail-title">
+        Ticket detail
+      </h2>
+      <div
+        className="ticket-detail__tabs"
+        role="tablist"
+        aria-label="Ticket detail"
+        onKeyDown={onKeyDown}
+      >
+        {TABS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            id={`ticket-tab-${entry.id}`}
+            aria-selected={tab === entry.id}
+            aria-controls={`ticket-panel-${entry.id}`}
+            tabIndex={tab === entry.id ? 0 : -1}
+            className={`ticket-detail__tab${tab === entry.id ? " is-active" : ""}`}
+            onClick={() => setTab(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="ticket-detail__panel"
+        role="tabpanel"
+        id={`ticket-panel-${tab}`}
+        aria-labelledby={`ticket-tab-${tab}`}
+        tabIndex={0}
+      >
+        {tab === "claims" ? (
+          <>
+            {/* Frame claims are the custody checkout's, not this page's (spec
+                c13, honesty condition h20): internal/devague.MapFrameClaims
+                still has no production caller and the live path is an opaque
+                frame_json blob, so the page states each claim and the
+                confirmation state it arrived with, and offers nothing to
+                change it. The claims this page DOES decide are the ledger
+                records above. */}
+            <section aria-labelledby="claims-title" id="ticket-frame-claims">
+              <h2 id="claims-title">Frame claims</h2>
+              <p className="muted">
+                Read-only: a frame claim is confirmed in the custody checkout, not
+                here. What this page decides is the ledger records above.
+              </p>
+              {claims.length ? <ol className="ticket-cards">{claims.map((claim, index) => {
+                const key = claim.id ?? claim.ref ?? String(index);
+                return <li key={key} data-claim-id={key}><div><strong>{claim.id ?? claim.ref ?? `Claim ${index + 1}`}</strong><StateLabel state={claim.state ?? claim.status} /></div><p>{claim.text ?? claim.title ?? claim.claim ?? "No claim text supplied"}</p></li>;
+              })}</ol> : <p className="muted">No frame claims have been posted.</p>}
+            </section>
+
+            <section aria-labelledby="questions-title">
+              <h2 id="questions-title">Questions and decisions</h2>
+              {questions.length ? <ol className="ticket-cards">{questions.map((question, index) => {
+                const key = question.id ?? String(index);
+                const decision = question.id ? decisionByQuestion.get(question.id) : undefined;
+                return <li key={key}><div><strong>{question.id ?? `Question ${index + 1}`}</strong><StateLabel state={question.state ?? question.status} /></div><p>{question.text ?? question.question ?? "No question text supplied"}</p>{question.answer !== undefined ? <p><b>Answer:</b> {display(question.answer)}</p> : null}{decision ? <p><b>Decision:</b> {decision.text ?? decision.decision ?? decision.outcome}</p> : null}</li>;
+              })}</ol> : <p className="muted">No questions have been posted.</p>}
+              {decisions.filter((item) => !item.question_id).map((decision, index) => <p key={decision.id ?? index}><b>Decision:</b> {decision.text ?? decision.decision ?? decision.outcome}</p>)}
+            </section>
+          </>
+        ) : null}
+
+        {tab === "runs" ? (
+          <section aria-labelledby="runs-title">
+            <h2 id="runs-title">Runs and reports</h2>
+            {projection.runs.length ? <ul className="ticket-rows">{projection.runs.map((run) => <li key={run.id}><Link to={`/runs/${encodeURIComponent(run.id)}`}>{run.name ?? run.id}</Link><StateLabel state={run.state} /></li>)}</ul> : <p className="muted">No runs for this ticket.</p>}
+            {projection.ticket_reports.length ? <ul className="ticket-rows">{projection.ticket_reports.map((report) => <li key={report.id}><span>{report.phase} report · {report.run_id}</span><StateLabel state={report.status} /></li>)}</ul> : null}
+          </section>
+        ) : null}
+
+        {tab === "thread" ? (
+          <>
+            <section aria-labelledby="replies-title">
+              <h2 id="replies-title">Reply thread</h2>
+              {projection.replies.length ? <ol className="ticket-replies">{projection.replies.map((reply) => <li key={reply.id}><p>{reply.text}</p><small>{reply.replier}{reply.question_id ? ` · ${reply.question_id}` : ""} · <time dateTime={reply.created_at}>{reply.created_at}</time></small></li>)}</ol> : <p className="muted">No replies yet.</p>}
+            </section>
+
+            <form className="ticket-reply-form" onSubmit={onSubmit} aria-labelledby="reply-title">
+              <h2 id="reply-title">Reply</h2>
+              <SignedInAs verb="Replying" whoami={whoami} />
+              <label htmlFor="ticket-question">Question (optional)</label>
+              <select id="ticket-question" value={questionID} onChange={(event) => setQuestionID(event.target.value)} disabled={frozen}>
+                <option value="">General reply</option>
+                {questions.filter((question) => question.id).map((question) => <option key={question.id} value={question.id}>{question.id}: {question.text ?? question.question}</option>)}
+              </select>
+              <label htmlFor="ticket-reply">Reply text</label>
+              <textarea id="ticket-reply" rows={5} value={text} onChange={(event) => setText(event.target.value)} required disabled={frozen} />
+              <button type="submit" disabled={frozen || submitting || actorId === null || !text.trim()}>{submitting ? "Sending…" : "Send reply"}</button>
+              {sent ? <p role="status" className="ticket-reply-form__success">Reply sent.</p> : null}
+              {submitError ? <p role="alert">{submitError.message}. {submitError.remediation}</p> : null}
+            </form>
+          </>
+        ) : null}
+      </div>
     </section>
   );
 }

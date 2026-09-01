@@ -37,6 +37,16 @@ function renderRoute() {
   );
 }
 
+/**
+ * Open one of the ticket page's detail tabs (task t17). Claims and questions,
+ * runs and reports, and the conversation moved behind a tab strip so the flow
+ * rail and the pending decision own the first screen; a test that reads one
+ * of them now says so, exactly as a person does.
+ */
+async function openTab(name: string) {
+  await userEvent.setup().click(screen.getByRole("tab", { name }));
+}
+
 function headerNames(init: RequestInit): string[] {
   return Object.keys(init.headers as Record<string, string>).map((key) => key.toLowerCase());
 }
@@ -66,7 +76,10 @@ describe("TicketView", () => {
       expect(within(state as HTMLElement).getByText(state?.getAttribute("data-state") ?? "")).toBeInTheDocument();
     }
     expect(screen.getByText("Questions and decisions")).toBeInTheDocument();
+
+    await openTab("Runs & reports");
     expect(screen.getByText("Runs and reports")).toBeInTheDocument();
+    await openTab("Conversation");
     expect(screen.getByText("Reply thread")).toBeInTheDocument();
     expect(screen.getByText("Yes, use the existing token.")).toBeInTheDocument();
   });
@@ -85,6 +98,7 @@ describe("TicketView", () => {
     expect(screen.queryByLabelText(/token/i)).toBeNull();
     expect(screen.queryByLabelText(/your name/i)).toBeNull();
     expect(document.querySelector('input[type="password"]')).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Conversation" }));
     expect(await screen.findByText(/replying as/i)).toHaveTextContent(WHOAMI_EMAIL);
 
     await user.type(screen.getByLabelText("Reply text"), "Proceed");
@@ -111,6 +125,7 @@ describe("TicketView", () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Decisions" });
     await waitFor(() => expect(mockGetWhoami).toHaveBeenCalled());
+    await user.click(screen.getByRole("tab", { name: "Conversation" }));
     await user.type(screen.getByLabelText("Reply text"), "Proceed");
     expect(screen.getByRole("button", { name: "Send reply" })).toBeDisabled();
     const approve = within(screen.getByLabelText(`Outcomes for ${PENDING_TASK_ID}`)).getByRole("button", { name: "approved" });
@@ -141,6 +156,7 @@ describe("TicketView", () => {
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Frozen");
     expect(screen.getByRole("link", { name: "PR #42" })).toHaveAttribute("href", "https://github.example.test/pulls/42");
+    await openTab("Conversation");
     expect(screen.getByLabelText("Question (optional)")).toBeDisabled();
     expect(screen.getByLabelText("Reply text")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send reply" })).toBeDisabled();
@@ -525,6 +541,57 @@ describe("TicketView layout (task t27)", () => {
     mockGetWhoami.mockReset();
     mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
     mockGetTicket.mockResolvedValue(structuredClone(TICKET_PROJECTION));
+  });
+
+  /**
+   * Task t17's first criterion is about ORDER, not only content: the first
+   * screen is a picture of where the ticket is plus the thing waiting on a
+   * person. Claims, runs, reports and the thread are still all here — they
+   * are behind the tab strip, which comes after both.
+   */
+  it("leads with the flow rail and the decision, and puts everything else behind tabs", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: TICKET_PROJECTION.ticket_id });
+
+    const rail = screen.getByTestId("ticket-flow-rail");
+    const decisions = document.querySelector(".ticket-decisions")!;
+    const tabs = screen.getByRole("tablist", { name: "Ticket detail" });
+
+    // Node.compareDocumentPosition: FOLLOWING (4) means the argument comes
+    // after the node it is compared against, which is exactly "above the
+    // fold" expressed as something a test can hold.
+    expect(rail.compareDocumentPosition(decisions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(decisions.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Claims & questions",
+      "Runs & reports",
+      "Conversation",
+    ]);
+  });
+
+  it("says where the ticket is in words as well as in the picture", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: TICKET_PROJECTION.ticket_id });
+    const rail = screen.getByTestId("ticket-flow-rail");
+    expect(rail.querySelectorAll("[data-stage]")).toHaveLength(5);
+    // Status is never colour (or shape) alone: the current stage, who it
+    // waits on, and the evidence for it are all readable text.
+    expect(rail).toHaveTextContent("Review");
+    expect(rail).toHaveTextContent(/Waiting on a person/);
+    expect(rail).toHaveTextContent(/Read from this ticket alone/);
+  });
+
+  it("says nothing is waiting on a person when neither queue has anything", async () => {
+    mockGetTicket.mockResolvedValue({
+      ...structuredClone(TICKET_PROJECTION),
+      pending_tasks: [],
+      pending_records: [],
+    });
+    renderRoute();
+    expect(await screen.findByTestId("ticket-nothing-pending")).toHaveTextContent(
+      "Nothing on this ticket is waiting on a person.",
+    );
   });
 
   it("sits on the app's full-width rail, like every other view", async () => {

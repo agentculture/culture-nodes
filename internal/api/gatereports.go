@@ -163,6 +163,9 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 			"send a JSON body matching CreateGateReportRequest: {commit_sha, validator_actor_id, gates:[...]}",
 			"decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.ValidatorActorID, warning = principalActor(r, "validator_actor_id", req.ValidatorActorID)
 	if len(req.Gates) == 0 {
 		return badRequest(
 			"list every gate the workflow declared, including the ones that measured nothing",
@@ -263,7 +266,7 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 
 	s.routeGateReportFailures(ctx, id, req, out.Gates, results, records, measured, &out)
 
-	writeJSON(w, http.StatusCreated, out)
+	writeJSONWithWarning(w, http.StatusCreated, out, warning)
 	return nil
 }
 

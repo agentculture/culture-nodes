@@ -138,7 +138,10 @@ func TestGitHubPRSourcedRunFansOutToNotifyOnlyAndSaysWhy(t *testing.T) {
 // token in one would hand that whole audience the authority to decide.
 func TestFanOutPayloadsCarryNothingDerivedFromTheDecisionTokenSecret(t *testing.T) {
 	const secret = "s3cr3t-decision-token-value-for-this-test"
+	const accessJWT = "ey.test.cf-access-assertion.must-not-fan-out"
 	t.Setenv("NODES_HUMAN_DECISION_TOKEN_SECRET", secret)
+	t.Setenv("Cf-Access-Jwt-Assertion", accessJWT)
+	t.Setenv("CF_Authorization", "cf-service-token-must-not-fan-out")
 	t.Setenv(engine.UIBaseURLEnv, "http://thor:18080")
 
 	sum := sha256.Sum256([]byte(secret))
@@ -151,6 +154,10 @@ func TestFanOutPayloadsCarryNothingDerivedFromTheDecisionTokenSecret(t *testing.
 		// The variable's own NAME is forbidden too: a payload that names the
 		// knob tells a reader where to go looking for its value.
 		"NODES_HUMAN_DECISION_TOKEN_SECRET",
+		accessJWT,
+		"Cf-Access-Jwt-Assertion",
+		"CF_Authorization",
+		"cf-service-token-must-not-fan-out",
 	}
 
 	subjects := []engine.RunSubject{

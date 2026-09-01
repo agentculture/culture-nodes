@@ -219,7 +219,7 @@ func (p *Provider) RecordAuthRefusal(ctx context.Context, reason string) {
 	if p == nil || p.authRefusals == nil {
 		return
 	}
-	p.authRefusals.Add(ctx, 1, metric.WithAttributes(KeyAuthRefusalReason.String(reason)))
+	p.authRefusals.Add(ctx, 1, metric.WithAttributes(AuthRefusalReason(reason)))
 }
 
 // Shutdown flushes and releases any exporter resources New constructed.

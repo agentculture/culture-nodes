@@ -123,6 +123,7 @@ func TestAllowedAttributeKeys_ConstructorsAreAllowlisted(t *testing.T) {
 		TechStatus("succeeded"), Outcome("passed"), NodeRunState("completed"),
 		RunState("running"), Disposition("committed"),
 		AttemptNumber(1),
+		AuthRefusalReason("no_principal"),
 		durationMs(1.5),
 	}
 	for _, kv := range kvs {

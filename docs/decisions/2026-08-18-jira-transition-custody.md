@@ -1,5 +1,7 @@
 # Jira transition custody
 
+Superseded by [Jira transition allowlist](2026-09-02-jira-transition-allowlist.md).
+
 Decision c19 of `hands-free-scrum-2-pickup` assigns narrow board-state custody to the Jira bridge.
 
 The bridge may transition only issues whose key begins with the project prefix configured by

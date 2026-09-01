@@ -1261,7 +1261,8 @@ twice.
 | What | Where | Why |
 | --- | --- | --- |
 | `NODES_UI_BASE_URL` | `~/.culture-nodes/prod.env` on every host that mints runs | the comment and the Discord post carry the decision page link; unset renders a bare path, which Jira shows as text |
-| `JIRA_TRANSITION_TARGET` includes `Pending` | the jira bridge's own environment | the bridge's allowlist is the enforcement point for `transition_issue`. Since t11 it is a **comma-separated list** and a single value still works unchanged: `JIRA_TRANSITION_TARGET=Done,Pending` |
+| `JIRA_TRANSITION_TARGETS` | `~/.culture-nodes/jira-bridge-jira.env` | `deploy.sh` merges the deploy-time value into the bridge's existing credential file, defaulting to `In Progress,Pending,In Review,Done`; exact membership is enforced by `transition_issue` at parse time |
+| `JIRA_TRANSITION_PROJECT_PREFIX` | `~/.culture-nodes/jira-bridge-jira.env` | `deploy.sh` merges the deploy-time value into the bridge's existing credential file, defaulting to `SCRUM-`; issue keys outside it are refused at parse time |
 | `company/notify-discord` registered | `actors` table | the Discord half of every fan-out is dispatched through the same bridge `examples/notify-message` uses; an unregistered key fails that one row and leaves the queue alone |
 | `human_task_expiry` registered | `actors` table | `deploy/prod/register-actor.sh --engine human_task_expiry`. An expiry appends one `derived` ledger record and `ledger_records.origin_actor_id` is a foreign key to `actors(id)`, so without it every expiry refuses. Override the id with `NODES_HUMAN_TASK_EXPIRY_ACTOR_ID` |
 

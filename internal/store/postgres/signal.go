@@ -623,12 +623,19 @@ func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverS
 			 (input->>'repository'=$3 AND input->>'number'=$4))
 			ORDER BY created_at DESC,id DESC LIMIT 1`, in.NamespaceID, merged.IssueKey,
 			merged.Repository, strconv.Itoa(merged.Number)).Scan(&ticketRunID); err != nil {
-			if isNoRows(err) {
-				return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: pr.merged ticket %s has no run for Ticket done task", merged.IssueKey)
+			if !isNoRows(err) {
+				return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: find Ticket done run: %w", err)
 			}
-			return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: find Ticket done run: %w", err)
+			// A merged PR for a ticket the system never worked has no run to
+			// host a human task: the freeze above still applies (it is the
+			// durable part of the fact), and the Done decision stays with a
+			// person on the board. Raising nothing here is the honest
+			// outcome, not an error — the pre-t15 behaviour for such tickets.
+			ticketRunID = ""
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO human_tasks
+		if ticketRunID == "" {
+			// no run: freeze recorded, no Ticket done task to raise
+		} else if _, err := tx.Exec(ctx, `INSERT INTO human_tasks
 			(id,namespace_id,run_id,node_run_id,kind,status,request,source_signal_event_id)
 			VALUES($1,$2,$3,NULL,'ticket_done',$4,$5,$6)
 			ON CONFLICT (source_signal_event_id) WHERE source_signal_event_id IS NOT NULL DO NOTHING`,

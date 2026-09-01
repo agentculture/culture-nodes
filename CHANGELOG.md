@@ -41,8 +41,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   assertion carries no user `sub`) had no defined resolution at all. The
   requirement (frame claim `c3`, amended with the superseded text kept as a
   revision) now states one claim-to-binding algorithm: the lookup key is
-  `(provider, subject)`, interactive logins bind as `cloudflare_access` +
-  `sub` and service tokens as `cloudflare_access_service_token` +
+  `(provider, subject)`, interactive logins bind as `cloudflare-access` +
+  `sub` and service tokens as `cloudflare-service-token` +
   `common_name`, `email` is a display hint that is never a lookup key, and a
   verified token matching no binding is unbound rather than silently a viewer
   (Qodo finding 1 on #271).

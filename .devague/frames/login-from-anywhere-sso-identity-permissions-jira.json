@@ -4,12 +4,12 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-01T19:09:28Z",
-  "updated": "2026-09-01T20:35:24Z",
+  "updated": "2026-09-01T20:44:05Z",
   "claims": [
     {
       "id": "c1",
       "kind": "announcement",
-      "text": "Culture Nodes is reachable at nodes.culture.dev behind Cloudflare Access SSO on the same Zero Trust team as chat.agentculture.org; every person who signs in is a named human actor and every agent or bridge holds its own API token, and the ledger stamps origin from the authenticated caller rather than a request field; a ticket's human tasks, proposed claims and confirmations are decided on its own page under that identity; agents can read a Jira ticket's body, comments and links, and the system moves the board itself: In Review on a PR, Waiting on a parked question, Done on merge. OIDC / Entra workload auth is scoped as the follow-on.",
+      "text": "Culture Nodes is reachable at nodes.culture.dev behind Cloudflare Access SSO on the same Zero Trust team as chat.agentculture.org; every person who signs in is a named human actor and every agent or bridge holds its own API token, and the ledger stamps origin from the authenticated caller rather than a request field; a ticket's human tasks, proposed claims and confirmations are decided on its own page under that identity; agents can read a Jira ticket's body, comments and links, and the system moves the board itself: In Review on a PR, Pending on a parked question, Done when a human says so after live validation. OIDC / Entra workload auth is scoped as the follow-on.",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [
@@ -23,7 +23,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Culture Nodes is reachable at nodes.culture.dev behind Cloudflare Access SSO on the same Zero Trust team as chat.agentculture.org; every person who signs in is a named human actor and every agent or bridge holds its own API token, and the ledger stamps origin from the authenticated caller rather than a request field; a ticket's human tasks, proposed claims and confirmations are decided on its own page under that identity; agents can read a Jira ticket's body, comments and links, and the system moves the board itself: In Review on a PR, Waiting on a parked question, Done on merge. OIDC / Entra workload auth is scoped as the follow-on.",
+          "kind": "announcement",
+          "reason": "Qodo #5: Pending is canonical (c35)"
+        }
+      ]
     },
     {
       "id": "c2",
@@ -46,7 +52,7 @@
     {
       "id": "c3",
       "kind": "requirement",
-      "text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and then resolves the registered actor by one claim-to-binding algorithm: the lookup key is the (provider, subject) pair of the actor_identities binding, where an interactive SSO login is provider cloudflare_access with subject the verified sub claim, and a service token is provider cloudflare_access_service_token with subject the verified common_name claim (a service-token assertion carries no user sub); the email claim is carried as a display hint only and is never a lookup key, and a verified token whose (provider, subject) matches no binding is unbound \u2014 never resolved by email, never a silent viewer; the Go runtime does this with the standard library (crypto/rsa, encoding/json, net/http), honouring the zero-third-party-dependency rule",
+      "text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and derives ONE binding key: for an interactive login provider=cloudflare-access and subject=the JWT sub claim (Cloudflare's stable user id); for a service token provider=cloudflare-service-token and subject=the common_name claim; the email claim is kept only for display and never used to look up an actor; the Go runtime does this with the standard library, honouring the zero-third-party-dependency rule",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -64,7 +70,7 @@
         {
           "text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and maps the email claim (interactive SSO) or common_name claim (service token) to a registered actor; the Go runtime does this with the standard library (crypto/rsa, encoding/json, net/http), honouring the zero-third-party-dependency rule",
           "kind": "requirement",
-          "reason": "Qodo review on PR #271 (High/Security, 'Identity binding key conflicts'): the mapping clause keyed the actor lookup on email or common_name, which contradicts c49's actor_identities boundary and c37's confirmed (provider, subject) key that forbids an email key and leaves service principals unresolvable"
+          "reason": "Qodo #1: one claim-to-binding algorithm, never email as the key"
         }
       ]
     },
@@ -90,7 +96,7 @@
     {
       "id": "c5",
       "kind": "before_state",
-      "text": "As of 2026-08-30 (docs/audits/2026-08-30-lan-and-credential-dependencies.md): thor:18080 is HTTP-only on LAN/tailscale with no auth middleware on any GET; one shared NODES_HUMAN_DECISION_TOKEN_SECRET gates every write (page replies, frame posts, freeze, human-task decisions, reviews, grades) and identity is a free-text replier/decider_actor_id nobody binds to a person; one personal Jira Basic-auth pair (the operator's account) is the sweep, the bridge and both operator skills, so the operator's own board actions are filtered as self-echo",
+      "text": "As of 2026-08-30 (docs/audits/2026-08-30-lan-and-credential-dependencies.md, corrected): thor:18080 is HTTP-only on LAN/tailscale with no auth middleware on any GET; one shared NODES_HUMAN_DECISION_TOKEN_SECRET gates page replies, frame posts, freeze, human-task decisions, reviews, suite verdicts and gate reports, while POST /runs/{id}/grades is not gated at all (the audit's line saying otherwise is inaccurate); identity is a free-text replier/decider_actor_id nobody binds to a person; one personal Jira Basic-auth pair (the operator's account) is the sweep, the bridge and both operator skills, so the operator's own board actions are filtered as self-echo",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -104,7 +110,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "As of 2026-08-30 (docs/audits/2026-08-30-lan-and-credential-dependencies.md): thor:18080 is HTTP-only on LAN/tailscale with no auth middleware on any GET; one shared NODES_HUMAN_DECISION_TOKEN_SECRET gates every write (page replies, frame posts, freeze, human-task decisions, reviews, grades) and identity is a free-text replier/decider_actor_id nobody binds to a person; one personal Jira Basic-auth pair (the operator's account) is the sweep, the bridge and both operator skills, so the operator's own board actions are filtered as self-echo",
+          "kind": "before_state",
+          "reason": "Qodo #6: grades are ungated today; the audit line was wrong"
+        }
+      ]
     },
     {
       "id": "c6",
@@ -282,6 +294,12 @@
           "text": "prod bridge env lists four targets and the deploy lane writes that file (grant-check names it); a merged PR moves the ticket to Done and the sweep's next pass records that transition as self-echo without re-triggering intake; docs/drive-from-jira.md's trigger table and the custody decision record are updated in the same PR",
           "status": "confirmed",
           "instruction": ""
+        },
+        {
+          "id": "h38",
+          "text": "A store test asserts that a pr.merged fact plans NO transition_issue intent and raises exactly one 'Ticket done?' human task; the Done transition intent appears only after that task's done outcome is recorded; a Jira read after the merge shows the ticket still not Done",
+          "status": "confirmed",
+          "instruction": ""
         }
       ],
       "hard_questions": [
@@ -369,7 +387,7 @@
     {
       "id": "c19",
       "kind": "requirement",
-      "text": "Permissions follow PRD \u00a716.2's RBAC vocabulary with two roles shipped first \u2014 approver (decide, review, reply) and namespace administrator (register actors, publish, cancel, schedules, credentials) \u2014 and every other principal a viewer; roles live on the actor_identities binding, the ledger authority matrix is unchanged: a role grants the right to call a route, the registered kind still decides proposed vs confirmed",
+      "text": "Permissions follow PRD \u00a716.2's RBAC vocabulary with two human roles first and an explicit matrix: viewer = every GET and both SSE streams; approver = human-task decisions, reviews and commits, ticket replies, frame posts, freeze, grades; namespace administrator = everything approver has plus actors register/resume, workflows publish/validate, workflow-generations, runs create/cancel/patch, namespaces, schedules, preflight acknowledge, plan-imports, store entries/bindings/publish, inbound credential issuance/revocation; machine principals are not roles \u2014 bridges and runners keep their route-scoped credentials (attempt token for artifacts and callbacks, dial-in credential for inbound poll/complete, event token for POST /events, actor token for suite-verdicts and gate-reports) and their records stay agent-origin; roles live on the actor_identities binding and the ledger authority matrix is unchanged \u2014 a role grants the right to call a route, the registered kind still decides proposed vs confirmed",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -388,6 +406,11 @@
           "text": "Permissions follow PRD \u00a716.2's six RBAC roles (viewer, author, publisher, operator, approver, namespace administrator) as a principal->roles mapping held on the registered actor row's metadata (new revision, never an update), with the ledger authority matrix unchanged: a role grants the right to call a route, the registered kind still decides proposed vs confirmed",
           "kind": "requirement",
           "reason": "user q9"
+        },
+        {
+          "text": "Permissions follow PRD \u00a716.2's RBAC vocabulary with two roles shipped first \u2014 approver (decide, review, reply) and namespace administrator (register actors, publish, cancel, schedules, credentials) \u2014 and every other principal a viewer; roles live on the actor_identities binding, the ledger authority matrix is unchanged: a role grants the right to call a route, the registered kind still decides proposed vs confirmed",
+          "kind": "requirement",
+          "reason": "Qodo #4: exhaustive route-to-role matrix incl. machine principals"
         }
       ]
     },
@@ -742,13 +765,19 @@
     {
       "id": "c42",
       "kind": "requirement",
-      "text": "Push replaces polling as the primary Jira signal in the last wave: a Jira Cloud system webhook posts issue, transition and comment events to a dedicated receiver path on nodes.culture.dev that a path-scoped Cloudflare Access Bypass policy lets through, authenticated by a shared secret the receiver verifies (the webhook's signing secret where the tenant supports it, otherwise a secret in the URL) before it forwards to the existing event-token-gated POST /v1alpha1/events path; the receiver reuses pr_upkeep_jira.py's normalisation so facts, watermarks and self-echo are identical; the sweep stays as reconciliation and its interval is relaxed only after a week of push running green",
+      "text": "Push replaces polling as the primary Jira signal in the last wave: a Jira Cloud system webhook posts issue, transition and comment events to a dedicated receiver path on nodes.culture.dev that a path-scoped Cloudflare Access Bypass policy lets through, authenticated by a shared secret the receiver verifies before anything else; the receiver treats the delivery only as a wake-up \u2014 it re-reads the issue's changelog and comments through the same Jira read the sweep uses, replays them through the one normalisation seam (pr_upkeep_jira.jira_history_facts and jira_watermark) so source keys and cumulative watermarks are identical, and forwards to the existing event-token-gated POST /v1alpha1/events path where the watermark dedup absorbs delayed or out-of-order deliveries; the sweep stays as reconciliation and its interval is relaxed only after a week of push running green",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h14",
           "text": "A comment posted on a SCRUM ticket produces a pr-upkeep.jira.comment fact within seconds via the push path, and the next sweep pass reports it duplicate=true; a test asserts the receiver and the sweep emit byte-identical facts for the same fixture",
+          "status": "confirmed",
+          "instruction": ""
+        },
+        {
+          "id": "h37",
+          "text": "A fixture test delivers the same three webhook events in order, reversed, and duplicated, and the receiver emits exactly the source keys and watermarks the sweep emits for that fixture, with the control plane reporting duplicate=true for every repeat",
           "status": "confirmed",
           "instruction": ""
         }
@@ -761,6 +790,11 @@
           "text": "Push replaces polling as the primary Jira signal in the last wave: a Jira Automation web request through a Cloudflare Access service-token policy posts to POST /v1alpha1/events; the receiver reuses pr_upkeep_jira.py's normalisation so facts, watermarks and self-echo are identical; the sweep stays as reconciliation and its interval is relaxed only after a week of push running green",
           "kind": "requirement",
           "reason": "user: webhook over Automation (Premium trial quota ends soon)"
+        },
+        {
+          "text": "Push replaces polling as the primary Jira signal in the last wave: a Jira Cloud system webhook posts issue, transition and comment events to a dedicated receiver path on nodes.culture.dev that a path-scoped Cloudflare Access Bypass policy lets through, authenticated by a shared secret the receiver verifies (the webhook's signing secret where the tenant supports it, otherwise a secret in the URL) before it forwards to the existing event-token-gated POST /v1alpha1/events path; the receiver reuses pr_upkeep_jira.py's normalisation so facts, watermarks and self-echo are identical; the sweep stays as reconciliation and its interval is relaxed only after a week of push running green",
+          "kind": "requirement",
+          "reason": "Qodo #2: receiver must hydrate the same ordered history the sweep does"
         }
       ]
     },

@@ -1,0 +1,52 @@
+# systemd USER unit for the nodes.culture.dev tunnel (login-from-anywhere
+# cycle, task t19; spec claims c2, c7, c23, c43).
+#
+# Runs on THOR, the host that serves prod-api-1. It is a TOKEN-MODE unit:
+# the only thing on this host is the per-tunnel token cloudflared presents to
+# Cloudflare, read from TUNNEL_TOKEN_FILE. The tunnel's ingress (which
+# hostname forwards to which local service) is REMOTE-MANAGED in Cloudflare
+# and was written by the one-time `cultureflare remote-login setup` run, so
+# there is deliberately no config.yml beside this unit and no ingress rule to
+# drift here (spec c2: "never a config.yml on the API host").
+#
+# The ingress targets the control plane's LOOPBACK listener,
+# http://127.0.0.1:18081 — the `NODES_ACCESS_LISTEN` port task t8 binds —
+# and NOT the LAN listener on 0.0.0.0:18080. That split is spec c43: an
+# Access JWT is honoured only on a listener the tunnel alone can reach, so a
+# JWT captured on the plaintext LAN cannot be replayed against the LAN port.
+# The LAN listener stays on 18080 for the sweep, workers and bridges.
+#
+# The shape is copied from spark's proven cloudflared-vllm.service /
+# cloudflared-chat.service (cultureflare's token-mode unit): Type=simple,
+# --no-autoupdate, Restart=on-failure, NoNewPrivileges. The binary path is
+# not spark's ~/.local/bin — thor gets cloudflared at /usr/local/bin (see
+# docs/operations/nodes-culture-dev.md, which is the install and enable
+# recipe and the hand-turn ledger for this unit).
+#
+# Install (each step is a counted hand-turn — see the doc):
+#
+#   install -D -m 0644 deploy/prod/cloudflared-nodes.service \
+#     ~/.config/systemd/user/cloudflared-nodes.service
+#   install -d -m 0700 ~/.config/cloudflared
+#   # the token file goes to ~/.config/cloudflared/nodes-culture-dev.token, 0600
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now cloudflared-nodes
+#   loginctl enable-linger "$USER"
+#   journalctl --user -u cloudflared-nodes -f
+
+[Unit]
+Description=cloudflared tunnel — nodes.culture.dev (Culture Nodes control plane on localhost:18081)
+Documentation=https://github.com/agentculture/cultureflare
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=TUNNEL_TOKEN_FILE=%h/.config/cloudflared/nodes-culture-dev.token
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

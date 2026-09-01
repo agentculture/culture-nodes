@@ -54,7 +54,7 @@ defaults, so setting neither produces a byte-identical `prod.env`:
 
 | variable | default | what it decides |
 |---|---|---|
-| `NODES_CALLBACK_BASE_URL` | `http://thor:18080` | the origin a bridge posts an attempt result back to. Its `thor` is a **container-resolved** name (compose.orin.yml maps it through `extra_hosts` from `THOR_IP`), not an ssh target — which is why it does not follow the host arguments the way `NODES_UI_BASE_URL` does |
+| `NODES_CALLBACK_BASE_URL` | `http://thor:18080` | the origin a bridge posts an attempt result back to. Its `thor` is a **container-resolved** name (compose.orin.yml maps it through `extra_hosts` from `THOR_IP`), not an ssh target. (`NODES_UI_BASE_URL` used to follow the host arguments; since t19 it is the fixed public origin `https://nodes.culture.dev`, see "Ticket page links are the public SSO origin" below) |
 | `NODES_COMPOSE_PROFILES` | `bundled-postgres,backup` | thor's profile list. Setting it is the supported way to deploy against an external database without hand-editing `prod.env` on the host afterwards |
 
 To use an external database, edit `prod.env` on each host: set the same
@@ -607,32 +607,40 @@ parked as issue #6; the runner protocol's `AllowInsecureTransport` opt-in
 is what permits plaintext HTTP off-loopback). Do not port-forward any of
 these beyond the LAN.
 
-### Ticket page links are LAN addresses (task t16)
+### Ticket page links are the public SSO origin (task t16, then t19)
 
 `NODES_UI_BASE_URL` is the origin culture-nodes puts in front of every ticket
-page link it posts on a Jira issue. Without it the page-link comment read
-`/tickets/SCRUM-N` — a path with no origin, which Jira renders as plain text.
-`install-secrets.sh` now writes the key into both hosts' `prod.env`, and both
-compose files declare it for every service that can mint a run (api, scheduler
-and worker on thor; the worker on orin — the comment is rendered by whichever
-process claimed the work, and the two machines share one namespace).
+page link it posts on a Jira issue, every human-task fan-out option, and every
+Discord notification. Without it the page-link comment read `/tickets/SCRUM-N`
+— a path with no origin, which Jira renders as plain text. `install-secrets.sh`
+writes the key into both hosts' `prod.env`, and both compose files declare it
+for every service that can mint a run (api, scheduler and worker on thor; the
+worker on orin — the comment is rendered by whichever process claimed the
+work, and the two machines share one namespace).
 
-**The link it produces is reachable from the LAN or tailscale only, and that is
-the accepted state until the OAuth cycle.** The default is thor's API origin —
-the control-plane host you invoked the script with, so
-`./install-secrets.sh 192.168.1.146 orin` produces
-`http://192.168.1.146:18080/tickets/SCRUM-N`. A reader looking at that comment
-in Jira or Discord from off the network sees a link they cannot open. Nothing
-about the ticket is hidden from them — the Jira issue itself is where the
-decision is recorded — but the *page* is not public, and no part of this
-deployment pretends otherwise (see "Network trust" above: none of these ports
-should be forwarded beyond the LAN to make the link work).
+**Since the login-from-anywhere cycle (task t19, spec c44) the value is
+`https://nodes.culture.dev` — the name the page is served under behind
+Cloudflare Access — on both hosts, and no longer a LAN or tailscale address.**
+Task t16 had accepted a LAN link (`http://<thor-host>:18080/tickets/SCRUM-N`) a
+reader off the network could not open; that acceptance ended with this cycle.
+The public name reaches thor over a token-mode `cloudflared` user unit
+(`deploy/prod/cloudflared-nodes.service`) whose remote-managed ingress targets
+the control plane's **loopback** listener `127.0.0.1:18081` (`NODES_ACCESS_LISTEN`,
+bound by task t8) — not the LAN listener, so an Access JWT seen on the
+plaintext LAN cannot be replayed to `18080` (spec c43). The LAN publish
+`18080:8080` is unchanged and `tests/deploy/nodesculturedev_test.go` pins both
+that and the two compose files agreeing on the value. Provisioning, the token
+file, enabling the unit, and every hand-turn in it are in
+`docs/operations/nodes-culture-dev.md`.
 
-Both hosts get **thor's** origin, not their own: orin serves no API, so a link
-to orin would 404 for every reader.
+Both hosts get the **same** origin, not their own: orin serves no API, so a
+link to orin would 404 for every reader, and a link to thor's LAN address is
+what this cycle retired. Nothing about the machine-facing addresses moves:
+`NODES_API_URL` (sweep) and `NODES_CALLBACK_BASE_URL` (bridges) stay LAN forms,
+per "Network trust" above.
 
-To point the links at any other origin — a reverse proxy, a tailscale name, or
-whatever the OAuth cycle lands on — export it and re-run:
+To point the links at any other origin — a reverse proxy, a tailscale name for
+a deployment that has no tunnel — export it and re-run:
 
 ```bash
 NODES_UI_BASE_URL=https://nodes.example.net ./install-secrets.sh
@@ -648,11 +656,12 @@ rather than truncated: `prod.env` is one `KEY=value` per line, so such a value
 has no representation on the host either.
 
 The install log says which of the two it used (`exported for this run` versus
-`defaulted to the control-plane API origin`), because the two produce
-identically-shaped `prod.env` lines and only one of them is reachable from
-outside. And because this lane is add-if-absent (above), changing an origin a
-host already carries is `remove-secret.sh NODES_UI_BASE_URL --yes <host>`
-followed by a re-run, not a re-run alone.
+`defaulted to the public SSO origin`), because the two produce
+identically-shaped `prod.env` lines. And because this lane is add-if-absent
+(above), changing an origin a host already carries — which every host
+provisioned before t19 does, with the old LAN value — is
+`remove-secret.sh NODES_UI_BASE_URL --yes <host>` followed by a re-run, not a
+re-run alone. That removal is a counted hand-turn.
 
 ## Telemetry (telemetry profile, issue #5)
 

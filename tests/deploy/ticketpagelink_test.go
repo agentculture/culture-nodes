@@ -42,14 +42,19 @@ var uiBaseURLRoles = map[string][]string{
 // silently reverting to the bare path, and audit-credentials.sh classifies
 // `${KEY:-value}` as `defaulted` -> optional by construction, where `${KEY:-}`
 // would land in its fail-closed `unclassified` bucket.
-const uiBaseURLComposeDefault = "http://thor:18080"
+//
+// Since the login-from-anywhere cycle (task t19, spec c44) it is the PUBLIC
+// name the page is served under behind Cloudflare Access, not thor's LAN
+// address: a link a person off the network can open. It is the same constant
+// nodesculturedev_test.go pins across both compose files and install-secrets.
+const uiBaseURLComposeDefault = publicUIOrigin
 
 // The two phrases install-secrets.sh's log uses to say WHERE the origin came
 // from. They are asserted rather than merely printed because the defaulted
 // and exported cases produce identically-shaped prod.env lines, and only one
 // of them is reachable from outside the LAN.
 const (
-	uiBaseURLDefaultedMarker = "defaulted to the control-plane API origin"
+	uiBaseURLDefaultedMarker = "defaulted to the public SSO origin"
 	uiBaseURLExportedMarker  = "exported for this run"
 )
 
@@ -79,11 +84,13 @@ func TestEveryRunMintingRoleCarriesTheUIBaseURL(t *testing.T) {
 }
 
 // TestInstallSecretsDeliversTheUIBaseURLToBothHosts is half two, and pins
-// where the default comes from: the control-plane host THIS deploy was told
-// about, not a literal. The hosts are named `thor-lan` / `orin-lan` here so a
-// hardcoded `http://thor:18080` in the script cannot pass.
+// where the default comes from since t19: the PUBLIC SSO origin, a literal
+// that is deliberately NOT derived from the host arguments. The hosts are
+// named `thor-lan` / `orin-lan` here so a default that leaks the ssh target
+// into the link (t16's `http://$THOR:18080`, which sent a person to a LAN
+// address) cannot pass.
 //
-// Both hosts get THOR's origin. orin runs a worker and serves no API, so a
+// Both hosts get the SAME origin. orin runs a worker and serves no API, so a
 // link to orin would 404 for every reader; the machine that renders the
 // comment is not the machine that serves the page.
 func TestInstallSecretsDeliversTheUIBaseURLToBothHosts(t *testing.T) {
@@ -102,7 +109,7 @@ func TestInstallSecretsDeliversTheUIBaseURLToBothHosts(t *testing.T) {
 		t.Fatalf("unforced re-run exited %d; output:\n%s", code, out)
 	}
 
-	const want = "http://thor-lan:18080"
+	const want = publicUIOrigin
 	for _, host := range hosts {
 		path := c.prodEnvPath(t, host)
 		env := readEnvFile(t, path)
@@ -113,20 +120,19 @@ func TestInstallSecretsDeliversTheUIBaseURLToBothHosts(t *testing.T) {
 			continue
 		}
 		if got != want {
-			t.Errorf("%s: %s = %q, want %q — the default is the control-plane origin this deploy was given, and orin gets thor's because orin serves no API", host, storepg.UIBaseURLEnv, got, want)
+			t.Errorf("%s: %s = %q, want %q — the default is the public SSO origin, never the host argument this deploy was given, and orin gets the same value because orin serves no API", host, storepg.UIBaseURLEnv, got, want)
 		}
 	}
 	if !strings.Contains(out, want) || !strings.Contains(out, uiBaseURLDefaultedMarker) {
-		t.Errorf("the install log does not report the ticket-page origin as defaulted (want %q and %q); an operator reading the deploy log cannot otherwise tell a defaulted LAN address from one they exported\noutput:\n%s", want, uiBaseURLDefaultedMarker, out)
+		t.Errorf("the install log does not report the ticket-page origin as defaulted (want %q and %q); an operator reading the deploy log cannot otherwise tell the defaulted public origin from one they exported\noutput:\n%s", want, uiBaseURLDefaultedMarker, out)
 	}
 }
 
 // TestAnOperatorExportedUIBaseURLWinsAndIsAnnounced covers the other branch.
-// Once the OAuth cycle gives the deployment a name a Jira reader can resolve,
-// pointing every ticket link at it must be one exported variable — and the
-// log has to distinguish that from the defaulted LAN address, because the two
-// produce identically-shaped prod.env lines and only one of them is reachable
-// from outside the network.
+// A deployment without the tunnel (a reverse proxy, a tailscale name) points
+// every ticket link at its own origin with one exported variable — and the
+// log has to distinguish that from the defaulted public origin, because the
+// two produce identically-shaped prod.env lines.
 func TestAnOperatorExportedUIBaseURLWinsAndIsAnnounced(t *testing.T) {
 	c := newFakeCluster(t)
 	hosts := []string{"thor", "orin"}

@@ -32,11 +32,14 @@ services:
       # a value present on thor only would make the link's correctness a
       # race, the same divergence #224 records for the actor tokens below.
       #
-      # It is thor's origin, not orin's: orin serves no API, so a link to
-      # this machine 404s for every reader. Until the OAuth cycle it is a
-      # LAN/tailscale address a reader off the network cannot open
-      # (deploy/prod/README.md, "Ticket page links are LAN addresses").
-      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
+      # It is the PUBLIC name the page is served under behind Cloudflare
+      # Access, not orin's address and not thor's LAN address: orin serves no
+      # API, so a link to this machine 404s for every reader, and since the
+      # login-from-anywhere cycle (task t19, spec c44) the link a person
+      # follows is https://nodes.culture.dev. Must equal compose.thor.yml's
+      # value byte for byte — tests/deploy/nodesculturedev_test.go pins the
+      # two together (docs/operations/nodes-culture-dev.md, "Step 5").
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-https://nodes.culture.dev}
       NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
       NODES_ARTIFACT_S3_ENDPOINT: ${THOR_HOST:-thor}:9000

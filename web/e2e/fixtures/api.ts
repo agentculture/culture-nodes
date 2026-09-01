@@ -847,4 +847,9 @@ export interface CapturedRequest {
   body: unknown;
 }
 
-export { mockTicketApi, mockInboxApi, mockDecisionsApi } from "./decision-api";
+export {
+  mockTicketApi,
+  mockInboxApi,
+  mockDecisionsApi,
+  mockHomeApi,
+} from "./decision-api";

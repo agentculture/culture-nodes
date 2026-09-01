@@ -2773,3 +2773,314 @@ button.timeline__node {
   padding-left: 0.75rem;
   border-left: 2px solid var(--line);
 }
+
+/* --- Ticket flow rail, and the pages that lead with it (task t17) -------
+   Issue #270: the human-facing pages open on blocks of text. The rail is the
+   one bold thing on those first screens — five stops, the current one held in
+   a breathing ring — and everything around it is deliberately quiet so the
+   diagram carries the orientation on its own.
+
+   Every value below resolves through culture-design/tokens.css, so light and
+   dark are the same rules with different tokens; nothing here names a colour.
+   Reached and un-reached differ in SHAPE (filled disc vs dashed ring) as well
+   as tone, because status is never colour alone. */
+
+.ticket-flow {
+  margin: 0 0 1.5rem;
+  max-width: 48rem;
+}
+
+.ticket-flow__rail {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ticket-flow__link {
+  stroke: var(--line);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.ticket-flow__link.is-walked {
+  stroke: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ticket-flow__mark {
+  fill: var(--bg);
+  stroke: var(--line);
+  stroke-width: 2;
+}
+
+.ticket-flow__stop.is-reached .ticket-flow__mark {
+  fill: color-mix(in srgb, var(--accent) 70%, transparent);
+  stroke: var(--accent);
+}
+
+.ticket-flow__stop.is-current .ticket-flow__mark {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.ticket-flow__halo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 0.4;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.ticket-flow__label {
+  fill: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 15px;
+  letter-spacing: var(--ac-tracking-flat);
+}
+
+.ticket-flow__stop.is-current .ticket-flow__label {
+  fill: var(--ink);
+  font-weight: 600;
+}
+
+.ticket-flow__caption {
+  margin: 0.35rem 0 0;
+}
+
+.ticket-flow__now {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.ticket-flow__now-label {
+  font-size: var(--ac-type-micro);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ticket-flow__waiting {
+  color: var(--ink-soft);
+}
+
+.ticket-flow__evidence {
+  margin: 0.2rem 0 0;
+  font-size: var(--ac-type-meta);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ticket-flow__halo {
+    animation: ticket-flow-breathe 3.4s var(--ease-gentle) infinite alternate;
+  }
+}
+
+@keyframes ticket-flow-breathe {
+  from { opacity: 0.18; transform: scale(0.92); }
+  to { opacity: 0.5; transform: scale(1.06); }
+}
+
+/* The ticket page's first screen. The key was set at page-title size, which
+   spent a quarter of a 1280x800 viewport on a string the reader just clicked
+   — it drops to section size so the rail and the decision fit above the
+   fold. */
+.ticket-view__head h1 {
+  font-size: var(--ac-type-section-title);
+  margin: 0;
+}
+
+.ticket-view__head .eyebrow {
+  margin-bottom: 0.15rem;
+}
+
+/* The act zone's headings sit UNDER the ticket key in the hierarchy — they
+   were rendering larger than it once the key dropped to section size, which
+   read as though the page were about decisions in general rather than about
+   this ticket. */
+.ticket-view .ticket-decisions h2,
+.ticket-view .ticket-claim-reviews h2 {
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+  font-size: var(--ac-type-component-title);
+}
+
+.ticket-view .ticket-decisions .identity-line,
+.ticket-view .ticket-claim-reviews .identity-line {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.ticket-view__clear {
+  color: var(--ink-soft);
+  margin: 0 0 1rem;
+}
+
+/* One pending decision, laid out as a card a person can read at a glance:
+   what kind of decision it is first, the run and deadline as meta under it,
+   and the buttons last. The ULID used to lead. */
+.decision-card__kind {
+  margin: 0;
+  font-size: var(--ac-type-component-title);
+  font-family: var(--font-display);
+}
+
+.decision-card__meta {
+  margin: 0.1rem 0 0.15rem;
+  font-size: var(--ac-type-meta);
+}
+
+/* --- Ticket detail tabs ------------------------------------------------- */
+
+.ticket-detail {
+  margin-top: 2rem;
+  max-width: 76rem;
+}
+
+.ticket-detail__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ticket-detail__tab {
+  appearance: none;
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 0.6rem 0.6rem 0 0;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-size: var(--ac-type-ui);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.ticket-detail__tab:hover {
+  color: var(--accent);
+}
+
+.ticket-detail__tab.is-active {
+  color: var(--ink);
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.ticket-detail__panel {
+  padding-top: 0.25rem;
+}
+
+.ticket-detail__panel > section > h2:first-child {
+  margin-top: 1.25rem;
+}
+
+/* --- The first-visit page (`/`) ----------------------------------------- */
+
+.home-view__head {
+  max-width: var(--ac-measure-heading);
+}
+
+.home-view__head h1 {
+  margin: 0.15rem 0 0.4rem;
+}
+
+.home-view__lede {
+  color: var(--ink-soft);
+  font-size: var(--ac-type-lede);
+  line-height: var(--ac-leading-lede);
+  margin: 0;
+  max-width: var(--ac-measure-prose);
+}
+
+.home-view__clear {
+  font-size: var(--ac-type-lede);
+  margin: 1.5rem 0;
+}
+
+.home-tickets {
+  list-style: none;
+  padding: 0;
+  margin: 2rem 0 1.5rem;
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(26rem, 1fr));
+}
+
+.home-ticket {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--nodes-card-radius);
+  padding: 1rem 1.15rem 1.15rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.home-ticket__key {
+  margin: 0 0 0.5rem;
+  font-size: var(--ac-type-card-title);
+}
+
+.home-ticket__key a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.home-ticket__key a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.home-ticket .ticket-flow {
+  margin-bottom: 0.75rem;
+  max-width: none;
+}
+
+.home-ticket__go {
+  margin: 0.75rem 0 0;
+}
+
+.home-ticket__cta {
+  display: inline-block;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.35rem 0.95rem;
+  font-size: var(--ac-type-ui);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.home-ticket__cta:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.home-how {
+  margin-top: 2.5rem;
+  max-width: var(--ac-measure-prose);
+}
+
+.home-how h2 {
+  font-size: var(--ac-type-component-title);
+  margin-bottom: 0.4rem;
+}
+
+.home-how p {
+  margin: 0 0 0.6rem;
+}
+
+/* --- Header nav groups (task t17) --------------------------------------- */
+
+.app-header__group {
+  display: inline-flex;
+  gap: 1rem;
+}
+
+.app-header__group--engine {
+  margin-left: 0.5rem;
+  padding-left: 1rem;
+  border-left: 1px solid var(--line-soft);
+}
+
+.app-header__group--engine a {
+  font-size: var(--ac-type-meta);
+}

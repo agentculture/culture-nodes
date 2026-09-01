@@ -43,6 +43,10 @@ test("keyboard walk reaches the reply box and submits as the signed-in actor", a
   await expect(page.locator("#ticket-replier")).toHaveCount(0);
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
 
+  // The reply thread and its form live behind the Conversation tab since
+  // task t17 — the first screen is the flow rail and the pending decision.
+  await page.getByRole("tab", { name: "Conversation" }).click();
+
   await page.keyboard.press("Tab");
   const focused = page.locator("*:focus");
   for (let count = 0; count < 40; count += 1) {

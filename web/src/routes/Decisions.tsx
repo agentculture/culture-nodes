@@ -22,6 +22,7 @@ import RunDecisionCard, {
   type RecordVerdict,
   type RunVerdicts,
 } from "../components/RunDecisionCard";
+import { findTicketKey } from "../domain/ticket-key";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 import { useWhoami } from "../hooks/useWhoami";
 
@@ -262,16 +263,6 @@ function PendingDecisionsView() {
       )}
     </section>
   );
-}
-
-function findTicketKey(input: unknown): string | null {
-  if (!input || typeof input !== "object") return null;
-  for (const [key, value] of Object.entries(input)) {
-    if (["ticket_key", "issue_key", "jira_key"].includes(key) && typeof value === "string") return value;
-    const nested = findTicketKey(value);
-    if (nested) return nested;
-  }
-  return null;
 }
 
 function ProposedClaimsView() {

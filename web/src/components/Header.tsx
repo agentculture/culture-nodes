@@ -73,7 +73,7 @@ export function Header() {
 
   return (
     <header className="app-header" id="app-header">
-      <Link className="app-header__brand" to="/runs" onClick={closeNav}>
+      <Link className="app-header__brand" to="/" onClick={closeNav}>
         <Mark size={28} />
         <span className="app-header__wordmark">Culture Nodes</span>
       </Link>
@@ -92,36 +92,49 @@ export function Header() {
         id="app-header-nav"
         aria-label="Primary"
       >
-        <NavLink to="/runs" className={navLinkClass} onClick={closeNav}>
-          Runs
-        </NavLink>
-        <NavLink to="/board" className={navLinkClass} onClick={closeNav}>
-          Board
-        </NavLink>
-        <NavLink to="/jobs" className={navLinkClass} onClick={closeNav}>
-          Jobs
-        </NavLink>
-        <NavLink to="/inbox" className={navLinkClass} onClick={closeNav}>
-          Inbox
-        </NavLink>
-        <NavLink to="/decisions" className={navLinkClass} onClick={closeNav}>
-          Decisions
-        </NavLink>
-        <NavLink to="/mesh" className={navLinkClass} onClick={closeNav}>
-          Mesh
-        </NavLink>
-        <NavLink to="/stats" className={navLinkClass} onClick={closeNav}>
-          Statistics
-        </NavLink>
-        <NavLink to="/graphs" className={navLinkClass} onClick={closeNav}>
-          Node Graphs
-        </NavLink>
-        <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
-          Plan
-        </NavLink>
-        <NavLink to="/workflows/generate" className={navLinkClass} onClick={closeNav}>
-          Generate
-        </NavLink>
+        {/* Two groups, and the split is the point (task t17, decision c33):
+            a person is here for their own work, an operator is here for the
+            engine. Nothing was retired — Inbox and Decisions still list every
+            pending item across every ticket, which no single ticket page can
+            — but they stopped competing for first place with the one link a
+            person arriving from a Jira comment actually wants. */}
+        <span className="app-header__group app-header__group--work">
+          <NavLink to="/" end className={navLinkClass} onClick={closeNav}>
+            Your work
+          </NavLink>
+          <NavLink to="/inbox" className={navLinkClass} onClick={closeNav}>
+            Inbox
+          </NavLink>
+          <NavLink to="/decisions" className={navLinkClass} onClick={closeNav}>
+            Decisions
+          </NavLink>
+        </span>
+        <span className="app-header__group app-header__group--engine">
+          <NavLink to="/runs" className={navLinkClass} onClick={closeNav}>
+            Runs
+          </NavLink>
+          <NavLink to="/board" className={navLinkClass} onClick={closeNav}>
+            Board
+          </NavLink>
+          <NavLink to="/jobs" className={navLinkClass} onClick={closeNav}>
+            Jobs
+          </NavLink>
+          <NavLink to="/mesh" className={navLinkClass} onClick={closeNav}>
+            Mesh
+          </NavLink>
+          <NavLink to="/stats" className={navLinkClass} onClick={closeNav}>
+            Statistics
+          </NavLink>
+          <NavLink to="/graphs" className={navLinkClass} onClick={closeNav}>
+            Node Graphs
+          </NavLink>
+          <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
+            Plan
+          </NavLink>
+          <NavLink to="/workflows/generate" className={navLinkClass} onClick={closeNav}>
+            Generate
+          </NavLink>
+        </span>
         <form className="app-header__ticket" onSubmit={openTicket}>
           <label htmlFor="app-header-ticket-key">Tickets</label>
           <input

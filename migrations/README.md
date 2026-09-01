@@ -393,3 +393,10 @@ compatibility promise, and the k8s Job migrate-before-rollout pattern.
 
 Full `(namespace_id, subject)` index on `runs` for the ticket projection's
 subject listing (0046). Additive; the 0038 partial index is unchanged.
+
+## `0054_pr_review_and_ticket_done.sql`
+
+Keys each merge-created task to its source fact and admits the `in-review`
+Jira outbox phase. The source-event unique index makes one merge fact one
+`Ticket done?` task even under redelivery; the task belongs to the ticket's
+newest run so existing ticket and inbox readers surface it without a new API.

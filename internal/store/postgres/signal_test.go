@@ -286,6 +286,33 @@ func TestDeliverSignalEventWatermarkSuppressesRestartDuplicate(t *testing.T) {
 	}
 }
 
+func TestPROpenedPlansOneInReviewTransition(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "pr-opened-in-review")
+	in := postgres.DeliverSignalEventInput{
+		NamespaceID: ns.ID, Name: "pr.opened", Emitter: "pr-upkeep-sweep",
+		Payload:   json.RawMessage(`{"source":"github_pr","repository":"o/r","number":15,"url":"https://github.com/o/r/pull/15","opened_at":"2026-09-02T08:00:00Z","issue_key":"SCRUM-15"}`),
+		SourceKey: "github:o/r:pr:15:opened", Watermark: json.RawMessage(`{"opened_at":"2026-09-02T08:00:00Z"}`),
+	}
+	if _, err := s.DeliverSignalEvent(ctx, in); err != nil {
+		t.Fatalf("first pr.opened: %v", err)
+	}
+	if _, err := s.DeliverSignalEvent(ctx, in); err != nil {
+		t.Fatalf("duplicate pr.opened: %v", err)
+	}
+	var count int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM jira_ticket_report_outbox
+		WHERE namespace_id=$1 AND payload->>'verb'='transition_issue'
+		AND payload->>'target'='In Review' AND target_actor_key=$2`,
+		ns.ID, postgres.JiraTicketReporterActorKey).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("In Review transition intents = %d, want 1", count)
+	}
+}
+
 // TestAnswerDeliveryRollsBackWatermarkAndEventTogether is t11's restart
 // fixture. A database failure after signal_events has been appended but while
 // its answer watermark is advancing must leave NEITHER half committed. The

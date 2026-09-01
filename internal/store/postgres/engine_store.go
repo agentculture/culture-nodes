@@ -537,6 +537,7 @@ FROM human_tasks WHERE id = $1 AND namespace_id = $2
 func (eq engineQueries) GetHumanTask(ctx context.Context, id string) (engine.HumanTask, error) {
 	var (
 		task            engine.HumanTask
+		runID           pgtype.Text
 		nodeRunID       pgtype.Text
 		assignedOwnerID pgtype.Text
 		status          string
@@ -546,7 +547,7 @@ func (eq engineQueries) GetHumanTask(ctx context.Context, id string) (engine.Hum
 		resolvedAt      pgtype.Timestamptz
 	)
 	err := eq.q.QueryRow(ctx, selectHumanTaskSQL, id, eq.namespaceID).Scan(
-		&task.ID, &task.NamespaceID, &task.RunID, &nodeRunID, &task.Kind,
+		&task.ID, &task.NamespaceID, &runID, &nodeRunID, &task.Kind,
 		&assignedOwnerID, &status, &request, &response, &createdAt, &resolvedAt,
 	)
 	if err != nil {
@@ -556,6 +557,7 @@ func (eq engineQueries) GetHumanTask(ctx context.Context, id string) (engine.Hum
 		return engine.HumanTask{}, fmt.Errorf("postgres: engine: GetHumanTask: %w", err)
 	}
 	task.NodeRunID = textOrEmpty(nodeRunID)
+	task.RunID = textOrEmpty(runID)
 	task.AssignedOwnerID = textOrEmpty(assignedOwnerID)
 	task.Status = status
 	task.Request = json.RawMessage(request)
@@ -581,6 +583,31 @@ func (eq engineQueries) MarkHumanTaskDecided(ctx context.Context, id string, res
 	)
 	if err != nil {
 		return false, fmt.Errorf("postgres: engine: MarkHumanTaskDecided: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		var kind, runID string
+		var request []byte
+		if err := eq.q.QueryRow(ctx, `SELECT kind,run_id,request FROM human_tasks WHERE id=$1 AND namespace_id=$2`,
+			id, eq.namespaceID).Scan(&kind, &runID, &request); err != nil {
+			return false, fmt.Errorf("postgres: engine: MarkHumanTaskDecided: read task: %w", err)
+		}
+		var decision struct {
+			Outcome string `json:"outcome"`
+		}
+		var ticket struct {
+			IssueKey string `json:"issue_key"`
+		}
+		_ = json.Unmarshal(response, &decision)
+		_ = json.Unmarshal(request, &ticket)
+		if intent := engine.PlanTicketDoneTransition(ticket.IssueKey, decision.Outcome); kind == "ticket_done" && intent != nil {
+			if _, err := eq.q.Exec(ctx, `INSERT INTO human_task_fanout_outbox
+				(id,namespace_id,human_task_id,run_id,channel,target_actor_key,payload)
+				VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(human_task_id,channel) DO NOTHING`,
+				store.NewULID(), eq.namespaceID, id, runID, engine.FanOutChannelJiraTransition,
+				JiraTicketReporterActorKey, intent.Payload); err != nil {
+				return false, fmt.Errorf("postgres: engine: MarkHumanTaskDecided: plan Done: %w", err)
+			}
+		}
 	}
 	return tag.RowsAffected() == 1, nil
 }

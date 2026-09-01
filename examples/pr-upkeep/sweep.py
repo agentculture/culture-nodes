@@ -50,7 +50,9 @@ from pr_upkeep_emit import (
     RUNS_PAGE_LIMIT,
     dispatched_finding_ids,
     emission_watermark,
+    merged_pr_fact,
     next_run_cursor,
+    opened_pr_fact,
     runs_query,
     undispatched_findings,
 )
@@ -613,35 +615,6 @@ def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
     return merged
 
 
-_ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
-
-
-def merged_pr_fact(pull: dict, repository: str, jira_project: str | None = None) -> dict | None:
-    """Build the freeze fact, correlating by head branch first, then body.
-
-    With a configured Jira project only keys of THAT project correlate: the
-    first prod pass linked PR #70 to "ADR-0002" and froze a phantom ticket
-    (colleague review of the wave-1 merge, #230).
-    """
-    if not pull.get("merged_at"):
-        return None
-    head = (pull.get("head") or {}).get("ref") or ""
-    pattern = _ISSUE_KEY_RE
-    if jira_project:
-        pattern = re.compile(r"(?<![A-Z0-9])(" + re.escape(jira_project) + r"-\d+)(?![A-Z0-9])")
-    match = pattern.search(head) or pattern.search(pull.get("body") or "")
-    if not match:
-        return None
-    return {
-        "source": "github_pr",
-        "repository": repository,
-        "number": pull.get("number"),
-        "url": pull.get("html_url") or "",
-        "merged_at": pull["merged_at"],
-        "issue_key": match.group(1),
-    }
-
-
 def fetch_check_runs(token: str | None, repository: str, head_sha: str) -> dict:
     """Check runs for one PR's head commit (issue #61's third source)."""
     return _get_json(
@@ -889,6 +862,20 @@ def main() -> int:
                         fact,
                         f"github:{github_repo}:pr:{pull.get('number')}:merged",
                         {"merged_at": pull["merged_at"]},
+                        subject=fact["issue_key"],
+                    )
+                )
+        for pull in swept:
+            fact = opened_pr_fact(pull, github_repo, repository.get("jira_project"))
+            if fact is None:
+                continue
+            with attempting(f"emitting pr.opened for #{pull.get('number')} (control plane)"):
+                emitted.append(
+                    raise_event(
+                        "pr.opened",
+                        fact,
+                        f"github:{github_repo}:pr:{pull.get('number')}:opened",
+                        {"opened_at": fact["opened_at"]},
                         subject=fact["issue_key"],
                     )
                 )

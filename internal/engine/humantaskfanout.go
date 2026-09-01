@@ -77,6 +77,32 @@ const NoGitHubPRCommentReason = "no actor registered in this deployment advertis
 // bridge's allowlist became a list in this task.
 const JiraDecisionStatus = "Pending"
 
+const (
+	JiraReviewStatus = "In Review"
+	JiraDoneStatus   = "Done"
+)
+
+// PlanPROpenedTransition is the ticket-scoped board intent owed by a new,
+// correlated GitHub PR fact. The signal store persists this plan beside the
+// fact; there is deliberately no GitHub-comment plan because no writer exists.
+func PlanPROpenedTransition(issue string) HumanTaskFanOut {
+	return fanOut(FanOutChannelJiraTransition, map[string]any{
+		"verb": "transition_issue", "issue": issue, "target": JiraReviewStatus,
+	})
+}
+
+// PlanTicketDoneTransition returns a board intent only for the human `done`
+// outcome. A merge fact and `not_yet` both return no transition.
+func PlanTicketDoneTransition(issue, outcome string) *HumanTaskFanOut {
+	if outcome != "done" {
+		return nil
+	}
+	intent := fanOut(FanOutChannelJiraTransition, map[string]any{
+		"verb": "transition_issue", "issue": issue, "target": JiraDoneStatus,
+	})
+	return &intent
+}
+
 // HumanTaskFanOut is one queued message a human task owes: which channel it
 // goes out on, and the bridge input that carries it.
 type HumanTaskFanOut struct {

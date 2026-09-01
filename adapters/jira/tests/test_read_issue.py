@@ -178,7 +178,13 @@ def test_server_dispatches_read_and_advertises_read_custody(monkeypatch):
 
 
 def test_client_module_remains_byte_unchanged():
+    """The comment path changes only when a change is ABOUT the comment path.
+
+    Re-pinned once, at task t21: JIRA_API_BASE routes every verb's REST call,
+    so the comment verb had to move with the other three. The digest before
+    t21 was 2c7818b242fc685a8a8d5f3412e36391161bb0d60eb00bcd34c644acfd11e926.
+    """
     client = Path(__file__).parents[1] / "src/jira_bridge/client.py"
     assert hashlib.sha256(client.read_bytes()).hexdigest() == (
-        "2c7818b242fc685a8a8d5f3412e36391161bb0d60eb00bcd34c644acfd11e926"
+        "a636f913a136df0ce42eefa15968aecdd2dedd82324ae768bd1feb41be5ec010"
     )

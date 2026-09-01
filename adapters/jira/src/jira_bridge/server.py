@@ -160,7 +160,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         assert parsed is not None
         if isinstance(parsed, read_issue.ReadIssue):
-            fetched = read_issue.read(self.cfg.jira_site, parsed, email, token)
+            fetched = read_issue.read(
+                self.cfg.jira_site, parsed, email, token, api_base=self.cfg.api_base
+            )
             if not fetched.ok:
                 self._json(502, {"error": fetched.error, "class": "execution"})
                 return
@@ -168,7 +170,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, read_issue.result(fetched.output, self.cfg.actor_id))
             return
         if isinstance(parsed, create_issue.CreateIssue):
-            created = create_issue.create(self.cfg.jira_site, parsed, email, token)
+            created = create_issue.create(
+                self.cfg.jira_site, parsed, email, token, api_base=self.cfg.api_base
+            )
             if not created.ok:
                 self._json(502, {"error": created.error, "class": "execution"})
                 return
@@ -176,7 +180,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if isinstance(parsed, transition_issue.Transition):
             posted = transition_issue.transition(
-                self.cfg.jira_site, parsed.issue, parsed.target, email, token
+                self.cfg.jira_site,
+                parsed.issue,
+                parsed.target,
+                email,
+                token,
+                api_base=self.cfg.api_base,
             )
             if not posted.ok:
                 self._json(502, {"error": posted.error, "class": "execution"})
@@ -184,7 +193,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, transition_issue.result(parsed.issue, parsed.target, self.cfg.actor_id))
             return
         posted = client.post_comment(
-            self.cfg.jira_site, parsed.issue, parsed.marked_text, email, token
+            self.cfg.jira_site,
+            parsed.issue,
+            parsed.marked_text,
+            email,
+            token,
+            api_base=self.cfg.api_base,
         )
         if not posted.ok:
             self._json(502, {"error": posted.error, "class": "execution"})

@@ -717,9 +717,30 @@ fi
 RUNNER_SECRETS_MERGE=${PROD_ENV_MERGE//prod.env/runner-secrets.env}
 
 install_jira_runner_env() { # host
-  local host=$1 exists
+  local host=$1 exists pair=no base=no
   exists=$(ssh "$host" 'if [ -f ~/.culture-nodes/runner-secrets.env ]; then echo yes; else echo no; fi')
-  if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] && [ -z "${JIRA_API_TOKEN:-}" ]; then
+  # JIRA_API_BASE travels WITH the pair, because it is the other half of how
+  # the credential authenticates: a scoped Jira Cloud service-account token is
+  # accepted only at the Atlassian gateway, and the site URL answers 401 for
+  # it. It is not itself a credential -- it is a published address, classified
+  # as such in tests/deploy/relayinputs_test.go.
+  #
+  # Empty is a legitimate VALUE here (it means "use the site URL"), so this
+  # lane has to tell set-and-empty from unset, and uses the `+` expansion
+  # rather than the `:-` one to do it. Unset leaves whatever the host already
+  # carries, for exactly the #253 reason an unset pair is not a way to clear
+  # the pair; set-and-empty is an operator deliberately turning the gateway
+  # base off, and rotating the pair without exporting the base does not
+  # silently send every read back to the 401ing site URL.
+  if [ -n "${JIRA_API_BASE+set}" ]; then base=yes; fi
+  if [ -n "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -n "${JIRA_API_TOKEN:-}" ]; then
+    if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
+      echo "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN must both be set" >&2
+      return 1
+    fi
+    pair=yes
+  fi
+  if [ "$pair" = no ] && [ "$base" = no ]; then
     if [ "$exists" = yes ]; then
       # The #253 path. An unset pair is not an instruction to blank the two
       # names -- on a host that already carries the file it is an instruction
@@ -731,8 +752,8 @@ install_jira_runner_env() { # host
       # so there is nothing broken to stop for, and aborting install-secrets.sh
       # here would take the notify and issuance lanes below it down with every
       # deploy that has no Jira configured.
-      echo "refusing to rewrite ~/.culture-nodes/runner-secrets.env on $host: JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are unset in this shell and the file already exists — its current grants (which may include GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, granted by hand and written by no lane) were left untouched" >&2
-      echo "hint: export JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN to rotate the pair; leaving them unset is not a way to clear them" >&2
+      echo "refusing to rewrite ~/.culture-nodes/runner-secrets.env on $host: JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN and JIRA_API_BASE are unset in this shell and the file already exists — its current grants (which may include GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, granted by hand and written by no lane) were left untouched" >&2
+      echo "hint: export JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN to rotate the pair, and JIRA_API_BASE to set or clear the gateway REST base; leaving them unset is not a way to clear them" >&2
       return 0
     fi
     # Grant the NAMES with empty values rather than skipping the file.
@@ -753,19 +774,25 @@ install_jira_runner_env() { # host
     #
     # Reachable only when the host has NO runner-secrets.env at all, which is
     # a first deploy: there is nothing here to overwrite.
-    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN not set — granting empty values on $host so the sweep's environment_refs resolve" >&2
-    printf 'JIRA_ACCOUNT_EMAIL=\nJIRA_API_TOKEN=\n' \
+    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN/JIRA_API_BASE not set — granting empty values on $host so the sweep's environment_refs resolve" >&2
+    printf 'JIRA_ACCOUNT_EMAIL=\nJIRA_API_TOKEN=\nJIRA_API_BASE=\n' \
       | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/runner-secrets.env; chmod 600 ~/.culture-nodes/runner-secrets.env'
     return 0
   fi
-  if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
-    echo "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN must both be set" >&2
-    return 1
-  fi
   backup_env_file "$host" runner-secrets.env
-  printf 'JIRA_ACCOUNT_EMAIL=%s\nJIRA_API_TOKEN=%s\n' "$JIRA_ACCOUNT_EMAIL" "$JIRA_API_TOKEN" \
+  # One printf per grant this shell actually holds. Assembling the payload in
+  # a variable would not do: `$(printf ...)` strips the trailing newline, so
+  # the base would land glued to the end of the token line.
+  {
+    if [ "$pair" = yes ]; then
+      printf 'JIRA_ACCOUNT_EMAIL=%s\nJIRA_API_TOKEN=%s\n' "$JIRA_ACCOUNT_EMAIL" "$JIRA_API_TOKEN"
+    fi
+    if [ "$base" = yes ]; then
+      printf 'JIRA_API_BASE=%s\n' "$JIRA_API_BASE"
+    fi
+  } \
     | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$RUNNER_SECRETS_MERGE"
-  echo "merged the Jira Basic-auth pair into mode-600 runner-secrets.env on $host (every other key in the file was left as it was)"
+  echo "merged the Jira grants this shell holds into mode-600 runner-secrets.env on $host (every other key in the file was left as it was)"
 }
 
 install_jira_runner_env "$THOR"

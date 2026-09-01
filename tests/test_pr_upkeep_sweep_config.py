@@ -43,6 +43,13 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
         # are never copied into a report, argv, fixture, or diagnostic.
         "JIRA_ACCOUNT_EMAIL",
         "JIRA_API_TOKEN",
+        # Safe: the REST base the pair authenticates AT. A scoped Jira Cloud
+        # service-account token is accepted only at the Atlassian gateway, so
+        # this is the other half of "how the credential authenticates", not a
+        # second place a repo can be re-pointed from -- it selects an API
+        # endpoint for the already-configured `jira_site`, and the browse
+        # links a person clicks are still built from that site host.
+        "JIRA_API_BASE",
         # Safe: these identify and authenticate the one control-plane event
         # ingress; they cannot redirect a source credential to another repo.
         "NODES_API_URL",

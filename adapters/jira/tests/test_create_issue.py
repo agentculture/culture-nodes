@@ -108,12 +108,14 @@ def test_create_happy_path_posts_recorded_v3_shape_and_proposes_claim():
         "status": "completed",
         "outcome": "issue_created",
         "output": {"issue": "SCRUM-24", "id": "10023"},
-        "ledger_records": [{
-            "record_type": "claim",
-            "authority": "proposed",
-            "origin": {"kind": "agent", "actor_id": "jira-actor"},
-            "payload": {"verb": "create_issue", "issue": "SCRUM-24", "id": "10023"},
-        }],
+        "ledger_records": [
+            {
+                "record_type": "claim",
+                "authority": "proposed",
+                "origin": {"kind": "agent", "actor_id": "jira-actor"},
+                "payload": {"verb": "create_issue", "issue": "SCRUM-24", "id": "10023"},
+            }
+        ],
     }
 
 
@@ -191,7 +193,12 @@ def test_server_dispatches_create_and_advertises_the_verb_surface(monkeypatch):
     try:
         with urllib.request.urlopen(f"{base}/v1/capabilities", timeout=5) as response:
             advertised = json.loads(response.read())
-        assert advertised["verbs"] == ["post_comment", "transition_issue", "create_issue"]
+        assert advertised["verbs"] == [
+            "post_comment",
+            "transition_issue",
+            "create_issue",
+            "read_issue",
+        ]
         assert advertised["custody"]["create_projects"] == ["SCRUM"]
         # Task t11: the whole allowlist is advertised, and the pre-t11
         # single-value key still reads back the first entry.

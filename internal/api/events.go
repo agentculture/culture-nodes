@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,6 +105,8 @@ func (s *Server) handleStreamRunEvents(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
+	keepalive := time.NewTicker(s.keepaliveInterval)
+	defer keepalive.Stop()
 
 	for {
 		rows, err := s.pollEvents(ctx, id, after)
@@ -126,11 +129,35 @@ func (s *Server) handleStreamRunEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		flusher.Flush()
+		if len(rows) > 0 {
+			keepalive.Reset(s.keepaliveInterval) // "idle" is measured from the last real frame
+		}
 
+		if !waitForNextPoll(ctx, ticker.C, keepalive.C, w, flusher) {
+			return
+		}
+	}
+}
+
+// waitForNextPoll blocks until the next poll tick, writing an SSE comment
+// line (": keepalive") and flushing on every keepalive tick that lands in
+// between (task t3). It reports false when the stream must stop: the
+// request context is done (the client disconnected), or a keepalive write
+// failed, which means the same thing. A comment line is the one SSE frame
+// every consumer is required to ignore, so it carries no id, no event name
+// and no payload — a client's resume cursor is untouched by it.
+func waitForNextPoll(ctx context.Context, poll, keepalive <-chan time.Time, w http.ResponseWriter, flusher http.Flusher) bool {
+	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ticker.C:
+			return false
+		case <-poll:
+			return true
+		case <-keepalive:
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return false
+			}
+			flusher.Flush()
 		}
 	}
 }
@@ -437,6 +464,8 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(s.pollInterval * 2)
 	defer ticker.Stop()
+	keepalive := time.NewTicker(s.keepaliveInterval)
+	defer keepalive.Stop()
 
 	for {
 		rows, err := s.pollCrossRunEvents(ctx, after)
@@ -456,6 +485,7 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		wrote := false
 		for _, row := range rows {
 			after = row.ID // advance past every raw row scanned, matched or not -- the bounded catch-up guarantee
 			if !crossRunEventInScope(row, scope, explicit, active) {
@@ -464,13 +494,15 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			if !writeCrossRunSSEEvent(w, row) {
 				return
 			}
+			wrote = true
 		}
 		flusher.Flush()
+		if wrote {
+			keepalive.Reset(s.keepaliveInterval) // "idle" is measured from the last real frame
+		}
 
-		select {
-		case <-ctx.Done():
+		if !waitForNextPoll(ctx, ticker.C, keepalive.C, w, flusher) {
 			return
-		case <-ticker.C:
 		}
 	}
 }

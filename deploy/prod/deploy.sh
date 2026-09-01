@@ -669,6 +669,8 @@ deploy_notify() { # host
 # plane configuration; systemd loads it from jira-bridge-jira.env directly.
 deploy_jira() { # host
   local host=$1
+  local transition_targets=${JIRA_TRANSITION_TARGETS:-In Progress,Pending,In Review,Done}
+  local transition_project_prefix=${JIRA_TRANSITION_PROJECT_PREFIX:-SCRUM-}
   case "$host" in thor*) ;; *) return 0 ;; esac
   if [ -z "${JIRA_SITE:-}" ]; then
     say "JIRA_SITE unset: Jira comment actor is not configured on $host"
@@ -689,6 +691,13 @@ deploy_jira() { # host
   [ -n "$JIRA_BIN" ] || { echo "jira-bridge not on PATH after install" >&2; return 1; }
   printf 'JIRA_BRIDGE_HOST=0.0.0.0\nJIRA_BRIDGE_PORT=8089\nJIRA_BRIDGE_ACTOR_ID=%s\nJIRA_SITE=%s\n' "$JIRA_ACTOR_ID" "$JIRA_SITE" \
     | ssh "$host" 'umask 077; cat > ~/.culture-nodes/jira-bridge.env; chmod 600 ~/.culture-nodes/jira-bridge.env'
+  # This file also holds the Jira Basic-auth credential pair installed by
+  # install-secrets.sh. Merge only the two deploy-owned, non-secret keys: a
+  # whole-file write here would erase the bridge's Jira authority on every
+  # ordinary deploy. Values travel over stdin and output names only.
+  say "merging JIRA_TRANSITION_TARGETS and JIRA_TRANSITION_PROJECT_PREFIX into the Jira bridge environment on $host"
+  printf 'JIRA_TRANSITION_TARGETS=%s\nJIRA_TRANSITION_PROJECT_PREFIX=%s\n' "$transition_targets" "$transition_project_prefix" \
+    | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/jira-bridge-jira.env; chmod 600 ~/.culture-nodes/jira-bridge-jira.env; if [ -s ~/.culture-nodes/jira-bridge-jira.env ] && [ -n "$(tail -c1 ~/.culture-nodes/jira-bridge-jira.env)" ]; then echo >> ~/.culture-nodes/jira-bridge-jira.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; tmp=~/.culture-nodes/jira-bridge-jira.env.merge.$$; : > "$tmp"; chmod 600 "$tmp"; found=0; while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in "$k"=*) printf "%s\n" "$line" >> "$tmp"; found=1;; *) printf "%s\n" "$cur" >> "$tmp";; esac; done < ~/.culture-nodes/jira-bridge-jira.env; [ "$found" = 1 ] || printf "%s\n" "$line" >> "$tmp"; mv "$tmp" ~/.culture-nodes/jira-bridge-jira.env; done'
   ssh "$host" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); sed \"s#%h/.local/bin/jira-bridge#$JIRA_BIN#\" $REMOTE_DIR/deploy/prod/jira-bridge.service > ~/.config/systemd/user/jira-bridge.service && systemctl --user daemon-reload && systemctl --user restart jira-bridge && systemctl --user enable jira-bridge"
   assert_unit_healthy "$host" jira-bridge
 }

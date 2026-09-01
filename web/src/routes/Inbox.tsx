@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import {
@@ -15,6 +15,7 @@ import type {
 import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
 import { SignedInAs } from "../components/IdentityGate";
+import OutcomeButtons from "../components/OutcomeButtons";
 import StatusChip from "../components/StatusChip";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
 import { useWhoami } from "../hooks/useWhoami";
@@ -39,11 +40,21 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * Pending tasks come from `GET /v1alpha1/human-tasks?status=pending` and
  * render the §9.9 request payload exactly as the engine stored it — what
  * the human is actually being shown, never re-derived, and absent fields
- * stay absent (no fabricated deadlines). Each card carries a decision form:
- * one allowed outcome, an optional JSON payload and note. Decided tasks
+ * stay absent (no fabricated deadlines). Each card carries one button per
+ * outcome the engine will accept. Decided tasks
  * (`?status=decided`) render their resolution read-only under the
  * confirmed-authority chip, since a committed human decision IS a confirmed
  * ledger review (PRD §10.8).
+ *
+ * The decision itself is `OutcomeButtons` — the same component the Decisions
+ * queue and the ticket page offer (task t12). It used to be a second, hand-
+ * rolled radio fieldset plus a submit here, which is exactly the drift
+ * `allowed_outcomes` exists to prevent: two independent renderings of "offer
+ * what DecideHumanTask accepts and nothing else" are two chances for one of
+ * them to offer an outcome that 400s (`expired`, #265) or hide one that would
+ * have worked. There is one now, and it takes the free-text JSON payload and
+ * note with it: the response is derived from the task's own decision schema,
+ * as it already was on the other two surfaces.
  *
  * Who decides is not part of the form (task t9, spec c8). Until then the
  * page held a deployment-shared bearer per tab and asked for a decider id
@@ -210,10 +221,6 @@ function PendingTaskCard({
   onDecided: () => void;
 }) {
   const [ledgerVersion, setLedgerVersion] = useState<number | null>(null);
-  const [outcome, setOutcome] = useState("");
-  const [payload, setPayload] = useState("");
-  const [note, setNote] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [result, setResult] = useState<HumanTaskDecisionResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -233,55 +240,24 @@ function PendingTaskCard({
 
   const request = task.request ?? {};
   const audit = request.audit;
-  const canSubmit =
-    actorId !== null &&
-    !submitting &&
-    result === null &&
-    outcome !== "" &&
-    ledgerVersion !== null;
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!canSubmit || actorId === null || ledgerVersion === null) return;
-
-    // The response payload: the JSON textarea verbatim, with the note
-    // folded in as a `note` key (wrapped as {payload, note} when the JSON
-    // is not an object, so nothing the decider typed is ever dropped).
-    let response: unknown;
-    const rawPayload = payload.trim();
-    if (rawPayload !== "") {
-      try {
-        response = JSON.parse(rawPayload);
-      } catch {
-        setFormError(
-          "the decision payload is not valid JSON — fix it or clear the field",
-        );
-        return;
-      }
-    }
-    const rawNote = note.trim();
-    if (rawNote !== "") {
-      if (response === undefined) {
-        response = { note: rawNote };
-      } else if (
-        typeof response === "object" &&
-        response !== null &&
-        !Array.isArray(response)
-      ) {
-        response = { ...response, note: rawNote };
-      } else {
-        response = { payload: response, note: rawNote };
-      }
-    }
-
-    setFormError(null);
+  /**
+   * Record the decision (task t12). `expected_ledger_version` is a real read,
+   * not a fabrication: the card fetched its run's ledger once and submits the
+   * version it actually read, so a concurrent write is refused by the stale
+   * guard instead of silently raced.
+   */
+  const decide = async (outcome: string) => {
+    if (actorId === null || ledgerVersion === null || submitting) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
       const decided = await decideHumanTask(task.id, {
         outcome,
         decider_actor_id: actorId,
-        response,
+        // A task with a decision schema gets a schema-valid payload; one
+        // without gets none, rather than an invented empty object.
+        response: request.decision_schema_ref ? { outcome } : undefined,
         expected_ledger_version: ledgerVersion,
       });
       setResult(decided);
@@ -417,56 +393,16 @@ function PendingTaskCard({
       </dl>
 
       {result === null ? (
-        <form className="inbox-card__form" onSubmit={submit}>
-          <fieldset className="inbox-card__outcomes">
-            <legend>Outcome</legend>
-            {(request.allowed_outcomes ?? []).map((allowed) => (
-              <label key={allowed} className="inbox-card__outcome">
-                <input
-                  type="radio"
-                  name={`outcome-${task.id}`}
-                  value={allowed}
-                  checked={outcome === allowed}
-                  onChange={() => setOutcome(allowed)}
-                />
-                {allowed}
-              </label>
-            ))}
-          </fieldset>
-          <div className="inbox-card__field">
-            <label htmlFor={`payload-${task.id}`}>
-              Decision payload (JSON, optional)
-            </label>
-            <textarea
-              id={`payload-${task.id}`}
-              rows={3}
-              value={payload}
-              onChange={(event) => setPayload(event.target.value)}
-            />
-          </div>
-          <div className="inbox-card__field">
-            <label htmlFor={`note-${task.id}`}>Note (optional)</label>
-            <input
-              id={`note-${task.id}`}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          </div>
-          {formError ? (
-            <p className="inbox-card__form-error" role="alert">
-              {formError}
-            </p>
-          ) : null}
+        <>
+          <OutcomeButtons
+            taskId={task.id}
+            outcomes={request.allowed_outcomes ?? []}
+            disabled={actorId === null || ledgerVersion === null}
+            busy={submitting}
+            onChoose={(outcome) => void decide(outcome)}
+          />
           {submitError ? <ErrorNotice error={submitError} /> : null}
-          <button
-            type="submit"
-            className="author-workflow__button author-workflow__button--primary"
-            disabled={!canSubmit}
-          >
-            Submit decision
-          </button>
-        </form>
+        </>
       ) : (
         <p className="inbox-card__result" role="status">
           decision recorded — outcome <strong>{result.outcome}</strong>, run

@@ -641,9 +641,86 @@ export interface TicketProjection {
   human_tasks: HumanTask[];
   /** The decidable subset of human_tasks. Absent from a control plane older than t18. */
   pending_tasks?: TicketPendingTask[];
+  /**
+   * The ticket's undecided ledger claims, grouped by run and quoted at the
+   * `ledger_version` THIS response read (task t14, spec c11). The same shape
+   * `GET /v1alpha1/pending-decisions` serves, narrowed to this ticket's own
+   * runs. Absent from a control plane older than t14.
+   */
+  pending_records?: PendingDecisionRun[];
   ticket_reports: TicketReport[];
   replies: TicketReply[];
   latest_frame?: TicketFrame;
+}
+
+/**
+ * One run's verdict inside a ticket review batch
+ * (`components.schemas.TicketReviewRun`, task t14).
+ *
+ * `verdict` is the decider's vocabulary — the state the records end up in —
+ * and it is per RUN rather than per record because a review is opened against
+ * one run at one stated version (PRD §10.8). A ticket whose claims need both
+ * answers sends the confirmations and the rejections as two entries.
+ */
+export interface TicketReviewRun {
+  run_id: string;
+  /**
+   * The version the page that rendered these records was read at — the ticket
+   * projection's `pending_records[].ledger_version`, never a version fetched
+   * in a later request. A mismatch reports `conflict` for this run and writes
+   * nothing.
+   */
+  expected_ledger_version: number;
+  /** The ledger record ids this verdict decides. */
+  records: string[];
+  verdict: "confirmed" | "rejected";
+}
+
+/** `POST /v1alpha1/tickets/{id}/reviews` request body. */
+export interface TicketReviewsRequest {
+  runs: TicketReviewRun[];
+  /**
+   * Why the reviewer decided this way — recorded on every review record every
+   * run in the batch appends. Required by the API: a confirmation with no
+   * stated reason cannot be told apart from an unread one.
+   */
+  rationale: string;
+  /**
+   * The deciding human, sent because the API still requires the field when no
+   * principal is resolved. With a signed-in principal the control plane uses
+   * that principal's bound actor regardless of what the body names.
+   */
+  reviewer_actor_id?: string;
+}
+
+/** One submitted run's outcome (`components.schemas.TicketReviewRunResult`). */
+export interface TicketReviewRunResult {
+  run_id: string;
+  /**
+   * `conflict` means the ledger moved under the decider and NOTHING was
+   * written — the one outcome a page answers by re-reading that group and
+   * offering the decision again.
+   */
+  status: "committed" | "conflict" | "error";
+  /** The committed review. Present only on `committed`. */
+  review_id?: string;
+  /** The run's version after the commit. Present only on `committed`. */
+  ledger_version?: number;
+  /** What happened, in the decider's terms, on anything but a clean commit. */
+  message?: string;
+}
+
+/**
+ * `POST /v1alpha1/tickets/{id}/reviews`'s result. The response is 200
+ * whenever the batch was well-formed enough to attempt, so a partial outcome
+ * is the normal answer rather than a failure — `committed_runs` is the one
+ * number to branch on, `runs` says which.
+ */
+export interface TicketReviewsResult {
+  ticket_id: string;
+  /** One result per submitted run, in the order submitted. */
+  runs: TicketReviewRunResult[];
+  committed_runs: number;
 }
 
 export interface TicketReplyRequest {

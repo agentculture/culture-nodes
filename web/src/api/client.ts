@@ -19,6 +19,8 @@ import type {
   TicketProjection,
   TicketReply,
   TicketReplyRequest,
+  TicketReviewsRequest,
+  TicketReviewsResult,
   Version,
   Whoami,
   WorkflowSource,
@@ -142,6 +144,33 @@ export const postTicketReply = (
 ) =>
   postJson<TicketReply>(
     `/tickets/${encodeURIComponent(id)}/replies`,
+    request,
+    signal,
+  );
+
+/**
+ * `POST /v1alpha1/tickets/{id}/reviews` (task t14, spec c11, decision c40):
+ * decide the ticket's undecided ledger claims, one review per run, in the
+ * order sent.
+ *
+ * One call, several reviews, because a review is opened against ONE run at
+ * ONE stated version (PRD §10.8) — a person deciding a ticket should not have
+ * to know that. Each `runs[]` entry carries the `expected_ledger_version` the
+ * page RENDERED that group from, never a fresh read: if the run moved since,
+ * the control plane reports `conflict` for that run and writes nothing while
+ * every other run still commits. Partial success is therefore the normal
+ * answer, and the caller reads `runs[].status` to see which.
+ *
+ * A review names records and never rewrites them: a confirmed claim still
+ * reads `authority: proposed`, with a review record beside it.
+ */
+export const postTicketReviews = (
+  id: string,
+  request: TicketReviewsRequest,
+  signal?: AbortSignal,
+) =>
+  postJson<TicketReviewsResult>(
+    `/tickets/${encodeURIComponent(id)}/reviews`,
     request,
     signal,
   );

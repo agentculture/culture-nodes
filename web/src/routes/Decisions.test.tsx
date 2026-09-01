@@ -68,6 +68,13 @@ function stubDecisionFetch() {
   return fetchMock;
 }
 
+/** One record's verdict radio, by the label a decider reads. */
+function verdictRadio(card: HTMLElement, recordId: string, name: string) {
+  return within(
+    within(card).getByRole("group", { name: `Verdict for ${recordId}` }),
+  ).getByRole("radio", { name });
+}
+
 async function findRunCard(runId = CLAIM_RUN_ID) {
   await screen.findByText(runId);
   return document.querySelector(`[data-run-id="${runId}"]`) as HTMLElement;
@@ -248,20 +255,17 @@ describe("Decisions submission", () => {
     expect(recorded).toHaveTextContent(CLAIM_RUN_ID);
   });
 
-  it("sends reject when reject is chosen, and only the records still selected", async () => {
+  // The verdict is per record, which is the grain the commit route decides
+  // at: a run whose claim holds up and whose evidence does not is ONE review
+  // with two answers. A record left at "not now" is simply not named by it.
+  it("sends a verdict per record, and names only the records this review covers", async () => {
     const user = userEvent.setup();
     const fetchMock = stubDecisionFetch();
     renderDecisions();
     const card = await findRunCard();
 
-    await user.click(within(card).getByRole("radio", { name: "reject" }));
-    // Drop the second record from this review: deciding a subset is a
-    // different frame, so it is a different review.
-    await user.click(
-      within(card).getByRole("checkbox", {
-        name: `include this record in the verdict (${PENDING_RUN.records[1].id})`,
-      }),
-    );
+    await user.click(verdictRadio(card, PENDING_RUN.records[0].id, "reject"));
+    await user.click(verdictRadio(card, PENDING_RUN.records[1].id, "not now"));
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
       "the evidence is process-reported, not measured",
@@ -276,6 +280,28 @@ describe("Decisions submission", () => {
     ]);
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).decisions).toEqual({
       [PENDING_RUN.records[0].id]: "reject",
+    });
+  });
+
+  it("confirms one record and rejects another in a single review", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubDecisionFetch();
+    renderDecisions();
+    const card = await findRunCard();
+
+    await user.click(verdictRadio(card, PENDING_RUN.records[1].id, "reject"));
+    await user.type(
+      within(card).getByLabelText(/Why \(recorded on the decision\)/),
+      "the claim holds; the evidence is process-reported",
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Record decision" }),
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).decisions).toEqual({
+      [PENDING_RUN.records[0].id]: "confirm",
+      [PENDING_RUN.records[1].id]: "reject",
     });
   });
 
@@ -379,17 +405,42 @@ describe("Decisions record payload rendering (task t27)", () => {
     expect(rendered.textContent).toBe(multiline);
   });
 
-  it("names the record in each checkbox's accessible label", async () => {
+  it("names the record in each verdict group's accessible label", async () => {
     mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
     renderDecisions();
     const card = await findRunCard();
 
     for (const record of PENDING_RUN.records) {
+      const group = within(card).getByRole("group", {
+        name: `Verdict for ${record.id}`,
+      });
       expect(
-        within(card).getByRole("checkbox", {
-          name: `include this record in the verdict (${record.id})`,
-        }),
-      ).toBeInTheDocument();
+        within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value")),
+      ).toEqual(["confirm", "reject", "skip"]);
     }
+  });
+
+  // A review names records; it never rewrites them (PRD §10.8). The card says
+  // so on the record itself once its review has committed.
+  it("leaves a decided record reading proposed, with the review beside it", async () => {
+    const user = userEvent.setup();
+    stubDecisionFetch();
+    mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
+    renderDecisions();
+    const card = await findRunCard();
+    await user.type(
+      within(card).getByLabelText(/Why \(recorded on the decision\)/),
+      "read the qualification",
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Record decision" }),
+    );
+
+    await within(card).findByText(/decision recorded/);
+    const row = card.querySelector(
+      `[data-record-id="${PENDING_RUN.records[0].id}"]`,
+    ) as HTMLElement;
+    expect(row.querySelector('[data-authority="proposed"]')).not.toBeNull();
+    expect(row.querySelector('[data-authority="confirmed"]')).not.toBeNull();
   });
 });

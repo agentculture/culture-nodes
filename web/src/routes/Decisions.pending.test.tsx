@@ -185,8 +185,8 @@ describe("Decisions pending tab", () => {
 });
 
 
-describe("Decisions pending tab record rendering (task t27)", () => {
-  it("labels each claim checkbox with the record it selects and shows the statement as prose", async () => {
+describe("Decisions pending tab record rendering (task t27, task t12)", () => {
+  it("shows the claim's statement as prose and sends the decider to the ticket page", async () => {
     const statement = "Ran the suite twice.\nBoth greens are CI's, not mine.";
     mockListHumanTasks.mockResolvedValue({ items: [] });
     mockListPendingDecisions.mockResolvedValue({
@@ -208,14 +208,62 @@ describe("Decisions pending tab record rendering (task t27)", () => {
         },
       ],
     });
+    mockGetRun.mockResolvedValue({
+      run: {
+        id: "run-t27",
+        workflow_digest: "sha256:x",
+        state: "waiting",
+        created_at: "",
+        updated_at: "",
+        input: { ticket_key: "SCRUM-42" },
+      },
+      tokens: [],
+      node_runs: [],
+    });
     await renderPending();
 
-    expect(
-      await screen.findByRole("checkbox", {
-        name: "include this record in the verdict (rec-t27-0001)",
-      }),
-    ).toBeInTheDocument();
+    await screen.findByText("rec-t27-0001");
     const prose = document.querySelector(".decisions-record__statement")!;
     expect(prose.textContent).toBe(statement);
+
+    // Task t12: the inert checkbox — one that selected a record into a verdict
+    // no form on this tab could submit — is gone, and the group links to the
+    // page that CAN take the decision (decision c33: replaced, not retired).
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(
+      await screen.findByRole("link", {
+        name: "Decide these claims on ticket SCRUM-42",
+      }),
+    ).toHaveAttribute("href", "/tickets/SCRUM-42");
+  });
+
+  it("says plainly when a claim's run names no ticket, instead of linking nowhere", async () => {
+    mockListHumanTasks.mockResolvedValue({ items: [] });
+    mockListPendingDecisions.mockResolvedValue({
+      record_count: 1,
+      items: [
+        {
+          run_id: "run-no-ticket",
+          ledger_version: 3,
+          records: [
+            {
+              id: "rec-no-ticket-1",
+              record_type: "claim",
+              origin_kind: "agent",
+              origin_actor_id: "codex-orin",
+              created_at: "2026-08-30T10:00:00Z",
+              data: { kind: "completion", statement: "Nothing to change." },
+            },
+          ],
+        },
+      ],
+    });
+    await renderPending();
+
+    await screen.findByText("rec-no-ticket-1");
+    expect(
+      screen.getByText(/No ticket is recorded for this run/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 });

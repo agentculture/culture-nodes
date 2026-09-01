@@ -2603,11 +2603,41 @@ button.timeline__node {
   gap: 0.75rem;
 }
 
-.decisions-record__select {
+/* One record's identity line, above its payload. */
+.decisions-record__head {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
   flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+/* The per-record verdict (task t12), wearing the same clothes as a human
+   task's outcome row — a reader learns one affordance, not two. */
+.decisions-record__verdict {
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) / 2);
+  padding: 0.35rem 0.7rem;
+  margin: 0.4rem 0 0;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.decisions-record__verdict-legend {
+  font-size: 0.8rem;
+  padding: 0 0.3rem;
+}
+
+/* What a record looks like after its review committed: the record's own
+   authority, which did not move, beside the verdict that names it. */
+.decisions-record__decided {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0 0;
   font-size: 0.9rem;
 }
 

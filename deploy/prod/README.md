@@ -865,7 +865,9 @@ ssh orin 'systemctl --user status codex-bridge'
 revision for an actor key, no-ops on an unchanged endpoint+metadata, and
 appends a new revision row on a changed one — no code path ever `UPDATE`s
 or `DELETE`s an actor row (c8, h7). It refuses a hostname endpoint
-outright; only a numeric LAN IP is accepted (c20).
+outright; only a numeric LAN IP is accepted (c20). `--human <actor_key>`
+registers a person as an endpoint-less `kind=human` actor — the second of
+the three onboarding places in `docs/operations/people.md`.
 
 `--os-user NAME` is sugar for `--metadata os_user=NAME` — a first-class
 metadata key (issue #204) that records the dedicated Unix account a bridge

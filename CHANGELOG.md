@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.1] - 2026-09-01
+
+### Added
+
+- Spec for the login-from-anywhere cycle: `docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`
+  — nodes.culture.dev behind Cloudflare Access (the chat.agentculture.org
+  pattern, provisioned with cultureflare; tunnel unit on thor), a principal
+  middleware in `internal/auth` verifying the Access JWT with the standard
+  library, an `actor_identities` binding table with two roles first
+  (approver, namespace administrator), ledger origin stamped from the
+  authenticated caller on every write and on dial-in completions
+  (#117/#183/#6 custody), the ticket page as the decision surface (#255),
+  a jira `read_issue` verb (#257), a four-target transition allowlist with
+  Done as a human actor node after live validation (#256), page replies
+  carrying the signed-in identity (#235), Jira push over polling as the last
+  wave, and a human-welcoming UX uplift whose findings aggregate on #270.
+  Scoped with `/scope` (45 cited surfaces), converged in `/think`, and
+  pressure-tested with a rigorous `/challenge` pass (eight findings, all
+  adjudicated). Issues #6, #111, #235, #255, #256, #257.
+- `/validate-delivery` vendored verbatim from devague (0.23.0), the
+  execution-to-evidence leg between `/assign-to-workforce` and
+  `/summarize-delivery`; row added to `docs/skill-sources.md`.
+
+### Changed
+
+### Fixed
+
 ## [0.46.0] - 2026-08-31
 
 ### Fixed

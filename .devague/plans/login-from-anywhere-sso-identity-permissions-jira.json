@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-01T20:34:34Z",
-  "updated": "2026-09-01T21:46:02Z",
+  "updated": "2026-09-01T22:25:12Z",
   "targets": [
     {
       "id": "c1",
@@ -971,6 +971,41 @@
         "h6"
       ],
       "instruction": "Mirror create_issue.py's module shape and README section. Copy pr_upkeep_jira.jira_description_text with attribution for ADF flattening (the sweep module must stay import-free of the bridge). Add the read allowlist env to config.py's env parsing, NOT to _FILE_FIELDS. Update adapters/jira/README.md input examples."
+    },
+    {
+      "id": "t21",
+      "summary": "Jira API base for scoped service-account tokens (deviation follow-up)",
+      "origin": "llm",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+        "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+        "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base"
+      ],
+      "deps": [],
+      "covers": [
+        "c17",
+        "h21"
+      ],
+      "instruction": "Recorded deviation d1. Python only plus deploy shell and docs; do not touch internal/. Keep the sweep module import-free and under its line limit; follow docs/operations/pr-upkeep-lane.md:150-160 if the sweep's environmentRefs change (they do: add JIRA_API_BASE)."
+    },
+    {
+      "id": "t22",
+      "summary": "Break-glass principal from an issued dial-in credential (deviation d2 follow-up)",
+      "origin": "llm",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+        "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c48",
+        "h34"
+      ],
+      "instruction": "Small Go package in internal/api/principal.go + internal/actors inbound_authentication read path; do not widen dial-in issuance. Recorded deviation d2."
     }
   ],
   "risks": [

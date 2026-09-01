@@ -20,7 +20,7 @@ import { mockDecisionsApi } from "./fixtures/api";
  * Its replacement is a link to the page that CAN take the decision.
  */
 test("Pending tab sends a claim group to the ticket page and offers no dead checkbox", async ({ page }) => {
-  mockDecisionsApi(page);
+  await mockDecisionsApi(page);
   await page.goto("/decisions");
   await page.getByRole("button", { name: "Pending" }).click();
 
@@ -36,7 +36,7 @@ test("Pending tab sends a claim group to the ticket page and offers no dead chec
 });
 
 test("Proposed claims tab records a per-record verdict as a review naming those records", async ({ page }) => {
-  const captured = mockDecisionsApi(page);
+  const captured = await mockDecisionsApi(page);
   await page.goto("/decisions");
 
   await expect(page.getByRole("heading", { name: "Decisions" })).toBeVisible();
@@ -94,7 +94,7 @@ test("Proposed claims tab records a per-record verdict as a review naming those 
 });
 
 test("holds nothing in the browser: no token, no remembered actor id", async ({ page }) => {
-  mockDecisionsApi(page);
+  await mockDecisionsApi(page);
   await page.goto("/decisions");
   await expect(page.getByRole("heading", { name: "Decisions" })).toBeVisible();
 

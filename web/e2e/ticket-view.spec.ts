@@ -81,7 +81,7 @@ test("reduced motion disables ticket-route transitions and animations", async ({
  * rendered from is exactly the failure the stale guard exists to catch.
  */
 test("decides a human task on the ticket page, at the version the API served with it", async ({ page }) => {
-  const captured = mockTicketApi(page);
+  const captured = await mockTicketApi(page);
   await page.goto(`/tickets/${TICKET_ID}`);
   await expect(page.getByRole("heading", { name: "Decisions", exact: true })).toBeVisible();
 
@@ -108,7 +108,7 @@ test("decides a human task on the ticket page, at the version the API served wit
 });
 
 test("confirms a claim on the ticket page and shows each run's own outcome", async ({ page }) => {
-  const captured = mockTicketApi(page);
+  const captured = await mockTicketApi(page);
   await page.goto(`/tickets/${TICKET_ID}`);
   await expect(
     page.getByRole("heading", { name: "Claims awaiting a decision" }),
@@ -178,7 +178,7 @@ test("confirms a claim on the ticket page and shows each run's own outcome", asy
 
 test("re-reads only the conflicted group when its reload is used", async ({ page }) => {
   let served = TICKET_PROJECTION;
-  const captured = mockTicketApi(page, { ticket: () => served });
+  const captured = await mockTicketApi(page, { ticket: () => served });
   await page.goto(`/tickets/${TICKET_ID}`);
   await page.getByLabel("Why (recorded on every decision)").fill("read both claims");
   await page.getByRole("button", { name: "Record decisions" }).click();
@@ -208,7 +208,7 @@ test("re-reads only the conflicted group when its reload is used", async ({ page
  * claim arrived in and offers nothing to change it.
  */
 test("renders frame claims read-only, with their confirmation state", async ({ page }) => {
-  mockTicketApi(page);
+  await mockTicketApi(page);
   await page.goto(`/tickets/${TICKET_ID}`);
   const claims = page.locator("#ticket-frame-claims");
   await expect(claims.getByRole("heading", { name: "Frame claims" })).toBeVisible();

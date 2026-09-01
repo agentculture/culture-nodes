@@ -19,7 +19,7 @@ import { mockInboxApi } from "./fixtures/api";
  * until now nothing walked it end to end in a browser at all.
  */
 test("decides a pending human task with one click, at the ledger version it read", async ({ page }) => {
-  const captured = mockInboxApi(page);
+  const captured = await mockInboxApi(page);
   await page.goto("/inbox");
 
   await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
@@ -52,7 +52,7 @@ test("decides a pending human task with one click, at the ledger version it read
 });
 
 test("offers exactly the outcomes the engine accepts, and nothing to type", async ({ page }) => {
-  mockInboxApi(page);
+  await mockInboxApi(page);
   await page.goto("/inbox");
 
   const card = page.locator(`[data-human-task-id="${PENDING_TASK.id}"]`);
@@ -78,7 +78,7 @@ test("offers exactly the outcomes the engine accepts, and nothing to type", asyn
  * button for it was an offer to hand-produce an engine observation.
  */
 test("never offers expired, and states the absence when a task offers no choice", async ({ page }) => {
-  mockInboxApi(page, {
+  await mockInboxApi(page, {
     pending: [
       { ...PENDING_TASK, request: { ...PENDING_TASK.request, allowed_outcomes: ["approved", "expired"] } },
       { ...PENDING_TASK_MINIMAL, request: { allowed_outcomes: [] } },
@@ -97,7 +97,7 @@ test("never offers expired, and states the absence when a task offers no choice"
 });
 
 test("shows a decided task read-only under the confirmed-authority chip", async ({ page }) => {
-  mockInboxApi(page);
+  await mockInboxApi(page);
   await page.goto("/inbox");
 
   const card = page.locator(`[data-human-task-id="${DECIDED_TASK.id}"]`);

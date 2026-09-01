@@ -21,8 +21,14 @@
  *     (internal/engine, DecidableOutcomes). A button for it was an offer to
  *     hand-produce an engine observation.
  *   - Every button is disabled unless a decision could actually be
- *     recorded — a token is held and a decider is named. A decision with no
- *     named decider is not a decision (PRD §10.4).
+ *     recorded. Since task t9 that means: the signed-in principal is bound
+ *     to an actor (`useWhoami` says `bound`) and, where the caller has to
+ *     read it, the ledger version is known. Nothing is typed to enable them
+ *     — the token panels and the free-text decider are gone; the decider is
+ *     whoever Cloudflare Access verified, and the control plane stamps that
+ *     on the record regardless of what the body names. A decision with no
+ *     accountable decider is still not a decision (PRD §10.4) — it is just
+ *     no longer the page's job to ask for the name.
  *   - The busy task's buttons are disabled while its POST is in flight, so
  *     a double click cannot become two decisions.
  */
@@ -43,7 +49,7 @@ export function OutcomeButtons({
 }: {
   taskId: string;
   outcomes: string[];
-  /** True when no decision can be recorded at all (no token, no decider, no version). */
+  /** True when no decision can be recorded at all (whoami not bound, or no ledger version yet). */
   disabled: boolean;
   /** True while THIS task's decision is in flight. */
   busy: boolean;

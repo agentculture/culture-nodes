@@ -41,6 +41,8 @@ import {
   STATS_RUNS,
   STATS_RUNS_FILTERED,
 } from "../../src/fixtures/statistics-fixture";
+import { WHOAMI_BOUND } from "../../src/fixtures/whoami-fixture";
+import type { Whoami } from "../../src/api/types";
 
 export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
@@ -68,6 +70,38 @@ const json = (body: unknown) => ({
   body: JSON.stringify(body),
 });
 
+export { WHOAMI_ACTOR_ID, WHOAMI_BOUND, WHOAMI_UNBOUND } from "../../src/fixtures/whoami-fixture";
+
+/**
+ * `GET /v1alpha1/whoami` (task t9, spec c8/c9): the browser's only source of
+ * identity. Every mock below answers it with the bound fixture so the header
+ * renders a signed-in person and the decision surfaces are live; a spec that
+ * wants the unbound or signed-out state registers `mockWhoami` with its own
+ * answer AFTER the wide mock (Playwright runs the last-registered route
+ * first).
+ */
+export async function mockWhoami(
+  page: Page,
+  answer: Whoami | { status: 401 } = WHOAMI_BOUND,
+): Promise<void> {
+  await page.route("**/v1alpha1/whoami", async (route) => {
+    if ("status" in answer && answer.status === 401) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: 1,
+          message: "request refused",
+          remediation: "authenticate with a bound principal holding the required role",
+          reason: "no_principal",
+        }),
+      });
+      return;
+    }
+    await route.fulfill(json(answer));
+  });
+}
+
 /**
  * Serve the whole `/v1alpha1` surface the Run and Ledger views read, from the
  * shared fixture, via request interception.
@@ -84,6 +118,10 @@ export async function mockApi(page: Page): Promise<void> {
     // The client percent-encodes path segments (a workflow digest carries a
     // `:`), so compare against the decoded path the server sees.
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
 
     if (path === "/v1alpha1/runs") {
       await route.fulfill(json({ items: [RUN_VIEW.run] }));
@@ -163,6 +201,10 @@ export async function mockRunsBoardApi(page: Page): Promise<void> {
   await page.route("**/v1alpha1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
 
     if (path === "/v1alpha1/runs") {
       await route.fulfill(json({ items: BOARD_RUNS }));
@@ -260,6 +302,10 @@ export async function mockJobsTimelineApi(page: Page): Promise<void> {
   await page.route("**/v1alpha1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
 
     if (path === "/v1alpha1/node-runs") {
       if (url.searchParams.get("cursor") === JOB_RUNS_CURSOR) {
@@ -330,6 +376,10 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
   await page.route("**/v1alpha1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
     const bounded =
       url.searchParams.has("updated_since") ||
       url.searchParams.has("updated_until");
@@ -395,6 +445,10 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
     const request = route.request();
     const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
 
     if (path === "/v1alpha1/workflows") {
       await route.fulfill(json({ items: WORKFLOW_VERSIONS }));
@@ -492,6 +546,10 @@ export async function mockAuthoringApi(page: Page): Promise<void> {
     const request = route.request();
     const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
     const method = request.method();
 
     if (path === "/v1alpha1/workflows/validate" && method === "POST") {
@@ -578,6 +636,10 @@ export async function mockMeshApi(page: Page): Promise<void> {
     const request = route.request();
     const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
 
     if (path === "/v1alpha1/actors") {
       await route.fulfill(json({ items: MESH_ACTORS }));
@@ -639,6 +701,10 @@ export async function mockPlanApi(page: Page): Promise<void> {
   await page.route("**/v1alpha1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = decodeURIComponent(url.pathname);
+    if (path === "/v1alpha1/whoami") {
+      await route.fulfill(json(WHOAMI_BOUND));
+      return;
+    }
 
     if (path === "/v1alpha1/plan-imports") {
       const slug = url.searchParams.get("slug");

@@ -8,6 +8,7 @@ import {
 import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
+import IdentityGate from "./components/IdentityGate";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
@@ -94,6 +95,10 @@ export function App() {
       <Header />
       <RouteWatcher />
       <main id="main">
+        {/* Identity is derived from the signed-in principal (task t9): an
+            unbound login sees a named full-page state instead of the routed
+            view, a missing one sees "sign in required" above it. */}
+        <IdentityGate>
         <Routes>
           <Route path="/" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsList />} />
@@ -130,6 +135,7 @@ export function App() {
             }
           />
         </Routes>
+        </IdentityGate>
       </main>
       <AgentStateScript />
     </>

@@ -12,15 +12,21 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+/**
+ * No server secret is named anywhere in the bundle's source. The allowlist
+ * used to carry one entry — the decision-token contract that documented the
+ * human-decision secret for the operator who pasted it — and task t9 (spec
+ * c8) shrank it to nothing: identity comes from the Cloudflare
+ * edge and `GET /v1alpha1/whoami`, so there is no secret for a person to
+ * hold and no file that needs to mention one.
+ */
 describe("browser credential boundary", () => {
-  it("contains no server secret name outside the decision-token contract", () => {
+  it("contains no server secret name at all", () => {
     const suffix = "_" + "SECRET";
     const findings = sourceFiles(SOURCE_ROOT).flatMap((path) => {
       const matches = readFileSync(path, "utf8").match(new RegExp(`[A-Z][A-Z0-9_]+${suffix}`, "g")) ?? [];
       return matches.map((name) => ({ path: relative(SOURCE_ROOT, path), name }));
     });
-    expect(findings).toEqual([
-      { path: "api/decision-token.ts", name: ["NODES", "HUMAN", "DECISION", "TOKEN", "SECRET"].join("_") },
-    ]);
+    expect(findings).toEqual([]);
   });
 });

@@ -238,6 +238,9 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 
 	out := gateReportResult{Gates: make([]ledger.Record, 0, len(composed))}
 	for i, record := range composed {
+		// Under the gate's own agent credential every row of the report is
+		// the gate's proposed claim (actorbearer.go, task t11).
+		record = stampAgentProposed(r, record)
 		appended, aerr := s.Ledger.Append(ctx, record)
 		if aerr != nil {
 			return classify(aerr)
@@ -255,6 +258,7 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return internalError(err)
 	}
+	aggregateRecord = stampAgentProposed(r, aggregateRecord)
 	appendedAggregate, err := s.Ledger.Append(ctx, aggregateRecord)
 	if err != nil {
 		return classify(err)

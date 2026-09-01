@@ -550,6 +550,37 @@ install_codex_account_env() { # host
 install_codex_account_env "$THOR"
 install_codex_account_env "$ORIN"
 
+# --- merge-gate actor token (login-from-anywhere t11, spec c45) ------------
+#
+# The merge-gate scripts (scripts/merge-gate.py, scripts/collect-handover.py
+# --gate) used to post suite verdicts and gate reports with the HUMAN
+# decision secret. They now authenticate as their own registered agent actor,
+# company/merge-gate, whose bearer is NODES_ACTOR_MERGE_GATE_TOKEN: the actor
+# row's metadata.auth_token_env names this variable
+# (deploy/prod/register-actor.sh company/merge-gate <endpoint> NODES_ACTOR_MERGE_GATE_TOKEN),
+# and the api service reads it from prod.env to recognise the bearer —
+# the same lookup the worker uses for outbound credentials.
+#
+# Two custody points must agree: the control plane's copy here, and the copy
+# the gate runs with (a granted environment value on the lane, or the
+# operator's ~/.culture-nodes/operator.env). So an EXISTING value is kept
+# unless FORCE_MERGE_GATE=1 — a silent re-mint on every run would leave every
+# operator copy stale and every gate post answering 401. Same discipline as
+# every lane above: the token rides ssh stdin into the umask-077 merge, never
+# an ssh argv.
+MERGE_GATE_TOKEN=$(gen)
+
+install_merge_gate_token() { # host
+  local host=$1 rc=0
+  printf 'NODES_ACTOR_MERGE_GATE_TOKEN=%s\n' "$MERGE_GATE_TOKEN" \
+    | ssh "$host" "FORCE=${FORCE_MERGE_GATE:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && grep -q "^NODES_ACTOR_MERGE_GATE_TOKEN=" ~/.culture-nodes/prod.env && [ "$FORCE" != "1" ]; then echo "keeping existing NODES_ACTOR_MERGE_GATE_TOKEN (set FORCE_MERGE_GATE=1 to rotate)" >&2; exit 3; fi; '"$PROD_ENV_MERGE" || rc=$?
+  if [ "$rc" -eq 3 ]; then echo "kept existing NODES_ACTOR_MERGE_GATE_TOKEN on $host"; return 0; fi
+  [ "$rc" -eq 0 ] || return "$rc"
+  echo "installed NODES_ACTOR_MERGE_GATE_TOKEN into prod.env on $host"
+}
+install_merge_gate_token "$THOR"
+install_merge_gate_token "$ORIN"
+
 # --- nodes-notifier webhook (thor only — deploy/prod/compose.thor.yml's
 # `notifier` service is the only consumer; task t34) ----------------------
 # A Discord (or generic) webhook URL is EXTERNALLY ISSUED (created in

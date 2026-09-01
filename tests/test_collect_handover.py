@@ -142,6 +142,7 @@ def world(tmp_path, fake_api):
         },
         "run": run_view(THOR_ACTOR),
         "posts": [],
+        "auth": [],
         "routing": {
             "id": "ledger_routing_1",
             "authority": "derived",
@@ -189,6 +190,7 @@ def world(tmp_path, fake_api):
     def post_verdict(h, m, q, b):
         payload = json.loads(b)
         state["posts"].append(payload)
+        state["auth"].append(h.headers.get("Authorization"))
         # The 201 body is SuiteVerdictResult (task t32): the verdict, plus
         # where a REJECTING gate was routed. `state["routing"]` lets a test
         # choose which routing the control plane answered with.
@@ -403,7 +405,10 @@ def test_json_on_the_ambiguous_empty_case_still_parses(world):
 # --------------------------------------------------------------------------
 
 
-GATE_ENV = {"NODES_VALIDATOR_ACTOR_ID": "actor_merge_gate", "NODES_HUMAN_DECISION_TOKEN": "s3cret"}
+GATE_ENV = {
+    "NODES_VALIDATOR_ACTOR_ID": "actor_merge_gate",
+    "NODES_ACTOR_MERGE_GATE_TOKEN": "s3cret",
+}
 
 
 def test_the_gate_records_the_suite_the_exit_code_and_the_sha(world):
@@ -498,7 +503,10 @@ def test_a_suite_that_moved_the_worktree_records_nothing(world):
     assert "not at the handed-over commit" in proc.stdout + proc.stderr
 
 
-def test_the_gate_without_a_validator_identity_refuses(world):
+def test_the_gate_without_its_own_credential_refuses_even_with_the_human_token(world):
+    """login-from-anywhere t11 (c45 / h31): the gate authenticates as its own
+    agent actor. The human decision bearer is not read at all — present in
+    the environment, it neither authenticates the post nor leaks."""
     proc = collect(
         world,
         RUN_ID,
@@ -509,11 +517,58 @@ def test_the_gate_without_a_validator_identity_refuses(world):
         sys.executable,
         "-c",
         "raise SystemExit(0)",
-        env_extra={"NODES_HUMAN_DECISION_TOKEN": "s3cret"},
+        env_extra={
+            "NODES_VALIDATOR_ACTOR_ID": "actor_merge_gate",
+            "NODES_HUMAN_DECISION_TOKEN": "human-bearer",
+            "NODES_HUMAN_DECISION_TOKEN_SECRET": "human-bearer",
+        },
     )
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "NODES_VALIDATOR_ACTOR_ID" in proc.stdout + proc.stderr
+    assert "NODES_ACTOR_MERGE_GATE_TOKEN" in proc.stdout + proc.stderr
+    assert "human-bearer" not in proc.stdout + proc.stderr
     assert world["state"]["posts"] == []
+
+
+def test_the_gate_posts_under_its_own_actor_token(world):
+    proc = collect(
+        world,
+        RUN_ID,
+        "--gate",
+        "--suite",
+        "go test ./...",
+        "--",
+        sys.executable,
+        "-c",
+        "raise SystemExit(0)",
+        env_extra={
+            "NODES_ACTOR_MERGE_GATE_TOKEN": "agent-bearer",
+            "NODES_HUMAN_DECISION_TOKEN": "human-bearer",
+        },
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert world["state"]["auth"] == ["Bearer agent-bearer"]
+    # No validator identity was granted, and none is needed: the credential
+    # resolves to the registered agent actor on the control plane, which
+    # stamps the verdict's origin from it (agent / proposed).
+    assert "validator_actor_id" not in world["state"]["posts"][0]
+
+
+def test_the_gate_reads_its_credential_from_the_operator_env_file(world):
+    env_file = world["tmp"] / "operator.env"
+    env_file.write_text("NODES_ACTOR_MERGE_GATE_TOKEN=from-operator-env\n", encoding="utf-8")
+    proc = collect(
+        world,
+        RUN_ID,
+        "--gate",
+        "--suite",
+        "go test ./...",
+        "--",
+        sys.executable,
+        "-c",
+        "raise SystemExit(0)",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert world["state"]["auth"] == ["Bearer from-operator-env"]
 
 
 def test_the_gate_refuses_when_no_handover_was_collected(world):

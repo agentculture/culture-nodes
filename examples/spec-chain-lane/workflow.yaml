@@ -70,9 +70,11 @@
 #                                 `devague_write: true`, and the bridge
 #                                 answers that request from its declaration
 #                                 (403 otherwise). Its `claude_env` must
-#                                 GRANT NODES_API_URL and
-#                                 NODES_HUMAN_DECISION_TOKEN: post_frame.py
-#                                 reads the token from the environment only.
+#                                 GRANT NODES_API_URL and NODES_ACTOR_TOKEN —
+#                                 the lane's OWN actor credential, never the
+#                                 human decision token (t11 of
+#                                 login-from-anywhere): post_frame.py reads
+#                                 it from the environment only.
 #                                 See docs/operations/spec-chain-lane.md.
 #   actor://company/jira-comment  the narrow Jira bridge (post_comment with
 #                                 question_id; it stamps the marker).
@@ -181,7 +183,7 @@ spec:
               devague command: git add .devague && git commit, then post the
               snapshot with python3 examples/spec-chain-lane/post_frame.py
               --ticket <id> (it reads NODES_API_URL and
-              NODES_HUMAN_DECISION_TOKEN from your environment; never print
+              NODES_ACTOR_TOKEN from your environment; never print
               either) and note the version it returns. (4) Finish by writing
               devague question --list --json and devague converge --json to
               files and running python3 examples/spec-chain-lane/frame_moves.py
@@ -299,7 +301,7 @@ spec:
               were given, so the run re-asks nothing new. (3) After the move:
               git add .devague && git commit, then python3
               examples/spec-chain-lane/post_frame.py --ticket <id> (it reads
-              NODES_API_URL and NODES_HUMAN_DECISION_TOKEN from your
+              NODES_API_URL and NODES_ACTOR_TOKEN from your
               environment; never print either). NEVER run devague confirm,
               devague reject or devague export. (4) Write devague question --list
               --json and devague converge --json to files and run
@@ -414,7 +416,7 @@ spec:
               question_id, question, frame_slug and frame_version you were
               given. (3) After the move: git add .devague && git commit, then
               python3 examples/spec-chain-lane/post_frame.py --ticket <id>
-              (it reads NODES_API_URL and NODES_HUMAN_DECISION_TOKEN from your
+              (it reads NODES_API_URL and NODES_ACTOR_TOKEN from your
               environment; never print either). NEVER run devague confirm,
               devague reject or devague export. (4) Run frame_moves.py
               next --ticket <id> --questions-file ... --converge-file ...
@@ -530,7 +532,7 @@ spec:
               question_id, question, frame_slug and frame_version you were
               given. (3) After the move: git add .devague && git commit, then
               python3 examples/spec-chain-lane/post_frame.py --ticket <id>
-              (it reads NODES_API_URL and NODES_HUMAN_DECISION_TOKEN from your
+              (it reads NODES_API_URL and NODES_ACTOR_TOKEN from your
               environment; never print either). NEVER run devague confirm,
               devague reject or devague export. (4) Run frame_moves.py
               next --ticket <id> --questions-file ... --converge-file ...

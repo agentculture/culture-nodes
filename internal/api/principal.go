@@ -86,7 +86,7 @@ func (s *Server) AccessHandler() http.Handler {
 
 func (s *Server) principalMiddleware(accessListener bool, next http.Handler) http.Handler {
 	if s.principalVerifier == nil {
-		return next
+		return s.actorBearerMiddleware(next)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var p Principal
@@ -129,6 +129,19 @@ func (s *Server) principalMiddleware(accessListener bool, next http.Handler) htt
 				present = true
 			}
 		}
+		if !present && agentMayWrite(r.Method, r.URL.Path) {
+			// An agent actor's own bearer (actorbearer.go): resolved only on
+			// the routes an agent may write, so the credential opens those
+			// and nothing else.
+			actor, ok, err := s.actorBearerPrincipal(r.Context(), r)
+			if err != nil {
+				s.writeAPIError(w, r, internalError(err))
+				return
+			}
+			if ok {
+				p, present = actor, true
+			}
+		}
 		if present {
 			r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, p))
 		}
@@ -145,9 +158,39 @@ func (s *Server) principalMiddleware(accessListener bool, next http.Handler) htt
 				s.refuse(w, r, http.StatusForbidden, "unbound", p.Subject)
 				return
 			}
-			if !hasRole(p.Roles, policy.role) {
+			if p.isActorBearer() {
+				// An agent principal is never a role-holder on a human
+				// surface: it writes where the policy says agents may, and
+				// a decision, review or grade under it is refused by role.
+				if !policy.agents {
+					s.refuse(w, r, http.StatusForbidden, "forbidden_role", p.Subject)
+					return
+				}
+			} else if !hasRole(p.Roles, policy.role) {
 				s.refuse(w, r, http.StatusForbidden, "forbidden_role", p.Subject)
 				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// actorBearerMiddleware is the principal gate's shape when no verifier is
+// configured (the pre-Access LAN listener): it enforces nothing, and only
+// resolves an agent actor's own bearer into the context on the routes an
+// agent may write, so those handlers' requireDecisionAuth sees a principal
+// and the ledger origin is stamped from it. Every other request passes
+// through untouched, exactly as before.
+func (s *Server) actorBearerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if agentMayWrite(r.Method, r.URL.Path) {
+			actor, ok, err := s.actorBearerPrincipal(r.Context(), r)
+			if err != nil {
+				s.writeAPIError(w, r, internalError(err))
+				return
+			}
+			if ok {
+				r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, actor))
 			}
 		}
 		next.ServeHTTP(w, r)
@@ -157,6 +200,9 @@ func (s *Server) principalMiddleware(accessListener bool, next http.Handler) htt
 type routePolicy struct {
 	role   auth.Role
 	secret string
+	// agents marks a protected route a registered agent actor's own bearer
+	// may write (actorbearer.go); the role above then applies to people only.
+	agents bool
 }
 
 func principalPolicy(method, path string) (routePolicy, bool) {
@@ -175,6 +221,10 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 	case strings.Contains(path, "/human-tasks/") && strings.HasSuffix(path, "/decision"),
 		strings.Contains(path, "/reviews"), strings.Contains(path, "/tickets/"), strings.HasSuffix(path, "/grades"):
 		p.role, p.secret = auth.RoleApprover, "decision"
+		// A ticket frame is the developer lane's own devague snapshot, posted
+		// under the lane's own credential (task t11); a person still needs the
+		// approver role to post one.
+		p.agents = agentMayWrite(method, path)
 	case path == "/v1alpha1/actors" || strings.HasSuffix(path, "/resume"):
 		p.secret = "actor"
 	case path == "/v1alpha1/adhoc-runs":

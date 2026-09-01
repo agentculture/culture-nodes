@@ -186,6 +186,14 @@ func actorKeyOf(ref string) string {
 	return strings.Trim(trimmed, "/")
 }
 
+// AuthTokenEnvOf is authTokenEnvOf for callers outside this package. The api
+// service resolves an inbound bearer to a registered agent actor through the
+// SAME metadata key the dispatch path reads its outbound credential from
+// (login-from-anywhere task t11): one row, one variable name, two directions.
+func AuthTokenEnvOf(metadata []byte) string {
+	return authTokenEnvOf(metadata)
+}
+
 // authTokenEnvOf reads metadata.auth_token_env without decoding the whole
 // document into a typed struct — the metadata column is deliberately open,
 // and a typed decode would fail on a key this code does not care about.

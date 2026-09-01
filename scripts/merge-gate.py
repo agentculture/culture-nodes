@@ -93,10 +93,22 @@ inferred):
     NODES_NODE_RUN_ID     narrows the records to this node run (optional).
     NODES_ATTEMPT_ID      narrows the records to this attempt (optional).
     NODES_API_URL         the control plane.
-    NODES_DECISION_TOKEN  the same bearer secret the review surface uses.
+    NODES_ACTOR_MERGE_GATE_TOKEN
+                          the gate's OWN credential: the bearer of the
+                          registered `company/merge-gate` agent actor (its row
+                          names this variable in metadata.auth_token_env, the
+                          same way every dispatched actor's row does). The
+                          control plane resolves it to that actor and stamps
+                          every record of the report agent-origin, proposed —
+                          the gate's claim about the suites it ran, decided by
+                          a person like any other claim. The human decision
+                          secret is never read here (login-from-anywhere t11,
+                          spec c45).
     NODES_GATE_VALIDATOR_ACTOR_ID
-                          the registered, non-human validator identity these
-                          derived records are attributed to.
+                          optional. A registered non-human validator identity
+                          to attribute the records to instead; under the agent
+                          credential the control plane overrides it with the
+                          credential's own actor and says so in its reply.
 """
 
 from __future__ import annotations
@@ -221,7 +233,11 @@ def git(repo: Path, *args: str) -> str:
 
 def git_optional(repo: Path, *args: str) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
     return proc.stdout.strip() if proc.returncode == 0 else ""
@@ -427,9 +443,7 @@ def run_gate(
                 executed = True
                 break
         if not executed:
-            return not_applicable(
-                gate, REASON_NO_TESTS_EXECUTED, considered, considered, version
-            )
+            return not_applicable(gate, REASON_NO_TESTS_EXECUTED, considered, considered, version)
 
     entry: dict[str, Any] = {
         "gate": gate["gate"],
@@ -534,9 +548,10 @@ def post_report(report: dict[str, Any], run_id: str) -> dict[str, Any]:
         "a gate whose finding is not in the ledger gated nothing",
     )
     token = env_or_refuse(
-        "NODES_DECISION_TOKEN",
-        "grant NODES_DECISION_TOKEN: whoever can record a gate result can decide a merge, so "
-        "the route is gated by the same secret the review surface uses",
+        "NODES_ACTOR_MERGE_GATE_TOKEN",
+        "grant NODES_ACTOR_MERGE_GATE_TOKEN, the merge gate's own actor credential "
+        "(install-secrets.sh mints it; register-actor.sh binds it to company/merge-gate). "
+        "The human decision token is not read here: an agent posts under its own principal",
     )
     url = base.rstrip("/") + f"/v1alpha1/runs/{run_id}/gate-reports"
     request = (
@@ -683,11 +698,11 @@ def main(argv: list[str] | None = None) -> int:
             "(internal/runners.ContextEnvironment); a validator that cannot name its subject "
             "records nothing",
         )
-        report["validator_actor_id"] = env_or_refuse(
-            "NODES_GATE_VALIDATOR_ACTOR_ID",
-            "a derived record needs an identified deterministic producer (PRD §10.4); register a "
-            "non-human validator actor and grant its id to the operation",
-        )
+        # The credential IS the identity: the control plane resolves the
+        # bearer to the registered agent actor and stamps the records from
+        # it. A separately granted validator id is forwarded when present.
+        if os.environ.get("NODES_GATE_VALIDATOR_ACTOR_ID", "").strip():
+            report["validator_actor_id"] = os.environ["NODES_GATE_VALIDATOR_ACTOR_ID"].strip()
         for key, name in (
             ("node_run_ref", "NODES_NODE_RUN_ID"),
             ("attempt_ref", "NODES_ATTEMPT_ID"),

@@ -40,7 +40,7 @@ func TestPrincipalGateRefusesNoPrincipalAndViewer(t *testing.T) {
 	mutating := []struct{ method, path string }{
 		{http.MethodPost, "/v1alpha1/workflows/validate"}, {http.MethodPost, "/v1alpha1/workflows"}, {http.MethodPost, "/v1alpha1/workflow-generations"},
 		{http.MethodPost, "/v1alpha1/adhoc-runs"}, {http.MethodPost, "/v1alpha1/runs"}, {http.MethodPatch, "/v1alpha1/runs/run_x"}, {http.MethodPost, "/v1alpha1/runs/run_x/cancel"},
-		{http.MethodPost, "/v1alpha1/tickets/SCRUM-1/frame"}, {http.MethodPost, "/v1alpha1/tickets/SCRUM-1/replies"}, {http.MethodPost, "/v1alpha1/tickets/SCRUM-1/freeze"},
+		{http.MethodPost, "/v1alpha1/tickets/SCRUM-1/frame"}, {http.MethodPost, "/v1alpha1/tickets/SCRUM-1/replies"}, {http.MethodPost, "/v1alpha1/tickets/SCRUM-1/freeze"}, {http.MethodPost, "/v1alpha1/tickets/SCRUM-1/reviews"},
 		{http.MethodPost, "/v1alpha1/actors"}, {http.MethodPost, "/v1alpha1/actors/act_x/resume"}, {http.MethodPost, "/v1alpha1/inbound/credentials"}, {http.MethodPost, "/v1alpha1/inbound/credentials/revoke"},
 		{http.MethodPost, "/v1alpha1/schedules"}, {http.MethodPatch, "/v1alpha1/schedules/sch_x"}, {http.MethodDelete, "/v1alpha1/schedules/sch_x"}, {http.MethodPost, "/v1alpha1/namespaces"},
 		{http.MethodPost, "/v1alpha1/preflights/pre_x/acknowledge"}, {http.MethodPost, "/v1alpha1/store/entries"}, {http.MethodPost, "/v1alpha1/store/entries/pull"},

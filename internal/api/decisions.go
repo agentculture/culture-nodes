@@ -119,8 +119,16 @@ type pendingDecisionParams struct {
 	RunID      string
 	RecordType string
 	ActorID    string
-	Limit      int
-	Cursor     *nodeRunCursor
+	// RunIDs narrows to a KNOWN SET of runs, which is what a projection
+	// scoped to one subject needs — the ticket page (task t14) asks for the
+	// undecided records of the runs it already listed, and a per-run query
+	// would be one round trip per run of a ticket that may have hundreds.
+	// Empty means "every run", as before; a non-nil but empty set would be
+	// a query for nothing and is treated the same way by callers, which
+	// never build one.
+	RunIDs []string
+	Limit  int
+	Cursor *nodeRunCursor
 }
 
 // listPendingDecisions returns every proposed record no review record points
@@ -151,8 +159,9 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 			  WHERE s.namespace_id = r.namespace_id AND s.supersedes = r.id
 		  )
 		  AND ($7::timestamptz IS NULL OR (r.created_at, r.id) < ($7, $8))
+		  AND ($9::text[] IS NULL OR r.run_id = ANY($9))
 		ORDER BY r.created_at DESC, r.id DESC
-		LIMIT $9`
+		LIMIT $10`
 	var cursorCreatedAt *time.Time
 	var cursorID string
 	if p.Cursor != nil {
@@ -160,9 +169,13 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 		cursorID = p.Cursor.ID
 	}
 
+	var runIDs any
+	if len(p.RunIDs) > 0 {
+		runIDs = p.RunIDs
+	}
 	rows, err := s.Store.Pool().Query(ctx, query,
 		s.NamespaceID, string(ledger.AuthorityProposed),
-		p.RunID, p.RecordType, p.ActorID, string(ledger.RecordReview), cursorCreatedAt, cursorID, p.Limit+1)
+		p.RunID, p.RecordType, p.ActorID, string(ledger.RecordReview), cursorCreatedAt, cursorID, runIDs, p.Limit+1)
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("list pending decisions: %w", err)
 	}

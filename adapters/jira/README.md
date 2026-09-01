@@ -1,9 +1,10 @@
 # culture-nodes-jira-bridge
 
-An ordinary `kind: agent` actor-protocol bridge with three narrow
+An ordinary `kind: agent` actor-protocol bridge with four narrow
 capabilities: post a comment on a named Jira issue, perform one
 bridge-allowlisted issue transition, or create an issue in a
-bridge-allowlisted project. It exposes no generic Jira request surface.
+bridge-allowlisted project, plus read one issue inside the transition project
+prefix. It exposes no generic Jira request surface.
 
 The bridge reads `JIRA_ACCOUNT_EMAIL` and `JIRA_API_TOKEN` directly from its
 own process environment. Those values are deliberately not valid JSON config
@@ -15,6 +16,10 @@ creation custody boundary: a comma-separated list of EXACT project keys the
 `create_issue` verb may target. It defaults to empty, which refuses every
 creation — installing the code widens nothing until a deployment configures
 the allowlist.
+`JIRA_READ_COMMENT_LIMIT` is the environment-only read custody limit. It has
+no default: when unset or not a positive integer, `read_issue` refuses every
+request before contacting Jira. Reads also require the issue key to match
+`JIRA_TRANSITION_PROJECT_PREFIX`.
 
 Invocation input is exactly:
 
@@ -34,12 +39,21 @@ or:
 {"verb":"create_issue","project":"SCRUM","summary":"Wire the new lane","description":"Optional.","issue_type":"Task"}
 ```
 
+or:
+
+```json
+{"verb":"read_issue","issue":"SCRUM-17"}
+```
+
 `description` and `issue_type` are optional (`issue_type` defaults to
 `Task`); a `project` outside the configured allowlist is refused by name at
 the bridge, before any Jira request is built. `GET /v1/capabilities`
 (authenticated like invocations) advertises the verb list and the non-secret
 custody configuration behind it — which transition and which creation
-projects this deployment actually allows.
+projects this deployment actually allows, plus the read project prefix and
+comment limit. A read returns the issue summary, flattened description (at
+most 4000 characters with a truncation flag), status, capped comments, and
+inward/outward issue links.
 
 `question_id` is optional for ordinary notices and required by a question
 round trip. The actor appends a fixed `[culture-nodes:jira-actor ...]` marker

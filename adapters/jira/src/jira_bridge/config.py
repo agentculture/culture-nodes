@@ -47,6 +47,8 @@ class Config:
     # type the verb has always defaulted to; anything else is refused by name
     # (PR #208 review finding 1) -- widen deliberately per deployment.
     create_issue_types: tuple[str, ...] = ("Task",)
+    # Read custody stays environment-only. None refuses every read.
+    read_comment_limit: int | None = None
 
     @property
     def transition_target(self) -> str:
@@ -97,6 +99,11 @@ class Config:
             values["create_projects"] = env["JIRA_CREATE_PROJECTS"].split(",")
         if "JIRA_CREATE_ISSUE_TYPES" in env:
             values["create_issue_types"] = env["JIRA_CREATE_ISSUE_TYPES"].split(",")
+        if "JIRA_READ_COMMENT_LIMIT" in env:
+            try:
+                values["read_comment_limit"] = int(env["JIRA_READ_COMMENT_LIMIT"])
+            except ValueError as exc:
+                raise ConfigError("JIRA_READ_COMMENT_LIMIT must be an integer") from exc
         if "JIRA_BRIDGE_PORT" in env:
             try:
                 values["port"] = int(env["JIRA_BRIDGE_PORT"])
@@ -107,17 +114,13 @@ class Config:
             isinstance(item, str) for item in raw_projects
         ):
             raise ConfigError("create_projects must be a list of project keys")
-        values["create_projects"] = tuple(
-            item.strip() for item in raw_projects if item.strip()
-        )
+        values["create_projects"] = tuple(item.strip() for item in raw_projects if item.strip())
         raw_targets = values.get("transition_targets", ())
         if not isinstance(raw_targets, (list, tuple)) or not all(
             isinstance(item, str) for item in raw_targets
         ):
             raise ConfigError("transition_targets must be a list of status names")
-        values["transition_targets"] = tuple(
-            item.strip() for item in raw_targets if item.strip()
-        )
+        values["transition_targets"] = tuple(item.strip() for item in raw_targets if item.strip())
         raw_types = values.get("create_issue_types", ("Task",))
         if not isinstance(raw_types, (list, tuple)) or not all(
             isinstance(item, str) for item in raw_types

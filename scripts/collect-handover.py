@@ -50,12 +50,22 @@ becomes "the agent did nothing".
 # The gate half (task t11, issue #101)
 
 ``--gate`` runs a suite against the collected commit, in a detached worktree
-at that exact commit, and records what happened as a ``derived`` ledger record
-(PRD §10.4: a test suite is a deterministic validator; an operator reading a
-green tick is not evidence of anything). The record names the suite, the exit
-code, and the commit sha — and the sha is READ BACK from the worktree the
-suite actually ran in rather than assumed, because a verdict that does not
-name what it tested is not evidence.
+at that exact commit, and records what happened as a ledger record (PRD
+§10.4: an operator reading a green tick is not evidence of anything). The
+record names the suite, the exit code, and the commit sha — and the sha is
+READ BACK from the worktree the suite actually ran in rather than assumed,
+because a verdict that does not name what it tested is not evidence.
+
+The verdict is posted under the gate's OWN credential,
+``NODES_ACTOR_MERGE_GATE_TOKEN`` — the bearer of the registered
+``company/merge-gate`` agent actor, read from the environment or from
+``~/.culture-nodes/operator.env`` — and the control plane stamps it
+agent-origin, ``proposed``: the gate's claim about the suite it ran, decided by
+a person like any other claim (login-from-anywhere task t11, spec c45). The
+human decision token is never read here. ``NODES_VALIDATOR_ACTOR_ID`` /
+``--validator`` stay optional for attributing the record to a separately
+registered validator identity; under the agent credential the control plane
+overrides them with the credential's own actor and says so in its reply.
 
 # The routing half (task t32, issue #102)
 
@@ -83,7 +93,7 @@ why, and #18/#119 for the measurements behind it.
 
 Exit codes follow culture_nodes/cli/_errors.py: 0 success, 1 user/domain
 outcome (no ref collected; the suite failed), 2 environment (no control plane,
-no configured remote, no validator identity). A routed failure still exits 1:
+no configured remote, no merge-gate credential). A routed failure still exits 1:
 the gate rejected, and the routing is what happens next, not a pass.
 """
 
@@ -175,12 +185,25 @@ def api_base() -> str:
     return (config("NODES_API_URL") or DEFAULT_API).rstrip("/")
 
 
-def decision_token() -> str | None:
-    for key in ("NODES_HUMAN_DECISION_TOKEN", "NODES_HUMAN_DECISION_TOKEN_SECRET"):
-        value = config(key)
-        if value:
-            return value
-    return None
+MERGE_GATE_TOKEN_KEY = "NODES_ACTOR_MERGE_GATE_TOKEN"
+
+
+def merge_gate_token() -> str:
+    """The gate's own actor credential, and nothing else.
+
+    The human decision token is deliberately not consulted — an agent lane
+    writes under its own principal (spec c45), and a script that fell back
+    to the human bearer would keep the one shared secret load-bearing."""
+    value = config(MERGE_GATE_TOKEN_KEY)
+    if value:
+        return value
+    raise Refusal(
+        f"{MERGE_GATE_TOKEN_KEY} is not set, so the verdict cannot be posted as the merge gate",
+        f"set {MERGE_GATE_TOKEN_KEY} in the environment or in ~/.culture-nodes/operator.env "
+        "(deploy/prod/install-secrets.sh mints it into thor's prod.env; register-actor.sh binds it "
+        "to company/merge-gate). The human decision token is not read here",
+        code=2,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +609,7 @@ def record_verdict(
     command: list[str],
     exit_code: int,
     tested_sha: str,
-    validator: str,
+    validator: str | None,
     requires_grants: list[str] | None = None,
     implicates: list[str] | None = None,
 ) -> dict:
@@ -601,19 +624,21 @@ def record_verdict(
     egress cannot verify a PostgreSQL-backed suite no matter how cleanly `go`
     runs there.
     """
+    payload = {
+        "suite": suite,
+        "command": command,
+        "exit_code": exit_code,
+        "commit_sha": tested_sha,
+        "ref": handover["ref"],
+        "requires_grants": requires_grants or [],
+        "implicated_paths": implicates or [],
+    }
+    if validator:
+        payload["validator_actor_id"] = validator
     return request(
         f"{base}/v1alpha1/runs/{result['run_id']}/suite-verdicts",
-        {
-            "suite": suite,
-            "command": command,
-            "exit_code": exit_code,
-            "commit_sha": tested_sha,
-            "ref": handover["ref"],
-            "validator_actor_id": validator,
-            "requires_grants": requires_grants or [],
-            "implicated_paths": implicates or [],
-        },
-        token=decision_token(),
+        payload,
+        token=merge_gate_token(),
     )
 
 
@@ -642,15 +667,12 @@ def gate(base: str, repo: Path, result: dict, args: argparse.Namespace) -> tuple
         )
     handover = handovers[0]
 
+    # The credential is the identity (merge_gate_token); a separately granted
+    # validator is forwarded when present. Refuse BEFORE the suite runs when
+    # the credential is missing: a suite that ran and could not be recorded
+    # gated nothing.
+    merge_gate_token()
     validator = args.validator or config("NODES_VALIDATOR_ACTOR_ID")
-    if not validator:
-        raise Refusal(
-            "no validator identity is configured, so the suite's result cannot be attributed",
-            "register a non-human actor for the gate and set NODES_VALIDATOR_ACTOR_ID (or pass "
-            "--validator <actor-id>). PRD §10.4 admits a derived record only from an IDENTIFIED "
-            "deterministic producer; an anonymous verdict attests to nothing",
-            code=2,
-        )
 
     exit_code, tested_sha = run_suite(repo, handover["commit_sha"], args.command)
     if tested_sha != handover["commit_sha"]:
@@ -755,7 +777,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--suite", help="what ran, in the spelling a reader could re-run it with")
     parser.add_argument(
-        "--validator", help="the registered non-human actor the verdict is attributed to"
+        "--validator",
+        help="optional: a registered non-human actor to attribute the verdict to (the merge-gate "
+        "credential's own actor otherwise)",
     )
     parser.add_argument(
         "--requires-grant",

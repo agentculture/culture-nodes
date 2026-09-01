@@ -153,16 +153,23 @@
 #                                program must not come from the tree it is
 #                                measuring.
 #     NODES_API_URL              the control plane the derived records land in.
-#     NODES_DECISION_TOKEN       the same bearer secret the review surface
-#                                uses — whoever can record a gate result can
-#                                decide a merge, so a third secret would only
-#                                mean a third thing to leak.
+#     NODES_ACTOR_MERGE_GATE_TOKEN
+#                                the gate's OWN credential: the bearer of the
+#                                registered company/merge-gate agent actor
+#                                (login-from-anywhere t11, spec c45). The
+#                                control plane resolves it to that actor and
+#                                stamps every record of the report
+#                                agent-origin, proposed — the gate's claim,
+#                                decided by a person like any other. The
+#                                human decision secret is not granted to a
+#                                gate.
 #     NODES_GATE_VALIDATOR_ACTOR_ID
-#                                the registered, NON-HUMAN validator identity
-#                                these derived records are attributed to. A
-#                                derived record needs an identified
-#                                deterministic producer (§10.4); the control
-#                                plane refuses a human one.
+#                                optional: a registered, NON-HUMAN validator
+#                                identity to attribute the records to when
+#                                posting under the human decision bearer
+#                                (validator-origin, derived). Under the agent
+#                                credential the control plane overrides it
+#                                with the credential's own actor and says so.
 #
 #   NOT deployment configuration, and deliberately so: the gate matrix and
 #   every threshold in it travel in argv, so they are pinned by the published
@@ -388,7 +395,7 @@ spec:
           - MERGE_GATE_SOURCE_URL
           - MERGE_GATE_SOURCE_SHA256
           - NODES_API_URL
-          - NODES_DECISION_TOKEN
+          - NODES_ACTOR_MERGE_GATE_TOKEN
           - NODES_GATE_VALIDATOR_ACTOR_ID
         allowedOutputPaths: []
       contract:

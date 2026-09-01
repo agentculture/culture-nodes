@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -95,6 +96,14 @@ type Server struct {
 	artifactRouter          *artifacts.Router
 	artifactInvocationStore artifactInvocationStore
 	artifactRunnerOps       artifactRunnerOpSource
+
+	// actorTokenLookup resolves the environment variable a registered agent
+	// actor's row names (metadata.auth_token_env) to the bearer the control
+	// plane expects from that actor on the routes an agent may write
+	// (actorbearer.go, login-from-anywhere task t11). os.LookupEnv unless a
+	// test replaces it; it is the same lookup worker.DBRegistry uses for the
+	// outbound credential, so one row names one variable for both directions.
+	actorTokenLookup func(string) (string, bool)
 
 	// decisionAuthSecret gates POST /v1alpha1/human-tasks/{id}/decision (see
 	// (*Server).requireDecisionAuth in humantasks.go). Every other operation
@@ -414,6 +423,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		artifactRunnerOps:       store,
 		pollInterval:            defaultEventPollInterval,
 		keepaliveInterval:       DefaultSSEKeepaliveInterval,
+		actorTokenLookup:        os.LookupEnv,
 		log:                     slog.Default(),
 	}
 	s.inboundAuthenticator, err = actors.NewInboundAuthenticator(store, actors.DefaultInboundAuthenticationConfig, nil)

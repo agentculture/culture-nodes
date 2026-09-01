@@ -165,6 +165,14 @@ NODES_ACTOR_NOTIFY_TOKEN required
 # is precisely why the audit has to.
 NODES_ACTOR_QWEN_TOKEN required
 
+# The merge gate's own bearer (login-from-anywhere t11, spec c45): the api
+# service resolves it to the registered company/merge-gate agent actor, and
+# scripts/merge-gate.py / collect-handover.py --gate post under it. Optional
+# because it is inbound-only and closed-by-default — an absent value means
+# every gate post answers 401 rather than a dispatch failing — but it must be
+# REPORTED, since that 401 names nothing on the gate side.
+NODES_ACTOR_MERGE_GATE_TOKEN optional
+
 # Not an open default — an override. compose.thor.yml defaults this to the
 # literal string "default", which is a bootstrap placeholder rather than a
 # namespace id: a worker started with it polls a namespace that does not exist

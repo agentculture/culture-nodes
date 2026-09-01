@@ -65,7 +65,11 @@ type createSuiteVerdictRequest struct {
 //     surface uses. Whoever can post a verdict here can decide a merge, which
 //     is the same authority as deciding a claim; a third secret would only
 //     mean a third thing to leak, and an open route would mean anyone on the
-//     network could write "suite passed".
+//     network could write "suite passed". Since login-from-anywhere task t11
+//     a registered agent actor's OWN bearer is accepted here too
+//     (actorbearer.go): the merge-gate scripts post as `company/merge-gate`,
+//     and what they post is stamped agent-origin, proposed — the gate's
+//     claim, decided by a person like any other claim.
 //  2. Producer identity. validator_actor_id must be a registered actor
 //     (ledger_records.origin_actor_id is a foreign key, so this is enforced
 //     twice over), and must not be a HUMAN. That refusal is
@@ -165,6 +169,10 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return internalError(err)
 	}
+	// Posted under the gate's own agent credential, the verdict is the
+	// gate's proposed claim rather than a validator's derived finding
+	// (actorbearer.go, login-from-anywhere task t11).
+	record = stampAgentProposed(r, record)
 
 	appended, err := s.Ledger.Append(ctx, record)
 	if err != nil {

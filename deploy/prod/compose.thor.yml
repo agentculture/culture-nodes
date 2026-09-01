@@ -133,6 +133,13 @@ services:
       # it against this list, so an actor registered without a matching line
       # here dispatches, 401s, and points at nothing (issue filed).
       NODES_ACTOR_QWEN_TOKEN: ${NODES_ACTOR_QWEN_TOKEN:-}
+      # The merge gate's own principal (login-from-anywhere t11, spec c45):
+      # scripts/merge-gate.py and collect-handover.py --gate post suite
+      # verdicts and gate reports as company/merge-gate, and the api service
+      # recognises the bearer through the actor row's auth_token_env — the
+      # INBOUND direction of the same variable the lines above serve
+      # outbound. api only: no worker ever dispatches to this actor.
+      NODES_ACTOR_MERGE_GATE_TOKEN: ${NODES_ACTOR_MERGE_GATE_TOKEN:-}
       # The three bearer secrets the attempts-evidence-humans-loops batch
       # added (t13 registration, t10 event delivery, t19+t15 ad-hoc lane).
       # Optional on purpose: closed-by-default means an unset secret leaves

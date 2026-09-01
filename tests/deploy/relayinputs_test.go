@@ -162,6 +162,7 @@ var nonCredentialKnobs = map[string]string{
 	"FORCE_HUMAN_INBOX": "rotation gate for the human-inbox lane",
 	"FORCE_ISSUANCE":    "rotation gate for the issuance-secret lane",
 	"FORCE_NOTIFY":      "rotation gate for the notify actor-token lane",
+	"FORCE_MERGE_GATE":  "rotation gate for the merge-gate actor-token lane (login-from-anywhere t11)",
 	"FORCE_PROD":        "rotation gate for the generated prod.env block",
 	"FORCE_RUNNER":      "rotation gate for the runner lane",
 

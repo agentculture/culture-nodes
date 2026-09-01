@@ -153,10 +153,19 @@ func (s *Server) resolveRepairLane(ctx context.Context, override string, records
 // records are immutable and append-only, so the newest is the current one. A
 // run whose work was re-dispatched to a different actor routes its repair at
 // the actor that produced what is actually on the branch.
+//
+// A review record is skipped even when it is agent-origin and proposed: since
+// login-from-anywhere task t11 the merge gate posts its verdicts under its
+// own agent credential, and the gate's verdict is not the session whose work
+// it judged. Routing a repair at the gate would send the failure back to the
+// instrument that found it.
 func lastAgentActorID(records []ledger.Record) string {
 	actorID := ""
 	for _, rec := range ledger.Live(records) {
 		if rec.Origin.Kind != ledger.OriginAgent || rec.Authority != ledger.AuthorityProposed {
+			continue
+		}
+		if rec.RecordType == ledger.RecordReview {
 			continue
 		}
 		if rec.Origin.ActorID != "" {

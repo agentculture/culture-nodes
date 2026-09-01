@@ -826,3 +826,43 @@ func TestRegisterActorRefusesInvalidOSUser(t *testing.T) {
 		})
 	}
 }
+
+// TestRegisterHumanActorHasNoEndpoint is login-from-anywhere task t13's
+// case: `--human <actor_key>` registers a PERSON -- the second of spec
+// c46's three onboarding places -- as a kind=human actor with protocol
+// 'none' and a NULL endpoint, and never trips the IPv4 endpoint refusal
+// that applies to dispatched actors. The person is reached through the
+// Access-protected page, so there is nothing for a worker to dial.
+func TestRegisterHumanActorHasNoEndpoint(t *testing.T) {
+	fake, _, inserts := newFakePsql(t, t.TempDir(), "namespace_1", "")
+	env := []string{"PSQL_CMD=" + fake, "NODES_NAMESPACE_ID=namespace_1"}
+
+	output, code := runRegisterActorArgs(t, env, "--human", "company/alice")
+	if code != 0 {
+		t.Fatalf("--human registration exit=%d output=%q", code, output)
+	}
+	inserted, err := os.ReadFile(inserts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(inserted), "'company/alice', 1, 'human', 'none', NULL") {
+		t.Fatalf("--human did not insert a human/none actor without endpoint: %s", inserted)
+	}
+
+	// Idempotent: the same call against an existing revision is a no-op.
+	fake2, _, inserts2 := newFakePsql(t, t.TempDir(), "namespace_1", "1||t")
+	output, code = runRegisterActorArgs(t, []string{"PSQL_CMD=" + fake2, "NODES_NAMESPACE_ID=namespace_1"}, "--human", "company/alice")
+	if code != 0 || !strings.Contains(output, "unchanged (revision 1)") {
+		t.Fatalf("second --human registration = exit %d output %q, want no-op", code, output)
+	}
+	if inserted, _ := os.ReadFile(inserts2); len(inserted) != 0 {
+		t.Fatalf("second --human registration inserted a row: %s", inserted)
+	}
+
+	// A person has no endpoint: an endpoint argument is refused up front.
+	missing := filepath.Join(t.TempDir(), "psql-must-not-run")
+	output, code = runRegisterActorArgs(t, []string{"PSQL_CMD=" + missing, "NODES_NAMESPACE_ID=namespace_1"}, "--human", "company/alice", "http://192.168.1.5:8080")
+	if code != 1 || !strings.Contains(output, "--human does not accept endpoint arguments") {
+		t.Fatalf("--human with an endpoint = exit %d output %q, want refusal", code, output)
+	}
+}

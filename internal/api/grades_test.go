@@ -34,7 +34,7 @@ func TestCreateGradeAgentProposedThenHumanConfirmsThroughReview(t *testing.T) {
 	reviewerActor := f.insertActorKind("reviewer", "human")
 
 	var grade ledger.Record
-	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 		createGradeReq{
 			Rating: 4, Rationale: "solid, one small miss",
 			EvaluatedActorID: evaluatedActor, GradingActorID: graderAgent,
@@ -101,14 +101,14 @@ func TestCreateGradeAgentProposedThenHumanConfirmsThroughReview(t *testing.T) {
 // checkHumanAuthority carve-out for grade records (it is the human's own
 // opinion, not a claim someone else must ratify).
 func TestCreateGradeHumanDirectLandsConfirmed(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	run, _ := createMinimalRun(t, f)
 
 	humanActor := f.insertActorKind("ori", "human")
 	evaluatedActor := f.insertActor("evaluated")
 
 	var grade ledger.Record
-	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 		createGradeReq{
 			Rating: 5, Rationale: "clean, verified myself",
 			EvaluatedActorID: evaluatedActor, GradingActorID: humanActor,
@@ -128,12 +128,12 @@ func TestCreateGradeHumanDirectLandsConfirmed(t *testing.T) {
 // rule extended to opinion records, surfaced through classify() rather than
 // re-implemented in the handler.
 func TestCreateGradeSelfGradeRefused(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	run, _ := createMinimalRun(t, f)
 
 	actor := f.insertActor("solo")
 
-	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 		createGradeReq{Rating: 3, Rationale: "grading myself", EvaluatedActorID: actor, GradingActorID: actor}, nil)
 	requireStatus(t, resp, body, http.StatusBadRequest)
 	apiErr := decodeAPIError(t, body)
@@ -149,28 +149,28 @@ func TestCreateGradeSelfGradeRefused(t *testing.T) {
 // (contracts.ValidationError, classified alongside ledger.AuthorityError —
 // see internal/api/errors.go).
 func TestCreateGradeRatingOutOfBoundsIsASchemaValidationError(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	run, _ := createMinimalRun(t, f)
 
 	graderAgent := f.insertActor("grader")
 	evaluatedActor := f.insertActor("evaluated")
 
 	t.Run("rating_too_high", func(t *testing.T) {
-		resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+		resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 			createGradeReq{Rating: 6, Rationale: "out of range", EvaluatedActorID: evaluatedActor, GradingActorID: graderAgent}, nil)
 		requireStatus(t, resp, body, http.StatusBadRequest)
 		decodeAPIError(t, body)
 	})
 
 	t.Run("rating_too_low", func(t *testing.T) {
-		resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+		resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 			createGradeReq{Rating: 0, Rationale: "out of range", EvaluatedActorID: evaluatedActor, GradingActorID: graderAgent}, nil)
 		requireStatus(t, resp, body, http.StatusBadRequest)
 		decodeAPIError(t, body)
 	})
 
 	t.Run("empty_rationale", func(t *testing.T) {
-		resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+		resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 			createGradeReq{Rating: 3, Rationale: "", EvaluatedActorID: evaluatedActor, GradingActorID: graderAgent}, nil)
 		requireStatus(t, resp, body, http.StatusBadRequest)
 		decodeAPIError(t, body)
@@ -181,7 +181,7 @@ func TestCreateGradeRatingOutOfBoundsIsASchemaValidationError(t *testing.T) {
 // up before appending anything: the run itself, the grading actor, and the
 // evaluated actor.
 func TestCreateGradeUnknownRunOrActorIs404(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	run, _ := createMinimalRun(t, f)
 
 	graderAgent := f.insertActor("grader")
@@ -195,14 +195,14 @@ func TestCreateGradeUnknownRunOrActorIs404(t *testing.T) {
 	})
 
 	t.Run("unknown_grading_actor", func(t *testing.T) {
-		resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+		resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 			createGradeReq{Rating: 3, Rationale: "x", EvaluatedActorID: evaluatedActor, GradingActorID: "does-not-exist"}, nil)
 		requireStatus(t, resp, body, http.StatusNotFound)
 		decodeAPIError(t, body)
 	})
 
 	t.Run("unknown_evaluated_actor", func(t *testing.T) {
-		resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+		resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 			createGradeReq{Rating: 3, Rationale: "x", EvaluatedActorID: "does-not-exist", GradingActorID: graderAgent}, nil)
 		requireStatus(t, resp, body, http.StatusNotFound)
 		decodeAPIError(t, body)
@@ -216,13 +216,13 @@ func TestCreateGradeUnknownRunOrActorIs404(t *testing.T) {
 // (see internal/ledger/authority.go's origin switch), so this handler
 // refuses before ever attempting the append.
 func TestCreateGradeUnsupportedGradingActorKindRefused(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
 	run, _ := createMinimalRun(t, f)
 
 	runnerActor := f.insertActorKind("runner", "runner")
 	evaluatedActor := f.insertActor("evaluated")
 
-	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"),
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/grades"), decisionAuthSecret,
 		createGradeReq{Rating: 3, Rationale: "x", EvaluatedActorID: evaluatedActor, GradingActorID: runnerActor}, nil)
 	requireStatus(t, resp, body, http.StatusBadRequest)
 	decodeAPIError(t, body)

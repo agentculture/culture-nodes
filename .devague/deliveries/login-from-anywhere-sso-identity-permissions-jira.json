@@ -2,7 +2,7 @@
   "plan_slug": "login-from-anywhere-sso-identity-permissions-jira",
   "schema_version": 2,
   "created": "2026-09-01T22:07:52Z",
-  "updated": "2026-09-02T03:42:34Z",
+  "updated": "2026-09-02T03:43:59Z",
   "deviations": [
     {
       "id": "d1",
@@ -541,7 +541,7 @@
       },
       "origin": "llm",
       "status": "proposed",
-      "superseded": false,
+      "superseded": true,
       "seq": 29
     },
     {
@@ -1153,5 +1153,13 @@
       "superseded": false
     }
   ],
-  "supersessions": []
+  "supersessions": [
+    {
+      "id": "s1",
+      "action": "supersede",
+      "target_ref": "e26",
+      "replacement_ref": "e56",
+      "origin": "user"
+    }
+  ]
 }

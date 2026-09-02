@@ -57,6 +57,43 @@ const tunnelTokenFile = "%h/.config/cloudflared/nodes-culture-dev.token"
 // tunnelDoc is the operator recipe and hand-turn ledger.
 const tunnelDoc = "docs/operations/nodes-culture-dev.md"
 
+// declaredUIBaseURLs reads NODES_UI_BASE_URL out of every run-minting role in
+// every production compose file, keyed by the value so the caller can ask the
+// one question that matters: is there exactly one? A role that is missing, or
+// that declares no value at all, is reported here and contributes nothing —
+// the count then answers "the files disagree" without a second vocabulary for
+// "one of them said nothing".
+func declaredUIBaseURLs(t *testing.T) map[string][]string {
+	t.Helper()
+	seen := map[string][]string{}
+	for file, roles := range uiBaseURLRoles {
+		doc := loadOtelCompose(t, file)
+		for _, role := range roles {
+			if value, ok := declaredUIBaseURL(t, doc, file, role); ok {
+				seen[value] = append(seen[value], file+":"+role)
+			}
+		}
+	}
+	return seen
+}
+
+// declaredUIBaseURL is one role's read, split out so the loop above stays a
+// loop: it reports the absence itself and returns ok=false.
+func declaredUIBaseURL(t *testing.T, doc otelComposeFile, file, role string) (string, bool) {
+	t.Helper()
+	svc, ok := doc.Services[role]
+	if !ok {
+		t.Errorf("%s declares no %q service", file, role)
+		return "", false
+	}
+	value, ok := svc.Environment[storepg.UIBaseURLEnv]
+	if !ok {
+		t.Errorf("%s's %q service does not declare %s", file, role, storepg.UIBaseURLEnv)
+		return "", false
+	}
+	return value, true
+}
+
 // TestBothComposeFilesAgreeOnThePublicUIOrigin is fact 1's compose half. It
 // reads the value from every run-minting role in both files and requires
 // them all to be the SAME string, and that string to default to the public
@@ -65,23 +102,7 @@ const tunnelDoc = "docs/operations/nodes-culture-dev.md"
 // claimed the node.
 func TestBothComposeFilesAgreeOnThePublicUIOrigin(t *testing.T) {
 	want := "${" + storepg.UIBaseURLEnv + ":-" + publicUIOrigin + "}"
-	seen := map[string][]string{}
-	for file, roles := range uiBaseURLRoles {
-		doc := loadOtelCompose(t, file)
-		for _, role := range roles {
-			svc, ok := doc.Services[role]
-			if !ok {
-				t.Errorf("%s declares no %q service", file, role)
-				continue
-			}
-			value, ok := svc.Environment[storepg.UIBaseURLEnv]
-			if !ok {
-				t.Errorf("%s's %q service does not declare %s", file, role, storepg.UIBaseURLEnv)
-				continue
-			}
-			seen[value] = append(seen[value], file+":"+role)
-		}
-	}
+	seen := declaredUIBaseURLs(t)
 	if len(seen) != 1 {
 		t.Fatalf("the compose files do not agree on %s; a person's link depends on which worker minted the run: %v", storepg.UIBaseURLEnv, seen)
 	}

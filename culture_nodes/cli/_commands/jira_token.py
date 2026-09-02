@@ -14,7 +14,11 @@ Four verbs, none of which holds a secret for longer than one call:
   ``grant run --inject`` path, or a ``getpass`` prompt on a TTY) and calls
   ``GET <base>/rest/api/3/myself`` with the standard library. Exit ``0`` and
   the ``accountId`` on 200; exit ``2`` with a hint otherwise. Email and base
-  default to the module constants — they are not secrets.
+  default to the module constants — they are not secrets. The base is more
+  than a default: it is *pinned* to the gateway, because ``verify`` hands the
+  Basic credential to whatever base it is given, and an environment that can
+  set ``JIRA_API_BASE`` must not thereby be able to choose who receives the
+  token.
 * ``install`` prints the ordered operator hand-turn sequence that lands a
   verified pair on thor and orin. It prints; it does not run.
 
@@ -43,6 +47,7 @@ import shutil
 import subprocess  # nosec B404 - argv list only, never a shell
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import NoReturn
 
@@ -200,7 +205,9 @@ def _mint_text() -> str:
             f"seal it: nodes jira-token seal  (stores it hidden in {SECRET_STORE} as"
             f" {SECRET_NAME}; no plaintext file on spark)",
             f"consume it: {INJECT_PREFIX} <cmd>",
-            f"  ({ENV_EMAIL} and {ENV_BASE} are not secrets and default to the values above)",
+            f"  ({ENV_EMAIL} and {ENV_BASE} are not secrets; {ENV_EMAIL} defaults to"
+            f" the address above and {ENV_BASE} is pinned to the base above — verify"
+            " sends the credential nowhere else)",
             f"next: 'nodes jira-token seal', then '{INJECT_PREFIX} nodes jira-token verify',"
             " then 'nodes jira-token install'",
             f"doc: {DOC_PATH}",
@@ -307,9 +314,13 @@ def cmd_seal(args: argparse.Namespace) -> int:
 
 
 def _read_env() -> tuple[str, str, str]:
-    """Email and base default to the constants; the token is the only secret."""
+    """Email defaults to the constant, the base is pinned, the token is the secret.
+
+    The base is settled *before* the token is read, so a base this command
+    would refuse never gets as far as prompting an operator for a secret.
+    """
     email = os.environ.get(ENV_EMAIL, "") or SERVICE_ACCOUNT_EMAIL
-    base = (os.environ.get(ENV_BASE, "") or GATEWAY_BASE).rstrip("/")
+    base = _pinned_base((os.environ.get(ENV_BASE, "") or GATEWAY_BASE).rstrip("/"))
     token = os.environ.get(ENV_TOKEN, "")
     if not token and sys.stdin.isatty():
         token = getpass.getpass("Jira service-account token (no echo): ").strip()
@@ -326,13 +337,36 @@ def _read_env() -> tuple[str, str, str]:
     return email, token, base
 
 
-def _check_base(base: str) -> None:
-    if not base.startswith("https://"):
+def _base_identity(base: str) -> tuple[str, str, str]:
+    """Scheme/host/path of a base, so only cosmetic differences compare equal."""
+    parsed = urllib.parse.urlsplit(base.rstrip("/"))
+    return parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/")
+
+
+def _pinned_base(base: str) -> str:
+    """Refuse every base but the gateway — the credential goes nowhere else.
+
+    ``verify`` attaches the service-account email and token as Basic auth to
+    whatever base it is handed, so an environment that can set ``JIRA_API_BASE``
+    but cannot read the sealed grant secret would otherwise be able to
+    exfiltrate the token by naming a host of its own. Checking the scheme does
+    not stop that: the base is pinned to ``GATEWAY_BASE`` — host *and* path —
+    which costs nothing, because that gateway is the only address this
+    account's token authenticates at anyway. Returns the canonical spelling,
+    so everything downstream — the request, the errors, ``--json`` — names one
+    address rather than whatever variant the environment happened to hold.
+    """
+    if _base_identity(base) != _base_identity(GATEWAY_BASE):
         raise CliError(
             code=EXIT_USER_ERROR,
-            message=f"{ENV_BASE} must be an https:// URL",
-            remediation=f"export {ENV_BASE}={GATEWAY_BASE}",
+            message=f"{ENV_BASE} must be the gateway base {GATEWAY_BASE}, not {base}",
+            remediation=(
+                f"export {ENV_BASE}={GATEWAY_BASE}, or unset it (verify defaults to the"
+                f" gateway). The site URL {SITE_URL} answers 401 for a service-account"
+                " token, and no other host is ever sent the credential"
+            ),
         )
+    return GATEWAY_BASE
 
 
 def _myself(email: str, token: str, base: str) -> dict[str, object]:
@@ -344,8 +378,8 @@ def _myself(email: str, token: str, base: str) -> dict[str, object]:
         method="GET",
     )
     try:
-        # _check_base has already refused anything but https://, so the
-        # scheme reaching urlopen is known-safe.
+        # _pinned_base has already pinned the base to the https:// gateway,
+        # so the URL reaching urlopen is a known constant, not env input.
         response = urllib.request.urlopen(request, timeout=_VERIFY_TIMEOUT_SECONDS)  # nosec B310
         with response:
             raw = response.read()
@@ -381,10 +415,11 @@ def _raise_http(status: int, base: str) -> NoReturn:
             code=EXIT_ENV_ERROR,
             message=f"{base}{MYSELF_PATH} answered HTTP {status}",
             remediation=(
-                f"a service-account token is refused (401) at the site URL {SITE_URL};"
-                f" {ENV_BASE} must be the gateway base {GATEWAY_BASE}. If it already is,"
-                " the token was revoked or mistyped: re-mint it ('nodes jira-token mint')"
-                " and re-seal it ('nodes jira-token seal')"
+                f"the base is pinned to the gateway {GATEWAY_BASE} (the site URL"
+                f" {SITE_URL} answers 401 for a service-account token, which is why"
+                " nothing else is accepted), so a 401 here means the token was revoked"
+                " or mistyped: re-mint it ('nodes jira-token mint') and re-seal it"
+                " ('nodes jira-token seal')"
             ),
         ) from None
     raise CliError(
@@ -397,7 +432,6 @@ def _raise_http(status: int, base: str) -> NoReturn:
 def cmd_verify(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     email, token, base = _read_env()
-    _check_base(base)
     payload = _myself(email, token, base)
     account_id = str(payload["accountId"])
     if json_mode:

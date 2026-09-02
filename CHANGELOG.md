@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.47.2] - 2026-09-02
+
+### Security
+
+- `nodes jira-token verify` pins `JIRA_API_BASE` to the Atlassian gateway
+  instead of accepting any `https://` URL. `verify` attaches the
+  service-account email and token as Basic auth to whatever base it is
+  handed, so an environment able to set that variable — but not to read the
+  hidden grant secret, which is the whole point of sealing it — could point
+  the credential at a host of its own. Scheme, host and path are now compared
+  against `GATEWAY_BASE`; anything else is exit `1` with a hint and no
+  request is built, so the token is never encoded into an `Authorization`
+  header for another host. The account's token authenticates at exactly one
+  address, so nothing legitimate is lost (PR #282 review, Qodo "Arbitrary
+  host receives token")
+
 ## [0.47.1] - 2026-09-02
 
 ### Added

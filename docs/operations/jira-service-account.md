@@ -31,7 +31,8 @@ credential.
 
 `JIRA_ACCOUNT_EMAIL` and `JIRA_API_BASE` are not secrets: `verify` defaults
 them to the values above, and the install steps export them in the clear.
-Only the token is sealed.
+Only the token is sealed. `JIRA_API_BASE` is nonetheless pinned to the
+gateway rather than merely defaulted — see [Verify](#verify).
 
 ## Where a token is minted (and re-minted)
 
@@ -102,13 +103,25 @@ grant run --inject JIRA_API_TOKEN=JIRA_SERVICE_ACCOUNT_TOKEN -- nodes jira-token
 accountId: 712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615
 ```
 
-Email and base default to the constants above; override them by exporting
-`JIRA_ACCOUNT_EMAIL` / `JIRA_API_BASE`. Without a token in the environment,
-a terminal is prompted with `getpass` (no echo) and a non-terminal exits `2`
-with the `grant run` line above as its hint. Exit `2` with an
-`error:`/`hint:` pair on a 401/403 or a network failure; exit `1` on a
-non-https base. The token value never appears in any output, `--json`
-included.
+Email defaults to the constant above and may be overridden by exporting
+`JIRA_ACCOUNT_EMAIL`. The base is different: `JIRA_API_BASE` may only ever
+name the gateway above. Any other value — another host, another cloud id, a
+`http://` spelling — is exit `1` with a hint, and no request is built.
+
+That is deliberate, and it is a security property rather than a
+convenience. `verify` attaches the service-account email and token to
+whatever base it is handed, so a base read from the environment is a choice
+of *who receives the credential*. The whole point of sealing the token in
+grant is that a process which can run `verify` under `grant run --inject`
+still cannot read the secret out; letting that same process point
+`JIRA_API_BASE` at a host of its own would hand it the token anyway. Since
+this account's token authenticates at exactly one address, pinning costs
+nothing.
+
+Without a token in the environment, a terminal is prompted with `getpass`
+(no echo) and a non-terminal exits `2` with the `grant run` line above as
+its hint. Exit `2` with an `error:`/`hint:` pair on a 401/403 or a network
+failure. The token value never appears in any output, `--json` included.
 
 ## Install — five operator hand-turns, run from spark
 

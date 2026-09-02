@@ -571,16 +571,21 @@ works.
 Reads `JIRA_API_TOKEN` from the environment — the `grant run --inject`
 path — and calls `GET $JIRA_API_BASE/rest/api/3/myself` with Basic auth.
 `JIRA_ACCOUNT_EMAIL` and `JIRA_API_BASE` are not secrets and default to
-the service account and the gateway base. Without a token: a TTY is
-prompted with `getpass`; a non-TTY is exit `2` with the `grant run` hint.
-On 200 it prints `accountId: <id>` (`--json`: `account_id`, `email`,
-`api_base`) and exits `0`. A 401/403 or a network failure is a structured
-`error:`/`hint:` failure with exit `2`; a non-https base is exit `1`. The
-token value is never printed, not even in an error.
+the service account and the gateway base. `JIRA_API_BASE` is *pinned*, not
+merely defaulted: any base but the gateway (scheme, host and path compared)
+is exit `1` and no request is built, because `verify` hands the Basic
+credential to whatever base it is given and an environment that can set
+that variable must not thereby choose who receives the token. Without a
+token: a TTY is prompted with `getpass`; a non-TTY is exit `2` with the
+`grant run` hint. On 200 it prints `accountId: <id>` (`--json`:
+`account_id`, `email`, `api_base`) and exits `0`. A 401/403 or a network
+failure is a structured `error:`/`hint:` failure with exit `2`. The token
+value is never printed, not even in an error.
 
 The trap the hint names: a service-account token authenticates only at the
 API gateway base `https://api.atlassian.com/ex/jira/<cloudId>`. The site
-URL `https://agentculture.atlassian.net` answers 401 for it.
+URL `https://agentculture.atlassian.net` answers 401 for it — which is why
+`verify` refuses it up front rather than sending the pair there.
 
 ## install — the hand-turn sequence, printed not run
 

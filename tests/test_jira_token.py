@@ -335,16 +335,17 @@ def test_verify_json_shape(
 def test_verify_unauthorized_exits_2_and_names_gateway(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
-    _set_env(monkeypatch, base="https://agentculture.atlassian.net")
+    _set_env(monkeypatch)
     _stub_urlopen(monkeypatch, status=status)
     rc = main(["jira-token", "verify"])
     captured = capsys.readouterr()
     assert rc == 2
     assert captured.out == ""
-    assert captured.err.startswith("error: https://agentculture.atlassian.net/rest/api/3/myself")
+    assert captured.err.startswith(f"error: {jira_token.GATEWAY_BASE}/rest/api/3/myself")
     assert f"HTTP {status}" in captured.err
     assert "hint:" in captured.err
     assert "site URL" in captured.err and "401" in captured.err
+    assert "re-mint" in captured.err and "re-seal" in captured.err
     assert jira_token.GATEWAY_BASE in captured.err
 
 
@@ -428,19 +429,71 @@ def test_verify_prompts_with_getpass_on_a_tty(
     assert seen["auth"] == f"Basic {expected}"
 
 
-def test_verify_non_https_base_is_user_error(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "base",
+    [
+        # The scheme is the least of it: every one of these would have been an
+        # https:// URL good enough for the old prefix check, and every one of
+        # them is a host that would have received the Basic credential.
+        "http://api.atlassian.com/ex/jira/0610b05c-63f8-4935-bd7f-a30f907bba8c",
+        "https://evil.example.com/ex/jira/0610b05c-63f8-4935-bd7f-a30f907bba8c",
+        "https://api.atlassian.com.evil.example.com/ex/jira/0610b05c",
+        "https://api.atlassian.com@evil.example.com/ex/jira/0610b05c",
+        "https://api.atlassian.com/ex/jira/00000000-0000-0000-0000-000000000000",
+        "https://agentculture.atlassian.net",
+    ],
+)
+def test_verify_refuses_any_base_but_the_gateway(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, base: str
 ) -> None:
-    _set_env(monkeypatch, base="http://api.atlassian.com/ex/jira/x")
+    _set_env(monkeypatch, base=base)
     calls: list[object] = []
     monkeypatch.setattr(
         jira_token.urllib.request, "urlopen", lambda *a, **k: calls.append(a)  # noqa: ARG005
     )
     assert main(["jira-token", "verify"]) == 1
+    # The point is not the exit code: no request was built, so the token was
+    # never encoded into an Authorization header for that host.
     assert calls == []
     err = capsys.readouterr().err
-    assert "must be an https:// URL" in err
+    assert "must be the gateway base" in err
+    assert jira_token.GATEWAY_BASE in err
     assert "hint:" in err
+    assert FAKE_TOKEN not in err
+
+
+def test_verify_refuses_the_base_before_asking_for_a_token(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A base that will be refused never gets as far as collecting the secret."""
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("JIRA_API_BASE", "https://evil.example.com/ex/jira/x")
+    monkeypatch.setattr(
+        jira_token.getpass,
+        "getpass",
+        lambda *a, **k: pytest.fail("prompted for the token for a refused base"),  # noqa: ARG005
+    )
+    _stub_stdin(monkeypatch, "", tty=True)
+    assert main(["jira-token", "verify"]) == 1
+    assert "must be the gateway base" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        jira_token.GATEWAY_BASE,
+        jira_token.GATEWAY_BASE + "/",
+        jira_token.GATEWAY_BASE.replace("api.atlassian.com", "API.Atlassian.Com"),
+    ],
+)
+def test_verify_accepts_the_gateway_however_it_is_spelled(
+    monkeypatch: pytest.MonkeyPatch, base: str
+) -> None:
+    _set_env(monkeypatch, base=base)
+    seen = _stub_urlopen(monkeypatch, body=b'{"accountId":"712020:abc"}')
+    assert main(["jira-token", "verify"]) == 0
+    # However it was spelled, one canonical address is what gets requested.
+    assert seen["url"] == jira_token.GATEWAY_BASE + "/rest/api/3/myself"
 
 
 # --- install ---------------------------------------------------------------

@@ -73,6 +73,33 @@ d1-d3 and every hand-turn are recorded on the plan and on #273.
   `tests/deploy/nodesculturedev_test.go` pins, now alongside the listen
   value the recipe prescribes.
 
+## [0.46.2] - 2026-09-02
+
+### Added
+
+- Plan for the login-from-anywhere cycle:
+  `docs/plans/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`
+  — 18 tasks in 7 dependency waves covering all 72 spec targets (stdlib JWT
+  verifier, `actor_identities` + roles, principal middleware with a loopback
+  listener, origin from the principal, ticket API + page, jira `read_issue`,
+  four-target allowlist with Done as a human node, webhook receiver, UX
+  uplift, measurement sitting), six non-blocking risks, and two rejected
+  duplicate tasks kept visible (t6, t7: ids shifted when the CLI refused
+  decision ids as coverage). Converged and approved by the operator.
+
+### Changed
+
+### Fixed
+
+- The Done criteria no longer contradict the measurement (Qodo #1 on PR #272).
+  The user decision recorded in c32/c15 — a merge raises a `Ticket done?`
+  human node and only that node's `done` outcome plans the Done transition —
+  had never been propagated to c27, c29(e) and h7, which still read as if the
+  merge itself moved the ticket. A compliant implementation could not have
+  satisfied the prod measurement without breaking the human gate. The
+  after-state, the (e) success signal and h7 now measure from the human `done`
+  outcome; the frame claims carry the prior text as revisions.
+
 ## [0.46.1] - 2026-09-01
 
 ### Added

@@ -1,0 +1,38 @@
+{
+  "plan_slug": "nodes-culture-dev-hand-turns-273",
+  "schema_version": 2,
+  "created": "2026-09-02T06:12:09Z",
+  "updated": "2026-09-02T06:17:58Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "The nodes.culture.dev tunnel token is sealed as a hidden secret in thor's grant store (NODES_CULTURE_DEV_TUNNEL_TOKEN) and cloudflared-nodes.service execs through 'grant run --inject TUNNEL_TOKEN=...' instead of reading TUNNEL_TOKEN_FILE from a 0600 file; deploy/prod/cloudflared-nodes.service and docs/operations/nodes-culture-dev.md step 3 change accordingly, which widens the spec's non-goal c11 (no deploy/ changes) by one unit file and one doc",
+      "task_ref": "t9",
+      "reason": "operator decision 2026-09-02: no plaintext token on disk; grant (the renamed shushu secrets manager) is installed on thor and spark, hidden secrets are consumable only via grant run, and rotation becomes one grant set",
+      "affects": [
+        "c11",
+        "c14"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "The Jira service-account token is sealed hidden in spark's grant as JIRA_SERVICE_ACCOUNT_TOKEN by a new 'nodes jira-token seal' verb (getpass or stdin) and every install step consumes it via grant run --inject; the 0600 env file ~/.config/agent/jira-service-account.env that t11's first build and the plan text assumed is gone",
+      "task_ref": "t11",
+      "reason": "operator decision 2026-09-02: the token must not be saved to disk in plaintext; grant is installed on spark and thor",
+      "affects": [
+        "c15"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

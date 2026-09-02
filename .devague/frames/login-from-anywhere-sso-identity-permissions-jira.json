@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-01T19:09:28Z",
-  "updated": "2026-09-01T20:44:05Z",
+  "updated": "2026-09-01T21:48:02Z",
   "claims": [
     {
       "id": "c1",
@@ -979,6 +979,18 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c52",
+      "kind": "decision",
+      "text": "The system's Jira identity is a Jira Cloud service account (Atlassian admin, Directory, Service accounts), not a bot user built on a person's account: it has its own accountId and API token, cannot log in interactively, and is managed centrally; the engine sees no difference (JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN pair, jira_bot_account_id = its accountId), so the provisioning recipe stays the same with the account created as a service account. If the site's plan does not offer service accounts, fall back to a dedicated bot user",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -1372,5 +1384,204 @@
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c3",
+      "seam": "internal/auth: Cf-Access-Jwt-Assertion verification and binding-key derivation",
+      "behavior": "A Go test verifies a token signed by a test RSA key against a fake JWKS endpoint: valid passes; wrong aud, wrong iss, expired, unknown kid (after one refetch) and bad signature each refuse with a named reason; no non-stdlib import appears in internal/auth",
+      "source_text": "The control plane verifies the Cf-Access-Jwt-Assertion header the way irc-lens web/auth.py does \u2014 RS256 against the team's /cdn-cgi/access/certs JWKS, audience pinned to the Access app AUD, issuer pinned to the team domain, kid-miss refetch with an anti-flood window \u2014 and derives ONE binding key: for an interactive login provider=cloudflare-access and subject=the JWT sub claim (Cloudflare's stable user id); for a service token provider=cloudflare-service-token and subject=the common_name claim; the email claim is kept only for display and never used to look up an actor; the Go runtime does this with the standard library, honouring the zero-third-party-dependency rule",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c8",
+      "seam": "web/src: browser identity derived from the signed-in principal",
+      "behavior": "grep across web/src finds no sessionStorage decision token, no localStorage actor id, and no free-text decider/reviewer/replier input; the Header renders the signed-in principal; the no-bundled-secrets test still passes with its allowlist shrunk, not widened",
+      "source_text": "The browser's identity model is replaced, not extended: web/src/api/decision-token.ts (shared bearer in sessionStorage + free-text actor id in localStorage), the three token panels (Inbox, Decisions, TicketView) and every DeciderActorField / reviewer / replier free-text input become derived from the signed-in principal; Header gains 'signed in as'; the deployment-wide NODES_HUMAN_DECISION_TOKEN_SECRET stops being handed to humans",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c9",
+      "seam": "internal/api: GET and EventSource accept the edge-set Access cookie; LAN writes 401",
+      "behavior": "Through the tunnel, a GET and an EventSource connection succeed with only the edge-set cookie; through the LAN address, the same GET succeeds (reads stay open on the LAN) and every write returns 401 without a principal",
+      "source_text": "Behind Cloudflare Access the API reads are already authenticated at the edge, so the Go side must accept the Cf-Access-Jwt-Assertion on GETs and on EventSource connections too (client.ts getJson sends no credential and EventSource cannot set headers \u2014 the edge cookie carries the JWT on same-origin requests, so no query token is needed)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c10",
+      "seam": "internal/api write routes: origin stamped from the verified principal",
+      "behavior": "For each write route the audit lists, an API test sends a body naming a different actor than the principal and the stored record's origin is the principal's actor, not the body's; grades.go carries the same gate; the authgate_test table covers every mutating route",
+      "source_text": "Every write route stamps the human origin from the verified principal: replies (tickets.go:139-215 replier), frame posts (posted_by), freeze (frozen_by defaulting to the literal 'human'), human-task decisions (decider_actor_id), reviews (reviewer_actor_id), grades (grades.go:53 currently ungated), suite-verdicts and gate-reports; the free-text fields become optional display hints that must match the principal or are ignored",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c11",
+      "seam": "GET /v1alpha1/tickets/{id} + TicketView: pending records and confirm/reject at a served ledger_version",
+      "behavior": "GET /v1alpha1/tickets/{id} returns pending ledger records per run with the ledger_version they were read at, in one response; the ticket page confirms a claim end to end with a required rationale and the record stays proposed with a confirmed review beside it; a stale version is refused with the existing conflict shape",
+      "source_text": "The ticket page (#255) becomes the decision surface: GET /v1alpha1/tickets/{id} grows pending ledger records per run served at the same ledger_version the page renders from (ticketpending.go:44-53 stale-guard contract), and the RunDecisionCard confirm/reject+rationale form from Decisions.tsx:515-698 is lifted onto TicketView beside OutcomeButtons; a review still names records and never rewrites them, rationale stays required, reviewer stays a registered human",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c14",
+      "seam": "adapters/jira read_issue verb and /v1/capabilities",
+      "behavior": "adapters/jira tests cover read_issue: prefix refusal, empty allowlist refusal, comment cap, and the exact request shape; /v1/capabilities advertises it; an intake run on prod shows the comment body in the agent's ledger claim",
+      "source_text": "#257: the jira bridge gains a read_issue verb (new module beside post_comment/transition_issue/create_issue, dispatched in server.py, advertised on /v1/capabilities) returning summary, description, status, comments and issue links for one key under the configured project prefix, with a comment-count and body-size cap; the sweep stays the only reader of the board as a whole, and the verb's result is an agent-origin proposed claim like the other three",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c15",
+      "seam": "jira bridge JIRA_TRANSITION_TARGETS allowlist + engine-side transition policy (Done is a human node)",
+      "behavior": "prod bridge env lists four targets and the deploy lane writes that file (grant-check names it); a merged PR moves the ticket to Done and the sweep's next pass records that transition as self-echo without re-triggering intake; docs/drive-from-jira.md's trigger table and the custody decision record are updated in the same PR",
+      "source_text": "#256: the transition allowlist becomes JIRA_TRANSITION_TARGETS=In Progress,Pending,In Review,Done with exact membership still parse-time enforced in the bridge, while the per-transition policy lives engine-side: Pending from PlanHumanTaskFanOut as today; In Review from a new open-PR fact; Done is never automatic \u2014 the pr.merged fact (already freezing the ticket in signal.go:579-594) raises a human actor node after live validation evidence is filed, and that node's 'done' outcome is what plans the Done transition; every system transition is authored by the bot account and therefore already skipped by the exact-author-id transition self-echo",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c15",
+      "seam": "jira bridge JIRA_TRANSITION_TARGETS allowlist + engine-side transition policy (Done is a human node)",
+      "behavior": "A store test asserts that a pr.merged fact plans NO transition_issue intent and raises exactly one 'Ticket done?' human task; the Done transition intent appears only after that task's done outcome is recorded; a Jira read after the merge shows the ticket still not Done",
+      "source_text": "#256: the transition allowlist becomes JIRA_TRANSITION_TARGETS=In Progress,Pending,In Review,Done with exact membership still parse-time enforced in the bridge, while the per-transition policy lives engine-side: Pending from PlanHumanTaskFanOut as today; In Review from a new open-PR fact; Done is never automatic \u2014 the pr.merged fact (already freezing the ticket in signal.go:579-594) raises a human actor node after live validation evidence is filed, and that node's 'done' outcome is what plans the Done transition; every system transition is authored by the bot account and therefore already skipped by the exact-author-id transition self-echo",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c16",
+      "seam": "ticket-page reply -> engine fact origin + Jira mirror 'via' suffix",
+      "behavior": "A page reply from a signed-in person produces an engine fact whose origin is that person's actor and a Jira comment suffixed with their verified display name; the fact still validates against schemas/events/jira_comment.schema.json and jira_comment_is_self_echo is unchanged",
+      "source_text": "#235 with Cloudflare identity: a ticket-page reply carries the signed-in email as the human origin of the engine fact, and the Jira mirror (tickets.go:198, the 'via' suffix naming the replier) is rendered from that verified identity, still posted under the system account; per-user Atlassian OAuth is not built \u2014 a second dedicated system Jira account replaces the operator's personal pair so the operator's own board moves stop being self-echo",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c18",
+      "seam": "internal/api principal middleware replacing the require*Auth helpers; openapi.yaml auth scheme",
+      "behavior": "internal/api has exactly one principal middleware; the six require*Auth helpers are gone or delegate to it; openapi.yaml's 'authless by design' paragraph is replaced by the principal scheme; the negative gate table lists every mutating route",
+      "source_text": "internal/auth stops being a stub: one principal-aware middleware replaces the six byte-identical require*Auth helpers and gates the mutating routes that have no gate today (grades, runs create/cancel/patch, workflows publish/validate, workflow-generations, namespaces, schedules, preflight acknowledge, plan-imports); GET and both SSE streams (registered outside wrap at server.go:445-446) accept the same principal; the negative gate table in authgate_test.go is rewritten deliberately, and api/openapi/openapi.yaml:12-16 'authless by design' is retired",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c19",
+      "seam": "RBAC roles on actor_identities: viewer / approver / namespace administrator route matrix",
+      "behavior": "A viewer-role principal gets 403 on every mutating route; an approver can decide, review and reply but not register actors or publish; an administrator can; the ledger authority matrix tests are unchanged and still pass",
+      "source_text": "Permissions follow PRD \u00a716.2's RBAC vocabulary with two human roles first and an explicit matrix: viewer = every GET and both SSE streams; approver = human-task decisions, reviews and commits, ticket replies, frame posts, freeze, grades; namespace administrator = everything approver has plus actors register/resume, workflows publish/validate, workflow-generations, runs create/cancel/patch, namespaces, schedules, preflight acknowledge, plan-imports, store entries/bindings/publish, inbound credential issuance/revocation; machine principals are not roles \u2014 bridges and runners keep their route-scoped credentials (attempt token for artifacts and callbacks, dial-in credential for inbound poll/complete, event token for POST /events, actor token for suite-verdicts and gate-reports) and their records stay agent-origin; roles live on the actor_identities binding and the ledger authority matrix is unchanged \u2014 a role grants the right to call a route, the registered kind still decides proposed vs confirmed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c20",
+      "seam": "dial-in completion custody (inbound_transport.go) + Cloudflare service token -> registered actor",
+      "behavior": "A dial-in completion whose ledger delta names another actor is refused at accept time with a diagnostic on the run naming both ids and no redispatch (closes #183's custody half); a Cloudflare service token mapped to a human actor can decide a human task from curl off-LAN",
+      "source_text": "API tokens for agents and services stay the existing issued dial-in credentials (cnd_ prefix, crypto/rand, digest at rest, reveal-once, RequireControlPlaneIssued) and per-actor NODES_ACTOR_*_TOKEN pairs; what is added is the principal binding on the dial-in path \u2014 inbound_transport.go:29's hardcoded party kind 'actor' becomes the authenticated actor key stamped server-side as the origin of every completion (closing #183's custody half) \u2014 and a Cloudflare service token mapped to a registered actor for a human-operated CLI or curl from outside the LAN",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c25",
+      "seam": "human-facing pages: ticket page first screen, first-visit path, screenshot pass",
+      "behavior": "The ticket page's first screen above the fold is a flow diagram of where the ticket is plus the one pending decision with its buttons, no token field and no free-text identity; a first-visit path exists for a signed-in person with nothing pending; the screenshot pass is captured and reviewed by the user before merge",
+      "source_text": "The human-facing pages become welcoming: the ticket page, inbox, decisions, header and a first-visit path lead with a visual state (where the ticket is in the flow, what is waiting on whom) and a guided decide-in-place step, not stacked sections of text and lists, reusing the existing xyflow/elk canvas and EventTimeline for progress and status graphics; dense lists become secondary views; non-human-facing surfaces (runs, ledger, graphs, mesh, stats) are kept and touched only where shared components change, retired only when replaced; findings aggregate on #270",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c31",
+      "seam": "devague validate-delivery adoption: vendored skill, skill-sources row, obligations and evidence before Done",
+      "behavior": "diff -r ../devague/.claude/skills/validate-delivery .claude/skills/validate-delivery is empty; docs/skill-sources.md names it; the plan's acceptance criteria carry obligations and the delivery store holds at least one evidence record per success signal before summarize-delivery runs",
+      "source_text": "The devague execution-to-evidence leg is adopted: /validate-delivery is vendored directly from devague (origin, like scope/challenge/deviate/summarize-delivery) into .claude/skills with a row in docs/skill-sources.md; this repo declares its behavioral-test convention (a dedicated folder or marker) so the confirmed claims become devague obligations (devague oblige) and merged work files evidence (devague evidence) before any human node is asked to say Done",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c42",
+      "seam": "Jira webhook receiver on nodes.culture.dev -> pr_upkeep_jira normalisation -> POST /v1alpha1/events",
+      "behavior": "A comment posted on a SCRUM ticket produces a pr-upkeep.jira.comment fact within seconds via the push path, and the next sweep pass reports it duplicate=true; a test asserts the receiver and the sweep emit byte-identical facts for the same fixture",
+      "source_text": "Push replaces polling as the primary Jira signal in the last wave: a Jira Cloud system webhook posts issue, transition and comment events to a dedicated receiver path on nodes.culture.dev that a path-scoped Cloudflare Access Bypass policy lets through, authenticated by a shared secret the receiver verifies before anything else; the receiver treats the delivery only as a wake-up \u2014 it re-reads the issue's changelog and comments through the same Jira read the sweep uses, replays them through the one normalisation seam (pr_upkeep_jira.jira_history_facts and jira_watermark) so source keys and cumulative watermarks are identical, and forwards to the existing event-token-gated POST /v1alpha1/events path where the watermark dedup absorbs delayed or out-of-order deliveries; the sweep stays as reconciliation and its interval is relaxed only after a week of push running green",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o16",
+      "claim_id": "c42",
+      "seam": "Jira webhook receiver on nodes.culture.dev -> pr_upkeep_jira normalisation -> POST /v1alpha1/events",
+      "behavior": "A fixture test delivers the same three webhook events in order, reversed, and duplicated, and the receiver emits exactly the source keys and watermarks the sweep emits for that fixture, with the control plane reporting duplicate=true for every repeat",
+      "source_text": "Push replaces polling as the primary Jira signal in the last wave: a Jira Cloud system webhook posts issue, transition and comment events to a dedicated receiver path on nodes.culture.dev that a path-scoped Cloudflare Access Bypass policy lets through, authenticated by a shared secret the receiver verifies before anything else; the receiver treats the delivery only as a wake-up \u2014 it re-reads the issue's changelog and comments through the same Jira read the sweep uses, replays them through the one normalisation seam (pr_upkeep_jira.jira_history_facts and jira_watermark) so source keys and cumulative watermarks are identical, and forwards to the existing event-token-gated POST /v1alpha1/events path where the watermark dedup absorbs delayed or out-of-order deliveries; the sweep stays as reconciliation and its interval is relaxed only after a week of push running green",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o17",
+      "claim_id": "c43",
+      "seam": "tunnel-only loopback listener honours Access JWTs; the 0.0.0.0:18080 LAN listener does not",
+      "behavior": "A request carrying a valid Access JWT to http://192.168.1.146:18080 is refused on writes exactly as an unauthenticated one; the same request to the tunnel listener succeeds; cloudflared's ingress on thor targets the loopback listener",
+      "source_text": "Access JWTs are honoured only on a listener the tunnel alone can reach: the control plane accepts Cf-Access-Jwt-Assertion on a second loopback listener (or a listener-scoped flag) that cloudflared on thor targets, never on the 0.0.0.0:18080 LAN listener; a JWT captured on the plaintext LAN therefore cannot be replayed against the LAN port",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o18",
+      "claim_id": "c44",
+      "seam": "NODES_UI_BASE_URL=https://nodes.culture.dev in compose files and prod.env on thor and orin",
+      "behavior": "grep on both hosts' compose files and prod.env shows NODES_UI_BASE_URL=https://nodes.culture.dev; a fresh ticket's page-link comment and a fan-out options comment carry that origin",
+      "source_text": "NODES_UI_BASE_URL becomes https://nodes.culture.dev on thor and orin (compose files, prod.env via install-secrets) so ticket page-link comments, human-task fan-out options and Discord notifications carry a link a person off-LAN can open; the c10 audit accepted LAN links only until this cycle",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o19",
+      "claim_id": "c45",
+      "seam": "developer lane + scripts/merge-gate.py + collect-handover.py authenticate as an agent actor, not the human token",
+      "behavior": "grep across docs/operations, scripts/ and deploy/ finds no NODES_HUMAN_DECISION_TOKEN outside install-secrets' generation; merge-gate.py posts a suite verdict with an agent credential and the stored record's origin kind is agent/proposed; the list of re-pointed flows is in the delivery summary",
+      "source_text": "The developer lane (docs/operations/spec-chain-lane.md \u00a72 claude_env) and scripts/merge-gate.py / collect-handover.py stop carrying NODES_HUMAN_DECISION_TOKEN: they authenticate as their own registered agent actor (issued dial-in credential or actor token) and their suite-verdicts and gate-reports are stamped agent-origin proposed; any flow that relied on those records being human-authority is listed and re-pointed at a human node",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o20",
+      "claim_id": "c46",
+      "seam": "onboarding/offboarding recipe: Access policy, human actor revision, actor_identities binding; unbound page and 403",
+      "behavior": "An allowlisted email with no binding sees the unbound page and gets 403 on a decision; docs/operations carries the three-place onboarding recipe; the Access app's session duration is a recorded value in the recipe, not the default",
+      "source_text": "Onboarding and offboarding a person are one documented recipe with three places: the Access allow policy, a registered human actor revision, and the actor_identities binding; a principal that passes Access but has no binding gets a clear 'no actor is bound to this login' page naming the principal, and every write is refused (403, reason class), never a silent viewer; offboarding revokes the Cloudflare session (Access session revocation) and retires the binding, and the Access session duration is set explicitly rather than left at the 24h default",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o21",
+      "claim_id": "c47",
+      "seam": "SSE keepalive on /v1alpha1/events and /v1alpha1/runs/{id}/events through the tunnel; EventSource reconnect",
+      "behavior": "A quiet /v1alpha1/events stream held open through nodes.culture.dev for 5 minutes stays connected and the server log shows keepalive writes; a forced drop is followed by an EventSource reconnect in the browser test",
+      "source_text": "Both SSE streams emit a comment keepalive at least every 30 s so Cloudflare's idle timeout (100 s) does not drop a quiet run or inbox subscription through the tunnel; the browser's EventSource reconnect is tested against a simulated drop",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o22",
+      "claim_id": "c48",
+      "seam": "principal middleware refusal logging (reason class + subject, never the token), telemetry counter, break-glass credential",
+      "behavior": "A wrong-aud token produces one log line with reason bad_audience and the subject, and the refusal counter increments; the JWT value appears in no log; the operator's break-glass credential is issued and its use is recorded in the measurement sitting",
+      "source_text": "Every refusal on the principal middleware is logged with reason class (no_principal, bad_signature, expired, unbound, forbidden_role) and the principal's subject, never the token; a counter per reason is exposed on the existing telemetry; an operator on the LAN keeps a break-glass path (an issued service credential bound to the operator's actor) so a misconfigured Access policy cannot lock every human out",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }

@@ -165,6 +165,14 @@ NODES_ACTOR_NOTIFY_TOKEN required
 # is precisely why the audit has to.
 NODES_ACTOR_QWEN_TOKEN required
 
+# The merge gate's own bearer (login-from-anywhere t11, spec c45): the api
+# service resolves it to the registered company/merge-gate agent actor, and
+# scripts/merge-gate.py / collect-handover.py --gate post under it. Optional
+# because it is inbound-only and closed-by-default — an absent value means
+# every gate post answers 401 rather than a dispatch failing — but it must be
+# REPORTED, since that 401 names nothing on the gate side.
+NODES_ACTOR_MERGE_GATE_TOKEN optional
+
 # Not an open default — an override. compose.thor.yml defaults this to the
 # literal string "default", which is a bootstrap placeholder rather than a
 # namespace id: a worker started with it polls a namespace that does not exist
@@ -235,7 +243,25 @@ DISCORD_WEBHOOK_URL optional
 # control plane.
 NODES_ACTOR_REGISTRATION_TOKEN_SECRET optional
 NODES_EVENT_TOKEN_SECRET optional
+
+# Jira's loopback-only webhook is a closed optional feature. Both delivery
+# credentials may be absent; the route then answers 401. The Jira read tuple
+# may likewise be absent because it is consulted only after authentication.
+NODES_JIRA_WEBHOOK_SECRET optional
+NODES_JIRA_WEBHOOK_TOKEN optional
+JIRA_ACCOUNT_EMAIL optional
+JIRA_API_TOKEN optional
+JIRA_API_BASE optional
+JIRA_SITE optional
+JIRA_BOT_ACCOUNT_ID optional
 NODES_ADHOC_RUN_TOKEN_SECRET optional
+
+# Cloudflare Access is one all-or-nothing listener tuple. With all three
+# absent the feature is off and the LAN listener behaves exactly as before;
+# cmd/nodes refuses a partial tuple at startup.
+NODES_ACCESS_LISTEN optional
+NODES_ACCESS_TEAM_DOMAIN optional
+NODES_ACCESS_AUD optional
 
 # The dial-in credential issuance secret (issue #111's dial-in half). Same
 # closed-by-default reasoning: unset, POST /v1alpha1/inbound/credentials

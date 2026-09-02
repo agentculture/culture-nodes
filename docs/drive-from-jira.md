@@ -24,6 +24,24 @@ Two things to know before anything else:
   question"](#answering-a-question-do-it-on-the-page) section below is the
   whole of it.
 
+  Where that account is a **Jira Cloud service account with a scoped API
+  token**, one deployment detail follows and there is no way around it: a
+  scoped token is accepted only at the Atlassian **gateway** base,
+  `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/...`. The site URL
+  answers `401` for it. So the deployment grants `JIRA_API_BASE` alongside the
+  account email and token — for the sweep, for the Jira bridge actor's four
+  verbs, and for the operator skills — and every REST call is built from it.
+  Read the cloud id off the site itself:
+
+  ```sh
+  curl -s https://<your-site>.atlassian.net/_edge/tenant_info
+  ```
+
+  Nothing you see as a person changes. **Browse links always use the site
+  host** — `https://<your-site>.atlassian.net/browse/SCRUM-5` — in ticket
+  back-links, page-link comments and the report. The gateway serves the API;
+  it never serves the board.
+
 ## What a ticket must contain
 
 | Field | Needed? | What culture-nodes does with it |
@@ -52,8 +70,9 @@ Two limits worth knowing:
 | Write a plain comment | *The comment consumer*: an agent reads your comment in the ticket's context and replies on the ticket |
 | Answer a **marked question** | Resumes the run that asked it — **answer on the page, not on the board** |
 | (culture-nodes needs a decision) | Posts a comment listing the options, moves the ticket to **Pending**, and posts to Discord |
-| A pull request naming the ticket **merges** | The ticket **freezes**: replies close and its runs end |
-| Move a ticket to **Done** | Nothing automatic. Done is a person's statement, and only a person makes it |
+| A pull request naming the ticket **opens** | Moves the ticket to **In Review** once for that PR |
+| A pull request naming the ticket **merges** | The ticket **freezes** and raises one **Ticket done?** human task |
+| Answer **done** on that task | Moves the ticket to **Done**; the merge itself never does |
 
 Each row in detail below.
 
@@ -205,6 +224,8 @@ merges, culture-nodes records that merge as a fact, and:
   0 runs cancelled and 2 parked with reason ticket_frozen");
 - any decision still pending on a merged PR expires with the reason
   `pr_merged`, so nobody is asked to approve work that already shipped.
+- one **Ticket done?** task asks an approver to check the filed
+  `/validate-delivery` evidence before choosing `done` or `not_yet`.
 
 Merging **parks** the runs rather than cancelling them: parking is reversible
 and keeps everything a resume would need. Runs are only *cancelled* — ended
@@ -217,18 +238,14 @@ If the branch and the PR description both fail to name the ticket key, nothing
 correlates and the ticket does not freeze. Naming the ticket in the branch is
 the reliable habit.
 
-### Done → a person moves it
+### Done → a person answers after reading evidence
 
-**Nothing in culture-nodes moves a ticket to Done.** Not intake, not the spec
-lane, not a merge. A person does it, and that is on purpose: Done is a claim
-that the work is finished and correct, and an agent saying "done" is a
-completion claim, not evidence for one. (Teaching the system to make that move
-is an open, named feature — it is a decision nobody has taken, not an
-oversight.)
-
-What Done means when you do move it: the work is accepted. If you then freeze
-the ticket while it reads Done, its runs are **cancelled** rather than parked —
-the difference described above.
+**A merge never moves a ticket to Done.** It raises **Ticket done?**, addressed
+to the approver role. Read the filed `/validate-delivery` evidence first. A
+person's `done` outcome then asks the Jira actor to move the board; `not_yet`
+records that the evidence is not sufficient and leaves the board unchanged.
+Done therefore remains a person's acceptance statement, not an automatic
+inference from GitHub state or an agent's completion claim.
 
 ## What each system comment means
 

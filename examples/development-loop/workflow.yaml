@@ -159,8 +159,10 @@
 #  7. THE VALIDATOR ITSELF WAS UNWRITTEN, AND NOW IS NOT (task t16). t18
 #     produced a design, not a program; `scripts/merge-gate.py` is that
 #     program, and `POST /v1alpha1/runs/{id}/gate-reports` is where its
-#     per-gate results land as `derived` validator records with an aggregate
-#     the control plane computes. The operation below still fetches and
+#     per-gate results land with an aggregate the control plane computes —
+#     as the gate's own agent-origin `proposed` claims when it posts under
+#     its NODES_ACTOR_MERGE_GATE_TOKEN principal (login-from-anywhere t11),
+#     or as `derived` validator records under the human decision bearer. The operation below still fetches and
 #     digest-verifies a deployment-supplied script exactly as pr-upkeep's
 #     sweep does, and what it must compute is now implemented rather than
 #     merely specified — see examples/merge-gate/ for the gate on its own,

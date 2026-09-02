@@ -36,9 +36,18 @@ if not email or not token or not email.group(1) or not token.group(1):
     sys.exit("jira-status: the Jira credential pair is not granted on this host")
 auth = base64.b64encode(f"{email.group(1)}:{token.group(1)}".encode()).decode()
 
+# The REST base, granted beside the pair: a SCOPED service-account token is
+# accepted only at the Atlassian gateway, and the site URL answers 401 for it.
+# Empty (or absent) means the site URL, which is what an unscoped token wants.
+base = re.search(r"^JIRA_API_BASE=(.*)$", sec, re.M)
+api_base = (base.group(1).strip().strip('"').strip("'").rstrip("/") if base else "")
+if api_base and not api_base.startswith("https://"):
+    sys.exit(f"jira-status: JIRA_API_BASE on this host is not an https URL: {api_base!r}")
+root = api_base or f"https://{site}"
+
 def call(path, payload=None):
     req = urllib.request.Request(
-        f"https://{site}/rest/api/3/{path}",
+        f"{root}/rest/api/3/{path}",
         data=None if payload is None else json.dumps(payload).encode(),
         headers={
             "Authorization": "Basic " + auth,

@@ -3,6 +3,7 @@ package engine_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,6 +182,41 @@ func TestTechnicalFailureRetriesTheSameNodeRun(t *testing.T) {
 	}
 	if got := f.nodeRunCount(runID, "work"); got != 1 {
 		t.Errorf("work has %d node runs, want 1 — retries reuse the node run", got)
+	}
+}
+
+func TestIdentityMismatchRefusalRecordsOneDiagnosticAndDoesNotRedispatch(t *testing.T) {
+	f := newFixture(t, "loop.workflow.yaml")
+	_, workNodeRun := advanceToWork(t, f, "identity-mismatch")
+	diagnostic := json.RawMessage(`{"error":{"class":"contract","detail":"dial-in completion origin actor \"actor_body\" does not match authenticated actor \"actor_credential\""}}`)
+	result := f.step("worker-identity", workNodeRun, engine.CompletionRequest{
+		TechStatus:   engine.StatusContractRejected,
+		Output:       diagnostic,
+		RetryRefusal: "identity mismatch at dial-in completion acceptance is not retryable",
+	})
+	if result.Retried {
+		t.Fatal("identity mismatch was redispatched")
+	}
+	attempts, err := f.engine.Store().Attempts(f.ctx, workNodeRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want one refusal", len(attempts))
+	}
+	var storedDiagnostic []byte
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT result FROM attempts WHERE id=$1`, attempts[0].ID).Scan(&storedDiagnostic); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(storedDiagnostic), "actor_body") || !strings.Contains(string(storedDiagnostic), "actor_credential") {
+		t.Fatalf("attempt diagnostic does not name both identities: %s", storedDiagnostic)
+	}
+	var ready int
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT count(*) FROM work_items WHERE node_run_id=$1 AND state='ready'`, workNodeRun).Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready != 0 {
+		t.Fatalf("ready redispatches = %d, want zero", ready)
 	}
 }
 

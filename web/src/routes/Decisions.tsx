@@ -11,18 +11,20 @@ import {
   listHumanTasks,
   listPendingDecisions,
 } from "../api/client";
-import {
-  clearDecisionToken,
-  getDecisionToken,
-  setDecisionActorID,
-  setDecisionToken,
-} from "../api/decision-token";
 import type { HumanTask, PendingDecisionRun, ReviewCommitResult } from "../api/types";
-import AuthorityChip from "../components/AuthorityChip";
-import DeciderActorField, { useDeciderActorID } from "../components/DeciderActorField";
 import ErrorNotice from "../components/ErrorNotice";
+import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
+import RunDecisionCard, {
+  RecordPayload,
+  confirmAllVerdicts,
+  recordsWithVerdict,
+  type RecordVerdict,
+  type RunVerdicts,
+} from "../components/RunDecisionCard";
+import { findTicketKey } from "../domain/ticket-key";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import { useWhoami } from "../hooks/useWhoami";
 
 /**
  * Events that can change what is awaiting a decision: a new record appended,
@@ -54,10 +56,12 @@ const REFRESH_DEBOUNCE_MS = 4000;
  *   - The rationale is required by the form, as it is by the API. A
  *     confirmation with no stated reason cannot be told apart from an unread
  *     one.
- *   - The reviewer is typed in, never inferred. The token authenticates the
- *     deployment, not the person; who decided is a separate, explicit claim,
+ *   - The reviewer is the signed-in principal's actor, never typed (task
+ *     t9, spec c8). Until then the token authenticated the deployment and
+ *     the page asked for a reviewer id in free text; now Cloudflare Access
+ *     verifies the person, `useWhoami` says which actor they are bound to,
  *     and the API refuses any reviewer the registry does not record as a
- *     human.
+ *     human — a login bound to an agent actor still cannot confirm.
  *   - The record payload is rendered in full. A decider must read the claim,
  *     including the qualifying half of it — the same reason the operator's
  *     ledger output stopped truncating.
@@ -85,61 +89,13 @@ export function Decisions() {
 
 const PAGE_SIZE = 25;
 
-/**
- * A ledger record's payload, with its prose readable as prose (task t27).
- *
- * A `claim` record's `statement` is a paragraph a human wrote or an agent
- * composed — often several, with newlines. `JSON.stringify` renders those as
- * literal `\n` inside a quoted string, so the one field a decider must
- * actually READ was the one field they could not: PRD §10.4's whole premise is
- * that a confirmation on an unread claim is worse than no confirmation. The
- * statement is lifted out and rendered as text with its newlines intact; every
- * other field still renders as the exact JSON payload, unmodified and
- * untruncated, below it.
- */
-function RecordPayload({ data }: { data: unknown }) {
-  const statement = statementOf(data);
-  const rest = statement === null ? data : withoutStatement(data);
-  const restIsEmpty =
-    rest !== null &&
-    typeof rest === "object" &&
-    !Array.isArray(rest) &&
-    Object.keys(rest as Record<string, unknown>).length === 0;
-
-  return (
-    <>
-      {statement !== null ? (
-        <p className="decisions-record__statement">{statement}</p>
-      ) : null}
-      {restIsEmpty ? null : (
-        <pre className="decisions-record__data">
-          {JSON.stringify(rest, null, 2)}
-        </pre>
-      )}
-    </>
-  );
-}
-
-/** The record's `statement`, when it has one that is prose. */
-function statementOf(data: unknown): string | null {
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const value = (data as Record<string, unknown>).statement;
-  return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-function withoutStatement(data: unknown): unknown {
-  const { statement: _statement, ...rest } = data as Record<string, unknown>;
-  return rest;
-}
-
 function PendingDecisionsView() {
   const [tasks, setTasks] = useState<HumanTask[] | null>(null);
   const [claims, setClaims] = useState<PendingDecisionRun[]>([]);
   const [versions, setVersions] = useState<Record<string, number>>({});
   const [tickets, setTickets] = useState<Record<string, string>>({});
   const [page, setPage] = useState(0);
-  const [actorID, setActorID] = useDeciderActorID();
-  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const whoami = useWhoami();
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -174,11 +130,23 @@ function PendingDecisionsView() {
       for (const group of claimItems) {
         setVersions((current) => ({ ...current, [group.run_id]: group.ledger_version }));
       }
+      // A human task's guard version has to be READ; a claim group already
+      // carries the version it was served at, so only the task runs are
+      // fetched.
       for (const runID of new Set(taskItems.map((task) => task.run_id))) {
         getLedger(runID, controller.signal).then((ledger) => {
           if (!controller.signal.aborted)
             setVersions((current) => ({ ...current, [runID]: ledger.ledger_version }));
         }).catch(() => undefined);
+      }
+      // The ticket key, for BOTH halves: a task's card names the ticket it
+      // belongs to, and since task t12 a claim group links to the ticket page
+      // that decides it — so a claim-only run needs the lookup too.
+      const runIDs = new Set([
+        ...taskItems.map((task) => task.run_id),
+        ...claimItems.map((group) => group.run_id),
+      ]);
+      for (const runID of runIDs) {
         getRun(runID, controller.signal).then((run) => {
           const ticket = findTicketKey(run.run.input);
           if (!controller.signal.aborted && ticket)
@@ -213,21 +181,20 @@ function PendingDecisionsView() {
     const runID = item.type === "task" ? item.task.run_id : item.group.run_id;
     grouped.set(runID, [...(grouped.get(runID) ?? []), item]);
   }
-  const token = tokenHeld ? getDecisionToken() : null;
+  const actorId = whoami.status === "bound" ? whoami.actorId : null;
 
   async function choose(task: HumanTask, outcome: string) {
     const ledgerVersion = versions[task.run_id];
-    if (!token || !actorID.trim() || ledgerVersion === undefined) return;
-    setDecisionActorID(actorID.trim());
+    if (actorId === null || ledgerVersion === undefined) return;
     setSubmitting(task.id);
     setError(null);
     try {
       await decideHumanTask(task.id, {
         outcome,
-        decider_actor_id: actorID.trim(),
+        decider_actor_id: actorId,
         response: task.request.decision_schema_ref ? { outcome } : undefined,
         expected_ledger_version: ledgerVersion,
-      }, token);
+      });
       setTasks((current) => current?.filter((item) => item.id !== task.id) ?? []);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
@@ -239,8 +206,7 @@ function PendingDecisionsView() {
   return (
     <section className="view-rail decisions-view">
       <h1>Pending decisions</h1>
-      <TokenPanel held={tokenHeld} onHold={(value) => { setDecisionToken(value); setTokenHeld(true); }} onClear={() => { clearDecisionToken(); setTokenHeld(false); }} />
-      <DeciderActorField id="pending-decider-actor" value={actorID} onChange={setActorID} />
+      <SignedInAs verb="Deciding" whoami={whoami} />
       {error ? <ErrorNotice error={error} /> : null}
       {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
         <>
@@ -248,6 +214,26 @@ function PendingDecisionsView() {
           {Array.from(grouped, ([runID, items]) => (
             <section key={runID} data-run-id={runID}>
               <h2>{tickets[runID] ? <>Ticket {tickets[runID]} · </> : null}Run <Link to={`/runs/${runID}`}>{runID}</Link></h2>
+              {/* Claims are decided on the ticket page (task t12, spec c11).
+                  This tab used to render a checkbox beside each one that
+                  selected it into a verdict no form on this tab could submit —
+                  an affordance that did nothing. It is replaced rather than
+                  merely deleted (decision c33): the group links to the page
+                  that CAN take the decision, or says plainly why it cannot. */}
+              {items.some((item) => item.type === "claim") ? (
+                tickets[runID] ? (
+                  <p className="muted">
+                    <Link to={`/tickets/${encodeURIComponent(tickets[runID])}`}>
+                      Decide these claims on ticket {tickets[runID]}
+                    </Link>
+                  </p>
+                ) : (
+                  <p className="muted">
+                    No ticket is recorded for this run — decide these claims
+                    under Proposed claims.
+                  </p>
+                )
+              ) : null}
               <ul className="decisions-list">
                 {items.map((item) => item.type === "task" ? (
                   <li className="inbox-card" key={item.task.id} data-human-task-id={item.task.id} data-testid={`pending-task-${item.task.id}`}>
@@ -255,21 +241,13 @@ function PendingDecisionsView() {
                     <OutcomeButtons
                       taskId={item.task.id}
                       outcomes={item.task.request.allowed_outcomes ?? []}
-                      disabled={!token || !actorID.trim() || versions[item.task.run_id] === undefined}
+                      disabled={actorId === null || versions[item.task.run_id] === undefined}
                       busy={submitting === item.task.id}
                       onChoose={(outcome) => void choose(item.task, outcome)}
                     />
                   </li>
                 ) : (
-                  <li className="inbox-card" key={item.record.id}>
-                    <label className="decisions-record__select">
-                      <input
-                        type="checkbox"
-                        defaultChecked
-                        aria-label={`include this record in the verdict (${item.record.id})`}
-                      />{" "}
-                      include this record in the verdict
-                    </label>{" "}
+                  <li className="inbox-card" key={item.record.id} data-record-id={item.record.id}>
                     <code>{item.record.id}</code> · {item.record.record_type}
                     <RecordPayload data={item.record.data} />
                   </li>
@@ -287,16 +265,6 @@ function PendingDecisionsView() {
   );
 }
 
-function findTicketKey(input: unknown): string | null {
-  if (!input || typeof input !== "object") return null;
-  for (const [key, value] of Object.entries(input)) {
-    if (["ticket_key", "issue_key", "jira_key"].includes(key) && typeof value === "string") return value;
-    const nested = findTicketKey(value);
-    if (nested) return nested;
-  }
-  return null;
-}
-
 function ProposedClaimsView() {
   const [groups, setGroups] = useState<PendingDecisionRun[] | null>(null);
   const [recordCount, setRecordCount] = useState(0);
@@ -308,7 +276,7 @@ function ProposedClaimsView() {
   // indistinguishable from the click having done nothing.
   const [recorded, setRecorded] = useState<RecordedDecision[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
-  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const whoami = useWhoami();
   const [reloadKey, setReloadKey] = useState(0);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastReload = useRef(0);
@@ -360,7 +328,7 @@ function ProposedClaimsView() {
     return () => controller.abort();
   }, [reloadKey]);
 
-  const token = tokenHeld ? getDecisionToken() : null;
+  const actorId = whoami.status === "bound" ? whoami.actorId : null;
 
   return (
     <section className="view-rail decisions-view">
@@ -371,17 +339,7 @@ function ProposedClaimsView() {
         recorded as its own ledger record naming who decided and why.
       </p>
 
-      <TokenPanel
-        held={tokenHeld}
-        onHold={(value) => {
-          setDecisionToken(value);
-          setTokenHeld(true);
-        }}
-        onClear={() => {
-          clearDecisionToken();
-          setTokenHeld(false);
-        }}
-      />
+      <SignedInAs verb="Reviewing" whoami={whoami} />
 
       {error ? <ErrorNotice error={error} /> : null}
 
@@ -389,8 +347,9 @@ function ProposedClaimsView() {
         <ul className="decisions-recorded" id="decisions-recorded" role="status">
           {recorded.map((entry) => (
             <li key={entry.reviewId}>
-              <strong>{entry.verdict}</strong>ed {entry.recordCount} record(s)
-              on run <code>{entry.runId}</code> — review{" "}
+              Recorded a <strong>{entry.verdict}</strong> decision on{" "}
+              {entry.recordCount} record(s) of run <code>{entry.runId}</code> —
+              review{" "}
               <code>{entry.reviewId}</code>, ledger now at version{" "}
               {entry.ledgerVersion}. The records decided are unchanged: a
               review names them, it never rewrites them.
@@ -416,10 +375,10 @@ function ProposedClaimsView() {
           </p>
           <ul className="decisions-list" id="decisions-runs">
             {groups.map((group) => (
-              <RunDecisionCard
+              <ProposedRunDecision
                 key={group.run_id}
                 group={group}
-                token={token}
+                actorId={actorId}
                 onDecided={(entry) => {
                   setRecorded((current) => [entry, ...current]);
                   setReloadKey((key) => key + 1);
@@ -433,72 +392,11 @@ function ProposedClaimsView() {
   );
 }
 
-/**
- * Token entry, indicator, and clear affordance — the same contract the Inbox
- * states (risk r1, api/decision-token.ts): the input is `type="password"`,
- * its draft is dropped the moment the token is held, and the held value is
- * never rendered back into the page.
- */
-function TokenPanel({
-  held,
-  onHold,
-  onClear,
-}: {
-  held: boolean;
-  onHold: (token: string) => void;
-  onClear: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-  return (
-    <div className="inbox-token" id="decisions-token">
-      <div className="inbox-token__entry">
-        <label htmlFor="decision-token-input">Decision token</label>
-        <input
-          id="decision-token-input"
-          type="password"
-          autoComplete="off"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button
-          type="button"
-          className="author-workflow__button"
-          disabled={draft === ""}
-          onClick={() => {
-            onHold(draft);
-            setDraft("");
-          }}
-        >
-          Hold token
-        </button>
-        {held ? (
-          <button
-            type="button"
-            className="author-workflow__button"
-            onClick={onClear}
-          >
-            Clear token
-          </button>
-        ) : null}
-      </div>
-      <p
-        className="inbox-token__state muted"
-        id="decision-token-state"
-        data-token-held={held}
-      >
-        {held
-          ? "token held — this tab only; cleared when the tab closes"
-          : "no token held — decisions are disabled until one is entered"}
-      </p>
-    </div>
-  );
-}
-
 /** One recorded decision, kept above the list after its run leaves it. */
 interface RecordedDecision {
   reviewId: string;
   runId: string;
-  verdict: "confirm" | "reject";
+  verdict: "confirm" | "reject" | "mixed";
   recordCount: number;
   ledgerVersion: number;
 }
@@ -506,42 +404,51 @@ interface RecordedDecision {
 /**
  * One run's undecided records and the form that decides them.
  *
- * The whole group is decided with one verdict and one rationale, because that
- * is the shape a review transaction has (PRD §10.8: all of it applies or none
- * of it does). Deciding a subset is deciding a different frame, so it is a
- * second review — the checkbox per record selects which records this review
- * covers.
+ * The rendering is the shared `RunDecisionCard` (task t12) — the ticket page
+ * shows the same records, and two renderings of the claim a decider reads
+ * before confirming it are two chances for one of them to summarise away the
+ * qualifying half. What lives here is only what is different: this queue
+ * decides ONE run per submit, so the rationale and the button belong to the
+ * card.
+ *
+ * The verdict is per record, which is the grain
+ * `POST /v1alpha1/reviews/{id}/commit` decides at: a run whose claim holds up
+ * and whose evidence does not is one review with two answers, not two
+ * reviews. A record left at "not now" is simply not named by this review and
+ * stays awaiting a decision.
  */
-function RunDecisionCard({
+function ProposedRunDecision({
   group,
-  token,
+  actorId,
   onDecided,
 }: {
   group: PendingDecisionRun;
-  token: string | null;
+  /** The signed-in principal's actor, or null when nothing can be recorded. */
+  actorId: string | null;
   onDecided: (entry: RecordedDecision) => void;
 }) {
-  const [selected, setSelected] = useState<string[]>(() =>
-    group.records.map((record) => record.id),
+  const [verdicts, setVerdicts] = useState<RunVerdicts>(() =>
+    confirmAllVerdicts(group),
   );
-  const [verdict, setVerdict] = useState<"confirm" | "reject">("confirm");
-  const [reviewer, setReviewer] = useState("");
   const [rationale, setRationale] = useState("");
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [result, setResult] = useState<ReviewCommitResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const confirmed = recordsWithVerdict(group, verdicts, "confirm");
+  const rejected = recordsWithVerdict(group, verdicts, "reject");
+  const decided = [...confirmed, ...rejected];
+
   const canSubmit =
-    token !== null &&
+    actorId !== null &&
     !submitting &&
     result === null &&
-    selected.length > 0 &&
-    reviewer.trim() !== "" &&
+    decided.length > 0 &&
     rationale.trim() !== "";
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit || token === null) return;
+    if (!canSubmit || actorId === null) return;
 
     setSubmitError(null);
     setSubmitting(true);
@@ -551,32 +458,25 @@ function RunDecisionCard({
       // run moved since the list loaded, the API refuses the commit with a
       // 409 and writes nothing, which is the correct outcome — the frame
       // this operator read is no longer the frame they would be deciding.
-      const review = await createReview(
-        group.run_id,
-        {
-          record_ids: selected,
-          ledger_version: group.ledger_version,
-          reviewer_actor_id: reviewer.trim(),
-        },
-        token,
-      );
+      const review = await createReview(group.run_id, {
+        record_ids: decided,
+        ledger_version: group.ledger_version,
+        reviewer_actor_id: actorId,
+      });
       const decisions: Record<string, "confirm" | "reject"> = {};
-      for (const id of selected) decisions[id] = verdict;
+      for (const id of confirmed) decisions[id] = "confirm";
+      for (const id of rejected) decisions[id] = "reject";
 
-      const committed = await commitReview(
-        review.id,
-        {
-          decisions,
-          expected_ledger_version: group.ledger_version,
-          rationale: rationale.trim(),
-        },
-        token,
-      );
+      const committed = await commitReview(review.id, {
+        decisions,
+        expected_ledger_version: group.ledger_version,
+        rationale: rationale.trim(),
+      });
       setResult(committed);
       onDecided({
         reviewId: committed.review_id,
         runId: group.run_id,
-        verdict,
+        verdict: rejected.length === 0 ? "confirm" : confirmed.length === 0 ? "reject" : "mixed",
         recordCount: committed.records.length,
         ledgerVersion: committed.ledger_version,
       });
@@ -592,82 +492,17 @@ function RunDecisionCard({
   };
 
   return (
-    <li className="inbox-card decisions-card" data-run-id={group.run_id}>
-      <div className="inbox-card__head">
-        <AuthorityChip authority="proposed" />
-        <code className="inbox-card__id">
-          <Link to={`/runs/${group.run_id}`}>{group.run_id}</Link>
-        </code>
-        <span className="inbox-card__kind">
-          ledger version {group.ledger_version}
-        </span>
-      </div>
-
-      <ul className="decisions-records">
-        {group.records.map((record) => (
-          <li key={record.id} data-record-id={record.id}>
-            <label className="decisions-record__select">
-              <input
-                type="checkbox"
-                checked={selected.includes(record.id)}
-                onChange={(event) =>
-                  setSelected((current) =>
-                    event.target.checked
-                      ? [...current, record.id]
-                      : current.filter((id) => id !== record.id),
-                  )
-                }
-                aria-label={`include this record in the verdict (${record.id})`}
-              />
-              include this record in the verdict · <code>{record.id}</code> · {record.record_type} · from{" "}
-              {record.origin_actor_id ?? "an unnamed actor"} (
-              {record.origin_kind})
-            </label>
-            {/* The payload in full: a decision on a claim nobody read is the
-                failure this whole surface exists to prevent. The statement
-                renders as prose so it can actually be read (task t27); the
-                rest is still the exact JSON, untruncated. */}
-            <RecordPayload data={record.data} />
-          </li>
-        ))}
-      </ul>
-
+    <RunDecisionCard
+      group={group}
+      verdicts={verdicts}
+      onVerdictChange={(recordId: string, verdict: RecordVerdict) =>
+        setVerdicts((current) => ({ ...current, [recordId]: verdict }))
+      }
+      disabled={actorId === null || submitting}
+      reviewedRecordIds={result === null ? [] : decided}
+    >
       {result === null ? (
         <form className="inbox-card__form" onSubmit={submit}>
-          <fieldset className="inbox-card__outcomes">
-            <legend>Verdict</legend>
-            <label className="inbox-card__outcome">
-              <input
-                type="radio"
-                name={`verdict-${group.run_id}`}
-                value="confirm"
-                checked={verdict === "confirm"}
-                onChange={() => setVerdict("confirm")}
-              />
-              confirm
-            </label>
-            <label className="inbox-card__outcome">
-              <input
-                type="radio"
-                name={`verdict-${group.run_id}`}
-                value="reject"
-                checked={verdict === "reject"}
-                onChange={() => setVerdict("reject")}
-              />
-              reject
-            </label>
-          </fieldset>
-          <div className="inbox-card__field">
-            <label htmlFor={`reviewer-${group.run_id}`}>
-              Reviewer actor id
-            </label>
-            <input
-              id={`reviewer-${group.run_id}`}
-              type="text"
-              value={reviewer}
-              onChange={(event) => setReviewer(event.target.value)}
-            />
-          </div>
           <div className="inbox-card__field">
             <label htmlFor={`rationale-${group.run_id}`}>
               Why (recorded on the decision)
@@ -696,7 +531,7 @@ function RunDecisionCard({
           unchanged: a review names them, it never rewrites them.
         </p>
       )}
-    </li>
+    </RunDecisionCard>
   );
 }
 

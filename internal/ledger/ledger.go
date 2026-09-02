@@ -601,9 +601,30 @@ func buildCommitOptions(opts []CommitOption) commitOptions {
 // matrix cannot catch this one: by the time it runs, the lie is already in the
 // record. It has to be caught here, against the registry.
 func checkReviewerIsHuman(ctx context.Context, tx Tx, req ReviewRequest) error {
-	kind, err := tx.ActorKind(ctx, req.ReviewerActorID)
+	return checkReviewerActorIsHuman(ctx, tx, "commit review "+req.ID, req.ReviewerActorID)
+}
+
+// RequireHumanReviewer resolves actorID against the actor registry and
+// returns the SAME refusal CommitReview would, before any review has been
+// committed.
+//
+// It exists for the batch surface (POST /v1alpha1/tickets/{id}/reviews),
+// which commits one review per run: discovering at run three that the
+// reviewer was never a human would leave runs one and two already decided
+// by an actor that may not decide anything. The rule itself is not restated
+// here — this is the same function CommitReview calls, so a caller cannot
+// pass a reviewer this check accepts and that guard then refuses.
+func (l *Ledger) RequireHumanReviewer(ctx context.Context, actorID string) error {
+	if actorID == "" {
+		return errors.New("ledger: RequireHumanReviewer requires an actor id")
+	}
+	return checkReviewerActorIsHuman(ctx, l.store, "reviewer check", actorID)
+}
+
+func checkReviewerActorIsHuman(ctx context.Context, tx Tx, what, actorID string) error {
+	kind, err := tx.ActorKind(ctx, actorID)
 	if err != nil {
-		return fmt.Errorf("ledger: commit review %s: reviewer %s: %w", req.ID, req.ReviewerActorID, err)
+		return fmt.Errorf("ledger: %s: reviewer %s: %w", what, actorID, err)
 	}
 	if kind == ActorKindHuman {
 		return nil
@@ -614,7 +635,7 @@ func checkReviewerIsHuman(ctx context.Context, tx Tx, req ReviewRequest) error {
 		// record would have carried — naming `human` here would restate the
 		// assumption being refused.
 		Origin:     OriginKind(kind),
-		ActorID:    req.ReviewerActorID,
+		ActorID:    actorID,
 		Authority:  AuthorityConfirmed,
 		RecordType: RecordReview,
 		Detail: "a decision on a proposed record is a human's to make (PRD §10.4); an actor registered as " +
@@ -744,8 +765,9 @@ func (l *Ledger) appendReviewRecords(ctx context.Context, tx Tx, req ReviewReque
 		}
 
 		rec, err := l.appendThrough(ctx, tx, Record{
-			RecordType:     RecordReview,
-			RunID:          req.RunID,
+			RecordType: RecordReview,
+			RunID:      req.RunID,
+			// origin: asserted — CommitReview checked the immutable request's reviewer registry identity
 			Origin:         Origin{Kind: OriginHuman, ActorID: req.ReviewerActorID},
 			Authority:      verdict.authority(),
 			SubjectRef:     NullableID(targetID),

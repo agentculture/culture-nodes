@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Decisions from "./Decisions";
-import { ApiError, listPendingDecisions } from "../api/client";
+import { ApiError, getWhoami, listPendingDecisions } from "../api/client";
 import {
   CLAIM_LEDGER_VERSION,
   CLAIM_RUN_ID,
@@ -12,21 +12,33 @@ import {
   PENDING_RUN,
   REVIEW_REQUEST,
 } from "../fixtures/pending-decisions-fixture";
+import {
+  WHOAMI_ACTOR_ID,
+  WHOAMI_BOUND,
+  WHOAMI_EMAIL,
+  WHOAMI_UNBOUND,
+} from "../fixtures/whoami-fixture";
 import { resetAgentState } from "../agent-state/store";
+import { resetWhoamiForTests } from "../hooks/useWhoami";
 
 /**
- * The Inbox test's stub pattern: the READ is module-mocked, and the two
- * mutating calls are NOT — they run the real client helpers against a stubbed
- * global `fetch`, because the acceptance for t30 is what the browser actually
- * sends (the bodies, and the Authorization header on both calls).
+ * The Inbox test's stub pattern: the READS (the list, whoami) are
+ * module-mocked, and the two mutating calls are NOT — they run the real client
+ * helpers against a stubbed global `fetch`, because the acceptance for t30 is
+ * what the browser actually sends (the bodies — and, since task t9, that no
+ * Authorization header goes with them).
  */
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, listPendingDecisions: vi.fn() };
+  return { ...actual, listPendingDecisions: vi.fn(), getWhoami: vi.fn() };
 });
 
 const mockListPendingDecisions = vi.mocked(listPendingDecisions);
-const TOKEN = "sekrit-decision-token";
+const mockGetWhoami = vi.mocked(getWhoami);
+
+function headerNames(init: { headers: Record<string, string> }): string[] {
+  return Object.keys(init.headers).map((key) => key.toLowerCase());
+}
 
 function renderDecisions() {
   return render(
@@ -56,9 +68,11 @@ function stubDecisionFetch() {
   return fetchMock;
 }
 
-async function holdToken(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText("Decision token"), TOKEN);
-  await user.click(screen.getByRole("button", { name: "Hold token" }));
+/** One record's verdict radio, by the label a decider reads. */
+function verdictRadio(card: HTMLElement, recordId: string, name: string) {
+  return within(
+    within(card).getByRole("group", { name: `Verdict for ${recordId}` }),
+  ).getByRole("radio", { name });
 }
 
 async function findRunCard(runId = CLAIM_RUN_ID) {
@@ -68,8 +82,9 @@ async function findRunCard(runId = CLAIM_RUN_ID) {
 
 beforeEach(() => {
   mockListPendingDecisions.mockReset();
-  window.localStorage.clear();
-  window.sessionStorage.clear();
+  mockGetWhoami.mockReset();
+  mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
+  resetWhoamiForTests();
   resetAgentState();
 });
 
@@ -128,7 +143,7 @@ describe("Decisions rendering", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables the decision until a token, a reviewer and a rationale are all present", async () => {
+  it("disables the decision until a rationale is present; the reviewer is the signed-in actor, never typed", async () => {
     const user = userEvent.setup();
     renderDecisions();
     const card = await findRunCard();
@@ -136,21 +151,30 @@ describe("Decisions rendering", () => {
       name: "Record decision",
     });
 
-    expect(submit).toBeDisabled();
-    await holdToken(user);
-    expect(submit).toBeDisabled(); // still no reviewer, no rationale
-
-    await user.type(
-      within(card).getByLabelText("Reviewer actor id"),
-      "actor-human-ori",
-    );
     expect(submit).toBeDisabled(); // a decision with no stated reason stays refused
+    expect(within(card).queryByLabelText(/reviewer/i)).toBeNull();
+    expect(screen.queryByLabelText(/token/i)).toBeNull();
+    expect(screen.getByText(/reviewing as/i)).toHaveTextContent(WHOAMI_EMAIL);
 
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
       "re-ran the suite on spark",
     );
     expect(submit).toBeEnabled();
+  });
+
+  it("keeps the decision disabled for an unbound login even with a rationale", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_UNBOUND);
+    const user = userEvent.setup();
+    renderDecisions();
+    const card = await findRunCard();
+    await user.type(
+      within(card).getByLabelText(/Why \(recorded on the decision\)/),
+      "re-ran the suite on spark",
+    );
+    expect(
+      within(card).getByRole("button", { name: "Record decision" }),
+    ).toBeDisabled();
   });
 });
 
@@ -159,17 +183,12 @@ describe("Decisions submission", () => {
     mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
   });
 
-  it("creates a review then commits it, both authenticated, with the version this page read", async () => {
+  it("creates a review then commits it, neither carrying an Authorization header, naming the signed-in reviewer and the version this page read", async () => {
     const user = userEvent.setup();
     const fetchMock = stubDecisionFetch();
     renderDecisions();
     const card = await findRunCard();
 
-    await holdToken(user);
-    await user.type(
-      within(card).getByLabelText("Reviewer actor id"),
-      "actor-human-ori",
-    );
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
       "re-ran the suite on spark and read the output",
@@ -182,16 +201,16 @@ describe("Decisions submission", () => {
 
     const [createUrl, createInit] = fetchMock.mock.calls[0];
     expect(createUrl).toBe(`/v1alpha1/runs/${CLAIM_RUN_ID}/reviews`);
-    expect(createInit.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headerNames(createInit)).not.toContain("authorization");
     expect(JSON.parse(createInit.body)).toEqual({
       record_ids: PENDING_RUN.records.map((record) => record.id),
       ledger_version: CLAIM_LEDGER_VERSION,
-      reviewer_actor_id: "actor-human-ori",
+      reviewer_actor_id: WHOAMI_ACTOR_ID,
     });
 
     const [commitUrl, commitInit] = fetchMock.mock.calls[1];
     expect(commitUrl).toBe(`/v1alpha1/reviews/${REVIEW_REQUEST.id}/commit`);
-    expect(commitInit.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headerNames(commitInit)).not.toContain("authorization");
     expect(JSON.parse(commitInit.body)).toEqual({
       decisions: Object.fromEntries(
         PENDING_RUN.records.map((record) => [record.id, "confirm"]),
@@ -218,11 +237,6 @@ describe("Decisions submission", () => {
 
     renderDecisions();
     const card = await findRunCard();
-    await holdToken(user);
-    await user.type(
-      within(card).getByLabelText("Reviewer actor id"),
-      "actor-human-ori",
-    );
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
       "read the qualification",
@@ -241,25 +255,17 @@ describe("Decisions submission", () => {
     expect(recorded).toHaveTextContent(CLAIM_RUN_ID);
   });
 
-  it("sends reject when reject is chosen, and only the records still selected", async () => {
+  // The verdict is per record, which is the grain the commit route decides
+  // at: a run whose claim holds up and whose evidence does not is ONE review
+  // with two answers. A record left at "not now" is simply not named by it.
+  it("sends a verdict per record, and names only the records this review covers", async () => {
     const user = userEvent.setup();
     const fetchMock = stubDecisionFetch();
     renderDecisions();
     const card = await findRunCard();
 
-    await holdToken(user);
-    await user.click(within(card).getByRole("radio", { name: "reject" }));
-    // Drop the second record from this review: deciding a subset is a
-    // different frame, so it is a different review.
-    await user.click(
-      within(card).getByRole("checkbox", {
-        name: `include this record in the verdict (${PENDING_RUN.records[1].id})`,
-      }),
-    );
-    await user.type(
-      within(card).getByLabelText("Reviewer actor id"),
-      "actor-human-ori",
-    );
+    await user.click(verdictRadio(card, PENDING_RUN.records[0].id, "reject"));
+    await user.click(verdictRadio(card, PENDING_RUN.records[1].id, "not now"));
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
       "the evidence is process-reported, not measured",
@@ -277,11 +283,35 @@ describe("Decisions submission", () => {
     });
   });
 
-  it("surfaces the API's refusal when the reviewer is not a human", async () => {
+  it("confirms one record and rejects another in a single review", async () => {
     const user = userEvent.setup();
-    // What the control plane answers when an agent names itself as reviewer
+    const fetchMock = stubDecisionFetch();
+    renderDecisions();
+    const card = await findRunCard();
+
+    await user.click(verdictRadio(card, PENDING_RUN.records[1].id, "reject"));
+    await user.type(
+      within(card).getByLabelText(/Why \(recorded on the decision\)/),
+      "the claim holds; the evidence is process-reported",
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Record decision" }),
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).decisions).toEqual({
+      [PENDING_RUN.records[0].id]: "confirm",
+      [PENDING_RUN.records[1].id]: "reject",
+    });
+  });
+
+  it("surfaces the API's refusal when the signed-in actor is not a human", async () => {
+    const user = userEvent.setup();
+    // What the control plane answers when the bound actor is an agent
     // (ledger rule reviewer_must_be_human) — the browser must show it, not
-    // swallow it into a generic failure.
+    // swallow it into a generic failure. The reviewer is no longer typed, so
+    // the case is a login bound to an agent actor.
+    mockGetWhoami.mockResolvedValue({ ...WHOAMI_BOUND, actor_id: "codex-thor" });
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -306,11 +336,6 @@ describe("Decisions submission", () => {
 
     renderDecisions();
     const card = await findRunCard();
-    await holdToken(user);
-    await user.type(
-      within(card).getByLabelText("Reviewer actor id"),
-      "codex-thor",
-    );
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
       "I am sure of my own work",
@@ -380,17 +405,42 @@ describe("Decisions record payload rendering (task t27)", () => {
     expect(rendered.textContent).toBe(multiline);
   });
 
-  it("names the record in each checkbox's accessible label", async () => {
+  it("names the record in each verdict group's accessible label", async () => {
     mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
     renderDecisions();
     const card = await findRunCard();
 
     for (const record of PENDING_RUN.records) {
+      const group = within(card).getByRole("group", {
+        name: `Verdict for ${record.id}`,
+      });
       expect(
-        within(card).getByRole("checkbox", {
-          name: `include this record in the verdict (${record.id})`,
-        }),
-      ).toBeInTheDocument();
+        within(group).getAllByRole("radio").map((radio) => radio.getAttribute("value")),
+      ).toEqual(["confirm", "reject", "skip"]);
     }
+  });
+
+  // A review names records; it never rewrites them (PRD §10.8). The card says
+  // so on the record itself once its review has committed.
+  it("leaves a decided record reading proposed, with the review beside it", async () => {
+    const user = userEvent.setup();
+    stubDecisionFetch();
+    mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
+    renderDecisions();
+    const card = await findRunCard();
+    await user.type(
+      within(card).getByLabelText(/Why \(recorded on the decision\)/),
+      "read the qualification",
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Record decision" }),
+    );
+
+    await within(card).findByText(/decision recorded/);
+    const row = card.querySelector(
+      `[data-record-id="${PENDING_RUN.records[0].id}"]`,
+    ) as HTMLElement;
+    expect(row.querySelector('[data-authority="proposed"]')).not.toBeNull();
+    expect(row.querySelector('[data-authority="confirmed"]')).not.toBeNull();
   });
 });

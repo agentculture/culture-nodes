@@ -19,7 +19,10 @@ import type {
   TicketProjection,
   TicketReply,
   TicketReplyRequest,
+  TicketReviewsRequest,
+  TicketReviewsResult,
   Version,
+  Whoami,
   WorkflowSource,
   WorkflowValidation,
   WorkflowVersion,
@@ -29,11 +32,14 @@ import type {
 /**
  * Same-origin API root. In dev, vite.config.ts proxies it to the Go control
  * plane; in production the Go binary serves this bundle and `/v1alpha1`
- * from one origin. Phase 1 is authless by design (PRD §26) with exactly one
- * class of exceptions: calls that write human-authority records — human-task
- * decisions, the two review calls, and ticket replies — require the decision
- * token the user presents per call (retention policy in
- * ./decision-token.ts). No other request attaches a credential.
+ * from one origin — and, in front of that origin, Cloudflare Access is the
+ * login (task t9, spec c8/c9). The edge cookie carries the verified
+ * identity on every same-origin request, reads and writes and EventSource
+ * connections alike, so NO request from this client attaches a credential
+ * of any kind: there is no header to set, no token to hold, and no code
+ * path that could. Who the caller is comes back from `getWhoami`, and the
+ * control plane stamps every human-origin write from the principal it
+ * verified, not from anything the body names.
  */
 export const API_ROOT = "/v1alpha1";
 
@@ -134,14 +140,39 @@ export const getTicket = (id: string, signal?: AbortSignal) =>
 export const postTicketReply = (
   id: string,
   request: TicketReplyRequest,
-  token: string,
   signal?: AbortSignal,
 ) =>
   postJson<TicketReply>(
     `/tickets/${encodeURIComponent(id)}/replies`,
     request,
     signal,
-    { authorization: `Bearer ${token}` },
+  );
+
+/**
+ * `POST /v1alpha1/tickets/{id}/reviews` (task t14, spec c11, decision c40):
+ * decide the ticket's undecided ledger claims, one review per run, in the
+ * order sent.
+ *
+ * One call, several reviews, because a review is opened against ONE run at
+ * ONE stated version (PRD §10.8) — a person deciding a ticket should not have
+ * to know that. Each `runs[]` entry carries the `expected_ledger_version` the
+ * page RENDERED that group from, never a fresh read: if the run moved since,
+ * the control plane reports `conflict` for that run and writes nothing while
+ * every other run still commits. Partial success is therefore the normal
+ * answer, and the caller reads `runs[].status` to see which.
+ *
+ * A review names records and never rewrites them: a confirmed claim still
+ * reads `authority: proposed`, with a review record beside it.
+ */
+export const postTicketReviews = (
+  id: string,
+  request: TicketReviewsRequest,
+  signal?: AbortSignal,
+) =>
+  postJson<TicketReviewsResult>(
+    `/tickets/${encodeURIComponent(id)}/reviews`,
+    request,
+    signal,
   );
 
 /**
@@ -173,7 +204,6 @@ async function postJson<T>(
   path: string,
   body: unknown,
   signal?: AbortSignal,
-  headers?: Record<string, string>,
 ): Promise<T> {
   let response: Response;
   try {
@@ -183,7 +213,6 @@ async function postJson<T>(
       headers: {
         accept: "application/json",
         "content-type": "application/json",
-        ...headers,
       },
       body: JSON.stringify(body),
     });
@@ -332,20 +361,19 @@ export const listPendingDecisions = (
 /**
  * `POST /v1alpha1/runs/{id}/reviews` (task t30): open a review over the
  * records a human is about to decide, pinned to the ledger version they were
- * read at. Authenticated for the same reason `decideHumanTask` is — it is
- * half of writing a human-authority record.
+ * read at. `reviewer_actor_id` is the signed-in principal's actor from
+ * `getWhoami`, sent because the API still requires the field; the control
+ * plane records the principal it verified either way.
  */
 export const createReview = (
   runId: string,
   request: CreateReviewRequest,
-  token: string,
   signal?: AbortSignal,
 ) =>
   postJson<ReviewRequest>(
     `/runs/${encodeURIComponent(runId)}/reviews`,
     request,
     signal,
-    { authorization: `Bearer ${token}` },
   );
 
 /**
@@ -357,14 +385,12 @@ export const createReview = (
 export const commitReview = (
   reviewId: string,
   request: CommitReviewRequest,
-  token: string,
   signal?: AbortSignal,
 ) =>
   postJson<ReviewCommitResult>(
     `/reviews/${encodeURIComponent(reviewId)}/commit`,
     request,
     signal,
-    { authorization: `Bearer ${token}` },
   );
 
 /** GET /v1alpha1/human-tasks query parameters (task t14). */
@@ -387,24 +413,22 @@ export const listHumanTasks = (
 
 /**
  * `POST /v1alpha1/human-tasks/{id}/decision` (task t14): commit a human
- * decision on a pending task. The ONLY authenticated call in this client —
- * the API refuses it without `Authorization: Bearer <token>`
- * (internal/api/humantasks.go's requireDecisionAuth), so `token` is a
- * required argument here, deliberately not optional: there is no
- * unauthenticated code path to a mutation from the browser. Where the token
- * lives (sessionStorage only) and why is ./decision-token.ts's contract.
+ * decision on a pending task. Until task t9 this was the one call that
+ * carried a credential — the deployment-shared decision secret the operator
+ * pasted into the page. It carries nothing now: the Access cookie is the
+ * credential and the principal middleware (internal/api/principal.go)
+ * decides whether the signed-in actor may decide. `decider_actor_id` is
+ * that actor, from `getWhoami`, because the field is still required.
  */
 export const decideHumanTask = (
   id: string,
   decision: HumanTaskDecisionRequest,
-  token: string,
   signal?: AbortSignal,
 ) =>
   postJson<HumanTaskDecisionResult>(
     `/human-tasks/${encodeURIComponent(id)}/decision`,
     decision,
     signal,
-    { authorization: `Bearer ${token}` },
   );
 
 /** GET /v1alpha1/actors (task t15): every registered actor row. */
@@ -491,3 +515,13 @@ export const PROJECTION_NAMES = [
  */
 export const getVersion = (signal?: AbortSignal) =>
   getJson<Version>("/version", signal);
+
+/**
+ * `GET /v1alpha1/whoami` (task t9, internal/api/whoami.go): who the
+ * Cloudflare edge verified and which registered actor that identity is
+ * bound to. A 401 means no identity reached the control plane at all; an
+ * `unbound: true` body means a verified person nobody has onboarded. Read
+ * once per session by hooks/useWhoami.ts and never cached in storage.
+ */
+export const getWhoami = (signal?: AbortSignal) =>
+  getJson<Whoami>("/whoami", signal);

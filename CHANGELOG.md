@@ -1,9 +1,113 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.47.0] - 2026-09-02
 
-Format follows [Keep a Changelog](https://keepachangelog.com/). This project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The login-from-anywhere cycle (spec `docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`,
+plan PR #272, tracking ticket SCRUM-8; issues #6 #111 #235 #255 #256 #257 #270).
+Built through culture-nodes itself: 8 codex packages, 4 developer-actor
+packages, 6 worktree subagents, TDD-gated merges by the operator; deviations
+d1-d3 and every hand-turn are recorded on the plan and on #273.
+
+### Added
+
+- Human identity from Cloudflare Access at the edge: `internal/auth` verifies
+  the Access JWT with the standard library (t1), `actor_identities` binds
+  provider+subject to a registered actor with roles (t2), one principal
+  middleware gates every mutating route with a loopback listener for the
+  tunnel, `GET /v1alpha1/whoami`, and classified refusal telemetry (t8); the
+  browser takes identity from whoami and every token panel and free-text
+  identity field is gone (t9).
+- Ledger origin from the authenticated caller on every write route and on
+  dial-in completions (t10); merge-gate and developer lanes authenticate as
+  their own agent actor (t11).
+- The ticket page decides everything: pending records at the served ledger
+  version, one review per run, reply identity (t14, t12); a human-welcoming
+  first screen with a flow rail, a first-visit page, Inbox/Decisions demoted
+  (t17).
+- Jira: `read_issue` bridge verb (t20); four-target transition allowlist
+  managed by the deploy lane with the custody record superseded (t4); In
+  Review on an open PR and a "Ticket done?" human node on merge — Done is
+  never automatic (t15); a system-webhook receiver that hydrates and replays
+  through the sweep's own seam (t16); `JIRA_API_BASE` for scoped
+  service-account tokens (t21, deviation d1).
+- Edge and deploy: `cloudflared-nodes.service`, loopback origin, public
+  `NODES_UI_BASE_URL` (t19); people recipe, `bind-identity.sh`, 8h session
+  policy (t13); SSE keepalive through the tunnel (t3); the
+  `/validate-delivery` convention and obligations (t5).
+
+- `JIRA_API_BASE`: the sweep, all four jira bridge verbs, both operator skills and
+  the deploy lanes read an optional gateway base so a scoped service-account token
+  (deviation d1) authenticates through `api.atlassian.com/ex/jira/<cloudId>`;
+  browse links keep the site host (t21).
+
+### Changed
+
+- Bound human write origins to the resolved principal across ticket replies,
+  frames and freezes, human-task decisions, reviews, grades, suite verdicts,
+  and gate reports while preserving transition-bearer behavior. Dial-in
+  completions now derive credential party kind from storage, reject ledger
+  origins that differ from the credential's registered actor, record the
+  mismatch diagnostic, and refuse redispatch.
+
+### Fixed
+
+- The `webglass` CI arm waits for the page to settle instead of racing it.
+  `#agent-state: ready` means "this view finished its initial load", a state
+  the page reaches a moment after the document loads, and the job asserted it
+  from a single instantaneous extract — which lost the race on a commit whose
+  only change from a green run was a JSON document under `.devague/`. The
+  extract now retries for a bounded 15 attempts; a page that never settles
+  still fails, with its last payload printed. The loop is a workaround with an
+  exit condition, not the intended shape: `webglass` navigates with
+  `wait_until="load"` plus a fixed 100 ms settle and exposes no
+  `--wait-for`/`--settle-ms`, so the condition cannot be expressed where it
+  belongs (agentculture/webglass-cli#16); #275 tracks deleting the loop when
+  it can.
+- `TestTunnelUnitIsTokenModeLoopbackAndUnprivileged` is three helpers — the
+  parse, the directives, and what the unit must not carry — rather than one
+  body over SonarCloud's cognitive-complexity threshold (S3776). They are
+  three separate questions and reading one no longer means reading the other
+  two.
+- The ticket projection no longer serves a silently truncated page (Qodo
+  finding 3 on PR #274). Both paged reads in `internal/api/tickets.go`
+  stopped at `ticketMaxPages` and returned the prefix they had collected even
+  with a cursor still outstanding, so a ticket carrying more than 10,000 runs
+  — or that many pending claims — would have shown a decider a page that
+  looked complete while omitting decidable records. Reaching the cap is now
+  an explicit refusal naming it: the cap is a runaway stop, not a result
+  limit.
+- `POST /v1alpha1/tickets/{id}/reviews` names the review request a failed
+  commit leaves open (Qodo finding 2). The request and the commit are two
+  ledger transactions and both take the run lock, so a writer landing between
+  them leaves a `requested` review behind while the per-run result said only
+  `conflict` and carried no id. `review_id` is now present on that outcome
+  too, and `POST /v1alpha1/reviews/{id}/commit` retries it at a fresh
+  version. The two-step ledger contract is deliberately unchanged: it is
+  PRD §10.8's, shared with `POST /v1alpha1/runs/{id}/reviews`, and collapsing
+  it under one route is how the two surfaces would come to mean different
+  things by "conflict".
+
+- The landing page settles: `Home` publishes `#agent-state` on the same terms
+  as every other routed view (`loading` on mount, `ready` when the initial
+  load finishes — including finishing badly), and `/` no longer bounces to
+  the run table when whoami fails for any reason other than a 401. A failed
+  whoami is a fact about the control plane, not about who is here — the rule
+  `IdentityGate` already states — and redirecting on it also restarted the
+  load, leaving `#agent-state` at `loading` for an extra round trip after the
+  page had already finished one. That is what the `webglass` CI arm caught:
+  it extracts `#agent-state` from `/` and read `{"status":"loading",
+  "route":"/runs"}`, the window between the redirect and the run list's
+  fetch.
+
+- The documented container-side value for the Access listener,
+  `NODES_ACCESS_LISTEN`, is `:8081` rather than `127.0.0.1:8081`. Docker
+  forwards a published port to the container's bridge address and never to
+  the container's own loopback, so the loopback form made
+  `127.0.0.1:18081` on thor a connection refused and `nodes.culture.dev` a
+  Cloudflare 502. The c43 replay split is unchanged: it is enforced by the
+  loopback-only publish `127.0.0.1:18081:8081`, which is what
+  `tests/deploy/nodesculturedev_test.go` pins, now alongside the listen
+  value the recipe prescribes.
 
 ## [0.46.2] - 2026-09-02
 

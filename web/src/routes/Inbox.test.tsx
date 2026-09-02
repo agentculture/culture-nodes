@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Inbox from "./Inbox";
-import { ApiError, getLedger, listHumanTasks } from "../api/client";
+import { ApiError, getLedger, getWhoami, listHumanTasks } from "../api/client";
 import {
   DECIDED_TASK,
   DECISION_RESULT,
@@ -11,8 +11,15 @@ import {
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
 } from "../fixtures/human-tasks-fixture";
+import {
+  WHOAMI_ACTOR_ID,
+  WHOAMI_BOUND,
+  WHOAMI_EMAIL,
+  WHOAMI_UNBOUND,
+} from "../fixtures/whoami-fixture";
 import { getAgentState, resetAgentState } from "../agent-state/store";
 import { resetSharedEventsForTests } from "../hooks/useSharedEvents";
+import { resetWhoamiForTests } from "../hooks/useWhoami";
 
 /** A minimal fake of the shared cross-run EventSource (mirrors Mesh.test.tsx). */
 class FakeEventSource {
@@ -67,21 +74,21 @@ class FakeEventSource {
 
 /**
  * The stub-API pattern Workflows.test.tsx established, with one deliberate
- * difference: `decideHumanTask` is NOT mocked. The acceptance for t14 is a
- * component test asserting the POST body *and the Authorization header* a
- * submission actually sends, so the decision path runs the real client
- * helper against a stubbed global `fetch` — the reads (list, ledger) stay
- * module-mocked like every other route test.
+ * difference: `decideHumanTask` is NOT mocked. The acceptance for t14 was a
+ * component test asserting the POST body a submission actually sends — and,
+ * since task t9, that NO Authorization header rides along with it — so the
+ * decision path runs the real client helper against a stubbed global
+ * `fetch`; the reads (list, ledger, whoami) stay module-mocked like every
+ * other route test.
  */
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, listHumanTasks: vi.fn(), getLedger: vi.fn() };
+  return { ...actual, listHumanTasks: vi.fn(), getLedger: vi.fn(), getWhoami: vi.fn() };
 });
 
 const mockListHumanTasks = vi.mocked(listHumanTasks);
 const mockGetLedger = vi.mocked(getLedger);
-
-const TOKEN = "sekrit-decision-token";
+const mockGetWhoami = vi.mocked(getWhoami);
 
 function renderInbox() {
   return render(
@@ -126,35 +133,26 @@ async function findPendingCard() {
   ) as HTMLElement;
 }
 
-async function holdToken(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText("Decision token"), TOKEN);
-  await user.click(screen.getByRole("button", { name: "Hold token" }));
-}
-
-/** Fill the full decision form on the rich pending task's card. */
-async function fillDecision(
+/**
+ * Take the decision on the rich pending task's card. Since task t12 that is
+ * one click on the shared `OutcomeButtons` — no radio to select, no submit to
+ * press, and (task t9) no decider to type: the decider is whoever whoami says
+ * is signed in.
+ */
+async function decide(
   user: ReturnType<typeof userEvent.setup>,
   card: HTMLElement,
-  { payload, note }: { payload?: string; note?: string } = {},
+  outcome = "approved",
 ) {
-  await user.click(within(card).getByRole("radio", { name: "approved" }));
-  await user.type(within(card).getByLabelText("Decider actor id"), "ori");
-  if (payload !== undefined) {
-    // user-event's type() parses `{`/`[` as keyboard descriptors; paste the
-    // JSON instead of escaping every brace.
-    await user.click(within(card).getByLabelText(/Decision payload/));
-    await user.paste(payload);
-  }
-  if (note !== undefined) {
-    await user.type(within(card).getByLabelText(/Note/), note);
-  }
+  await user.click(within(card).getByRole("button", { name: outcome }));
 }
 
 beforeEach(() => {
   mockListHumanTasks.mockReset();
   mockGetLedger.mockReset();
-  window.sessionStorage.clear();
-  window.localStorage.clear();
+  mockGetWhoami.mockReset();
+  mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
+  resetWhoamiForTests();
   resetAgentState();
 });
 
@@ -209,10 +207,16 @@ describe("Inbox pending task rendering", () => {
     // The §8.8 waiting vocabulary: glyph + word, same chip as everywhere.
     expect(scoped.getByText("waiting")).toBeInTheDocument();
     expect(scoped.getByText("⏸")).toBeInTheDocument();
-    // Allowed outcomes are the form's choices.
-    for (const outcome of PENDING_TASK.request.allowed_outcomes!) {
-      expect(scoped.getByRole("radio", { name: outcome })).toBeInTheDocument();
+    // Allowed outcomes are the buttons, `expired` filtered (task t12/#265):
+    // it is the outcome the control plane records when it READS a fact, and
+    // DecideHumanTask refuses it from a decider.
+    for (const outcome of PENDING_TASK.request.allowed_outcomes!.filter(
+      (outcome) => outcome !== "expired",
+    )) {
+      expect(scoped.getByRole("button", { name: outcome })).toBeInTheDocument();
     }
+    expect(scoped.queryByRole("button", { name: "expired" })).toBeNull();
+    expect(scoped.queryAllByRole("radio")).toHaveLength(0);
     expect(
       scoped.getByText("schemas/decisions/release-signoff.json"),
     ).toBeInTheDocument();
@@ -279,47 +283,30 @@ describe("Inbox decided task rendering", () => {
     expect(
       card.querySelector(`time[datetime="${DECIDED_TASK.resolved_at}"]`),
     ).toBeInTheDocument();
-    expect(
-      scoped.queryByRole("button", { name: "Submit decision" }),
-    ).not.toBeInTheDocument();
+    expect(scoped.queryAllByRole("button")).toHaveLength(0);
   });
 });
 
-describe("Inbox token retention (risk r1)", () => {
-  it("holds the token in sessionStorage only — never localStorage, never a cookie — and shows it held", async () => {
+/**
+ * Identity is derived, never typed (task t9, spec c8). The token panel and
+ * the free-text decider field are gone; the decider is the actor whoami
+ * binds the signed-in principal to, and an unbound login can decide nothing.
+ */
+describe("Inbox identity (task t9)", () => {
+  it("offers no token field and no decider field, and says who is deciding", async () => {
     resolveFixture();
-    const user = userEvent.setup();
     renderInbox();
     await screen.findByText(PENDING_TASK.id);
 
-    expect(screen.getByText(/no token held/i)).toBeInTheDocument();
-    await holdToken(user);
-
-    expect(
-      window.sessionStorage.getItem("nodes.human-decision-token"),
-    ).toBe(TOKEN);
-    expect(window.localStorage.length).toBe(0);
-    expect(document.cookie).toBe("");
-    expect(screen.getByText(/token held/i)).toBeInTheDocument();
-    // The credential never renders back into the page.
-    expect(screen.queryByText(TOKEN)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/token/i)).toBeNull();
+    expect(screen.queryByLabelText(/decider/i)).toBeNull();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(await screen.findByText(/deciding as/i)).toHaveTextContent(WHOAMI_EMAIL);
+    expect(screen.getByText(/deciding as/i)).toHaveTextContent(WHOAMI_ACTOR_ID);
   });
 
-  it("clears the token from sessionStorage via the clear affordance", async () => {
-    resolveFixture();
-    const user = userEvent.setup();
-    renderInbox();
-    await screen.findByText(PENDING_TASK.id);
-    await holdToken(user);
-
-    await user.click(screen.getByRole("button", { name: "Clear token" }));
-    expect(
-      window.sessionStorage.getItem("nodes.human-decision-token"),
-    ).toBeNull();
-    expect(screen.getByText(/no token held/i)).toBeInTheDocument();
-  });
-
-  it("refuses to submit without a token: the form is disabled and no request leaves the browser", async () => {
+  it("refuses to submit for an unbound login: the form is disabled and no request leaves the browser", async () => {
+    mockGetWhoami.mockResolvedValue(WHOAMI_UNBOUND);
     resolveFixture();
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
@@ -327,33 +314,26 @@ describe("Inbox token retention (risk r1)", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await fillDecision(user, card);
-    const submit = within(card).getByRole("button", {
-      name: "Submit decision",
-    });
-    expect(submit).toBeDisabled();
-    await user.click(submit);
+    const approve = within(card).getByRole("button", { name: "approved" });
+    expect(approve).toBeDisabled();
+    await user.click(approve);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 describe("Inbox decision submission", () => {
-  it("POSTs the decision with the bearer token, the chosen outcome, the payload+note response, and the ledger guard", async () => {
+  it("POSTs the decision with no Authorization header, the chosen outcome, the schema-shaped response, the signed-in decider and the ledger guard", async () => {
     resolveFixture();
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
     renderInbox();
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
-
-    await holdToken(user);
-    await fillDecision(user, card, {
-      payload: '{"release_ok": true}',
-      note: "ship it",
-    });
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
+    await waitFor(() =>
+      expect(within(card).getByRole("button", { name: "approved" })).toBeEnabled(),
     );
+
+    await decide(user, card);
 
     await screen.findByText(/decision recorded/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -361,12 +341,15 @@ describe("Inbox decision submission", () => {
     expect(url).toBe(`/v1alpha1/human-tasks/${PENDING_TASK.id}/decision`);
     expect(init.method).toBe("POST");
     expect(
-      (init.headers as Record<string, string>).authorization,
-    ).toBe(`Bearer ${TOKEN}`);
+      Object.keys(init.headers as Record<string, string>).map((key) => key.toLowerCase()),
+    ).not.toContain("authorization");
     expect(JSON.parse(init.body as string)).toEqual({
       outcome: "approved",
-      decider_actor_id: "ori",
-      response: { release_ok: true, note: "ship it" },
+      decider_actor_id: WHOAMI_ACTOR_ID,
+      // A task with a decision schema gets a schema-valid payload; one
+      // without gets none, rather than an invented empty object — the same
+      // derivation the Decisions queue and the ticket page make.
+      response: { outcome: "approved" },
       expected_ledger_version: LEDGER_VERSION,
     });
   });
@@ -380,11 +363,10 @@ describe("Inbox decision submission", () => {
     await within(card).findByText(String(LEDGER_VERSION));
     const listCallsBefore = mockListHumanTasks.mock.calls.length;
 
-    await holdToken(user);
-    await fillDecision(user, card);
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
+    await waitFor(() =>
+      expect(within(card).getByRole("button", { name: "approved" })).toBeEnabled(),
     );
+    await decide(user, card);
 
     await screen.findByText(/decision recorded/i);
     expect(mockListHumanTasks.mock.calls.length).toBeGreaterThan(
@@ -392,23 +374,31 @@ describe("Inbox decision submission", () => {
     );
   });
 
-  it("refuses an unparseable decision payload locally: no request leaves the browser", async () => {
+  // Task t12 replaced the hand-rolled form — free-text JSON payload, note and
+  // all — with the shared OutcomeButtons, so there is no longer a field a
+  // decider can put unparseable JSON into. The response is derived from the
+  // task's own decision schema instead, as it already was on the other two
+  // decision surfaces.
+  it("offers no free-text payload or note field at all", async () => {
     resolveFixture();
+    renderInbox();
+    const card = await findPendingCard();
+    expect(within(card).queryByLabelText(/Decision payload/)).toBeNull();
+    expect(within(card).queryByLabelText(/^Note/)).toBeNull();
+    expect(card.querySelectorAll("textarea, input")).toHaveLength(0);
+  });
+
+  it("holds every outcome until the run's ledger version has been read", async () => {
+    resolveFixture();
+    mockGetLedger.mockReturnValue(new Promise(() => {}));
     const fetchMock = stubDecisionFetch();
     const user = userEvent.setup();
     renderInbox();
     const card = await findPendingCard();
-    await within(card).findByText(String(LEDGER_VERSION));
 
-    await holdToken(user);
-    await fillDecision(user, card, { payload: "{not json" });
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
-    );
-
-    expect(
-      await within(card).findByText(/not valid JSON/),
-    ).toBeInTheDocument();
+    const approve = within(card).getByRole("button", { name: "approved" });
+    expect(approve).toBeDisabled();
+    await user.click(approve);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -427,11 +417,10 @@ describe("Inbox decision submission", () => {
     const card = await findPendingCard();
     await within(card).findByText(String(LEDGER_VERSION));
 
-    await holdToken(user);
-    await fillDecision(user, card);
-    await user.click(
-      within(card).getByRole("button", { name: "Submit decision" }),
+    await waitFor(() =>
+      expect(within(card).getByRole("button", { name: "approved" })).toBeEnabled(),
     );
+    await decide(user, card);
 
     expect(
       await within(card).findByText(/not valid for this deployment/),

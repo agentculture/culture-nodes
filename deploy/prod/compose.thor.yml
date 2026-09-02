@@ -92,15 +92,19 @@ services:
       # the comment read `/tickets/SCRUM-N`: a path with no origin, which
       # Jira renders as text rather than a link.
       #
-      # The default is thor's API origin because thor is the only machine
-      # serving the page; it is a LAN/tailscale address until the OAuth
-      # cycle, so a reader off the network sees a link they cannot open
-      # (deploy/prod/README.md, "Ticket page links are LAN addresses").
+      # The default is the PUBLIC name the page is served under behind
+      # Cloudflare Access (login-from-anywhere task t19, spec c44), not this
+      # machine's LAN address: the link is followed by a person, possibly off
+      # the network, while the sweep, workers and bridges keep their LAN
+      # URLs (NODES_API_URL / NODES_CALLBACK_BASE_URL) untouched. The same
+      # value is declared on orin — whichever worker mints the run renders
+      # the link, and the two machines share one namespace
+      # (docs/operations/nodes-culture-dev.md, "Step 5").
       # install-secrets.sh writes the concrete origin into prod.env, which
       # overrides this. The default is non-empty on purpose: a host that has
       # not re-run install-secrets.sh must not silently fall back to the
       # bare path.
-      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-https://nodes.culture.dev}
       NODES_HUMAN_DECISION_TOKEN_SECRET: ${NODES_HUMAN_DECISION_TOKEN_SECRET:?install secrets first}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000
@@ -129,6 +133,13 @@ services:
       # it against this list, so an actor registered without a matching line
       # here dispatches, 401s, and points at nothing (issue filed).
       NODES_ACTOR_QWEN_TOKEN: ${NODES_ACTOR_QWEN_TOKEN:-}
+      # The merge gate's own principal (login-from-anywhere t11, spec c45):
+      # scripts/merge-gate.py and collect-handover.py --gate post suite
+      # verdicts and gate reports as company/merge-gate, and the api service
+      # recognises the bearer through the actor row's auth_token_env — the
+      # INBOUND direction of the same variable the lines above serve
+      # outbound. api only: no worker ever dispatches to this actor.
+      NODES_ACTOR_MERGE_GATE_TOKEN: ${NODES_ACTOR_MERGE_GATE_TOKEN:-}
       # The three bearer secrets the attempts-evidence-humans-loops batch
       # added (t13 registration, t10 event delivery, t19+t15 ad-hoc lane).
       # Optional on purpose: closed-by-default means an unset secret leaves
@@ -136,6 +147,28 @@ services:
       NODES_ACTOR_REGISTRATION_TOKEN_SECRET: ${NODES_ACTOR_REGISTRATION_TOKEN_SECRET:-}
       NODES_EVENT_TOKEN_SECRET: ${NODES_EVENT_TOKEN_SECRET:-}
       NODES_ADHOC_RUN_TOKEN_SECRET: ${NODES_ADHOC_RUN_TOKEN_SECRET:-}
+      # Jira system webhooks enter only through the Access listener. Either
+      # HMAC secret or URL token authenticates the wake-up; Jira credentials
+      # hydrate authoritative history before any fact is delivered.
+      NODES_JIRA_WEBHOOK_SECRET: ${NODES_JIRA_WEBHOOK_SECRET:-}
+      NODES_JIRA_WEBHOOK_TOKEN: ${NODES_JIRA_WEBHOOK_TOKEN:-}
+      JIRA_ACCOUNT_EMAIL: ${JIRA_ACCOUNT_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      JIRA_API_BASE: ${JIRA_API_BASE:-}
+      JIRA_SITE: ${JIRA_SITE:-}
+      JIRA_PROJECT: ${JIRA_PROJECT:-SCRUM}
+      JIRA_BOT_ACCOUNT_ID: ${JIRA_BOT_ACCOUNT_ID:-}
+      # Cloudflare Access is accepted only on this second listener, the one
+      # published below on thor's loopback alone. Set it to `:8081` in
+      # prod.env — NOT `127.0.0.1:8081`: a published port is forwarded to the
+      # container's bridge address, never to the container's own loopback, so
+      # a container-loopback bind is unreachable from 127.0.0.1:18081 and
+      # cloudflared gets a connection refused. The loopback restriction is
+      # the host-side publish's job, and it does that job whatever the
+      # container binds (docs/operations/nodes-culture-dev.md, "Topology").
+      NODES_ACCESS_LISTEN: ${NODES_ACCESS_LISTEN:-}
+      NODES_ACCESS_TEAM_DOMAIN: ${NODES_ACCESS_TEAM_DOMAIN:-}
+      NODES_ACCESS_AUD: ${NODES_ACCESS_AUD:-}
       # The dial-in credential issuance lane (issue #111's dial-in half):
       # POST /v1alpha1/inbound/credentials mints the token a bridge presents
       # when it dials out, so no operator invents one. Same closed-by-default
@@ -156,7 +189,16 @@ services:
       # answers is a value, never a code or image change.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
+      # The LAN listener, on every interface: the sweep, both workers and the
+      # bridges reach the API here over plaintext HTTP, and it is NOT what
+      # nodes.culture.dev fronts. Task t8 adds a second, loopback-only
+      # publish beside it — `127.0.0.1:18081:<NODES_ACCESS_LISTEN port>` —
+      # which is the only origin the cloudflared-nodes.service tunnel targets,
+      # so an Access JWT captured on the LAN cannot be replayed to this port
+      # (spec c43; docs/operations/nodes-culture-dev.md). This line stays
+      # exactly as it is, and tests/deploy/nodesculturedev_test.go pins it.
       - "18080:8080"
+      - "127.0.0.1:18081:8081"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -175,7 +217,7 @@ services:
       NODES_SCHEDULER_ID: thor-scheduler-1
       # See the api service's note: whichever process mints the run renders
       # the ticket page link, so this value belongs on all three.
-      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-https://nodes.culture.dev}
       # See the api service's note: unset means telemetry off.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # The ticket-report dispatcher (t11, #198) runs on the ACTIVE scheduler
@@ -208,7 +250,7 @@ services:
       NODES_WORKER_ID: thor-worker-1
       # See the api service's note: whichever process mints the run renders
       # the ticket page link, so this value belongs on all three.
-      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-http://thor:18080}
+      NODES_UI_BASE_URL: ${NODES_UI_BASE_URL:-https://nodes.culture.dev}
       NODES_CALLBACK_BASE_URL: ${NODES_CALLBACK_BASE_URL:-http://thor:18080}
       NODES_CALLBACK_TOKEN_SECRET: ${NODES_CALLBACK_TOKEN_SECRET:?install secrets first}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000

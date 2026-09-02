@@ -658,6 +658,10 @@ type actorTelemetry struct {
 func (w *Worker) completeTechnicalFailure(
 	ctx context.Context, claimed postgres.ClaimedWork, actorID string, status engine.TechStatus, class, detail string, delta []ledger.Record, telemetry actorTelemetry,
 ) (engine.CompletionResult, error) {
+	retryRefusal := ""
+	if telemetry.ActorError != nil && telemetry.ActorError.Class == "identity_mismatch" {
+		retryRefusal = "identity mismatch at dial-in completion acceptance is not retryable"
+	}
 	result, err := w.complete(ctx, claimed, engine.CompletionRequest{
 		TechStatus:        status,
 		Output:            diagnosticOutput(class, detail, telemetry.ActorError),
@@ -667,6 +671,7 @@ func (w *Worker) completeTechnicalFailure(
 		ContinuationRef:   telemetry.ContinuationRef,
 		Preserve:          telemetry.Preserve,
 		ActorID:           actorID,
+		RetryRefusal:      retryRefusal,
 	})
 	if err != nil {
 		if isStale(err) {

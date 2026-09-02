@@ -3,6 +3,7 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { getVersion } from "../api/client";
 import type { Version } from "../api/types";
 import Mark from "../culture-design/mark";
+import { useWhoami, type WhoamiState } from "../hooks/useWhoami";
 
 /** The repo's own README — the only documentation this app can link to. */
 const DOCS_URL = "https://github.com/agentculture/culture-nodes#readme";
@@ -28,9 +29,17 @@ const DOCS_URL = "https://github.com/agentculture/culture-nodes#readme";
  * as its tooltip. A failed or unstamped read says so rather than showing
  * nothing: "revision unknown" is a fact about the deployment, and the header
  * is where issue #104 would have been caught fifteen hours earlier.
+ *
+ * It also says who is here (task t9, spec c8): "signed in as <email>", read
+ * from `GET /v1alpha1/whoami` once per session. There is no login form and
+ * no token field anywhere in the app — Cloudflare Access is the login, the
+ * edge cookie carries it, and the header only reports what the control
+ * plane verified. An unbound login and a missing one are named as such
+ * rather than blanked, for the same reason the version readout is.
  */
 export function Header() {
   const [navOpen, setNavOpen] = useState(false);
+  const whoami = useWhoami();
   const [version, setVersion] = useState<Version | null>(null);
   const [versionFailed, setVersionFailed] = useState(false);
   const [ticketKey, setTicketKey] = useState("");
@@ -64,7 +73,7 @@ export function Header() {
 
   return (
     <header className="app-header" id="app-header">
-      <Link className="app-header__brand" to="/runs" onClick={closeNav}>
+      <Link className="app-header__brand" to="/" onClick={closeNav}>
         <Mark size={28} />
         <span className="app-header__wordmark">Culture Nodes</span>
       </Link>
@@ -83,36 +92,49 @@ export function Header() {
         id="app-header-nav"
         aria-label="Primary"
       >
-        <NavLink to="/runs" className={navLinkClass} onClick={closeNav}>
-          Runs
-        </NavLink>
-        <NavLink to="/board" className={navLinkClass} onClick={closeNav}>
-          Board
-        </NavLink>
-        <NavLink to="/jobs" className={navLinkClass} onClick={closeNav}>
-          Jobs
-        </NavLink>
-        <NavLink to="/inbox" className={navLinkClass} onClick={closeNav}>
-          Inbox
-        </NavLink>
-        <NavLink to="/decisions" className={navLinkClass} onClick={closeNav}>
-          Decisions
-        </NavLink>
-        <NavLink to="/mesh" className={navLinkClass} onClick={closeNav}>
-          Mesh
-        </NavLink>
-        <NavLink to="/stats" className={navLinkClass} onClick={closeNav}>
-          Statistics
-        </NavLink>
-        <NavLink to="/graphs" className={navLinkClass} onClick={closeNav}>
-          Node Graphs
-        </NavLink>
-        <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
-          Plan
-        </NavLink>
-        <NavLink to="/workflows/generate" className={navLinkClass} onClick={closeNav}>
-          Generate
-        </NavLink>
+        {/* Two groups, and the split is the point (task t17, decision c33):
+            a person is here for their own work, an operator is here for the
+            engine. Nothing was retired — Inbox and Decisions still list every
+            pending item across every ticket, which no single ticket page can
+            — but they stopped competing for first place with the one link a
+            person arriving from a Jira comment actually wants. */}
+        <span className="app-header__group app-header__group--work">
+          <NavLink to="/" end className={navLinkClass} onClick={closeNav}>
+            Your work
+          </NavLink>
+          <NavLink to="/inbox" className={navLinkClass} onClick={closeNav}>
+            Inbox
+          </NavLink>
+          <NavLink to="/decisions" className={navLinkClass} onClick={closeNav}>
+            Decisions
+          </NavLink>
+        </span>
+        <span className="app-header__group app-header__group--engine">
+          <NavLink to="/runs" className={navLinkClass} onClick={closeNav}>
+            Runs
+          </NavLink>
+          <NavLink to="/board" className={navLinkClass} onClick={closeNav}>
+            Board
+          </NavLink>
+          <NavLink to="/jobs" className={navLinkClass} onClick={closeNav}>
+            Jobs
+          </NavLink>
+          <NavLink to="/mesh" className={navLinkClass} onClick={closeNav}>
+            Mesh
+          </NavLink>
+          <NavLink to="/stats" className={navLinkClass} onClick={closeNav}>
+            Statistics
+          </NavLink>
+          <NavLink to="/graphs" className={navLinkClass} onClick={closeNav}>
+            Node Graphs
+          </NavLink>
+          <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
+            Plan
+          </NavLink>
+          <NavLink to="/workflows/generate" className={navLinkClass} onClick={closeNav}>
+            Generate
+          </NavLink>
+        </span>
         <form className="app-header__ticket" onSubmit={openTicket}>
           <label htmlFor="app-header-ticket-key">Tickets</label>
           <input
@@ -155,6 +177,13 @@ export function Header() {
         >
           {versionReadout(version, versionFailed)}
         </span>
+        <span
+          className="app-header__identity"
+          id="app-header-identity"
+          data-identity-status={whoami.status}
+        >
+          {identityReadout(whoami)}
+        </span>
       </p>
     </header>
   );
@@ -180,6 +209,28 @@ function versionReadout(version: Version | null, failed: boolean): string {
  * establish — and paraphrasing it here would put a second, drifting claim next
  * to the authoritative one.
  */
+/**
+ * The signed-in readout. Each non-bound state is named distinctly: an
+ * unbound login is a person nobody has onboarded (IdentityGate replaces the
+ * page for them), a 401 is no identity at all, and an unreachable whoami is
+ * neither — it says nothing about who is here, so it must not read as
+ * "signed out".
+ */
+function identityReadout(whoami: WhoamiState): string {
+  switch (whoami.status) {
+    case "bound":
+      return `signed in as ${whoami.displayName}`;
+    case "unbound":
+      return `${whoami.displayName} · no actor bound`;
+    case "unauthenticated":
+      return "not signed in";
+    case "unavailable":
+      return "identity unavailable";
+    case "loading":
+      return "identity…";
+  }
+}
+
 function versionReadoutTitle(version: Version | null, failed: boolean): string {
   if (failed) {
     return "GET /v1alpha1/version did not answer, so which revision is serving this page is unknown";

@@ -179,8 +179,23 @@ means editing `workflow.yaml`.
 | `runner://headspace/tdd-gate` | the deployment's runner services file. A separate identity from a general-purpose runner precisely so it can be pointed at the one host whose toolchain satisfies the declared instruments. |
 | `group/platform-maintainers` | the deployment's human inbox. |
 | `MERGE_GATE_SOURCE_URL` / `MERGE_GATE_SOURCE_SHA256` | granted to the worker process. Where the gate program is fetched from, and the digest those bytes must have. |
-| `NODES_API_URL` / `NODES_DECISION_TOKEN` | granted to the worker process. The control plane the records land in, and the same bearer secret the review surface uses — whoever can record a gate result can decide a merge. |
-| `NODES_GATE_VALIDATOR_ACTOR_ID` | granted to the worker process. A registered, non-human validator identity; a derived record needs an identified deterministic producer (§10.4) and the control plane refuses a human one. |
+| `NODES_API_URL` / `NODES_ACTOR_MERGE_GATE_TOKEN` | granted to the worker process. The control plane the records land in, and the gate's **own** credential: the bearer of the registered `company/merge-gate` agent actor. The control plane resolves it through the actor row's `auth_token_env` and stamps every record of the report agent-origin, `proposed` — the gate's claim, decided by a person like any other (login-from-anywhere t11, spec c45). The human decision secret is not granted to a gate. |
+| `NODES_GATE_VALIDATOR_ACTOR_ID` | optional. A registered, non-human validator identity to attribute the records to when posting under the human decision bearer instead (validator-origin, `derived`); under the agent credential the control plane overrides it with the credential's own actor and says so in its reply. |
+
+Registering the gate's principal is one `register-actor.sh` call on thor,
+after `install-secrets.sh` has minted `NODES_ACTOR_MERGE_GATE_TOKEN` into
+`prod.env` (the endpoint is a placeholder: no workflow dispatches to this
+actor, it only ever dials in):
+
+```bash
+deploy/prod/register-actor.sh company/merge-gate http://127.0.0.1:1 NODES_ACTOR_MERGE_GATE_TOKEN
+```
+
+The row's `metadata.auth_token_env` then names the variable, which is what the
+control plane reads to recognise the bearer — the same lookup the worker uses
+for its outbound credential (`internal/worker/registry.go`). An operator
+running `scripts/collect-handover.py --gate` by hand needs the same value in
+`~/.culture-nodes/operator.env`.
 
 There is **no run input**. The gate measures the workspace the runner gives it
 and reads its own commit back out of that worktree.

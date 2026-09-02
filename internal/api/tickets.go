@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -101,13 +103,19 @@ type TicketOut struct {
 	// still being asked.
 	HumanTasks   []HumanTaskOut         `json:"human_tasks"`
 	PendingTasks []TicketPendingTaskOut `json:"pending_tasks"`
-	Reports      []TicketReportOut      `json:"ticket_reports"`
-	Replies      []TicketReplyOut       `json:"replies"`
-	LatestFrame  *TicketFrameOut        `json:"latest_frame,omitempty"`
-	PageLink     *TicketPageLinkOut     `json:"page_link,omitempty"`
-	Frozen       bool                   `json:"frozen"`
-	MergedPR     json.RawMessage        `json:"merged_pr,omitempty"`
-	Freeze       *TicketFreezeOut       `json:"freeze,omitempty"`
+	// PendingRecords is the ticket's undecided ledger claims, grouped by
+	// run and quoted at the version this same response read (task t14,
+	// spec c11/h5). It is the same shape GET /v1alpha1/pending-decisions
+	// serves, narrowed to this ticket's own runs, so a page that renders
+	// one can render the other.
+	PendingRecords []PendingDecisionRunOut `json:"pending_records"`
+	Reports        []TicketReportOut       `json:"ticket_reports"`
+	Replies        []TicketReplyOut        `json:"replies"`
+	LatestFrame    *TicketFrameOut         `json:"latest_frame,omitempty"`
+	PageLink       *TicketPageLinkOut      `json:"page_link,omitempty"`
+	Frozen         bool                    `json:"frozen"`
+	MergedPR       json.RawMessage         `json:"merged_pr,omitempty"`
+	Freeze         *TicketFreezeOut        `json:"freeze,omitempty"`
 }
 
 type postTicketReplyRequest struct {
@@ -145,6 +153,9 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send {replier, text, question_id?}", "decode ticket reply: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.Replier, warning = principalActor(r, "replier", req.Replier)
 	if req.Replier == "" || req.Text == "" {
 		return badRequest("replier and text are required", "empty ticket reply")
 	}
@@ -195,7 +206,13 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	if err != nil {
 		return internalError(fmt.Errorf("reply %s recorded without an engine fact: %w", replyID, err))
 	}
-	comment := fmt.Sprintf("%s\n\nvia %s", req.Text, req.Replier)
+	// The mirror names the person, not the id (task t14, spec c16/h8): a
+	// reader on the board sees "via Ada Lovelace", and that name is read
+	// back out of the actor the verified principal is BOUND to — never the
+	// free-text replier the body sent, which by this point a principal has
+	// already overridden anyway. Without a principal the field is all this
+	// control plane has, and the mirror says so by carrying it unchanged.
+	comment := fmt.Sprintf("%s\n\nvia %s", req.Text, s.replierDisplayName(r, req.Replier))
 	outboxPayload, _ := json.Marshal(map[string]any{"verb": "post_comment", "issue": ticketID, "comment": comment, "phase": "reply", "signal_event_id": delivery.Event.ID})
 	tx, err := s.Store.Pool().Begin(r.Context())
 	if err != nil {
@@ -211,8 +228,42 @@ func (s *Server) handlePostTicketReply(w http.ResponseWriter, r *http.Request) e
 	if err = tx.Commit(r.Context()); err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusCreated, TicketReplyOut{ID: replyID, Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID, SignalEventID: delivery.Event.ID, CreatedAt: delivery.Event.CreatedAt})
+	writeJSONWithWarning(w, http.StatusCreated, TicketReplyOut{ID: replyID, Replier: req.Replier, Text: req.Text, QuestionID: req.QuestionID, SignalEventID: delivery.Event.ID, CreatedAt: delivery.Event.CreatedAt}, warning)
 	return nil
+}
+
+// replierDisplayName is the name the Jira mirror credits a reply to.
+//
+// With a verified principal it is the bound actor's own display name —
+// `metadata.display_name` when the registration recorded one, else the
+// actor key — so the name on the board is one a reader can look up in the
+// actor registry. It is deliberately NOT the principal's email: the email
+// claim is kept for display in this control plane and is not what an actor
+// is resolved by (spec c18), and a Jira comment is a public surface.
+//
+// Any failure to resolve it falls back to the id already stamped on the
+// fact rather than failing the reply: the reply and its engine fact are the
+// record, and the mirror is display.
+func (s *Server) replierDisplayName(r *http.Request, replier string) string {
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok || p.Synthetic || p.ActorID == "" {
+		return replier
+	}
+	var actorKey string
+	var displayName pgtype.Text
+	err := s.Store.Pool().QueryRow(r.Context(),
+		`SELECT actor_key, metadata->>'display_name' FROM actors WHERE id=$1 AND namespace_id=$2`,
+		p.ActorID, s.NamespaceID).Scan(&actorKey, &displayName)
+	if err != nil {
+		return replier
+	}
+	if name := strings.TrimSpace(textOrEmpty(displayName)); name != "" {
+		return name
+	}
+	if actorKey != "" {
+		return actorKey
+	}
+	return replier
 }
 
 func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) error {
@@ -223,6 +274,9 @@ func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) erro
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send {merged_pr, frozen_by}", "decode freeze: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.FrozenBy, warning = principalActor(r, "frozen_by", req.FrozenBy)
 	if req.FrozenBy == "" {
 		req.FrozenBy = "human"
 	}
@@ -247,14 +301,14 @@ func (s *Server) handleFreezeTicket(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSONWithWarning(w, http.StatusOK, map[string]any{
 		"ticket_id":      ticketID,
 		"frozen":         true,
 		"merged_pr":      req.MergedPR,
 		"ticket_status":  req.TicketStatus,
 		"cancelled_runs": effect.Cancelled,
 		"parked_runs":    effect.Parked,
-	})
+	}, warning)
 	return nil
 }
 
@@ -266,6 +320,9 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return badRequest("send {frame, posted_by}", "decode ticket frame: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.PostedBy, warning = principalActor(r, "posted_by", req.PostedBy)
 	if len(req.Frame) == 0 || !json.Valid(req.Frame) || req.PostedBy == "" {
 		return badRequest("frame must be valid JSON and posted_by is required", "invalid ticket frame request")
 	}
@@ -289,41 +346,136 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 	if err := tx.Commit(r.Context()); err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusCreated, out)
+	writeJSONWithWarning(w, http.StatusCreated, out, warning)
 	return nil
 }
 
-func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
-	ticketID := r.PathValue("id")
-	// SubjectFromInput: the ticket page shows what happened on the ticket,
-	// including runs that predate the runs.subject column and carry the
-	// issue key only in their input (task t17) — see listRunsParams.
-	const (
-		ticketRunPageSize = 500
-		ticketRunMaxPages = 20
-	)
-	runs := make([]RunOut, 0, ticketRunPageSize)
+// ticketPageSize / ticketMaxPages bound every paged read this projection
+// makes. A decision surface may not lose a run — or a claim on one — to a
+// page limit, so each read walks its cursor to the end rather than serving
+// the first page and calling it the answer (task t18).
+//
+// ticketMaxPages is a runaway stop, not a result limit, and the difference
+// is visible in what happens when it is reached: both readers REFUSE with
+// an error naming the cap rather than returning the prefix they collected.
+// A truncated ticket page is indistinguishable from a complete one to the
+// person deciding on it, and that is the failure this projection may not
+// have (#274 review, Qodo finding 3).
+const (
+	ticketPageSize = 500
+	ticketMaxPages = 20
+)
+
+// ticketRuns is every run addressed to ticketID, newest first.
+//
+// SubjectFromInput: the ticket page shows what happened on the ticket,
+// including runs that predate the runs.subject column and carry the issue
+// key only in their input (task t17) — see listRunsParams. It is a method
+// rather than inline in handleGetTicket because POST
+// /v1alpha1/tickets/{id}/reviews (task t14) has to answer the same question
+// — is this run one of the ticket's? — and answering it a second way is how
+// the two surfaces would come to disagree about what the ticket owns.
+func (s *Server) ticketRuns(ctx context.Context, ticketID string) ([]RunOut, error) {
+	runs := make([]RunOut, 0, ticketPageSize)
 	var cursor *nodeRunCursor
-	for page := 0; page < ticketRunMaxPages; page++ {
-		pageRuns, next, err := s.listRuns(r.Context(), listRunsParams{
+	for page := 0; page < ticketMaxPages; page++ {
+		pageRuns, next, err := s.listRuns(ctx, listRunsParams{
 			Subject: ticketID, SubjectFromInput: true, Cursor: cursor,
-			Limit: ticketRunPageSize, Sort: sortCreatedAt,
+			Limit: ticketPageSize, Sort: sortCreatedAt,
 		})
 		if err != nil {
-			return internalError(err)
+			return nil, err
 		}
 		runs = append(runs, pageRuns...)
 		if next == "" {
+			return runs, nil
+		}
+		decoded, err := decodeNodeRunCursor(next)
+		if err != nil {
+			return nil, fmt.Errorf("api: decode ticket run cursor: %w", err)
+		}
+		cursor = &decoded
+	}
+	// The cap was reached with a cursor still outstanding. Returning what we
+	// have would be a page that LOOKS complete while omitting runs — and the
+	// decision surface reads this list to say which runs a ticket owns, so a
+	// silent prefix is a run nobody can decide and nobody can see is missing
+	// (#274 review, Qodo finding 3).
+	return nil, fmt.Errorf("api: ticket %s has more than %d runs (%d pages of %d); "+
+		"raise ticketMaxPages or narrow the ticket", ticketID, ticketPageSize*ticketMaxPages, ticketMaxPages, ticketPageSize)
+}
+
+// ticketPendingRecords is the ticket's undecided ledger claims, grouped by
+// run and quoted at a version this same response read (task t14, spec
+// c11/h5).
+//
+// The query is GET /v1alpha1/pending-decisions' own, narrowed to the runs
+// this projection already listed rather than re-implemented: "proposed, and
+// no review record points at it, and nothing supersedes it" is a join with
+// three ways to get it subtly wrong, and a ticket page that answered it
+// differently from the decisions queue would be a page that disagrees with
+// the queue about what is still open.
+//
+// The version is re-stated from the shared reader for the same reason the
+// tasks are: one response, one version per run. Serving records without it
+// is what ticketpending.go:44-53 argues against — a client that fetched the
+// version separately would be attesting to a frame it never showed anyone.
+func (s *Server) ticketPendingRecords(ctx context.Context, runIDs []string, version func(string) (int64, error)) ([]PendingDecisionRunOut, error) {
+	out := []PendingDecisionRunOut{}
+	if len(runIDs) == 0 {
+		return out, nil
+	}
+	byRun := map[string]int{}
+	var cursor *nodeRunCursor
+	for page := 0; page < ticketMaxPages; page++ {
+		groups, _, next, err := s.listPendingDecisions(ctx, pendingDecisionParams{
+			RunIDs: runIDs, Limit: ticketPageSize, Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, group := range groups {
+			if at, seen := byRun[group.RunID]; seen {
+				out[at].Records = append(out[at].Records, group.Records...)
+				continue
+			}
+			byRun[group.RunID] = len(out)
+			out = append(out, group)
+		}
+		if next == "" {
+			cursor = nil
 			break
 		}
 		decoded, err := decodeNodeRunCursor(next)
 		if err != nil {
-			return internalError(fmt.Errorf("api: decode ticket run cursor: %w", err))
+			return nil, fmt.Errorf("api: decode ticket pending-record cursor: %w", err)
 		}
 		cursor = &decoded
 	}
-	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, PendingTasks: []TicketPendingTaskOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
-	var err error
+	if cursor != nil {
+		// Same refusal as ticketRuns, and it matters more here: an undecided
+		// claim dropped off the end of a truncated read is a record the
+		// ticket page shows as absent rather than as pending.
+		return nil, fmt.Errorf("api: ticket runs carry more than %d pending records (%d pages of %d); "+
+			"decide the open ones, or raise ticketMaxPages", ticketPageSize*ticketMaxPages, ticketMaxPages, ticketPageSize)
+	}
+	for i := range out {
+		v, err := version(out[i].RunID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].LedgerVersion = v
+	}
+	return out, nil
+}
+
+func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
+	ticketID := r.PathValue("id")
+	runs, err := s.ticketRuns(r.Context(), ticketID)
+	if err != nil {
+		return internalError(err)
+	}
+	out := TicketOut{TicketID: ticketID, Runs: runs, Ledger: []TicketRunLedgerOut{}, HumanTasks: []HumanTaskOut{}, PendingTasks: []TicketPendingTaskOut{}, PendingRecords: []PendingDecisionRunOut{}, Reports: []TicketReportOut{}, Replies: []TicketReplyOut{}}
 	// The board link is composed from the runs, which are the only rows in
 	// this projection that carry the Jira work-item fact (task t18).
 	out.TicketURL = ticketBackLink(ticketID, runs)
@@ -351,9 +503,19 @@ func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) error {
 	// guard on POST /human-tasks/{id}/decision mean anything. A client
 	// that fetched the version separately would be attesting to a frame it
 	// never showed anyone.
-	out.PendingTasks, err = pendingTicketTasks(out.HumanTasks, func(runID string) (int64, error) {
+	//
+	// Both halves of the decidable surface — the tasks and the undecided
+	// claims below — quote the version through ONE memoized reader, so a
+	// page cannot show a decider two different versions of the same run and
+	// have them submit the wrong one.
+	versions := runLedgerVersions(func(runID string) (int64, error) {
 		return s.Ledger.LedgerVersion(r.Context(), runID)
 	})
+	out.PendingTasks, err = pendingTicketTasks(out.HumanTasks, versions)
+	if err != nil {
+		return internalError(err)
+	}
+	out.PendingRecords, err = s.ticketPendingRecords(r.Context(), runIDs, versions)
 	if err != nil {
 		return internalError(err)
 	}

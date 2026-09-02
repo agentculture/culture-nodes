@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import {
@@ -7,11 +7,6 @@ import {
   getLedger,
   listHumanTasks,
 } from "../api/client";
-import {
-  clearDecisionToken,
-  getDecisionToken,
-  setDecisionToken,
-} from "../api/decision-token";
 import type {
   HumanTask,
   HumanTaskBinding,
@@ -19,8 +14,11 @@ import type {
 } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
+import { SignedInAs } from "../components/IdentityGate";
+import OutcomeButtons from "../components/OutcomeButtons";
 import StatusChip from "../components/StatusChip";
 import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import { useWhoami } from "../hooks/useWhoami";
 
 /**
  * Every event that means a human task changed shape — a new one created, or
@@ -42,16 +40,29 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * Pending tasks come from `GET /v1alpha1/human-tasks?status=pending` and
  * render the §9.9 request payload exactly as the engine stored it — what
  * the human is actually being shown, never re-derived, and absent fields
- * stay absent (no fabricated deadlines). Each card carries a decision form:
- * one allowed outcome, the accountable decider, an optional JSON payload
- * and note. Decided tasks (`?status=decided`) render their resolution
- * read-only under the confirmed-authority chip, since a committed human
- * decision IS a confirmed ledger review (PRD §10.8).
+ * stay absent (no fabricated deadlines). Each card carries one button per
+ * outcome the engine will accept. Decided tasks
+ * (`?status=decided`) render their resolution read-only under the
+ * confirmed-authority chip, since a committed human decision IS a confirmed
+ * ledger review (PRD §10.8).
  *
- * The decision POST is this UI's only mutation and its only authenticated
- * call. The bearer token is user-entered and sessionStorage-held — the r1
- * retention decision, documented in api/decision-token.ts — and the form
- * cannot submit without it.
+ * The decision itself is `OutcomeButtons` — the same component the Decisions
+ * queue and the ticket page offer (task t12). It used to be a second, hand-
+ * rolled radio fieldset plus a submit here, which is exactly the drift
+ * `allowed_outcomes` exists to prevent: two independent renderings of "offer
+ * what DecideHumanTask accepts and nothing else" are two chances for one of
+ * them to offer an outcome that 400s (`expired`, #265) or hide one that would
+ * have worked. There is one now, and it takes the free-text JSON payload and
+ * note with it: the response is derived from the task's own decision schema,
+ * as it already was on the other two surfaces.
+ *
+ * Who decides is not part of the form (task t9, spec c8). Until then the
+ * page held a deployment-shared bearer per tab and asked for a decider id
+ * in free text; both are gone. The decider is the actor
+ * `useWhoami` says the signed-in principal is bound to, it is shown on the
+ * page as a fact rather than a field, the request carries no credential
+ * (the Cloudflare edge cookie is the credential), and an unbound or
+ * signed-out state disables every submit.
  *
  * `expected_ledger_version` is a real read, not a fabrication: each pending
  * card fetches its run's ledger once and submits the version it actually
@@ -62,7 +73,7 @@ export function Inbox() {
   const [pending, setPending] = useState<HumanTask[] | null>(null);
   const [decided, setDecided] = useState<HumanTask[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
-  const [tokenHeld, setTokenHeld] = useState(getDecisionToken() !== null);
+  const whoami = useWhoami();
   // Bumped after a recorded decision, and (task t30, issue #46) by a
   // debounced human-task event on the shared cross-run stream. The effect
   // refetches WITHOUT nulling the lists first (stale-while-revalidate), so
@@ -127,7 +138,7 @@ export function Inbox() {
     return () => controller.abort();
   }, [reloadKey]);
 
-  const token = tokenHeld ? getDecisionToken() : null;
+  const actorId = whoami.status === "bound" ? whoami.actorId : null;
   const loaded = pending !== null && decided !== null;
 
   return (
@@ -138,17 +149,7 @@ export function Inbox() {
         confirmed, human-authority ledger review — it routes the paused run.
       </p>
 
-      <TokenPanel
-        held={tokenHeld}
-        onHold={(value) => {
-          setDecisionToken(value);
-          setTokenHeld(true);
-        }}
-        onClear={() => {
-          clearDecisionToken();
-          setTokenHeld(false);
-        }}
-      />
+      <SignedInAs verb="Deciding" whoami={whoami} />
 
       {error ? <ErrorNotice error={error} /> : null}
       {!loaded ? (
@@ -171,7 +172,7 @@ export function Inbox() {
                 <PendingTaskCard
                   key={task.id}
                   task={task}
-                  token={token}
+                  actorId={actorId}
                   onDecided={() => setReloadKey((key) => key + 1)}
                 />
               ))}
@@ -194,66 +195,6 @@ export function Inbox() {
   );
 }
 
-/**
- * Token entry, indicator, and clear affordance (risk r1). The input is
- * `type="password"` and its draft is dropped the moment the token is held;
- * the held value itself is never rendered back into the page.
- */
-function TokenPanel({
-  held,
-  onHold,
-  onClear,
-}: {
-  held: boolean;
-  onHold: (token: string) => void;
-  onClear: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-  return (
-    <div className="inbox-token" id="inbox-token">
-      <div className="inbox-token__entry">
-        <label htmlFor="decision-token-input">Decision token</label>
-        <input
-          id="decision-token-input"
-          type="password"
-          autoComplete="off"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button
-          type="button"
-          className="author-workflow__button"
-          disabled={draft === ""}
-          onClick={() => {
-            onHold(draft);
-            setDraft("");
-          }}
-        >
-          Hold token
-        </button>
-        {held ? (
-          <button
-            type="button"
-            className="author-workflow__button"
-            onClick={onClear}
-          >
-            Clear token
-          </button>
-        ) : null}
-      </div>
-      <p
-        className="inbox-token__state muted"
-        id="decision-token-state"
-        data-token-held={held}
-      >
-        {held
-          ? "token held — this tab only; cleared when the tab closes"
-          : "no token held — decisions are disabled until one is entered"}
-      </p>
-    </div>
-  );
-}
-
 /** Shorten a sha256 digest the way the Workflows table does. */
 function shortDigest(digest: string): string {
   return digest.length > 21 ? `${digest.slice(0, 20)}…` : digest;
@@ -271,19 +212,15 @@ function renderBinding(ref: HumanTaskBinding): string {
 
 function PendingTaskCard({
   task,
-  token,
+  actorId,
   onDecided,
 }: {
   task: HumanTask;
-  token: string | null;
+  /** The signed-in principal's actor, or null when nothing can be recorded. */
+  actorId: string | null;
   onDecided: () => void;
 }) {
   const [ledgerVersion, setLedgerVersion] = useState<number | null>(null);
-  const [outcome, setOutcome] = useState("");
-  const [decider, setDecider] = useState("");
-  const [payload, setPayload] = useState("");
-  const [note, setNote] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [result, setResult] = useState<HumanTaskDecisionResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -303,62 +240,26 @@ function PendingTaskCard({
 
   const request = task.request ?? {};
   const audit = request.audit;
-  const canSubmit =
-    token !== null &&
-    !submitting &&
-    result === null &&
-    outcome !== "" &&
-    decider.trim() !== "" &&
-    ledgerVersion !== null;
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!canSubmit || token === null || ledgerVersion === null) return;
-
-    // The response payload: the JSON textarea verbatim, with the note
-    // folded in as a `note` key (wrapped as {payload, note} when the JSON
-    // is not an object, so nothing the decider typed is ever dropped).
-    let response: unknown;
-    const rawPayload = payload.trim();
-    if (rawPayload !== "") {
-      try {
-        response = JSON.parse(rawPayload);
-      } catch {
-        setFormError(
-          "the decision payload is not valid JSON — fix it or clear the field",
-        );
-        return;
-      }
-    }
-    const rawNote = note.trim();
-    if (rawNote !== "") {
-      if (response === undefined) {
-        response = { note: rawNote };
-      } else if (
-        typeof response === "object" &&
-        response !== null &&
-        !Array.isArray(response)
-      ) {
-        response = { ...response, note: rawNote };
-      } else {
-        response = { payload: response, note: rawNote };
-      }
-    }
-
-    setFormError(null);
+  /**
+   * Record the decision (task t12). `expected_ledger_version` is a real read,
+   * not a fabrication: the card fetched its run's ledger once and submits the
+   * version it actually read, so a concurrent write is refused by the stale
+   * guard instead of silently raced.
+   */
+  const decide = async (outcome: string) => {
+    if (actorId === null || ledgerVersion === null || submitting) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const decided = await decideHumanTask(
-        task.id,
-        {
-          outcome,
-          decider_actor_id: decider.trim(),
-          response,
-          expected_ledger_version: ledgerVersion,
-        },
-        token,
-      );
+      const decided = await decideHumanTask(task.id, {
+        outcome,
+        decider_actor_id: actorId,
+        // A task with a decision schema gets a schema-valid payload; one
+        // without gets none, rather than an invented empty object.
+        response: request.decision_schema_ref ? { outcome } : undefined,
+        expected_ledger_version: ledgerVersion,
+      });
       setResult(decided);
       onDecided();
     } catch (cause) {
@@ -492,65 +393,16 @@ function PendingTaskCard({
       </dl>
 
       {result === null ? (
-        <form className="inbox-card__form" onSubmit={submit}>
-          <fieldset className="inbox-card__outcomes">
-            <legend>Outcome</legend>
-            {(request.allowed_outcomes ?? []).map((allowed) => (
-              <label key={allowed} className="inbox-card__outcome">
-                <input
-                  type="radio"
-                  name={`outcome-${task.id}`}
-                  value={allowed}
-                  checked={outcome === allowed}
-                  onChange={() => setOutcome(allowed)}
-                />
-                {allowed}
-              </label>
-            ))}
-          </fieldset>
-          <div className="inbox-card__field">
-            <label htmlFor={`decider-${task.id}`}>Decider actor id</label>
-            <input
-              id={`decider-${task.id}`}
-              type="text"
-              value={decider}
-              onChange={(event) => setDecider(event.target.value)}
-            />
-          </div>
-          <div className="inbox-card__field">
-            <label htmlFor={`payload-${task.id}`}>
-              Decision payload (JSON, optional)
-            </label>
-            <textarea
-              id={`payload-${task.id}`}
-              rows={3}
-              value={payload}
-              onChange={(event) => setPayload(event.target.value)}
-            />
-          </div>
-          <div className="inbox-card__field">
-            <label htmlFor={`note-${task.id}`}>Note (optional)</label>
-            <input
-              id={`note-${task.id}`}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          </div>
-          {formError ? (
-            <p className="inbox-card__form-error" role="alert">
-              {formError}
-            </p>
-          ) : null}
+        <>
+          <OutcomeButtons
+            taskId={task.id}
+            outcomes={request.allowed_outcomes ?? []}
+            disabled={actorId === null || ledgerVersion === null}
+            busy={submitting}
+            onChoose={(outcome) => void decide(outcome)}
+          />
           {submitError ? <ErrorNotice error={submitError} /> : null}
-          <button
-            type="submit"
-            className="author-workflow__button author-workflow__button--primary"
-            disabled={!canSubmit}
-          >
-            Submit decision
-          </button>
-        </form>
+        </>
       ) : (
         <p className="inbox-card__result" role="status">
           decision recorded — outcome <strong>{result.outcome}</strong>, run

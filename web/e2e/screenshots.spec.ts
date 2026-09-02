@@ -1,12 +1,16 @@
 import { test, type Page } from "@playwright/test";
-import { TICKET_ID, TICKET_PROJECTION } from "../src/fixtures/ticket-fixture";
+import { TICKET_ID } from "../src/fixtures/ticket-fixture";
 import {
   RUN_ID,
   mockApi,
   mockAuthoringApi,
+  mockDecisionsApi,
+  mockHomeApi,
+  mockInboxApi,
   mockJobsTimelineApi,
   mockPlanApi,
   mockRunsBoardApi,
+  mockTicketApi,
 } from "./fixtures/api";
 
 /**
@@ -114,18 +118,64 @@ test.describe("t27 site polish shots", () => {
     await shoot(page, "generate-workflow");
   });
 
+  /**
+   * The ticket page, signed in — the state a person on a Jira link is
+   * actually in. Two shots, because the whole of task t17's first criterion
+   * is about what fits on the FIRST screen: `ticket-above-fold` is the
+   * 1280x800 viewport with no scrolling, `ticket` is the whole page.
+   */
   test("ticket", async ({ page }) => {
-    await page.route("**/v1alpha1/tickets/**", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(TICKET_PROJECTION),
-      }),
-    );
+    await mockTicketApi(page);
     await stubVersion(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`/tickets/${TICKET_ID}`);
     await page.getByRole("heading", { name: TICKET_ID }).waitFor();
+    await page.screenshot({ path: `${OUT}/ticket-above-fold.png` });
     await shoot(page, "ticket");
+
+    // Both themes, because every value on the new surfaces resolves through
+    // culture-design/tokens.css and a hard-coded colour would only show here.
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.screenshot({ path: `${OUT}/ticket-above-fold-dark.png` });
+  });
+
+  /**
+   * The three remaining human-facing surfaces. They are shot at the same
+   * 1280x800 first screen as the ticket page, plus full-page, because the
+   * finding this pass exists to evidence (issue #270) is about how much text
+   * a person meets before anything they can act on.
+   */
+  test("home", async ({ page }) => {
+    await mockHomeApi(page);
+    await stubVersion(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/");
+    await page.getByRole("heading", { level: 1 }).first().waitFor();
+    await page.screenshot({ path: `${OUT}/home-above-fold.png` });
+    await shoot(page, "home");
+
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.screenshot({ path: `${OUT}/home-above-fold-dark.png` });
+  });
+
+  test("inbox", async ({ page }) => {
+    await mockInboxApi(page);
+    await stubVersion(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/inbox");
+    await page.getByRole("heading", { level: 1 }).first().waitFor();
+    await page.screenshot({ path: `${OUT}/inbox-above-fold.png` });
+    await shoot(page, "inbox");
+  });
+
+  test("decisions", async ({ page }) => {
+    await mockDecisionsApi(page);
+    await stubVersion(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/decisions");
+    await page.getByRole("heading", { level: 1 }).first().waitFor();
+    await page.screenshot({ path: `${OUT}/decisions-above-fold.png` });
+    await shoot(page, "decisions");
   });
 
   test("plan", async ({ page }) => {

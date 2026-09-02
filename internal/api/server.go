@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -23,6 +24,16 @@ import (
 // implemented as a poll rather than LISTEN/NOTIFY so a client's resume
 // point is answered purely from durable state — see events.go).
 const defaultEventPollInterval = 500 * time.Millisecond
+
+// DefaultSSEKeepaliveInterval is how often both SSE handlers (events.go)
+// write an SSE comment line while the stream is idle, so a proxy in the
+// path never mistakes a quiet-but-live stream for a dead connection.
+// Cloudflare closes idle proxied connections at ~100 s; 25 s leaves margin
+// for a missed tick and the write itself. Comment lines are invisible to
+// every SSE consumer by specification (a browser EventSource never
+// dispatches them), so this changes no event name or payload. Injectable
+// through WithSSEKeepaliveInterval so tests do not sleep 25 s.
+const DefaultSSEKeepaliveInterval = 25 * time.Second
 
 // Server implements the Culture Nodes control-plane API
 // (api/openapi/openapi.yaml). It is bound to one namespace at construction
@@ -86,6 +97,14 @@ type Server struct {
 	artifactInvocationStore artifactInvocationStore
 	artifactRunnerOps       artifactRunnerOpSource
 
+	// actorTokenLookup resolves the environment variable a registered agent
+	// actor's row names (metadata.auth_token_env) to the bearer the control
+	// plane expects from that actor on the routes an agent may write
+	// (actorbearer.go, login-from-anywhere task t11). os.LookupEnv unless a
+	// test replaces it; it is the same lookup worker.DBRegistry uses for the
+	// outbound credential, so one row names one variable for both directions.
+	actorTokenLookup func(string) (string, bool)
+
 	// decisionAuthSecret gates POST /v1alpha1/human-tasks/{id}/decision (see
 	// (*Server).requireDecisionAuth in humantasks.go). Every other operation
 	// in this API is authless by phase-1 design (PRD spec decision c45,
@@ -147,8 +166,9 @@ type Server struct {
 	// minted here, never invented by an operator.
 	inboundIssuanceSecret []byte
 
-	pollInterval time.Duration
-	webAssets    fs.FS
+	pollInterval      time.Duration
+	keepaliveInterval time.Duration
+	webAssets         fs.FS
 
 	// telemetry instruments the engine's completion transaction (wired into
 	// Engine at construction, below) and the actor callback ingest route
@@ -161,7 +181,9 @@ type Server struct {
 	// doc's "Logging" section. Set unconditionally in NewServer, so a
 	// Server built through it never has a nil logger; WithLogger replaces
 	// it.
-	log *slog.Logger
+	log               *slog.Logger
+	principalVerifier principalVerifier
+	jiraWebhook       jiraWebhookConfig
 }
 
 // Option configures a Server.
@@ -173,6 +195,18 @@ func WithPollInterval(d time.Duration) Option {
 	return func(s *Server) {
 		if d > 0 {
 			s.pollInterval = d
+		}
+	}
+}
+
+// WithSSEKeepaliveInterval replaces the SSE handlers' idle keepalive
+// interval (DefaultSSEKeepaliveInterval). It exists so tests can observe
+// keepalives in milliseconds rather than waiting out 25 s; a non-positive
+// value keeps the default.
+func WithSSEKeepaliveInterval(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.keepaliveInterval = d
 		}
 	}
 }
@@ -290,6 +324,13 @@ func WithEventTokenSecret(secret string) Option {
 	}
 }
 
+// WithJiraWebhook configures the loopback-only Jira system webhook wake-up.
+func WithJiraWebhook(secret, token, apiBase, site, project, email, apiToken, botAccountID string) Option {
+	return func(s *Server) {
+		s.jiraWebhook = jiraWebhookConfig{secret: []byte(secret), token: []byte(token), apiBase: apiBase, site: site, project: project, email: email, apiToken: apiToken, botAccountID: botAccountID}
+	}
+}
+
 // WithAdhocRunSecret configures the bearer secret POST /v1alpha1/adhoc-runs
 // requires (see requireAdhocRunAuth in adhoc.go). Omitting it (or passing
 // "") leaves every ad-hoc run refused with 401 rather than
@@ -381,6 +422,8 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		artifactInvocationStore: callbackStore,
 		artifactRunnerOps:       store,
 		pollInterval:            defaultEventPollInterval,
+		keepaliveInterval:       DefaultSSEKeepaliveInterval,
+		actorTokenLookup:        os.LookupEnv,
 		log:                     slog.Default(),
 	}
 	s.inboundAuthenticator, err = actors.NewInboundAuthenticator(store, actors.DefaultInboundAuthenticationConfig, nil)
@@ -423,6 +466,10 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 // (see errors.go); streamRunEvents manages its own response lifecycle
 // because it writes a streaming body rather than one JSON document.
 func (s *Server) Handler() http.Handler {
+	return s.principalMiddleware(false, s.routes())
+}
+
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /v1alpha1/workflows/validate", s.wrap(s.handleValidateWorkflow))
@@ -439,6 +486,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/tickets/{id}/frame", s.wrap(s.handlePostTicketFrame))
 	mux.HandleFunc("POST /v1alpha1/tickets/{id}/replies", s.wrap(s.handlePostTicketReply))
 	mux.HandleFunc("POST /v1alpha1/tickets/{id}/freeze", s.wrap(s.handleFreezeTicket))
+	mux.HandleFunc("POST /v1alpha1/tickets/{id}/reviews", s.wrap(s.handleTicketReviews))
 	mux.HandleFunc("GET /v1alpha1/runs/{id}", s.wrap(s.handleGetRun))
 	mux.HandleFunc("PATCH /v1alpha1/runs/{id}", s.wrap(s.handlePatchRun))
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/cancel", s.wrap(s.handleCancelRun))
@@ -517,6 +565,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/version", s.wrap(s.handleVersion))
 	mux.HandleFunc("GET /v1alpha1/healthz", s.wrap(s.handleHealthz))
 	mux.HandleFunc("GET /v1alpha1/readyz", s.wrap(s.handleReadyz))
+	mux.HandleFunc("GET /v1alpha1/whoami", s.wrap(s.handleWhoami))
 
 	// The actor callback surface (PRD §13.1's callback.url, §13.4's event
 	// ingest) is not part of the nodes.culture.dev/v1alpha1 group above: it
@@ -554,6 +603,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /", spaHandler(s.webAssets))
 	}
 
+	return mux
+}
+
+func (s *Server) accessRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1alpha1/webhooks/jira", s.wrap(s.handleJiraWebhook))
+	mux.Handle("/", s.routes())
 	return mux
 }
 

@@ -326,7 +326,7 @@ def test_refuses_when_the_finding_cannot_be_recorded(repo: Path):
         env={
             "NODES_RUN_ID": RUN_ID,
             "NODES_API_URL": "http://127.0.0.1:1",
-            "NODES_DECISION_TOKEN": "t",
+            "NODES_ACTOR_MERGE_GATE_TOKEN": "t",
             "NODES_GATE_VALIDATOR_ACTOR_ID": VALIDATOR,
         },
     )
@@ -410,7 +410,7 @@ def test_posts_the_report_and_exits_with_the_recorded_code(repo: Path):
                 "NODES_RUN_ID": RUN_ID,
                 "NODES_NODE_RUN_ID": "01M05ZGNT8QW2W1M5PAPXQ8N3C",
                 "NODES_API_URL": stub.url,
-                "NODES_DECISION_TOKEN": "shhh",
+                "NODES_ACTOR_MERGE_GATE_TOKEN": "shhh",
                 "NODES_GATE_VALIDATOR_ACTOR_ID": VALIDATOR,
             },
         )
@@ -503,7 +503,7 @@ def test_a_disagreement_with_the_control_plane_reaches_a_person(repo: Path):
             env={
                 "NODES_RUN_ID": RUN_ID,
                 "NODES_API_URL": stub.url,
-                "NODES_DECISION_TOKEN": "shhh",
+                "NODES_ACTOR_MERGE_GATE_TOKEN": "shhh",
                 "NODES_GATE_VALIDATOR_ACTOR_ID": VALIDATOR,
             },
         )
@@ -727,3 +727,72 @@ def test_a_gate_cannot_measure_outside_the_worktree(repo: Path):
 
     assert proc.returncode == 2
     assert "escapes the worktree" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# the gate's own principal (login-from-anywhere t11, spec c45 / h31)
+# ---------------------------------------------------------------------------
+
+
+def test_the_gate_authenticates_with_its_own_actor_token_never_the_human_one(repo: Path):
+    """Both human-bearer names are present in the environment; the report
+    still goes out under NODES_ACTOR_MERGE_GATE_TOKEN and nothing else."""
+    commit(repo, "internal/api/gatereports.go")
+    with _StubControlPlane("gates_passed", 0) as stub:
+        proc = run_gate(
+            repo,
+            _passing_matrix(),
+            env={
+                "NODES_RUN_ID": RUN_ID,
+                "NODES_API_URL": stub.url,
+                "NODES_ACTOR_MERGE_GATE_TOKEN": "agent-bearer",
+                "NODES_HUMAN_DECISION_TOKEN": "human-bearer",
+                "NODES_DECISION_TOKEN": "legacy-bearer",
+            },
+        )
+    assert proc.returncode == 0, proc.stderr
+    assert stub.auth == "Bearer agent-bearer"
+    assert "human-bearer" not in proc.stdout + proc.stderr
+    # The credential IS the validator identity: the control plane resolves
+    # the bearer to the registered agent actor and stamps the record's origin
+    # from it, so the report names none of its own.
+    assert "validator_actor_id" not in stub.received
+
+
+def test_a_human_token_alone_is_refused_and_nothing_is_posted(repo: Path):
+    commit(repo, "internal/api/gatereports.go")
+    with _StubControlPlane("gates_passed", 0) as stub:
+        proc = run_gate(
+            repo,
+            _passing_matrix(),
+            env={
+                "NODES_RUN_ID": RUN_ID,
+                "NODES_API_URL": stub.url,
+                "NODES_HUMAN_DECISION_TOKEN": "human-bearer",
+                "NODES_DECISION_TOKEN": "legacy-bearer",
+            },
+        )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "NODES_ACTOR_MERGE_GATE_TOKEN" in proc.stderr
+    assert stub.received is None
+    assert "human-bearer" not in proc.stdout + proc.stderr
+
+
+def test_a_named_validator_is_still_forwarded_when_granted(repo: Path):
+    """NODES_GATE_VALIDATOR_ACTOR_ID stays honoured when set — an operator
+    posting through the human bearer needs it — but it is no longer
+    required, because the agent credential carries the identity."""
+    commit(repo, "internal/api/gatereports.go")
+    with _StubControlPlane("gates_passed", 0) as stub:
+        proc = run_gate(
+            repo,
+            _passing_matrix(),
+            env={
+                "NODES_RUN_ID": RUN_ID,
+                "NODES_API_URL": stub.url,
+                "NODES_ACTOR_MERGE_GATE_TOKEN": "agent-bearer",
+                "NODES_GATE_VALIDATOR_ACTOR_ID": VALIDATOR,
+            },
+        )
+    assert proc.returncode == 0, proc.stderr
+    assert stub.received["validator_actor_id"] == VALIDATOR

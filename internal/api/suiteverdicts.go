@@ -65,7 +65,11 @@ type createSuiteVerdictRequest struct {
 //     surface uses. Whoever can post a verdict here can decide a merge, which
 //     is the same authority as deciding a claim; a third secret would only
 //     mean a third thing to leak, and an open route would mean anyone on the
-//     network could write "suite passed".
+//     network could write "suite passed". Since login-from-anywhere task t11
+//     a registered agent actor's OWN bearer is accepted here too
+//     (actorbearer.go): the merge-gate scripts post as `company/merge-gate`,
+//     and what they post is stamped agent-origin, proposed — the gate's
+//     claim, decided by a person like any other claim.
 //  2. Producer identity. validator_actor_id must be a registered actor
 //     (ledger_records.origin_actor_id is a foreign key, so this is enforced
 //     twice over), and must not be a HUMAN. That refusal is
@@ -103,6 +107,9 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 			"send a JSON body matching CreateSuiteVerdictRequest: {suite, exit_code, commit_sha, validator_actor_id}",
 			"decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.ValidatorActorID, warning = principalActor(r, "validator_actor_id", req.ValidatorActorID)
 	if req.ExitCode == nil {
 		return badRequest(
 			"send the suite's exit_code explicitly; an omitted one is not a passing one",
@@ -162,6 +169,10 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return internalError(err)
 	}
+	// Posted under the gate's own agent credential, the verdict is the
+	// gate's proposed claim rather than a validator's derived finding
+	// (actorbearer.go, login-from-anywhere task t11).
+	record = stampAgentProposed(r, record)
 
 	appended, err := s.Ledger.Append(ctx, record)
 	if err != nil {
@@ -176,10 +187,10 @@ func (s *Server) handleCreateSuiteVerdict(w http.ResponseWriter, r *http.Request
 	// bound is counted over.
 	routing, routingErr := s.routeGateFailure(ctx, id, appended, req, records, measured)
 
-	writeJSON(w, http.StatusCreated, suiteVerdictResult{
+	writeJSONWithWarning(w, http.StatusCreated, suiteVerdictResult{
 		Verdict:      appended,
 		Routing:      routing,
 		RoutingError: routingErr,
-	})
+	}, warning)
 	return nil
 }

@@ -37,6 +37,7 @@ means supplying these — it never means editing `workflow.yaml`.
 | `PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256` | **Granted environment value.** Its independently checked sha256. |
 | `PR_UPKEEP_REPOSITORIES` | **Granted environment value.** An ordered JSON object containing `cycle` and the closed `repositories` set. Each entry supplies `github_repo` and `sonar_component`; optional `jira_site` and `jira_project` (required together) enable Jira for that repo. `jira_bot_account_id` is independently optional: the system's own Jira `accountId`, used only to filter self-authored comments out of the comment/resume event (task t9) — see "Jira event vocabulary" below. The cycle index selects exactly one entry per sweep. |
 | `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` | **Granted environment values.** The two separately configured Jira Cloud Basic-auth values. They are never run input, argv, output, or fixture data. |
+| `JIRA_API_BASE` | **Granted environment value**, optional (empty is a valid grant). The REST base those two authenticate at. A *scoped* Jira Cloud service-account token is accepted only at the Atlassian gateway (`.../ex/jira/<cloudId>`) and the site URL answers 401 for it; empty means `https://<jira_site>`. Refused at parse time unless it is an https URL with no query or fragment. Browse links (`details_url`) always use the site host — the gateway serves the API, never the board. |
 | `PR_UPKEEP_MAX_PRS_PER_SWEEP`, `PR_UPKEEP_REQUIRED_CHECKS`, `GITHUB_TOKEN` | **Process environment of the sweep.** These remain optional; the GitHub token only changes rate-limit headroom. |
 
 The granted environment values are the ones a reader cannot trace from the
@@ -202,6 +203,13 @@ gap in the sweep):
   reply's event copies that value as `originating_question_id` alongside the
   answer comment. The watermark position is unfiltered, so it already sits
   past the actor's own comment once a real reply lands.
+
+The GitHub lifecycle vocabulary is separate. A correlatable open PR raises
+`pr.opened` with `source=github_pr`, repository, number, URL, `opened_at`, and
+`issue_key`; its immutable opening timestamp is the durable once-per-PR
+watermark. A correlatable merge raises `pr.merged` with the same identity and
+`merged_at`. Both correlations prefer the head branch and then the body, and
+when `jira_project` is configured they accept only that project's keys.
 
 ## Dedupe by finding id (spec c7/h6)
 

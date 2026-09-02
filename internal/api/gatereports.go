@@ -163,6 +163,9 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 			"send a JSON body matching CreateGateReportRequest: {commit_sha, validator_actor_id, gates:[...]}",
 			"decode request body: %v", err)
 	}
+	// origin: resolved from principal
+	var warning string
+	req.ValidatorActorID, warning = principalActor(r, "validator_actor_id", req.ValidatorActorID)
 	if len(req.Gates) == 0 {
 		return badRequest(
 			"list every gate the workflow declared, including the ones that measured nothing",
@@ -235,6 +238,9 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 
 	out := gateReportResult{Gates: make([]ledger.Record, 0, len(composed))}
 	for i, record := range composed {
+		// Under the gate's own agent credential every row of the report is
+		// the gate's proposed claim (actorbearer.go, task t11).
+		record = stampAgentProposed(r, record)
 		appended, aerr := s.Ledger.Append(ctx, record)
 		if aerr != nil {
 			return classify(aerr)
@@ -252,6 +258,7 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return internalError(err)
 	}
+	aggregateRecord = stampAgentProposed(r, aggregateRecord)
 	appendedAggregate, err := s.Ledger.Append(ctx, aggregateRecord)
 	if err != nil {
 		return classify(err)
@@ -263,7 +270,7 @@ func (s *Server) handleCreateGateReport(w http.ResponseWriter, r *http.Request) 
 
 	s.routeGateReportFailures(ctx, id, req, out.Gates, results, records, measured, &out)
 
-	writeJSON(w, http.StatusCreated, out)
+	writeJSONWithWarning(w, http.StatusCreated, out, warning)
 	return nil
 }
 

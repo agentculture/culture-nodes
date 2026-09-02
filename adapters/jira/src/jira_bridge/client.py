@@ -8,6 +8,8 @@ import urllib.request
 from base64 import b64encode
 from dataclasses import dataclass
 
+from .rest import api_root
+
 
 @dataclass(frozen=True)
 class PostResult:
@@ -17,13 +19,23 @@ class PostResult:
     error: str = ""
 
 
-def post_comment(site: str, issue: str, text: str, email: str, token: str, *, opener=urllib.request.urlopen) -> PostResult:
-    if not site or "/" in site or ":" in site:
+def post_comment(
+    site: str,
+    issue: str,
+    text: str,
+    email: str,
+    token: str,
+    *,
+    opener=urllib.request.urlopen,
+    api_base: str = "",
+) -> PostResult:
+    root = api_root(site, api_base)
+    if root is None:
         return PostResult(False, 0, error="JIRA_SITE must be a host name")
     auth = b64encode(f"{email}:{token}".encode()).decode("ascii")
     body = json.dumps({"body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}]}}).encode()
     req = urllib.request.Request(
-        f"https://{site}/rest/api/3/issue/{issue}/comment",
+        f"{root}/rest/api/3/issue/{issue}/comment",
         data=body,
         headers={"Authorization": f"Basic {auth}", "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "culture-nodes-jira-bridge/1"},
         method="POST",

@@ -792,7 +792,7 @@ class TestEmitterMain:
         monkeypatch.setattr(
             sweep,
             "fetch_jira_issues",
-            lambda site, project, email, token: jira_payload,
+            lambda site, project, email, token, base="": jira_payload,
         )
 
         assert sweep.main() == 0
@@ -829,7 +829,9 @@ class TestEmitterMain:
         monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
         monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
         calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
-        monkeypatch.setattr(sweep, "fetch_jira_issues", lambda site, project, email, token: payload)
+        monkeypatch.setattr(
+            sweep, "fetch_jira_issues", lambda site, project, email, token, base="": payload
+        )
 
         assert sweep.main() == 0
         names = [name for name, *_rest in calls["events"]]
@@ -875,7 +877,9 @@ class TestEmitterMain:
         monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
         monkeypatch.setenv("JIRA_API_TOKEN", "fixture-token")
         calls = _stub_sweep(monkeypatch, pulls=[], sonar_main={"issues": []})
-        monkeypatch.setattr(sweep, "fetch_jira_issues", lambda site, project, email, token: payload)
+        monkeypatch.setattr(
+            sweep, "fetch_jira_issues", lambda site, project, email, token, base="": payload
+        )
 
         assert sweep.main() == 0
         names = [name for name, *_rest in calls["events"]]

@@ -102,10 +102,23 @@ if not email or not token:
            "the sweep's pair lives in ~/.culture-nodes/runner-secrets.env on thor")
 auth = base64.b64encode(f"{email}:{token}".encode()).decode()
 
+# The REST base, granted beside the pair. A SCOPED Jira Cloud service-account
+# token is accepted only at the Atlassian gateway and the site URL answers 401
+# for it, so this is part of how the credential authenticates -- it is read
+# from the same granted file rather than passed from the operator's machine.
+# Empty means the site URL, which is what an unscoped token wants.
+api_base = (secrets.get("JIRA_API_BASE") or "").strip().rstrip("/")
+if api_base and not api_base.startswith("https://"):
+    refuse(f"JIRA_API_BASE on this host is not an https URL: {api_base!r}",
+           "it is the Atlassian gateway base for this site's cloud id, or empty")
+root = api_base or f"https://{site}"
+
 
 def call(path, payload=None):
+    # Browse links are NOT built here: `jira.sh` prints issue keys, and the
+    # gateway serves the API, never the board.
     req = urllib.request.Request(
-        f"https://{site}/rest/api/3/{path}",
+        f"{root}/rest/api/3/{path}",
         data=None if payload is None else json.dumps(payload).encode(),
         headers={
             "Authorization": "Basic " + auth,

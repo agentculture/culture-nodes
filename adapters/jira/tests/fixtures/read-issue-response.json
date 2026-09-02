@@ -1,0 +1,35 @@
+{
+  "key": "SCRUM-17",
+  "fields": {
+    "summary": "Read the current Jira context",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {"type": "heading", "content": [{"type": "text", "text": "Context"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": "Fresh from Jira."}]}
+      ]
+    },
+    "status": {"name": "In Progress"},
+    "comment": {
+      "comments": [
+        {
+          "id": "101",
+          "author": {"accountId": "acct-1", "displayName": "One"},
+          "created": "2026-09-01T10:00:00.000+0000",
+          "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "First"}]}]}
+        },
+        {
+          "id": "102",
+          "author": {"accountId": "acct-2"},
+          "created": "2026-09-01T11:00:00.000+0000",
+          "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Second"}]}]}
+        }
+      ]
+    },
+    "issuelinks": [
+      {"type": {"name": "Blocks"}, "outwardIssue": {"key": "SCRUM-18"}},
+      {"type": {"name": "Relates"}, "inwardIssue": {"key": "SCRUM-9"}}
+    ]
+  }
+}

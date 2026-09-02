@@ -9,11 +9,16 @@ info:
     §12.1, §15.1): workflow publication, run orchestration, the append-only work
     ledger, and review transactions. group: nodes.culture.dev/v1alpha1.
 
-    Phase 1 runs authless by design (spec decision c45): this API carries no
-    authentication or authorization of its own and is meant to run behind a
-    private network. Every operation is reachable by anyone who can reach the
-    listener. Do not expose this API on a public network without a fronting
-    proxy that adds authentication.
+    Human identity is a Cloudflare Access JWT accepted only on the dedicated
+    loopback-origin Access listener. The verified provider/subject is bound to
+    an actor and roles. Viewer permits every GET and both SSE streams;
+    approver additionally permits human decisions, reviews/commits, ticket
+    replies/frame/freeze, and grades; namespace_administrator includes those
+    permissions plus actor administration, workflow publication/validation,
+    workflow generation, run mutation, namespaces, schedules, preflight
+    acknowledgement, plan imports, store writes, and inbound credential
+    issuance/revocation. Transition bearer and machine credentials remain
+    documented on their routes.
 
     Every error response uses the Error schema below — the same
     {code, message, remediation} shape internal/clifmt.CliError renders for
@@ -503,6 +508,60 @@ paths:
               schema: {$ref: '#/components/schemas/FreezeTicketResult'}
         '401': {description: Decision bearer token is missing or invalid.}
 
+  /v1alpha1/tickets/{id}/reviews:
+    post:
+      operationId: postTicketReviews
+      tags: [reviews]
+      summary: Decide a ticket's undecided ledger claims, one review per run.
+      description: >-
+        Commits one review per run named in `runs`, in the order given, from
+        the frame GET /v1alpha1/tickets/{id} served in `pending_records`
+        (task t14, spec c11, decision c40).
+
+
+        A review is opened against ONE run at ONE stated ledger version
+        (PRD §10.8), so a ticket whose claims live on three runs is three
+        reviews. Partial success is therefore the normal answer: a run whose
+        ledger moved since the page was rendered reports `conflict` and
+        writes nothing, while every other run still commits. The response is
+        200 whenever the batch was well-formed enough to attempt; read
+        `committed_runs` for how many landed and `runs[].status` for which.
+
+
+        Anything that would make the WHOLE request wrong is refused with 400
+        before the first review exists: a missing rationale, a reviewer the
+        registry does not record as a human, a verdict outside
+        confirmed/rejected, a run with no records, or a run this ticket does
+        not own. With a signed-in principal the reviewer is that principal's
+        bound actor and `reviewer_actor_id` is ignored.
+
+
+        A review names records and never rewrites them: a confirmed claim
+        still reads `authority: proposed`, with a `review` record beside it.
+      security: [{decisionBearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TicketReviewsRequest'}
+      responses:
+        '200':
+          description: Every submitted run's outcome, in the order submitted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TicketReviewsResult'}
+        '400':
+          description: The batch was refused before anything was written.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '401':
+          description: Decision bearer token or principal is missing or invalid.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
   /v1alpha1/runs:
     post:
       operationId: createRun
@@ -3059,6 +3118,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/whoami:
+    get:
+      operationId: whoami
+      summary: Resolve the current Access principal and actor binding
+      security:
+        - cloudflareAccessJwt: []
+      responses:
+        "200":
+          description: The bound principal, or a verified unbound principal.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [principal]
+                properties:
+                  principal:
+                    type: object
+                    required: [provider, subject]
+                    properties:
+                      provider: {type: string}
+                      subject: {type: string}
+                      email: {type: string}
+                      common_name: {type: string}
+                  actor_id: {type: string}
+                  roles:
+                    type: array
+                    items: {type: string, enum: [viewer, approver, namespace_administrator]}
+                  unbound: {type: boolean}
+        "401":
+          description: No verified principal was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1alpha1/version:
     get:
       operationId: version
@@ -3164,6 +3258,13 @@ components:
         type: string
 
   securitySchemes:
+    cloudflareAccessJwt:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: >-
+        Cloudflare Access RS256 assertion, honoured only on the configured
+        NODES_ACCESS_LISTEN listener and bound by stable provider/subject.
     decisionBearerAuth:
       type: http
       scheme: bearer
@@ -6320,6 +6421,101 @@ components:
             naming both counts and the reason. Composed server-side so the
             count a human reads is the count the API test asserts.
 
+    TicketReviewRun:
+      type: object
+      required: [run_id, expected_ledger_version, records, verdict]
+      description: One run's verdict inside a ticket review batch.
+      properties:
+        run_id: {type: string}
+        expected_ledger_version:
+          type: integer
+          format: int64
+          description: >-
+            The version the page that rendered these records was read at —
+            the ticket projection's `pending_records[].ledger_version`, not a
+            version fetched in a later request. A mismatch reports `conflict`
+            for this run and writes nothing.
+        records:
+          type: array
+          minItems: 1
+          items: {type: string}
+          description: The ledger record ids this verdict decides.
+        verdict:
+          type: string
+          enum: [confirmed, rejected]
+          description: >-
+            The state these records end up in. A rejection answers the
+            question as completely as a confirmation does.
+
+    TicketReviewsRequest:
+      type: object
+      required: [runs, rationale]
+      properties:
+        runs:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/TicketReviewRun'}
+        rationale:
+          type: string
+          minLength: 1
+          description: >-
+            Why the reviewer decided this way — recorded on every review
+            record every run in the batch appends. A confirmation with no
+            stated reason cannot be told apart from an unread one.
+        reviewer_actor_id:
+          type: string
+          description: >-
+            The deciding human, when no principal is resolved. Must be
+            registered with kind `human`. Ignored in favour of the signed-in
+            principal's bound actor when there is one.
+
+    TicketReviewRunResult:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: {type: string}
+        status:
+          type: string
+          enum: [committed, conflict, error]
+          description: >-
+            `conflict` means the ledger moved under the decider and no
+            DECISION was written — the one outcome a page answers by
+            re-reading and offering the decision again. It does not mean
+            nothing exists: the review request opened for this run is a
+            separate ledger transaction and stays open at `requested`
+            (PRD §10.8), and `review_id` names it.
+        review_id:
+          type: string
+          description: >-
+            The review this outcome belongs to: the committed review on
+            `committed`, and on a failed commit the review request that is
+            still open — retry it at a fresh version with POST
+            /v1alpha1/reviews/{id}/commit. Absent when no review was created.
+
+        ledger_version:
+          type: integer
+          format: int64
+          description: The run's version after the commit. Present only on `committed`.
+        message:
+          type: string
+          description: What happened, in the decider's terms, on anything that is not a clean commit.
+
+    TicketReviewsResult:
+      type: object
+      required: [ticket_id, runs, committed_runs]
+      properties:
+        ticket_id: {type: string}
+        runs:
+          type: array
+          items: {$ref: '#/components/schemas/TicketReviewRunResult'}
+          description: One result per submitted run, in the order submitted.
+        committed_runs:
+          type: integer
+          description: >-
+            How many runs committed. A caller that wants one number to
+            branch on reads this rather than the status line, because a
+            partial outcome is this route's normal answer.
+
     TicketPendingTask:
       type: object
       required: [id, run_id, kind, allowed_outcomes, created_at, ledger_version]
@@ -6359,7 +6555,7 @@ components:
 
     Ticket:
       type: object
-      required: [ticket_id, runs, ledger, human_tasks, pending_tasks, ticket_reports, replies, frozen]
+      required: [ticket_id, runs, ledger, human_tasks, pending_tasks, pending_records, ticket_reports, replies, frozen]
       properties:
         ticket_id: {type: string}
         ticket_url:
@@ -6386,6 +6582,17 @@ components:
             The decidable subset of human_tasks. Both are served because they
             answer different questions — what was asked, and what is still
             being asked.
+        pending_records:
+          type: array
+          items: {$ref: '#/components/schemas/PendingDecisionRun'}
+          description: >-
+            The ticket's undecided ledger claims, grouped by run and quoted
+            at the `ledger_version` THIS response read (task t14, spec c11).
+            The same shape GET /v1alpha1/pending-decisions serves, narrowed
+            to this ticket's own runs. The version travels with the records
+            because a client that fetched it separately would be attesting
+            to a frame it never showed anyone; POST
+            /v1alpha1/tickets/{id}/reviews measures a submission against it.
         ticket_reports: {type: array, items: {type: object}}
         replies: {type: array, items: {type: object}}
         latest_frame:

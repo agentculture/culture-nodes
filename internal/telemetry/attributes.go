@@ -57,6 +57,8 @@ const (
 	// without a separate metrics query. Operation.End sets this
 	// automatically; instrumented call sites never need to construct it.
 	KeyDurationMs = attribute.Key("duration_ms")
+	// KeyAuthRefusalReason is the closed refusal class, never credential data.
+	KeyAuthRefusalReason = attribute.Key("auth_refusal_reason")
 )
 
 // AllowedAttributeKeys is every key an instrumented call site, or this
@@ -67,6 +69,7 @@ var AllowedAttributeKeys = []attribute.Key{
 	KeyTechStatus, KeyOutcome, KeyNodeRunState, KeyRunState, KeyDisposition,
 	KeyAttemptNumber,
 	KeyDurationMs,
+	KeyAuthRefusalReason,
 }
 
 // RunID, NodeID, AttemptID, and ActorID are the id-category constructors.
@@ -92,6 +95,10 @@ func Disposition(v string) attribute.KeyValue  { return KeyDisposition.String(v)
 
 // AttemptNumber is the count-category constructor.
 func AttemptNumber(n int) attribute.KeyValue { return KeyAttemptNumber.Int(n) }
+
+// AuthRefusalReason is the closed refusal-class constructor (t8): the value is
+// one of the principal middleware's reason classes, never a token or subject.
+func AuthRefusalReason(v string) attribute.KeyValue { return KeyAuthRefusalReason.String(v) }
 
 // durationMs is the duration-category constructor. It is unexported:
 // Operation.End is the only caller, because a duration is measured by

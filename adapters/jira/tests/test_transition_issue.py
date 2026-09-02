@@ -20,10 +20,12 @@ class Response:
 
 
 def test_transition_config_is_loaded_from_the_environment_at_startup():
-    cfg = Config.load(env={
-        "JIRA_TRANSITION_PROJECT_PREFIX": "SCRUM-",
-        "JIRA_TRANSITION_TARGET": "Done",
-    })
+    cfg = Config.load(
+        env={
+            "JIRA_TRANSITION_PROJECT_PREFIX": "SCRUM-",
+            "JIRA_TRANSITION_TARGET": "Done",
+        }
+    )
     assert cfg.transition_project_prefix == "SCRUM-"
     assert cfg.transition_targets == ("Done",)
     # Single-string compat: a deployment that configured one target reads
@@ -31,36 +33,40 @@ def test_transition_config_is_loaded_from_the_environment_at_startup():
     assert cfg.transition_target == "Done"
 
 
-def test_transition_config_accepts_a_second_target_as_a_comma_list():
-    """Task t11: the ticket moves to 'Pending' when culture-nodes raises a
-    human decision and to 'Done' when the work finishes -- one bridge, two
-    allowlisted targets."""
-    cfg = Config.load(env={
-        "JIRA_TRANSITION_PROJECT_PREFIX": "SCRUM-",
-        "JIRA_TRANSITION_TARGET": "Done, Pending",
-    })
-    assert cfg.transition_targets == ("Done", "Pending")
+def test_transition_config_parses_the_four_deploy_managed_targets():
+    cfg = Config.load(
+        env={
+            "JIRA_TRANSITION_PROJECT_PREFIX": "SCRUM-",
+            "JIRA_TRANSITION_TARGETS": "In Progress,Pending,In Review,Done",
+        }
+    )
+    assert cfg.transition_targets == ("In Progress", "Pending", "In Review", "Done")
 
 
-def test_transition_parse_accepts_either_allowlisted_target():
-    for target in ("Done", "Pending"):
+def test_transition_parse_accepts_in_review_and_done_when_configured():
+    allowed = ("In Progress", "Pending", "In Review", "Done")
+    for target in ("In Review", "Done"):
         parsed, error = transition_issue.parse(
             {"verb": "transition_issue", "issue": "SCRUM-17", "target": target},
             project_prefix="SCRUM-",
-            allowed_targets=("Done", "Pending"),
+            allowed_targets=allowed,
         )
         assert error is None
         assert parsed.target == target
 
 
-def test_transition_parse_refuses_a_target_outside_a_multi_entry_allowlist():
+def test_transition_parse_refuses_a_fifth_target_outside_the_four_name_allowlist():
+    allowed = ("In Progress", "Pending", "In Review", "Done")
     parsed, error = transition_issue.parse(
-        {"verb": "transition_issue", "issue": "SCRUM-17", "target": "In Progress"},
+        {"verb": "transition_issue", "issue": "SCRUM-17", "target": "Reopened"},
         project_prefix="SCRUM-",
-        allowed_targets=("Done", "Pending"),
+        allowed_targets=allowed,
     )
     assert parsed is None
-    assert error == "policy: target must be one of the configured transitions: 'Done', 'Pending'"
+    assert error == (
+        "policy: target must be one of the configured transitions: "
+        "'In Progress', 'Pending', 'In Review', 'Done'"
+    )
 
 
 def test_transition_parse_refuses_everything_when_no_target_is_configured():
@@ -103,12 +109,14 @@ def test_transition_happy_path_uses_named_transition_and_proposes_claim():
     seen = []
 
     def open_(request, timeout):
-        seen.append({
-            "url": request.full_url,
-            "method": request.method,
-            "body": json.loads(request.data) if request.data else None,
-            "timeout": timeout,
-        })
+        seen.append(
+            {
+                "url": request.full_url,
+                "method": request.method,
+                "body": json.loads(request.data) if request.data else None,
+                "timeout": timeout,
+            }
+        )
         if request.method == "GET":
             return Response(200, b'{"transitions":[{"id":"31","name":"Done"}]}')
         return Response(204)
@@ -135,10 +143,12 @@ def test_transition_happy_path_uses_named_transition_and_proposes_claim():
         "status": "completed",
         "outcome": "issue_transitioned",
         "output": {"issue": "SCRUM-17", "target": "Done"},
-        "ledger_records": [{
-            "record_type": "claim",
-            "authority": "proposed",
-            "origin": {"kind": "agent", "actor_id": "jira-actor"},
-            "payload": {"verb": "transition_issue", "issue": "SCRUM-17", "target": "Done"},
-        }],
+        "ledger_records": [
+            {
+                "record_type": "claim",
+                "authority": "proposed",
+                "origin": {"kind": "agent", "actor_id": "jira-actor"},
+                "payload": {"verb": "transition_issue", "issue": "SCRUM-17", "target": "Done"},
+            }
+        ],
     }

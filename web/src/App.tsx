@@ -8,9 +8,12 @@ import {
 import AgentStateScript from "./agent-state/AgentStateScript";
 import { setAgentState } from "./agent-state/store";
 import Header from "./components/Header";
+import IdentityGate from "./components/IdentityGate";
+import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
+import Home from "./routes/Home";
 import Inbox from "./routes/Inbox";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
@@ -85,6 +88,31 @@ function RouteWatcher() {
   return null;
 }
 
+/**
+ * What `/` is (task t17, spec c25).
+ *
+ * It used to be a redirect to `/runs` — a table of engine rows, which is
+ * right for an operator and wrong for the person a Jira comment just sent
+ * here. A signed-in person now lands on the page that says what is waiting
+ * on a human; everyone else keeps the run table, because a LAN reader with
+ * no Access identity has no "your work" to show and a redirect is a better
+ * answer than an empty page.
+ *
+ * Only a 401 redirects. `loading` renders Home rather than bouncing to /runs
+ * and back the moment whoami answers — two navigations a person can see —
+ * and `unavailable` renders it for the reason IdentityGate states: a whoami
+ * that failed for any other cause is not a fact about who is here, so it may
+ * not read as "signed out". Redirecting on it also cost the landing its
+ * settled state: the second navigation restarted the load, so `#agent-state`
+ * was back at "loading" for a whole extra round trip after the page had
+ * already finished one.
+ */
+function Landing() {
+  const whoami = useWhoami();
+  if (whoami.status === "unauthenticated") return <Navigate to="/runs" replace />;
+  return <Home />;
+}
+
 export function App() {
   return (
     <>
@@ -94,8 +122,12 @@ export function App() {
       <Header />
       <RouteWatcher />
       <main id="main">
+        {/* Identity is derived from the signed-in principal (task t9): an
+            unbound login sees a named full-page state instead of the routed
+            view, a missing one sees "sign in required" above it. */}
+        <IdentityGate>
         <Routes>
-          <Route path="/" element={<Navigate to="/runs" replace />} />
+          <Route path="/" element={<Landing />} />
           <Route path="/runs" element={<RunsList />} />
           <Route path="/board" element={<RunsBoard />} />
           <Route path="/jobs" element={<JobsTimeline />} />
@@ -130,6 +162,7 @@ export function App() {
             }
           />
         </Routes>
+        </IdentityGate>
       </main>
       <AgentStateScript />
     </>

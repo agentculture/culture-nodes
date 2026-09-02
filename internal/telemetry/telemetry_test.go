@@ -123,6 +123,7 @@ func TestAllowedAttributeKeys_ConstructorsAreAllowlisted(t *testing.T) {
 		TechStatus("succeeded"), Outcome("passed"), NodeRunState("completed"),
 		RunState("running"), Disposition("committed"),
 		AttemptNumber(1),
+		AuthRefusalReason("no_principal"),
 		durationMs(1.5),
 	}
 	for _, kv := range kvs {
@@ -281,5 +282,55 @@ func TestSeams_MatchInstrumentedPaths(t *testing.T) {
 		if p.instruments[s] == nil {
 			t.Errorf("NoOp provider built no instruments for seam %q", s)
 		}
+	}
+}
+
+// TestRecordAuthRefusal_CountsTheClassAndNothingElse is the counter half of
+// spec c48: every principal refusal increments api.auth_refusals.count under
+// its reason class, and the data point carries the class and nothing else --
+// no subject, no credential, no assertion. The break-glass classes
+// login-from-anywhere task t22 adds (`credential_revoked` and its siblings)
+// are ordinary values of that one closed attribute, which is why they need
+// no new instrument and no new key.
+func TestRecordAuthRefusal_CountsTheClassAndNothingElse(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	p, err := newProvider(sdktrace.NewTracerProvider().Tracer(instrumentationName), mp.Meter(instrumentationName))
+	if err != nil {
+		t.Fatalf("newProvider: %v", err)
+	}
+
+	p.RecordAuthRefusal(context.Background(), "credential_revoked")
+	p.RecordAuthRefusal(context.Background(), "credential_revoked")
+	p.RecordAuthRefusal(context.Background(), "no_principal")
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	counts := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "api.auth_refusals.count" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("api.auth_refusals.count is %T, want an int64 sum", m.Data)
+			}
+			for _, dp := range sum.DataPoints {
+				attrs := dp.Attributes.ToSlice()
+				assertOnlyAllowedKeys(t, "metric "+m.Name, attrs)
+				if len(attrs) != 1 || attrs[0].Key != KeyAuthRefusalReason {
+					t.Fatalf("refusal data point attributes = %v, want only %s", attrs, KeyAuthRefusalReason)
+				}
+				counts[attrs[0].Value.AsString()] += dp.Value
+			}
+		}
+	}
+	if counts["credential_revoked"] != 2 || counts["no_principal"] != 1 {
+		t.Fatalf("refusal counts = %v, want credential_revoked=2 no_principal=1", counts)
 	}
 }

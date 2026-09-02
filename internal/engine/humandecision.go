@@ -147,6 +147,9 @@ type humanTaskDecision struct {
 }
 
 func (d *humanTaskDecision) do(ctx context.Context) error {
+	if handled, err := d.decideTicketScopedTask(ctx); handled || err != nil {
+		return err
+	}
 	if err := d.guard(ctx); err != nil {
 		return err
 	}
@@ -202,6 +205,41 @@ func (d *humanTaskDecision) do(ctx context.Context) error {
 	}
 
 	return d.transition(ctx, d.outcome, NodeRunCompleted)
+}
+
+// decideTicketScopedTask handles the merge-created Ticket done? human node.
+// It has no workflow run to resume: the human answer itself is terminal, and
+// the store plans the Jira Done intent only while recording a `done` answer.
+func (d *humanTaskDecision) decideTicketScopedTask(ctx context.Context) (bool, error) {
+	task, err := d.tx.GetHumanTask(ctx, d.req.HumanTaskID)
+	if err != nil {
+		return false, err
+	}
+	if task.Kind != "ticket_done" {
+		return false, nil
+	}
+	if d.expiry != nil {
+		return true, &OutcomeNotAllowedError{HumanTaskID: task.ID, Outcome: d.req.Outcome}
+	}
+	if err := d.tx.Lock(ctx, "human-task:"+task.ID); err != nil {
+		return true, err
+	}
+	if task, err = d.tx.GetHumanTask(ctx, task.ID); err != nil {
+		return true, err
+	}
+	if task.Status != HumanTaskStatusPending {
+		return true, &HumanTaskAlreadyDecidedError{HumanTaskID: task.ID, Status: task.Status}
+	}
+	d.task = task
+	if err := d.checkOutcome(); err != nil {
+		return true, err
+	}
+	d.outcome = d.req.Outcome
+	if err := d.markDecided(ctx); err != nil {
+		return true, err
+	}
+	d.result.Outcome = d.outcome
+	return true, nil
 }
 
 // guard loads the task and the node run it pauses, refusing an
@@ -390,9 +428,10 @@ func (d *humanTaskDecision) recordDecision(ctx context.Context) error {
 		RecordType: humanTaskDecisionRecordType,
 		RunID:      d.run.ID,
 		NodeRunID:  ledger.NullableID(d.nodeRun.ID),
-		Origin:     ledger.Origin{Kind: ledger.OriginHuman, ActorID: d.req.DeciderActorID},
-		Authority:  ledger.AuthorityProposed,
-		Data:       data,
+		// origin: asserted — the API resolves the decider from its principal
+		Origin:    ledger.Origin{Kind: ledger.OriginHuman, ActorID: d.req.DeciderActorID},
+		Authority: ledger.AuthorityProposed,
+		Data:      data,
 	})
 	if err != nil {
 		return err

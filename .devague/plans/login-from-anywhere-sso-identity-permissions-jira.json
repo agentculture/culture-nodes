@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-01T20:34:34Z",
-  "updated": "2026-09-01T21:36:49Z",
+  "updated": "2026-09-01T23:53:05Z",
   "targets": [
     {
       "id": "c1",
@@ -185,7 +185,7 @@
     {
       "id": "h7",
       "kind": "honesty",
-      "text": "prod bridge env lists four targets and the deploy lane writes that file (grant-check names it); a merged PR raises exactly one 'Ticket done?' human task and the ticket moves to Done only once that task's done outcome is recorded, after which the sweep's next pass records that transition as self-echo without re-triggering intake; docs/drive-from-jira.md's trigger table and the custody decision record are updated in the same PR",
+      "text": "prod bridge env lists four targets and the deploy lane writes that file (grant-check names it); a merged PR moves the ticket to Done and the sweep's next pass records that transition as self-echo without re-triggering intake; docs/drive-from-jira.md's trigger table and the custody decision record are updated in the same PR",
       "deferred": false,
       "deferred_reason": ""
     },
@@ -339,7 +339,7 @@
     {
       "id": "c27",
       "kind": "after_state",
-      "text": "Opening https://nodes.culture.dev from any network redirects through Cloudflare SSO and lands a signed-in person on what is waiting for them; every decision, reply, review and grade carries that person's identity as the ledger origin; every bridge completion carries the actor the credential belongs to; no human holds NODES_HUMAN_DECISION_TOKEN_SECRET; an agent can read the Jira ticket it works on; the board moves to In Review when a PR opens, Pending on a parked question, and Done when the post-merge 'Ticket done?' human node is answered done, without an operator hand-turn; the ticket page decides everything and looks like a guided flow rather than a wall of lists",
+      "text": "Opening https://nodes.culture.dev from any network redirects through Cloudflare SSO and lands a signed-in person on what is waiting for them; every decision, reply, review and grade carries that person's identity as the ledger origin; every bridge completion carries the actor the credential belongs to; no human holds NODES_HUMAN_DECISION_TOKEN_SECRET; an agent can read the Jira ticket it works on; the board moves to In Review when a PR opens, Pending on a parked question, Done on merge, without an operator hand-turn; the ticket page decides everything and looks like a guided flow rather than a wall of lists",
       "deferred": false,
       "deferred_reason": ""
     },
@@ -367,7 +367,7 @@
     {
       "id": "c29",
       "kind": "success_signal",
-      "text": "Measured on prod after deploy: (a) an unauthenticated curl to https://nodes.culture.dev/v1alpha1/tickets/SCRUM-N gets an Access redirect, and the same path via the LAN address with no principal gets 401 on writes; (b) a human-task decision made on the ticket page from off-LAN lands a ledger record whose origin_actor_id is the actor bound to the signed-in email, with no decider field typed; (c) one bridge completion with a self-declared foreign origin_actor_id is refused with a diagnostic naming the mismatch and consumes no redispatch; (d) an intake run's agent output quotes a comment from the ticket it could not see before; (e) a merged PR naming a SCRUM key leaves the ticket not Done and raises exactly one 'Ticket done?' human task; answering that task done moves the ticket to Done inside one sweep interval of that outcome, with zero operator transitions in the changelog; (f) the shared decision secret is removed from every human's hands (remove-secret.sh run recorded)",
+      "text": "Measured on prod after deploy: (a) an unauthenticated curl to https://nodes.culture.dev/v1alpha1/tickets/SCRUM-N gets an Access redirect, and the same path via the LAN address with no principal gets 401 on writes; (b) a human-task decision made on the ticket page from off-LAN lands a ledger record whose origin_actor_id is the actor bound to the signed-in email, with no decider field typed; (c) one bridge completion with a self-declared foreign origin_actor_id is refused with a diagnostic naming the mismatch and consumes no redispatch; (d) an intake run's agent output quotes a comment from the ticket it could not see before; (e) a merged PR naming a SCRUM key moves the ticket to Done inside one sweep interval with zero operator transitions in the changelog; (f) the shared decision secret is removed from every human's hands (remove-secret.sh run recorded)",
       "deferred": false,
       "deferred_reason": ""
     },
@@ -971,6 +971,41 @@
         "h6"
       ],
       "instruction": "Mirror create_issue.py's module shape and README section. Copy pr_upkeep_jira.jira_description_text with attribution for ADF flattening (the sweep module must stay import-free of the bridge). Add the read allowlist env to config.py's env parsing, NOT to _FILE_FIELDS. Update adapters/jira/README.md input examples."
+    },
+    {
+      "id": "t21",
+      "summary": "Jira API base for scoped service-account tokens (deviation follow-up)",
+      "origin": "llm",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+        "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+        "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base"
+      ],
+      "deps": [],
+      "covers": [
+        "c17",
+        "h21"
+      ],
+      "instruction": "Recorded deviation d1. Python only plus deploy shell and docs; do not touch internal/. Keep the sweep module import-free and under its line limit; follow docs/operations/pr-upkeep-lane.md:150-160 if the sweep's environmentRefs change (they do: add JIRA_API_BASE)."
+    },
+    {
+      "id": "t22",
+      "summary": "Break-glass principal from an issued dial-in credential (deviation d2 follow-up)",
+      "origin": "llm",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+        "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c48",
+        "h34"
+      ],
+      "instruction": "Small Go package in internal/api/principal.go + internal/actors inbound_authentication read path; do not widen dial-in issuance. Recorded deviation d2."
     }
   ],
   "risks": [
@@ -1023,5 +1058,576 @@
       "resolution": ""
     }
   ],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "task_id": "t1",
+      "criterion_index": 1,
+      "criterion_snapshot": "Verify(token) against a fake JWKS server: valid RS256 token passes and yields {subject, email|common_name, kind}; wrong aud, wrong iss, expired, nbf in future, unknown kid after one refetch, and bad signature each refuse with a distinct reason class",
+      "seam": "internal/auth Access JWT verifier",
+      "behavior": "Verify(token) against a fake JWKS server: valid RS256 token passes and yields {subject, email|common_name, kind}; wrong aud, wrong iss, expired, nbf in future, unknown kid after one refetch, and bad signature each refuse with a distinct reason class",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "task_id": "t1",
+      "criterion_index": 2,
+      "criterion_snapshot": "JWKS cache is keyed by kid, refetches once on a miss with an anti-flood window, and survives a key rotation test (old key dropped, new key served)",
+      "seam": "internal/auth Access JWT verifier",
+      "behavior": "JWKS cache is keyed by kid, refetches once on a miss with an anti-flood window, and survives a key rotation test (old key dropped, new key served)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "task_id": "t1",
+      "criterion_index": 3,
+      "criterion_snapshot": "go list -deps ./internal/auth shows only standard library packages; scripts/check-zero-runtime-deps.sh and tests/lint import guards pass; no log line in the package contains the token value",
+      "seam": "internal/auth Access JWT verifier",
+      "behavior": "go list -deps ./internal/auth shows only standard library packages; scripts/check-zero-runtime-deps.sh and tests/lint import guards pass; no log line in the package contains the token value",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "task_id": "t2",
+      "criterion_index": 1,
+      "criterion_snapshot": "Migration file is the highest-numbered, additive, creates actor_identities(provider, subject, actor_id FK actors, roles text[], created_at, revoked_at) with UNIQUE(provider, subject) and no email or credential column; migrations/pending/0036 unchanged",
+      "seam": "actor_identities migration + store methods",
+      "behavior": "Migration file is the highest-numbered, additive, creates actor_identities(provider, subject, actor_id FK actors, roles text[], created_at, revoked_at) with UNIQUE(provider, subject) and no email or credential column; migrations/pending/0036 unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "task_id": "t2",
+      "criterion_index": 2,
+      "criterion_snapshot": "Store methods BindIdentity/LookupIdentity/RevokeIdentity are covered by tests against the embedded Postgres; a revoked binding is not returned by lookup; roles are validated against the closed set {viewer, approver, namespace_administrator}",
+      "seam": "actor_identities migration + store methods",
+      "behavior": "Store methods BindIdentity/LookupIdentity/RevokeIdentity are covered by tests against the embedded Postgres; a revoked binding is not returned by lookup; roles are validated against the closed set {viewer, approver, namespace_administrator}",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "task_id": "t3",
+      "criterion_index": 1,
+      "criterion_snapshot": "internal/api/events.go writes an SSE comment line every 25 s on /v1alpha1/events and /v1alpha1/runs/{id}/events while idle; a test with a fake clock observes two keepalives in 60 s and no keepalive after the client disconnects",
+      "seam": "SSE keepalive + EventSource reconnect",
+      "behavior": "internal/api/events.go writes an SSE comment line every 25 s on /v1alpha1/events and /v1alpha1/runs/{id}/events while idle; a test with a fake clock observes two keepalives in 60 s and no keepalive after the client disconnects",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "task_id": "t3",
+      "criterion_index": 2,
+      "criterion_snapshot": "web/src EventSource consumers ignore comment frames and reconnect after a forced drop (vitest with a mocked EventSource)",
+      "seam": "SSE keepalive + EventSource reconnect",
+      "behavior": "web/src EventSource consumers ignore comment frames and reconnect after a forced drop (vitest with a mocked EventSource)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "task_id": "t4",
+      "criterion_index": 1,
+      "criterion_snapshot": "deploy/prod/deploy.sh's deploy_jira writes JIRA_TRANSITION_TARGETS='In Progress,Pending,In Review,Done' and JIRA_TRANSITION_PROJECT_PREFIX into jira-bridge-jira.env from deploy-time values, and lanes/grant-check.sh names both keys; a tests/deploy test asserts the written file",
+      "seam": "deploy_jira env + jira bridge transition allowlist + custody decision doc",
+      "behavior": "deploy/prod/deploy.sh's deploy_jira writes JIRA_TRANSITION_TARGETS='In Progress,Pending,In Review,Done' and JIRA_TRANSITION_PROJECT_PREFIX into jira-bridge-jira.env from deploy-time values, and lanes/grant-check.sh names both keys; a tests/deploy test asserts the written file",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "task_id": "t4",
+      "criterion_index": 2,
+      "criterion_snapshot": "adapters/jira/tests/test_transition_issue.py gains cases for In Review and Done accepted and a fifth name refused; test_bridge.py, tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and tests/test_jira_comment_fact_schema.py pass unchanged",
+      "seam": "deploy_jira env + jira bridge transition allowlist + custody decision doc",
+      "behavior": "adapters/jira/tests/test_transition_issue.py gains cases for In Review and Done accepted and a fifth name refused; test_bridge.py, tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and tests/test_jira_comment_fact_schema.py pass unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "task_id": "t4",
+      "criterion_index": 3,
+      "criterion_snapshot": "docs/decisions/2026-08-18-jira-transition-custody.md is superseded by docs/decisions/2026-09-XX-jira-transition-allowlist.md stating the list form, engine-side policy, and that Done is a human node (c32)",
+      "seam": "deploy_jira env + jira bridge transition allowlist + custody decision doc",
+      "behavior": "docs/decisions/2026-08-18-jira-transition-custody.md is superseded by docs/decisions/2026-09-XX-jira-transition-allowlist.md stating the list form, engine-side policy, and that Done is a human node (c32)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "task_id": "t5",
+      "criterion_index": 1,
+      "criterion_snapshot": "tests/behavioral/README.md declares the convention (dedicated folder; Go tests tagged //go:build behavioral, pytest marker behavioral) and scripts/lint-all.sh --list shows it is not part of lint; one placeholder test exists per language",
+      "seam": "tests/behavioral convention + devague obligations + validate-delivery lane doc",
+      "behavior": "tests/behavioral/README.md declares the convention (dedicated folder; Go tests tagged //go:build behavioral, pytest marker behavioral) and scripts/lint-all.sh --list shows it is not part of lint; one placeholder test exists per language",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "task_id": "t5",
+      "criterion_index": 2,
+      "criterion_snapshot": "devague oblige is run for every confirmed requirement claim on the frame and devague plan oblige for every acceptance criterion of confirmed tasks; devague status shows no unmet-obligation warning that names a claim without an obligation",
+      "seam": "tests/behavioral convention + devague obligations + validate-delivery lane doc",
+      "behavior": "devague oblige is run for every confirmed requirement claim on the frame and devague plan oblige for every acceptance criterion of confirmed tasks; devague status shows no unmet-obligation warning that names a claim without an obligation",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "task_id": "t5",
+      "criterion_index": 3,
+      "criterion_snapshot": "docs/operations/validate-delivery-lane.md explains when the leg runs (after each wave merges, before summarize-delivery) and that a merge never asks a human node for Done before evidence is filed",
+      "seam": "tests/behavioral convention + devague obligations + validate-delivery lane doc",
+      "behavior": "docs/operations/validate-delivery-lane.md explains when the leg runs (after each wave merges, before summarize-delivery) and that a merge never asks a human node for Done before evidence is filed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "task_id": "t8",
+      "criterion_index": 1,
+      "criterion_snapshot": "internal/api has one principal middleware; the six require*Auth helpers are deleted or delegate to it; every mutating route in the server.go table (incl. grades, runs create/cancel/patch, workflows, workflow-generations, namespaces, schedules, preflights, plan-imports) returns 401 without a principal and 403 for a viewer; authgate_test.go's table lists every mutating route and asserts both",
+      "seam": "internal/api principal middleware, loopback Access listener, whoami, refusal logging, openapi",
+      "behavior": "internal/api has one principal middleware; the six require*Auth helpers are deleted or delegate to it; every mutating route in the server.go table (incl. grades, runs create/cancel/patch, workflows, workflow-generations, namespaces, schedules, preflights, plan-imports) returns 401 without a principal and 403 for a viewer; authgate_test.go's table lists every mutating route and asserts both",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "task_id": "t8",
+      "criterion_index": 2,
+      "criterion_snapshot": "cmd/nodes serve gains NODES_ACCESS_LISTEN (loopback) + NODES_ACCESS_TEAM_DOMAIN + NODES_ACCESS_AUD; a valid Access JWT is honoured only on the loopback listener and ignored on NODES_LISTEN; GETs and both SSE streams (registered outside wrap) accept the principal; the existing bearer secrets keep working on NODES_LISTEN for the transition",
+      "seam": "internal/api principal middleware, loopback Access listener, whoami, refusal logging, openapi",
+      "behavior": "cmd/nodes serve gains NODES_ACCESS_LISTEN (loopback) + NODES_ACCESS_TEAM_DOMAIN + NODES_ACCESS_AUD; a valid Access JWT is honoured only on the loopback listener and ignored on NODES_LISTEN; GETs and both SSE streams (registered outside wrap) accept the principal; the existing bearer secrets keep working on NODES_LISTEN for the transition",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o16",
+      "task_id": "t8",
+      "criterion_index": 3,
+      "criterion_snapshot": "GET /v1alpha1/whoami returns {principal, actor_id, roles} or 200 {unbound: true} for an allowlisted principal with no binding, and every write for an unbound principal is 403 reason unbound",
+      "seam": "internal/api principal middleware, loopback Access listener, whoami, refusal logging, openapi",
+      "behavior": "GET /v1alpha1/whoami returns {principal, actor_id, roles} or 200 {unbound: true} for an allowlisted principal with no binding, and every write for an unbound principal is 403 reason unbound",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o17",
+      "task_id": "t8",
+      "criterion_index": 4,
+      "criterion_snapshot": "Refusals log one line with reason class (no_principal, bad_signature, bad_audience, expired, unbound, forbidden_role) and subject, never the token; a counter per reason is exposed via internal/telemetry; a test greps the log output for the token and finds nothing",
+      "seam": "internal/api principal middleware, loopback Access listener, whoami, refusal logging, openapi",
+      "behavior": "Refusals log one line with reason class (no_principal, bad_signature, bad_audience, expired, unbound, forbidden_role) and subject, never the token; a counter per reason is exposed via internal/telemetry; a test greps the log output for the token and finds nothing",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o18",
+      "task_id": "t8",
+      "criterion_index": 5,
+      "criterion_snapshot": "api/openapi/openapi.yaml replaces the 'authless by design' paragraph with the principal scheme; a contract test still passes; grep web/src and internal/ finds no OAuth client, session issuer, password hash or users table",
+      "seam": "internal/api principal middleware, loopback Access listener, whoami, refusal logging, openapi",
+      "behavior": "api/openapi/openapi.yaml replaces the 'authless by design' paragraph with the principal scheme; a contract test still passes; grep web/src and internal/ finds no OAuth client, session issuer, password hash or users table",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o19",
+      "task_id": "t9",
+      "criterion_index": 1,
+      "criterion_snapshot": "web/src/api/decision-token.ts is deleted; grep web/src finds no sessionStorage decision token, no localStorage actor id, no DeciderActorField, no free-text reviewer/replier input; postJson sends no Authorization header (the edge cookie carries identity)",
+      "seam": "web/src identity model: decision-token.ts removed, Header signed-in principal, unbound page",
+      "behavior": "web/src/api/decision-token.ts is deleted; grep web/src finds no sessionStorage decision token, no localStorage actor id, no DeciderActorField, no free-text reviewer/replier input; postJson sends no Authorization header (the edge cookie carries identity)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o20",
+      "task_id": "t9",
+      "criterion_index": 2,
+      "criterion_snapshot": "Header renders the signed-in email from GET /v1alpha1/whoami and an unbound principal sees a full-page 'no actor is bound to this login' state naming the principal; no-bundled-secrets.test.ts passes with its allowlist shrunk to zero entries",
+      "seam": "web/src identity model: decision-token.ts removed, Header signed-in principal, unbound page",
+      "behavior": "Header renders the signed-in email from GET /v1alpha1/whoami and an unbound principal sees a full-page 'no actor is bound to this login' state naming the principal; no-bundled-secrets.test.ts passes with its allowlist shrunk to zero entries",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o21",
+      "task_id": "t9",
+      "criterion_index": 3,
+      "criterion_snapshot": "Inbox, Decisions and TicketView tests pass with the identity fields removed; e2e ticket-view.spec.ts no longer types a token",
+      "seam": "web/src identity model: decision-token.ts removed, Header signed-in principal, unbound page",
+      "behavior": "Inbox, Decisions and TicketView tests pass with the identity fields removed; e2e ticket-view.spec.ts no longer types a token",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o22",
+      "task_id": "t10",
+      "criterion_index": 1,
+      "criterion_snapshot": "For replies, frame posts, freeze, human-task decisions, reviews, grades, suite-verdicts and gate-reports an API test sends a body naming a different actor than the principal and the stored record's origin_actor_id is the principal's actor; the body field is accepted only when equal, otherwise ignored with a 200 and a warning field",
+      "seam": "write-route origin stamping + dial-in completion custody + fan-out payload invariant",
+      "behavior": "For replies, frame posts, freeze, human-task decisions, reviews, grades, suite-verdicts and gate-reports an API test sends a body naming a different actor than the principal and the stored record's origin_actor_id is the principal's actor; the body field is accepted only when equal, otherwise ignored with a 200 and a warning field",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o23",
+      "task_id": "t10",
+      "criterion_index": 2,
+      "criterion_snapshot": "A dial-in completion whose ledger delta names an actor other than the authenticated actor key is refused at accept time with a diagnostic on the run naming both ids and no redispatch (#183); inbound_transport.go no longer hardcodes party kind",
+      "seam": "write-route origin stamping + dial-in completion custody + fan-out payload invariant",
+      "behavior": "A dial-in completion whose ledger delta names an actor other than the authenticated actor key is refused at accept time with a diagnostic on the run naming both ids and no redispatch (#183); inbound_transport.go no longer hardcodes party kind",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o24",
+      "task_id": "t10",
+      "criterion_index": 3,
+      "criterion_snapshot": "humantaskfanout_test.go's payload invariant also asserts no Cf-Access-Jwt-Assertion value appears in any fan-out payload",
+      "seam": "write-route origin stamping + dial-in completion custody + fan-out payload invariant",
+      "behavior": "humantaskfanout_test.go's payload invariant also asserts no Cf-Access-Jwt-Assertion value appears in any fan-out payload",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o25",
+      "task_id": "t11",
+      "criterion_index": 1,
+      "criterion_snapshot": "grep across docs/operations, scripts/, deploy/ and examples/ finds no NODES_HUMAN_DECISION_TOKEN outside install-secrets' generation; scripts/merge-gate.py and collect-handover.py authenticate with NODES_ACTOR_*_TOKEN or an issued dial-in credential and their suite verdicts land origin agent, authority proposed",
+      "seam": "developer lane and merge-gate/collect-handover agent credentials",
+      "behavior": "grep across docs/operations, scripts/, deploy/ and examples/ finds no NODES_HUMAN_DECISION_TOKEN outside install-secrets' generation; scripts/merge-gate.py and collect-handover.py authenticate with NODES_ACTOR_*_TOKEN or an issued dial-in credential and their suite verdicts land origin agent, authority proposed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o26",
+      "task_id": "t11",
+      "criterion_index": 2,
+      "criterion_snapshot": "docs/operations/spec-chain-lane.md \u00a72 claude_env no longer lists the human token; the flows that relied on human-authority verdicts are listed in the PR body and re-pointed at a human node or accepted as proposed",
+      "seam": "developer lane and merge-gate/collect-handover agent credentials",
+      "behavior": "docs/operations/spec-chain-lane.md \u00a72 claude_env no longer lists the human token; the flows that relied on human-authority verdicts are listed in the PR body and re-pointed at a human node or accepted as proposed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o27",
+      "task_id": "t12",
+      "criterion_index": 1,
+      "criterion_snapshot": "TicketView renders pending records per run with confirm/reject, required rationale, and one submit that calls the per-run review endpoint and shows per-run results; a confirmed record still reads proposed with a confirmed review beside it",
+      "seam": "TicketView decision surface + Playwright specs",
+      "behavior": "TicketView renders pending records per run with confirm/reject, required rationale, and one submit that calls the per-run review endpoint and shows per-run results; a confirmed record still reads proposed with a confirmed review beside it",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o28",
+      "task_id": "t12",
+      "criterion_index": 2,
+      "criterion_snapshot": "Frame claims from the custody checkout render read-only with their confirmation state; no grading form exists anywhere in web/src; /decisions' inert claim checkbox is removed",
+      "seam": "TicketView decision surface + Playwright specs",
+      "behavior": "Frame claims from the custody checkout render read-only with their confirmation state; no grading form exists anywhere in web/src; /decisions' inert claim checkbox is removed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o29",
+      "task_id": "t12",
+      "criterion_index": 3,
+      "criterion_snapshot": "Playwright: web/e2e/ticket-view.spec.ts walks decide-a-task and confirm-a-claim with intercepted API and asserts the exact request bodies; new inbox.spec.ts and decisions.spec.ts exist",
+      "seam": "TicketView decision surface + Playwright specs",
+      "behavior": "Playwright: web/e2e/ticket-view.spec.ts walks decide-a-task and confirm-a-claim with intercepted API and asserts the exact request bodies; new inbox.spec.ts and decisions.spec.ts exist",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o30",
+      "task_id": "t13",
+      "criterion_index": 1,
+      "criterion_snapshot": "docs/operations/people.md is the three-place recipe (Access policy, human actor revision via register-actor.sh, BindIdentity via a new scripts/bind-identity.sh) plus offboarding (revoke Access session, RevokeIdentity) and the recorded Access session duration; a second person is allowlisted and bound and decides a human task from off-LAN (recorded)",
+      "seam": "docs/operations/people.md recipe + bind-identity.sh + break-glass credential",
+      "behavior": "docs/operations/people.md is the three-place recipe (Access policy, human actor revision via register-actor.sh, BindIdentity via a new scripts/bind-identity.sh) plus offboarding (revoke Access session, RevokeIdentity) and the recorded Access session duration; a second person is allowlisted and bound and decides a human task from off-LAN (recorded)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o31",
+      "task_id": "t13",
+      "criterion_index": 2,
+      "criterion_snapshot": "scripts/issue-dialin-credential.sh (or a sibling) can issue a service credential bound to the operator's human actor for LAN break-glass; the credential decides a human task from curl on the LAN and the run records it",
+      "seam": "docs/operations/people.md recipe + bind-identity.sh + break-glass credential",
+      "behavior": "scripts/issue-dialin-credential.sh (or a sibling) can issue a service credential bound to the operator's human actor for LAN break-glass; the credential decides a human task from curl on the LAN and the run records it",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o32",
+      "task_id": "t14",
+      "criterion_index": 1,
+      "criterion_snapshot": "GET /v1alpha1/tickets/{id} returns pending_records grouped per run with the ledger_version each group was read at, in one response; a test proves a record appended after the read is refused by the guard when the client submits the served version",
+      "seam": "GET /v1alpha1/tickets/{id} pending_records + POST reviews + reply origin/Jira mirror",
+      "behavior": "GET /v1alpha1/tickets/{id} returns pending_records grouped per run with the ledger_version each group was read at, in one response; a test proves a record appended after the read is refused by the guard when the client submits the served version",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o33",
+      "task_id": "t14",
+      "criterion_index": 2,
+      "criterion_snapshot": "POST /v1alpha1/tickets/{id}/reviews accepts {runs: [{run_id, expected_ledger_version, records, verdict}], rationale} and commits one review per run in order, returning per-run results; a stale run reports conflict while the others commit (decision c40)",
+      "seam": "GET /v1alpha1/tickets/{id} pending_records + POST reviews + reply origin/Jira mirror",
+      "behavior": "POST /v1alpha1/tickets/{id}/reviews accepts {runs: [{run_id, expected_ledger_version, records, verdict}], rationale} and commits one review per run in order, returning per-run results; a stale run reports conflict while the others commit (decision c40)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o34",
+      "task_id": "t14",
+      "criterion_index": 3,
+      "criterion_snapshot": "A page reply's engine fact carries origin actor = the principal's actor and the Jira mirror reads the text followed by 'via' and the verified display name; the fact still validates against schemas/events/jira_comment.schema.json and jira_comment_is_self_echo is unchanged",
+      "seam": "GET /v1alpha1/tickets/{id} pending_records + POST reviews + reply origin/Jira mirror",
+      "behavior": "A page reply's engine fact carries origin actor = the principal's actor and the Jira mirror reads the text followed by 'via' and the verified display name; the fact still validates against schemas/events/jira_comment.schema.json and jira_comment_is_self_echo is unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o35",
+      "task_id": "t15",
+      "criterion_index": 1,
+      "criterion_snapshot": "examples/pr-upkeep/sweep.py emits pr.opened {repository, number, url, issue_key} using merged_pr_fact's correlation; a workflow or engine hook plans transition_issue In Review from it exactly once per PR (idempotent on the fan-out UNIQUE)",
+      "seam": "sweep pr.opened -> In Review; pr.merged -> 'Ticket done?' human task -> Done; drive-from-jira.md",
+      "behavior": "examples/pr-upkeep/sweep.py emits pr.opened {repository, number, url, issue_key} using merged_pr_fact's correlation; a workflow or engine hook plans transition_issue In Review from it exactly once per PR (idempotent on the fan-out UNIQUE)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o36",
+      "task_id": "t15",
+      "criterion_index": 2,
+      "criterion_snapshot": "pr.merged no longer only freezes the ticket: in the same transaction it raises a human task 'Ticket done?' whose options are done / not yet, addressed to the approver role, and whose done outcome plans transition_issue Done; the transition is never planned from pr.merged directly (test asserts absence) \u2014 decisions c32, c35",
+      "seam": "sweep pr.opened -> In Review; pr.merged -> 'Ticket done?' human task -> Done; drive-from-jira.md",
+      "behavior": "pr.merged no longer only freezes the ticket: in the same transaction it raises a human task 'Ticket done?' whose options are done / not yet, addressed to the approver role, and whose done outcome plans transition_issue Done; the transition is never planned from pr.merged directly (test asserts absence) \u2014 decisions c32, c35",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o37",
+      "task_id": "t15",
+      "criterion_index": 3,
+      "criterion_snapshot": "docs/drive-from-jira.md trigger table and the 'Move a ticket to Done' section are rewritten to the new behaviour in the same PR; test_pr_upkeep_sweep_jira.py's transition self-echo tests pass with the bot account authoring In Review and Done",
+      "seam": "sweep pr.opened -> In Review; pr.merged -> 'Ticket done?' human task -> Done; drive-from-jira.md",
+      "behavior": "docs/drive-from-jira.md trigger table and the 'Move a ticket to Done' section are rewritten to the new behaviour in the same PR; test_pr_upkeep_sweep_jira.py's transition self-echo tests pass with the bot account authoring In Review and Done",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o38",
+      "task_id": "t16",
+      "criterion_index": 1,
+      "criterion_snapshot": "POST /v1alpha1/webhooks/jira (on the loopback listener only) verifies the webhook secret (X-Hub-Signature HMAC where the tenant supports it, else a per-webhook URL token compared constant-time), normalises the payload with pr_upkeep_jira's functions (cited copy, byte-identical test), and forwards to the same DeliverSignalEvent path with the same source keys and watermark; a fixture test proves receiver and sweep emit byte-identical facts",
+      "seam": "POST /v1alpha1/webhooks/jira receiver + Bypass policy + sweep cadence",
+      "behavior": "POST /v1alpha1/webhooks/jira (on the loopback listener only) verifies the webhook secret (X-Hub-Signature HMAC where the tenant supports it, else a per-webhook URL token compared constant-time), normalises the payload with pr_upkeep_jira's functions (cited copy, byte-identical test), and forwards to the same DeliverSignalEvent path with the same source keys and watermark; a fixture test proves receiver and sweep emit byte-identical facts",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o39",
+      "task_id": "t16",
+      "criterion_index": 2,
+      "criterion_snapshot": "docs/operations/nodes-culture-dev.md gains the Bypass policy (path /v1alpha1/webhooks/jira, Everyone) and the Jira webhook registration steps; a comment posted on a SCRUM ticket produces a pr-upkeep.jira.comment fact within seconds and the next sweep pass reports duplicate=true",
+      "seam": "POST /v1alpha1/webhooks/jira receiver + Bypass policy + sweep cadence",
+      "behavior": "docs/operations/nodes-culture-dev.md gains the Bypass policy (path /v1alpha1/webhooks/jira, Everyone) and the Jira webhook registration steps; a comment posted on a SCRUM ticket produces a pr-upkeep.jira.comment fact within seconds and the next sweep pass reports duplicate=true",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o40",
+      "task_id": "t16",
+      "criterion_index": 3,
+      "criterion_snapshot": "The sweep schedule stays at five minutes until a week of push runs green; the relaxation is a recorded follow-up, not part of this task (decision c51: no Automation rules)",
+      "seam": "POST /v1alpha1/webhooks/jira receiver + Bypass policy + sweep cadence",
+      "behavior": "The sweep schedule stays at five minutes until a week of push runs green; the relaxation is a recorded follow-up, not part of this task (decision c51: no Automation rules)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o41",
+      "task_id": "t17",
+      "criterion_index": 1,
+      "criterion_snapshot": "The ticket page's first screen is a flow diagram (xyflow/elk, reusing ActiveGraphCanvas primitives) of where the ticket is plus the one pending decision with its buttons; claims, runs and the reply thread are below or in tabs",
+      "seam": "ticket page flow diagram, first-visit page, screenshot pass on #270",
+      "behavior": "The ticket page's first screen is a flow diagram (xyflow/elk, reusing ActiveGraphCanvas primitives) of where the ticket is plus the one pending decision with its buttons; claims, runs and the reply thread are below or in tabs",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o42",
+      "task_id": "t17",
+      "criterion_index": 2,
+      "criterion_snapshot": "A signed-in person with nothing pending lands on a first-visit page that names the tickets waiting on others and how to get a link; Inbox and Decisions become secondary views reachable from the header, or are retired where the ticket page replaces them (decision c33), with the retirement named in the PR; non-human-facing pages unchanged except shared components (c39)",
+      "seam": "ticket page flow diagram, first-visit page, screenshot pass on #270",
+      "behavior": "A signed-in person with nothing pending lands on a first-visit page that names the tickets waiting on others and how to get a link; Inbox and Decisions become secondary views reachable from the header, or are retired where the ticket page replaces them (decision c33), with the retirement named in the PR; non-human-facing pages unchanged except shared components (c39)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o43",
+      "task_id": "t17",
+      "criterion_index": 3,
+      "criterion_snapshot": "NODES_SHOTS screenshot pass captured for every human-facing page before and after and attached to #270 (c34); the operator reviews them before merge",
+      "seam": "ticket page flow diagram, first-visit page, screenshot pass on #270",
+      "behavior": "NODES_SHOTS screenshot pass captured for every human-facing page before and after and attached to #270 (c34); the operator reviews them before merge",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o44",
+      "task_id": "t18",
+      "criterion_index": 1,
+      "criterion_snapshot": "A dated docs/audits/ measurement sitting for login-from-anywhere records all six c29 measurements with the exact command, id or record, failures recorded as failures; NODES_HUMAN_DECISION_TOKEN_SECRET is removed from every human's hands via remove-secret.sh and the run is recorded",
+      "seam": "docs/audits measurement sitting, audit re-verification, unchanged credential-issuance paths",
+      "behavior": "A dated docs/audits/ measurement sitting for login-from-anywhere records all six c29 measurements with the exact command, id or record, failures recorded as failures; NODES_HUMAN_DECISION_TOKEN_SECRET is removed from every human's hands via remove-secret.sh and the run is recorded",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o45",
+      "task_id": "t18",
+      "criterion_index": 2,
+      "criterion_snapshot": "The 2026-08-30 audit is re-verified live and every changed line gets a dated correction; the delivery summary maps each after-state sentence to a measurement and quotes the Done/In Review hand-turn counts before and after and decisions under the secret vs under a principal",
+      "seam": "docs/audits measurement sitting, audit re-verification, unchanged credential-issuance paths",
+      "behavior": "The 2026-08-30 audit is re-verified live and every changed line gets a dated correction; the delivery summary maps each after-state sentence to a measurement and quotes the Done/In Review hand-turn counts before and after and decisions under the secret vs under a principal",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o46",
+      "task_id": "t18",
+      "criterion_index": 3,
+      "criterion_snapshot": "git diff main...branch shows no change under internal/actors/token.go, internal/actors/inbound_issuance.go, internal/awsauth/ or server.go's unversioned callback registration; go test ./internal/actors/... ./internal/awsauth/... passes unchanged",
+      "seam": "docs/audits measurement sitting, audit re-verification, unchanged credential-issuance paths",
+      "behavior": "git diff main...branch shows no change under internal/actors/token.go, internal/actors/inbound_issuance.go, internal/awsauth/ or server.go's unversioned callback registration; go test ./internal/actors/... ./internal/awsauth/... passes unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o47",
+      "task_id": "t19",
+      "criterion_index": 1,
+      "criterion_snapshot": "deploy/prod carries cloudflared-nodes.service (token-mode, TUNNEL_TOKEN_FILE 0600, the cloudflared-chat.service shape) targeting the loopback listener port on thor over plain HTTP, and docs/operations/nodes-culture-dev.md records the one-time cultureflare remote-login setup command with placeholders, the AUD tag location, and the session-duration value",
+      "seam": "cloudflared-nodes.service + NODES_UI_BASE_URL in compose/prod.env + version parity through the tunnel",
+      "behavior": "deploy/prod carries cloudflared-nodes.service (token-mode, TUNNEL_TOKEN_FILE 0600, the cloudflared-chat.service shape) targeting the loopback listener port on thor over plain HTTP, and docs/operations/nodes-culture-dev.md records the one-time cultureflare remote-login setup command with placeholders, the AUD tag location, and the session-duration value",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o48",
+      "task_id": "t19",
+      "criterion_index": 2,
+      "criterion_snapshot": "compose.thor.yml and compose.orin.yml plus install-secrets' prod.env block carry NODES_UI_BASE_URL=https://nodes.culture.dev; a grep test in tests/deploy asserts both files agree; the LAN publish 18080:8080 is unchanged",
+      "seam": "cloudflared-nodes.service + NODES_UI_BASE_URL in compose/prod.env + version parity through the tunnel",
+      "behavior": "compose.thor.yml and compose.orin.yml plus install-secrets' prod.env block carry NODES_UI_BASE_URL=https://nodes.culture.dev; a grep test in tests/deploy asserts both files agree; the LAN publish 18080:8080 is unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o49",
+      "task_id": "t19",
+      "criterion_index": 3,
+      "criterion_snapshot": "curl https://nodes.culture.dev/v1alpha1/version (after the operator applies the unit) returns the same revision as http://192.168.1.146:18080/v1alpha1/version; recorded in the delivery summary as a hand-turn if applied by hand",
+      "seam": "cloudflared-nodes.service + NODES_UI_BASE_URL in compose/prod.env + version parity through the tunnel",
+      "behavior": "curl https://nodes.culture.dev/v1alpha1/version (after the operator applies the unit) returns the same revision as http://192.168.1.146:18080/v1alpha1/version; recorded in the delivery summary as a hand-turn if applied by hand",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o50",
+      "task_id": "t20",
+      "criterion_index": 1,
+      "criterion_snapshot": "adapters/jira/src/jira_bridge/read_issue.py accepts exactly {verb, issue} and returns summary, description (ADF flattened, 4000-char cap), status, up to JIRA_READ_COMMENT_LIMIT comments (id, author accountId, created, body) and issue links; refuses a key outside JIRA_TRANSITION_PROJECT_PREFIX and refuses everything when the limit is unset",
+      "seam": "adapters/jira read_issue.py + server.py dispatch + /v1/capabilities + ledger authority",
+      "behavior": "adapters/jira/src/jira_bridge/read_issue.py accepts exactly {verb, issue} and returns summary, description (ADF flattened, 4000-char cap), status, up to JIRA_READ_COMMENT_LIMIT comments (id, author accountId, created, body) and issue links; refuses a key outside JIRA_TRANSITION_PROJECT_PREFIX and refuses everything when the limit is unset",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o51",
+      "task_id": "t20",
+      "criterion_index": 2,
+      "criterion_snapshot": "server.py dispatches it, /v1/capabilities lists it under verbs with the read custody block; tests cover prefix refusal, empty-config refusal, cap, and the exact GET path; test_no_transitions.py still passes and client.py is unchanged",
+      "seam": "adapters/jira read_issue.py + server.py dispatch + /v1/capabilities + ledger authority",
+      "behavior": "server.py dispatches it, /v1/capabilities lists it under verbs with the read custody block; tests cover prefix refusal, empty-config refusal, cap, and the exact GET path; test_no_transitions.py still passes and client.py is unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o52",
+      "task_id": "t20",
+      "criterion_index": 3,
+      "criterion_snapshot": "The result ledger record is authority proposed, origin agent, like the three write verbs (decision c41)",
+      "seam": "adapters/jira read_issue.py + server.py dispatch + /v1/capabilities + ledger authority",
+      "behavior": "The result ledger record is authority proposed, origin agent, like the three write verbs (decision c41)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o53",
+      "task_id": "t21",
+      "criterion_index": 1,
+      "criterion_snapshot": "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+      "seam": "sweep + jira bridge + operator skills + deploy lanes (Jira REST base)",
+      "behavior": "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o54",
+      "task_id": "t21",
+      "criterion_index": 2,
+      "criterion_snapshot": "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+      "seam": "sweep + jira bridge + operator skills + deploy lanes (Jira REST base)",
+      "behavior": "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o55",
+      "task_id": "t21",
+      "criterion_index": 3,
+      "criterion_snapshot": "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base",
+      "seam": "sweep + jira bridge + operator skills + deploy lanes (Jira REST base)",
+      "behavior": "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o56",
+      "task_id": "t22",
+      "criterion_index": 1,
+      "criterion_snapshot": "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+      "seam": "internal/api principal resolution on the LAN listener (issued dial-in credential)",
+      "behavior": "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o57",
+      "task_id": "t22",
+      "criterion_index": 2,
+      "criterion_snapshot": "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18",
+      "seam": "internal/api principal resolution on the LAN listener (issued dial-in credential)",
+      "behavior": "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }

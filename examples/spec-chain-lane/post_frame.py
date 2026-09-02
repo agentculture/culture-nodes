@@ -10,11 +10,17 @@ of it. The snapshot is the frame file devague itself wrote
 GET /v1alpha1/tickets/{id} then returns claim states equal to what devague
 recorded (t9's own acceptance).
 
-Custody of the decision token: the route is decision-token guarded, and
-the token is a GRANTED env value on the lane (`NODES_HUMAN_DECISION_TOKEN`
-in the developer bridge's `claude_env`) — never a workflow literal, never
-an argv, never printed. This script reads it from the environment only
-and exits 2, naming the variable, when it is absent.
+Custody of the credential: the lane posts the frame as ITSELF. The token is
+the developer actor's own bearer — the same value the control plane holds
+for `company/developer` under the actor row's `auth_token_env`
+(NODES_ACTOR_CLAUDE_TOKEN in thor's prod.env, `auth_token` in the bridge's
+developer.json) — GRANTED to the session as `NODES_ACTOR_TOKEN` in the
+developer bridge's `claude_env`: never a workflow literal, never an argv,
+never printed. The control plane resolves it to the registered actor and
+records the frame as posted by that actor (login-from-anywhere task t11,
+spec c45); the human decision token is never read here. This script reads
+the variable from the environment only and exits 2, naming it, when it is
+absent.
 
 Stdlib-only, like every helper beside a workflow in examples/.
 """
@@ -29,7 +35,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-TOKEN_ENV = "NODES_HUMAN_DECISION_TOKEN"
+TOKEN_ENV = "NODES_ACTOR_TOKEN"
 API_ENV = "NODES_API_URL"
 DEFAULT_POSTED_BY = "actor://company/developer"
 

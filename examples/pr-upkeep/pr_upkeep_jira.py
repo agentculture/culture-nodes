@@ -173,8 +173,19 @@ def _get_json(url: str, *, basic: tuple[str, str]) -> dict:
         return json.load(response)
 
 
-def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
-    """Fetch one project's issues and fully hydrate ordered Jira history."""
+def fetch_jira_issues(
+    site: str, project: str, email: str, token: str, api_base: str = ""
+) -> dict:
+    """Fetch one project's issues and fully hydrate ordered Jira history.
+
+    ``api_base`` reroutes the REST calls only. A scoped Jira Cloud
+    service-account token authenticates through the Atlassian gateway and the
+    site URL answers 401 for it, so the deployment grants the gateway base and
+    every request below is built from it. Browse links are NOT built here:
+    `jira_work_items` keeps `details_url` on the site host, because that is
+    the URL a person opens, and the gateway is not one.
+    """
+    site = jira_rest_site(site, api_base)
     basic = (email, token)
     params = {
         "jql": (
@@ -229,7 +240,7 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str) -> dict:
 
 
 def _extend_jira_issue_collection(
-    site: str,
+    site: str,  # the REST site: a host, or the gateway's host+tenant path
     issue_key: str,
     collection: str,
     entries: list[dict],
@@ -256,6 +267,49 @@ def _history_id(value: object) -> str:
 def _history_id_key(value: object) -> tuple[int, int | str]:
     text = _history_id(value)
     return (0, int(text)) if text.isdigit() else (1, text)
+
+
+def jira_rest_site(site: str, api_base: str = "") -> str:
+    """What follows ``https://`` for a REST call: the site host, or the
+    granted gateway base's host and tenant path.
+
+    Resolving the base into the SAME name the site host already used keeps
+    this module at exactly one issue-scoped URL expression, which is the
+    property `tests/deploy/jirabridgeaudit_test.go` pins. A second, gateway-
+    only branch would have made that guard count two endpoints and stop
+    meaning "this layer reads one shape of thing".
+    """
+    return api_base[len("https://") :] if api_base else site
+
+
+def jira_api_base() -> str:
+    """The optional granted REST base for a scoped service-account token.
+
+    Granted the same way the credential pair is -- a deployment environment
+    value, never run input, argv, output or fixture data -- because it is the
+    other half of *how the token authenticates*: a scoped Jira Cloud API token
+    is accepted only at the Atlassian gateway, and the site URL answers 401.
+    Absent means the site URL, which is what an unscoped token wants.
+
+    Refused at parse time rather than at the first request, so a typo is a
+    named configuration failure instead of an unattributable HTTP error.
+    """
+    value = (os.environ.get("JIRA_API_BASE") or "").strip()
+    if not value:
+        return ""
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or "@" in parsed.netloc
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "JIRA_API_BASE must be an https URL with no query or fragment, "
+            "such as the Atlassian gateway base for this site's cloud id"
+        )
+    return f"https://{parsed.netloc}{parsed.path.rstrip('/')}"
 
 
 def jira_credentials() -> tuple[str, str]:

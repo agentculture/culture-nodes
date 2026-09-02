@@ -173,6 +173,30 @@ func ticketFrameBackLink(frame *TicketFrameOut) string {
 	return safeTicketURL(doc.JiraURL)
 }
 
+// runLedgerVersions memoizes a ledger-version reader for the life of ONE
+// response.
+//
+// A ticket's decidable surface has two halves — the human tasks waiting on
+// a decision, and the undecided ledger claims — and both submit against the
+// same run's version. Reading it twice would let one response quote two
+// versions for the same run, and the decider would have no way to know
+// which of the two the guard is going to measure them against. Reading it
+// once means the page states one version per run, or refuses.
+func runLedgerVersions(read func(runID string) (int64, error)) func(string) (int64, error) {
+	seen := map[string]int64{}
+	return func(runID string) (int64, error) {
+		if v, ok := seen[runID]; ok {
+			return v, nil
+		}
+		v, err := read(runID)
+		if err != nil {
+			return 0, err
+		}
+		seen[runID] = v
+		return v, nil
+	}
+}
+
 // pendingTicketTasks shapes every pending task in tasks, reading each run's
 // current ledger version once. version is injected so this stays testable
 // without a store; handleGetTicket passes the real reader.

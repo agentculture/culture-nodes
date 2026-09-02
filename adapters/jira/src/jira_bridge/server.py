@@ -8,7 +8,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import client, create_issue, mapping, transition_issue
+from . import client, create_issue, mapping, read_issue, transition_issue
 from .config import Config
 
 INVOCATIONS_PATH = "/v1/invocations"
@@ -65,7 +65,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(
                 200,
                 {
-                    "verbs": [mapping.VERB, transition_issue.VERB, create_issue.VERB],
+                    "verbs": [
+                        mapping.VERB,
+                        transition_issue.VERB,
+                        create_issue.VERB,
+                        read_issue.VERB,
+                    ],
                     "custody": {
                         "transition_project_prefix": self.cfg.transition_project_prefix,
                         # Both names: `transition_target` is what this
@@ -76,6 +81,8 @@ class Handler(BaseHTTPRequestHandler):
                         "transition_target": self.cfg.transition_target,
                         "transition_targets": list(self.cfg.transition_targets),
                         "create_projects": list(self.cfg.create_projects),
+                        "read_project_prefix": self.cfg.transition_project_prefix,
+                        "read_comment_limit": self.cfg.read_comment_limit,
                     },
                 },
             )
@@ -132,6 +139,12 @@ class Handler(BaseHTTPRequestHandler):
                 allowed_projects=self.cfg.create_projects,
                 allowed_issue_types=self.cfg.create_issue_types,
             )
+        elif isinstance(input_, dict) and input_.get("verb") == read_issue.VERB:
+            parsed, refusal = read_issue.parse(
+                input_,
+                project_prefix=self.cfg.transition_project_prefix,
+                comment_limit=self.cfg.read_comment_limit,
+            )
         else:
             parsed, refusal = mapping.parse(input_)
         if refusal:
@@ -146,8 +159,20 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         assert parsed is not None
+        if isinstance(parsed, read_issue.ReadIssue):
+            fetched = read_issue.read(
+                self.cfg.jira_site, parsed, email, token, api_base=self.cfg.api_base
+            )
+            if not fetched.ok:
+                self._json(502, {"error": fetched.error, "class": "execution"})
+                return
+            assert fetched.output is not None
+            self._json(200, read_issue.result(fetched.output, self.cfg.actor_id))
+            return
         if isinstance(parsed, create_issue.CreateIssue):
-            created = create_issue.create(self.cfg.jira_site, parsed, email, token)
+            created = create_issue.create(
+                self.cfg.jira_site, parsed, email, token, api_base=self.cfg.api_base
+            )
             if not created.ok:
                 self._json(502, {"error": created.error, "class": "execution"})
                 return
@@ -155,17 +180,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         if isinstance(parsed, transition_issue.Transition):
             posted = transition_issue.transition(
-                self.cfg.jira_site, parsed.issue, parsed.target, email, token
+                self.cfg.jira_site,
+                parsed.issue,
+                parsed.target,
+                email,
+                token,
+                api_base=self.cfg.api_base,
             )
             if not posted.ok:
                 self._json(502, {"error": posted.error, "class": "execution"})
                 return
-            self._json(
-                200, transition_issue.result(parsed.issue, parsed.target, self.cfg.actor_id)
-            )
+            self._json(200, transition_issue.result(parsed.issue, parsed.target, self.cfg.actor_id))
             return
         posted = client.post_comment(
-            self.cfg.jira_site, parsed.issue, parsed.marked_text, email, token
+            self.cfg.jira_site,
+            parsed.issue,
+            parsed.marked_text,
+            email,
+            token,
+            api_base=self.cfg.api_base,
         )
         if not posted.ok:
             self._json(502, {"error": posted.error, "class": "execution"})

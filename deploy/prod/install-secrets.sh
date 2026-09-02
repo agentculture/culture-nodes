@@ -71,12 +71,21 @@ ORIN=${2:-orin}
 # on a Jira ticket is clickable. Set nowhere, it rendered `/tickets/SCRUM-N`:
 # a path with no origin, which Jira shows as text.
 #
-# Resolved HERE, once, and installed on BOTH hosts. It is thor's origin on
-# both, deliberately: orin runs a worker and serves no API, but the engine
-# renders this comment inside whichever process minted the run — so a value
-# present on thor only would make the link's correctness depend on which
-# worker claimed the node, the same divergence #224 records for the actor
-# tokens.
+# Resolved HERE, once, and installed on BOTH hosts with the SAME value,
+# deliberately: orin runs a worker and serves no API, but the engine renders
+# this comment inside whichever process minted the run — so a value present
+# on thor only would make the link's correctness depend on which worker
+# claimed the node, the same divergence #224 records for the actor tokens.
+#
+# Since the login-from-anywhere cycle (task t19, spec c44) the default is the
+# PUBLIC name the page is served under behind Cloudflare Access,
+# https://nodes.culture.dev — a link a person off the LAN can open. It is
+# therefore NOT derived from $THOR any more: the host this deploy was told
+# about is where the API listens for MACHINES (NODES_API_URL,
+# NODES_CALLBACK_BASE_URL keep their LAN forms), not where a person is sent.
+# See docs/operations/nodes-culture-dev.md, "Step 5", which also names the
+# hand-turn this add-if-absent lane needs on a host that already carries the
+# old LAN value.
 #
 # It is a non-secret address, which is why it may ride the argv to the remote
 # shell alongside HOST/DB_HOST/PROFILES.
@@ -84,12 +93,8 @@ UI_BASE_URL=${NODES_UI_BASE_URL:-}
 if [ -n "$UI_BASE_URL" ]; then
   UI_BASE_URL_SOURCE="exported for this run"
 else
-  # The API origin this deploy already knows: the control-plane host it was
-  # invoked with (`install-secrets.sh [thor-host] [orin-host]`), not the
-  # literal name `thor`, so an operator who addresses the machine by IP or
-  # tailscale name gets links that resolve the way their ssh does.
-  UI_BASE_URL="http://$THOR:18080"
-  UI_BASE_URL_SOURCE="defaulted to the control-plane API origin"
+  UI_BASE_URL="https://nodes.culture.dev"
+  UI_BASE_URL_SOURCE="defaulted to the public SSO origin"
 fi
 # A trailing slash is what an operator types; the renderer trims it too, but a
 # normalised value is what the next reader of prod.env sees.
@@ -276,6 +281,8 @@ POSTGRES_PASSWORD=$(gen)
 MINIO_ROOT_PASSWORD=$(gen)
 NODES_HUMAN_DECISION_TOKEN_SECRET=$(gen)
 NODES_CALLBACK_TOKEN_SECRET=$(gen)
+NODES_JIRA_WEBHOOK_SECRET=$(gen)
+NODES_JIRA_WEBHOOK_TOKEN=$(gen)
 NODES_RUNNER_SECRET_THOR=$(gen)
 NODES_RUNNER_SECRET_ORIN=$(gen)
 
@@ -326,7 +333,9 @@ of prod.env is merged around, not overwritten.
 common="POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
 NODES_HUMAN_DECISION_TOKEN_SECRET=${NODES_HUMAN_DECISION_TOKEN_SECRET}
-NODES_CALLBACK_TOKEN_SECRET=${NODES_CALLBACK_TOKEN_SECRET}"
+NODES_CALLBACK_TOKEN_SECRET=${NODES_CALLBACK_TOKEN_SECRET}
+NODES_JIRA_WEBHOOK_SECRET=${NODES_JIRA_WEBHOOK_SECRET}
+NODES_JIRA_WEBHOOK_TOKEN=${NODES_JIRA_WEBHOOK_TOKEN}"
 
 install_env "$THOR" "$common
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_THOR}"
@@ -335,11 +344,11 @@ install_env "$ORIN" "$common
 NODES_RUNNER_SECRET=${NODES_RUNNER_SECRET_ORIN}"
 
 # Announced before the lane runs, because the two branches at the top of this
-# file (exported versus defaulted) produce
-# identically-shaped prod.env lines and only one of them is reachable from
-# outside the LAN: an operator reading the deploy log has no other way to tell
-# a defaulted LAN address from an origin they chose. See deploy/prod/README.md,
-# "Ticket page links are LAN addresses".
+# file (exported versus defaulted) produce identically-shaped prod.env lines:
+# an operator reading the deploy log has no other way to tell the public SSO
+# origin the script chose from an origin they exported (a LAN or tailscale
+# address for a deployment without the tunnel, say). See deploy/prod/README.md,
+# "Ticket page links are the public SSO origin".
 echo "ticket page links: NODES_UI_BASE_URL=$UI_BASE_URL ($UI_BASE_URL_SOURCE) — every Jira page-link comment will read $UI_BASE_URL/tickets/<KEY>"
 
 # thor's database is the bundled compose service `postgres`; orin reaches the
@@ -541,6 +550,37 @@ install_codex_account_env() { # host
 install_codex_account_env "$THOR"
 install_codex_account_env "$ORIN"
 
+# --- merge-gate actor token (login-from-anywhere t11, spec c45) ------------
+#
+# The merge-gate scripts (scripts/merge-gate.py, scripts/collect-handover.py
+# --gate) used to post suite verdicts and gate reports with the HUMAN
+# decision secret. They now authenticate as their own registered agent actor,
+# company/merge-gate, whose bearer is NODES_ACTOR_MERGE_GATE_TOKEN: the actor
+# row's metadata.auth_token_env names this variable
+# (deploy/prod/register-actor.sh company/merge-gate <endpoint> NODES_ACTOR_MERGE_GATE_TOKEN),
+# and the api service reads it from prod.env to recognise the bearer —
+# the same lookup the worker uses for outbound credentials.
+#
+# Two custody points must agree: the control plane's copy here, and the copy
+# the gate runs with (a granted environment value on the lane, or the
+# operator's ~/.culture-nodes/operator.env). So an EXISTING value is kept
+# unless FORCE_MERGE_GATE=1 — a silent re-mint on every run would leave every
+# operator copy stale and every gate post answering 401. Same discipline as
+# every lane above: the token rides ssh stdin into the umask-077 merge, never
+# an ssh argv.
+MERGE_GATE_TOKEN=$(gen)
+
+install_merge_gate_token() { # host
+  local host=$1 rc=0
+  printf 'NODES_ACTOR_MERGE_GATE_TOKEN=%s\n' "$MERGE_GATE_TOKEN" \
+    | ssh "$host" "FORCE=${FORCE_MERGE_GATE:-0}; "'umask 077; mkdir -p ~/.culture-nodes; if [ -e ~/.culture-nodes/prod.env ] && grep -q "^NODES_ACTOR_MERGE_GATE_TOKEN=" ~/.culture-nodes/prod.env && [ "$FORCE" != "1" ]; then echo "keeping existing NODES_ACTOR_MERGE_GATE_TOKEN (set FORCE_MERGE_GATE=1 to rotate)" >&2; exit 3; fi; '"$PROD_ENV_MERGE" || rc=$?
+  if [ "$rc" -eq 3 ]; then echo "kept existing NODES_ACTOR_MERGE_GATE_TOKEN on $host"; return 0; fi
+  [ "$rc" -eq 0 ] || return "$rc"
+  echo "installed NODES_ACTOR_MERGE_GATE_TOKEN into prod.env on $host"
+}
+install_merge_gate_token "$THOR"
+install_merge_gate_token "$ORIN"
+
 # --- nodes-notifier webhook (thor only — deploy/prod/compose.thor.yml's
 # `notifier` service is the only consumer; task t34) ----------------------
 # A Discord (or generic) webhook URL is EXTERNALLY ISSUED (created in
@@ -712,9 +752,30 @@ fi
 RUNNER_SECRETS_MERGE=${PROD_ENV_MERGE//prod.env/runner-secrets.env}
 
 install_jira_runner_env() { # host
-  local host=$1 exists
+  local host=$1 exists pair=no base=no
   exists=$(ssh "$host" 'if [ -f ~/.culture-nodes/runner-secrets.env ]; then echo yes; else echo no; fi')
-  if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] && [ -z "${JIRA_API_TOKEN:-}" ]; then
+  # JIRA_API_BASE travels WITH the pair, because it is the other half of how
+  # the credential authenticates: a scoped Jira Cloud service-account token is
+  # accepted only at the Atlassian gateway, and the site URL answers 401 for
+  # it. It is not itself a credential -- it is a published address, classified
+  # as such in tests/deploy/relayinputs_test.go.
+  #
+  # Empty is a legitimate VALUE here (it means "use the site URL"), so this
+  # lane has to tell set-and-empty from unset, and uses the `+` expansion
+  # rather than the `:-` one to do it. Unset leaves whatever the host already
+  # carries, for exactly the #253 reason an unset pair is not a way to clear
+  # the pair; set-and-empty is an operator deliberately turning the gateway
+  # base off, and rotating the pair without exporting the base does not
+  # silently send every read back to the 401ing site URL.
+  if [ -n "${JIRA_API_BASE+set}" ]; then base=yes; fi
+  if [ -n "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -n "${JIRA_API_TOKEN:-}" ]; then
+    if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
+      echo "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN must both be set" >&2
+      return 1
+    fi
+    pair=yes
+  fi
+  if [ "$pair" = no ] && [ "$base" = no ]; then
     if [ "$exists" = yes ]; then
       # The #253 path. An unset pair is not an instruction to blank the two
       # names -- on a host that already carries the file it is an instruction
@@ -726,8 +787,8 @@ install_jira_runner_env() { # host
       # so there is nothing broken to stop for, and aborting install-secrets.sh
       # here would take the notify and issuance lanes below it down with every
       # deploy that has no Jira configured.
-      echo "refusing to rewrite ~/.culture-nodes/runner-secrets.env on $host: JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN are unset in this shell and the file already exists — its current grants (which may include GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, granted by hand and written by no lane) were left untouched" >&2
-      echo "hint: export JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN to rotate the pair; leaving them unset is not a way to clear them" >&2
+      echo "refusing to rewrite ~/.culture-nodes/runner-secrets.env on $host: JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN and JIRA_API_BASE are unset in this shell and the file already exists — its current grants (which may include GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN, granted by hand and written by no lane) were left untouched" >&2
+      echo "hint: export JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN to rotate the pair, and JIRA_API_BASE to set or clear the gateway REST base; leaving them unset is not a way to clear them" >&2
       return 0
     fi
     # Grant the NAMES with empty values rather than skipping the file.
@@ -748,19 +809,25 @@ install_jira_runner_env() { # host
     #
     # Reachable only when the host has NO runner-secrets.env at all, which is
     # a first deploy: there is nothing here to overwrite.
-    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN not set — granting empty values on $host so the sweep's environment_refs resolve" >&2
-    printf 'JIRA_ACCOUNT_EMAIL=\nJIRA_API_TOKEN=\n' \
+    echo "JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN/JIRA_API_BASE not set — granting empty values on $host so the sweep's environment_refs resolve" >&2
+    printf 'JIRA_ACCOUNT_EMAIL=\nJIRA_API_TOKEN=\nJIRA_API_BASE=\n' \
       | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/runner-secrets.env; chmod 600 ~/.culture-nodes/runner-secrets.env'
     return 0
   fi
-  if [ -z "${JIRA_ACCOUNT_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
-    echo "JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN must both be set" >&2
-    return 1
-  fi
   backup_env_file "$host" runner-secrets.env
-  printf 'JIRA_ACCOUNT_EMAIL=%s\nJIRA_API_TOKEN=%s\n' "$JIRA_ACCOUNT_EMAIL" "$JIRA_API_TOKEN" \
+  # One printf per grant this shell actually holds. Assembling the payload in
+  # a variable would not do: `$(printf ...)` strips the trailing newline, so
+  # the base would land glued to the end of the token line.
+  {
+    if [ "$pair" = yes ]; then
+      printf 'JIRA_ACCOUNT_EMAIL=%s\nJIRA_API_TOKEN=%s\n' "$JIRA_ACCOUNT_EMAIL" "$JIRA_API_TOKEN"
+    fi
+    if [ "$base" = yes ]; then
+      printf 'JIRA_API_BASE=%s\n' "$JIRA_API_BASE"
+    fi
+  } \
     | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; '"$RUNNER_SECRETS_MERGE"
-  echo "merged the Jira Basic-auth pair into mode-600 runner-secrets.env on $host (every other key in the file was left as it was)"
+  echo "merged the Jira grants this shell holds into mode-600 runner-secrets.env on $host (every other key in the file was left as it was)"
 }
 
 install_jira_runner_env "$THOR"

@@ -127,7 +127,7 @@ def test_every_devague_move_runs_on_the_developer_lane_with_the_custody_request(
         assert "frame_moves.py" in instruction
         assert "post_frame.py" in instruction
         assert "devague confirm" in instruction  # named as the move a session never makes
-        assert "NODES_HUMAN_DECISION_TOKEN" in instruction
+        assert "NODES_ACTOR_TOKEN" in instruction
 
 
 def test_no_agent_node_holds_a_stronger_authority_than_proposed(document):
@@ -431,7 +431,7 @@ def test_post_frame_sends_devagues_frame_file_byte_equal_with_the_granted_token(
 
     rc = post_frame.main(
         ["--ticket", "SCRUM-9", "--repo", str(tmp_path)],
-        env={"NODES_API_URL": base, "NODES_HUMAN_DECISION_TOKEN": "tok-123"},
+        env={"NODES_API_URL": base, "NODES_ACTOR_TOKEN": "tok-123"},
     )
     assert rc == 0
     assert len(handler.seen) == 1
@@ -456,7 +456,7 @@ def test_post_frame_refuses_without_the_granted_token_and_never_calls(
     )
     assert rc == 2
     assert handler.seen == []
-    assert "NODES_HUMAN_DECISION_TOKEN" in capsys.readouterr().err
+    assert "NODES_ACTOR_TOKEN" in capsys.readouterr().err
 
 
 def test_post_frame_reports_a_rejected_grant_as_a_failure(tmp_path, frame_server, capsys):
@@ -467,7 +467,7 @@ def test_post_frame_reports_a_rejected_grant_as_a_failure(tmp_path, frame_server
     (frame_dir / "scrum-9.json").write_text("{}", encoding="utf-8")
     rc = post_frame.main(
         ["--ticket", "SCRUM-9", "--repo", str(tmp_path)],
-        env={"NODES_API_URL": base, "NODES_HUMAN_DECISION_TOKEN": "wrong"},
+        env={"NODES_API_URL": base, "NODES_ACTOR_TOKEN": "wrong"},
     )
     assert rc == 1
     assert "401" in capsys.readouterr().err

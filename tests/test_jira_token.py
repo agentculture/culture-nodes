@@ -170,7 +170,8 @@ def test_mint_json_shape(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["secret_name"] == "JIRA_SERVICE_ACCOUNT_TOKEN"
     assert payload["inject"] == f"{INJECT} <cmd>"
     assert payload["env_keys"] == ["JIRA_ACCOUNT_EMAIL", "JIRA_API_TOKEN", "JIRA_API_BASE"]
-    assert "env_file" not in payload and "env_file_mode" not in payload
+    assert "env_file" not in payload
+    assert "env_file_mode" not in payload
 
 
 # --- seal ------------------------------------------------------------------

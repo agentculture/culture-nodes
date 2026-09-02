@@ -2,7 +2,7 @@
   "plan_slug": "login-from-anywhere-sso-identity-permissions-jira",
   "schema_version": 2,
   "created": "2026-09-01T22:07:52Z",
-  "updated": "2026-09-02T00:08:56Z",
+  "updated": "2026-09-02T03:42:34Z",
   "deviations": [
     {
       "id": "d1",
@@ -1115,6 +1115,43 @@
       "seq": 59
     }
   ],
-  "deltas": [],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "The Access listener binds ':8081' inside the API container, not '127.0.0.1:8081' as task t19's recipe first said. A Docker published port forwards to the container's bridge-network address, never to the container's own loopback, so the loopback form left cloudflared's origin refusing connections and nodes.culture.dev serving a Cloudflare 502. c43's replay boundary is unchanged and rests where it always did: the host publish 127.0.0.1:18081:8081 is loopback-scoped, so no LAN interface carries the port. Fixed on the branch by the pr-upkeep loop (4221ef0); tests/deploy/nodesculturedev_test.go pins the doc's prescribed value against the publish. (PR #274 review, Qodo finding 1.)",
+      "caused_by": [
+        "c43"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "GET /v1alpha1/tickets/{id} refuses with an error naming the page cap when either of its paged reads (runs, pending records) reaches ticketMaxPages with a cursor still outstanding, instead of returning the prefix it collected. Before this, a ticket over 10,000 runs or pending claims rendered a page that looked complete while omitting decidable records. (PR #274 review, Qodo finding 3.)",
+      "caused_by": [
+        "c11"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "A per-run result from POST /v1alpha1/tickets/{id}/reviews carries review_id when the commit half failed after the request half succeeded, not only on 'committed'. The two are separate ledger transactions (PRD 10.8), so a writer landing between them leaves an open 'requested' review that the response previously did not name; it is now findable and retryable through POST /v1alpha1/reviews/{id}/commit. The two-step ledger contract itself is unchanged. (PR #274 review, Qodo finding 2.)",
+      "caused_by": [
+        "c40"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }

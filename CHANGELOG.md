@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.11] - 2026-09-02
+
+### Changed
+
+- `test_seal_grant_missing_is_env_error` asserts the missing-`grant` error carries a `hint:` line and asserts that hint names `uv tool install grant` as two statements instead of one `and`. The two clauses are different failures of the same error path — a rubric-required `hint:` line that is absent altogether, versus a hint that is present but never says how to install the missing tool — and only the second leaves an operator told what is wrong with no way to fix it. The composite form reported both as the identical bare `assert` (PR #282, SonarCloud python:S9073)
+
 ## [0.47.10] - 2026-09-02
 
 ### Changed

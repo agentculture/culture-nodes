@@ -261,7 +261,8 @@ def test_seal_grant_missing_is_env_error(
     assert rc == 2
     assert calls == []
     assert "grant (the secrets manager) is not on PATH" in captured.err
-    assert "hint:" in captured.err and "uv tool install grant" in captured.err
+    assert "hint:" in captured.err
+    assert "uv tool install grant" in captured.err
 
 
 def test_seal_grant_failure_quotes_scrubbed_stderr(

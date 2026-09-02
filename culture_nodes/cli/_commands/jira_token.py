@@ -410,7 +410,7 @@ def _myself(email: str, token: str, base: str) -> dict[str, object]:
             raw = response.read()
     except urllib.error.HTTPError as err:
         _raise_http(err.code, base)
-    except (urllib.error.URLError, OSError, TimeoutError) as err:
+    except OSError as err:  # URLError and TimeoutError both derive from OSError
         reason = getattr(err, "reason", None) or err.__class__.__name__
         raise CliError(
             code=EXIT_ENV_ERROR,
@@ -419,7 +419,7 @@ def _myself(email: str, token: str, base: str) -> dict[str, object]:
         ) from None
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except ValueError:  # UnicodeDecodeError derives from ValueError
         raise CliError(
             code=EXIT_ENV_ERROR,
             message=f"{base}{MYSELF_PATH} answered 200 with a non-JSON body",

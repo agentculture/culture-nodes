@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.8] - 2026-09-02
+
+### Changed
+
+- `test_verify_unauthorized_exits_2_and_names_gateway` asserts the 401/403 hint names `re-mint` and asserts it names `re-seal` as two statements instead of one `and`. The two are separate remediation steps — `nodes jira-token mint` issues a replacement token, `nodes jira-token seal` installs it — and an operator who does only the first has a valid token that no bridge reads. The composite form reported a hint that had dropped either half as the identical failure, so it never said which step went missing (PR #282, SonarCloud python:S9073)
+
 ## [0.47.7] - 2026-09-02
 
 ### Changed

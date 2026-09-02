@@ -386,7 +386,8 @@ def test_verify_unauthorized_exits_2_and_names_gateway(
     assert f"HTTP {status}" in captured.err
     assert "hint:" in captured.err
     assert "site URL" in captured.err and "401" in captured.err
-    assert "re-mint" in captured.err and "re-seal" in captured.err
+    assert "re-mint" in captured.err
+    assert "re-seal" in captured.err
     assert jira_token.GATEWAY_BASE in captured.err
 
 

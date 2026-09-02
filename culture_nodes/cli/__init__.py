@@ -68,6 +68,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from culture_nodes.cli._commands import doctor as _doctor_cmd
     from culture_nodes.cli._commands import explain as _explain_cmd
     from culture_nodes.cli._commands import human_tasks as _human_tasks_group
+    from culture_nodes.cli._commands import jira_token as _jira_token_group
     from culture_nodes.cli._commands import learn as _learn_cmd
     from culture_nodes.cli._commands import ledger as _ledger_group
     from culture_nodes.cli._commands import node_runs as _node_runs_group
@@ -108,6 +109,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _review_group.register(sub)
     _human_tasks_group.register(sub)
     _dispatch_group.register(sub)
+    # Operator runbook verbs: no API call except verify's one GET at Atlassian.
+    _jira_token_group.register(sub)
     # Register your own noun groups here:
     #   from culture_nodes.cli._commands import my_noun as _my_noun_group
     #   _my_noun_group.register(sub)

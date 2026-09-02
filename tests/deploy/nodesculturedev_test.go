@@ -50,9 +50,9 @@ const accessLoopbackOrigin = "http://127.0.0.1:18081"
 // tunnelUnit is the systemd user unit for the nodes.culture.dev tunnel.
 const tunnelUnit = "cloudflared-nodes.service"
 
-// tunnelTokenFile is where the unit reads the per-tunnel token from,
+// tunnelTokenSecret is the grant secret name the unit injects as TUNNEL_TOKEN,
 // %h-relative so the same unit file serves whichever account runs it on thor.
-const tunnelTokenFile = "%h/.config/cloudflared/nodes-culture-dev.token"
+const tunnelTokenSecret = "NODES_CULTURE_DEV_TUNNEL_TOKEN"
 
 // tunnelDoc is the operator recipe and hand-turn ledger.
 const tunnelDoc = "docs/operations/nodes-culture-dev.md"
@@ -208,7 +208,6 @@ func assertTunnelUnitDirectives(t *testing.T, directives map[string]string) {
 	t.Helper()
 	wantExact := map[string]string{
 		"Type":            "simple",
-		"Environment":     "TUNNEL_TOKEN_FILE=" + tunnelTokenFile,
 		"Restart":         "on-failure",
 		"NoNewPrivileges": "true",
 		"WantedBy":        "default.target",
@@ -220,12 +219,18 @@ func assertTunnelUnitDirectives(t *testing.T, directives map[string]string) {
 			t.Errorf("%s: %s=%q, want %q (the proven token-mode shape from spark's cloudflared units)", tunnelUnit, key, got, want)
 		}
 	}
+	if _, ok := directives["Environment"]; ok {
+		t.Errorf("%s: carries an Environment= directive — the connector token is injected by grant at exec time (deviation d1 of the #273 cycle), never read from a TUNNEL_TOKEN_FILE on disk", tunnelUnit)
+	}
 	exec := directives["ExecStart"]
+	if !strings.HasPrefix(exec, "%h/.local/bin/grant run --inject TUNNEL_TOKEN="+tunnelTokenSecret+" -- ") {
+		t.Errorf("%s: ExecStart=%q does not exec through `grant run --inject TUNNEL_TOKEN=%s -- …` — the token is a hidden grant secret and only grant run can hand it to cloudflared", tunnelUnit, exec, tunnelTokenSecret)
+	}
 	if !strings.HasSuffix(exec, "cloudflared tunnel --no-autoupdate run") {
 		t.Errorf("%s: ExecStart=%q is not `cloudflared tunnel --no-autoupdate run` — token mode means the ingress is remote-managed and the unit runs the tunnel by token alone", tunnelUnit, exec)
 	}
-	if !strings.HasPrefix(exec, "/") {
-		t.Errorf("%s: ExecStart=%q must be an absolute path; systemd does not consult PATH", tunnelUnit, exec)
+	if !strings.Contains(exec, " -- /usr/local/bin/cloudflared ") {
+		t.Errorf("%s: ExecStart=%q must name cloudflared by absolute path after the grant `--` separator; systemd does not consult PATH and neither should the exec chain", tunnelUnit, exec)
 	}
 }
 

@@ -3,7 +3,7 @@
 #
 # Runs on THOR, the host that serves prod-api-1. It is a TOKEN-MODE unit:
 # the only thing on this host is the per-tunnel token cloudflared presents to
-# Cloudflare, read from TUNNEL_TOKEN_FILE. The tunnel's ingress (which
+# Cloudflare, sealed in grant and injected as TUNNEL_TOKEN at exec time. The tunnel's ingress (which
 # hostname forwards to which local service) is REMOTE-MANAGED in Cloudflare
 # and was written by the one-time `cultureflare remote-login setup` run, so
 # there is deliberately no config.yml beside this unit and no ingress rule to
@@ -27,8 +27,8 @@
 #
 #   install -D -m 0644 deploy/prod/cloudflared-nodes.service \
 #     ~/.config/systemd/user/cloudflared-nodes.service
-#   install -d -m 0700 ~/.config/cloudflared
-#   # the token file goes to ~/.config/cloudflared/nodes-culture-dev.token, 0600
+#   # seal the connector token once (hidden; never printable again):
+#   grant set NODES_CULTURE_DEV_TUNNEL_TOKEN - --hidden   # token on stdin
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now cloudflared-nodes
 #   loginctl enable-linger "$USER"
@@ -42,8 +42,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=TUNNEL_TOKEN_FILE=%h/.config/cloudflared/nodes-culture-dev.token
-ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run
+# The connector token is a HIDDEN secret in the unit user's grant store
+# (NODES_CULTURE_DEV_TUNNEL_TOKEN): nothing on disk holds it in plaintext,
+# `grant get` refuses to print it, and only `grant run --inject` can hand it
+# to a process. cloudflared reads TUNNEL_TOKEN from its environment, so the
+# unit execs through grant (deviation d1 of the #273 hand-turn cycle; the
+# t19 recipe's TUNNEL_TOKEN_FILE shape is retired for this host).
+ExecStart=%h/.local/bin/grant run --inject TUNNEL_TOKEN=NODES_CULTURE_DEV_TUNNEL_TOKEN -- /usr/local/bin/cloudflared tunnel --no-autoupdate run
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

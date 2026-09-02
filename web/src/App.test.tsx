@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App, { titleForPath } from "./App";
+import { ApiError, getWhoami } from "./api/client";
 import { resetAgentState } from "./agent-state/store";
 import { resetSharedEventsForTests } from "./hooks/useSharedEvents";
+import { resetWhoamiForTests } from "./hooks/useWhoami";
+import { WHOAMI_BOUND } from "./fixtures/whoami-fixture";
 
 /**
  * Route-specific document titles (task t27). Before this every view shared
@@ -40,6 +43,7 @@ class NoopEventSource {
 beforeEach(() => {
   resetAgentState();
   resetSharedEventsForTests();
+  resetWhoamiForTests();
   vi.stubGlobal("EventSource", NoopEventSource);
   document.title = "";
 });
@@ -114,5 +118,53 @@ describe("RouteWatcher wiring", () => {
     await waitFor(() =>
       expect(document.title).toBe("Run 01M0RUNTITLE · Culture Nodes"),
     );
+  });
+});
+
+/**
+ * What `/` resolves to (task t17). Only a 401 — "no Access identity reached
+ * the control plane" — is a fact about who is here; every other whoami
+ * failure is a fact about the control plane, and bouncing the reader to the
+ * run table on it both contradicts IdentityGate's rule and restarts the load
+ * that `#agent-state` had already settled.
+ */
+describe("Landing", () => {
+  it("keeps the landing page when whoami fails for any reason but a 401", async () => {
+    vi.mocked(getWhoami).mockRejectedValueOnce(
+      new ApiError(500, "Internal Server Error", "check the control plane"),
+    );
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: /waiting on a person/i }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe("Culture Nodes"));
+  });
+
+  it("sends a reader with no Access identity to the run table", async () => {
+    vi.mocked(getWhoami).mockRejectedValueOnce(
+      new ApiError(401, "Unauthorized", "sign in through Cloudflare Access"),
+    );
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(document.title).toBe("Runs · Culture Nodes"));
+  });
+
+  it("keeps a signed-in person on the landing page", async () => {
+    vi.mocked(getWhoami).mockResolvedValueOnce(WHOAMI_BOUND);
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: /waiting on a person/i }),
+    ).toBeInTheDocument();
   });
 });

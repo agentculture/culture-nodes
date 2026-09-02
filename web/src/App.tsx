@@ -98,13 +98,19 @@ function RouteWatcher() {
  * no Access identity has no "your work" to show and a redirect is a better
  * answer than an empty page.
  *
- * `loading` renders Home rather than redirecting: bouncing to /runs and then
- * back the moment whoami answers is two navigations a person can see.
+ * Only a 401 redirects. `loading` renders Home rather than bouncing to /runs
+ * and back the moment whoami answers — two navigations a person can see —
+ * and `unavailable` renders it for the reason IdentityGate states: a whoami
+ * that failed for any other cause is not a fact about who is here, so it may
+ * not read as "signed out". Redirecting on it also cost the landing its
+ * settled state: the second navigation restarted the load, so `#agent-state`
+ * was back at "loading" for a whole extra round trip after the page had
+ * already finished one.
  */
 function Landing() {
   const whoami = useWhoami();
-  if (whoami.status === "bound" || whoami.status === "loading") return <Home />;
-  return <Navigate to="/runs" replace />;
+  if (whoami.status === "unauthenticated") return <Navigate to="/runs" replace />;
+  return <Home />;
 }
 
 export function App() {

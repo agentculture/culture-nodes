@@ -51,6 +51,18 @@ d1-d3 and every hand-turn are recorded on the plan and on #273.
 
 ### Fixed
 
+- The landing page settles: `Home` publishes `#agent-state` on the same terms
+  as every other routed view (`loading` on mount, `ready` when the initial
+  load finishes — including finishing badly), and `/` no longer bounces to
+  the run table when whoami fails for any reason other than a 401. A failed
+  whoami is a fact about the control plane, not about who is here — the rule
+  `IdentityGate` already states — and redirecting on it also restarted the
+  load, leaving `#agent-state` at `loading` for an extra round trip after the
+  page had already finished one. That is what the `webglass` CI arm caught:
+  it extracts `#agent-state` from `/` and read `{"status":"loading",
+  "route":"/runs"}`, the window between the redirect and the run list's
+  fetch.
+
 - The documented container-side value for the Access listener,
   `NODES_ACCESS_LISTEN`, is `:8081` rather than `127.0.0.1:8081`. Docker
   forwards a published port to the container's bridge address and never to

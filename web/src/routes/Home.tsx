@@ -8,6 +8,7 @@ import {
   listPendingDecisions,
 } from "../api/client";
 import type { TicketProjection } from "../api/types";
+import { setAgentState } from "../agent-state/store";
 import ErrorNotice from "../components/ErrorNotice";
 import TicketFlowRail from "../components/TicketFlowRail";
 import { ticketFlow, type TicketFlow } from "../domain/ticket-flow";
@@ -64,11 +65,19 @@ export function Home() {
   const [data, setData] = useState<HomeData | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
+  // agent-state, on the same terms as every other routed view: "ready" means
+  // this view finished its initial load, including finishing it badly. The
+  // landing page is the one an agent (and the webglass CI arm) reaches first,
+  // so a landing that never published anything left `#agent-state` pinned at
+  // its initial "loading" for as long as it was on screen.
   useEffect(() => {
     const controller = new AbortController();
+    setAgentState({ status: "loading", run: null });
     load(controller.signal)
       .then((result) => {
-        if (!controller.signal.aborted) setData(result);
+        if (controller.signal.aborted) return;
+        setData(result);
+        setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
@@ -77,6 +86,7 @@ export function Home() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
   }, []);

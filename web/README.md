@@ -150,6 +150,8 @@ the API.
    `webglass-cli` under a scoped policy profile: `page extract --selector
    '#agent-state'` must report `status == "ready"`, and `page inspect --lens
    console` must report zero `page_errors`. Console *messages* are not
-   asserted empty — no control plane runs in that job, so the run list's
-   fetch legitimately 404s and the app renders its error notice rather than
-   throwing.
+   asserted empty — no control plane runs in that job, so the landing page's
+   pending-queue reads legitimately fail and the app renders its error notice
+   rather than throwing. The route under test is `/`, so the view that has to
+   reach `ready` is the landing page (`src/routes/Home.tsx`), not the run
+   list.

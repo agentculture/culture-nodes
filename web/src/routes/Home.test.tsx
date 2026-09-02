@@ -11,6 +11,7 @@ import {
 import { PENDING_TASK } from "../fixtures/human-tasks-fixture";
 import { TICKET_PROJECTION } from "../fixtures/ticket-fixture";
 import { WHOAMI_BOUND, WHOAMI_EMAIL } from "../fixtures/whoami-fixture";
+import { getAgentState, resetAgentState } from "../agent-state/store";
 import { resetWhoamiForTests } from "../hooks/useWhoami";
 import Home from "./Home";
 
@@ -68,6 +69,7 @@ function runWithTicket(id: string, ticketKey: string | null) {
 describe("Home", () => {
   beforeEach(() => {
     resetWhoamiForTests();
+    resetAgentState();
     for (const mock of [
       mockGetRun,
       mockGetTicket,
@@ -162,5 +164,23 @@ describe("Home", () => {
     renderHome();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByTestId("home-nothing-pending")).toBeNull();
+  });
+
+  // The landing is the first view an agent reads, and it is the one the
+  // webglass CI arm extracts `#agent-state` from. It publishes on the same
+  // terms as every other route: "ready" is "the initial load finished",
+  // whether it finished well or badly.
+  it("marks agent-state ready once the initial load settles", async () => {
+    renderHome();
+    expect(getAgentState().status).toBe("loading");
+    await screen.findByTestId("home-nothing-pending");
+    expect(getAgentState().status).toBe("ready");
+  });
+
+  it("marks agent-state ready when the initial load fails", async () => {
+    mockListHumanTasks.mockRejectedValue(new Error("boom"));
+    renderHome();
+    await screen.findByRole("alert");
+    expect(getAgentState().status).toBe("ready");
   });
 });

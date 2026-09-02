@@ -170,20 +170,40 @@ the t19 shape with `TUNNEL_TOKEN_FILE` is retired).
 The connector token to seal is the one the Cloudflare API returns for the
 tunnel — **not** the `tunnel_token` field of cultureflare 0.15.0's
 `setup --json` envelope, which cloudflared rejects as "Provided Tunnel token
-is not valid" (observed 2026-09-02; reported upstream). Read it and seal it
-in one pipeline so it never lands in a terminal or a file:
+is not valid" (observed 2026-09-02; reported upstream).
+
+That read is per-tunnel, so it needs the id of the tunnel step 2 created.
+Resolve it first: the id is not a secret, so unlike the token it may sit in a
+shell variable.
 
 ```bash
 # on thor, as the unit user, in a shell where CLOUDFLARE_API_TOKEN and
-# CLOUDFLARE_ACCOUNT_ID are exported; TUNNEL_ID from `cultureflare remote-login show`
+# CLOUDFLARE_ACCOUNT_ID are exported
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel?is_deleted=false" \
+  | python3 -c 'import json,sys; [print(t["id"], t["name"]) for t in json.load(sys.stdin)["result"]]'
+export TUNNEL_ID=<the id printed beside the nodes.culture.dev tunnel>
+```
+
+Then read the token and seal it in one pipeline, so it never lands in a
+terminal or a file:
+
+```bash
+# the same shell: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and TUNNEL_ID set
 curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/token" \
-  | python3 -c 'import json,sys; sys.stdout.write(json.load(sys.stdin)["result"])' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d.get("result"), str) and d["result"], d; sys.stdout.write(d["result"])' \
   | grant set NODES_CULTURE_DEV_TUNNEL_TOKEN - --hidden \
       --purpose "cloudflared connector token for the nodes.culture.dev tunnel" \
       --rotate-howto "re-read GET cfd_tunnel/<id>/token and grant set again"
 grant show NODES_CULTURE_DEV_TUNNEL_TOKEN     # metadata only: hidden: True
 ```
+
+The `assert` is load-bearing: an unset or wrong `TUNNEL_ID` does not fail the
+`curl`. Cloudflare answers with an error envelope whose `result` is `null`,
+and piping that onward would seal a secret that is not a token — which
+surfaces much later, as a connector that never registers. If the pipeline
+does fail, read `grant show` before retrying to see what is sealed.
 
 Secret names in grant are `[A-Z_][A-Z0-9_]*`. The Access service token's
 client secret goes in the same store as `NODES_CULTURE_DEV_SERVICE_TOKEN_SECRET`

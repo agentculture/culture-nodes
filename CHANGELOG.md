@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.16] - 2026-09-02
+
+### Fixed
+
+- Step 3 of `docs/operations/nodes-culture-dev.md` resolves `TUNNEL_ID` before it uses it. The connector-token read is per-tunnel (`GET cfd_tunnel/$TUNNEL_ID/token`), but the variable was only named in a comment ("TUNNEL_ID from `cultureflare remote-login show`") and never assigned, so an operator following the recipe literally requested `cfd_tunnel//token`. That does not fail the `curl`: Cloudflare answers an error envelope, and the old one-liner piped `json.load(...)["result"]` straight into `grant set`, so the failure surfaced much later as a connector that never registers. The step now lists the account's tunnels and exports the id first, and the seal pipeline asserts the response actually carries a token string before anything reaches `grant set` (PR #282, Qodo Reliability/Medium "Tunnel ID remains undefined")
+
 ## [0.47.15] - 2026-09-02
 
 ### Changed

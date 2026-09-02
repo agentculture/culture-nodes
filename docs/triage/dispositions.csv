@@ -162,3 +162,4 @@ issue,bucket,disposition,evidence_pointer
 268,finish work,run input names the single finding the fix node works so the rest stay emittable (or the dedupe ignores runs parked on approval),issue #268 / PR #267
 270,large bets,human-welcoming web UX — guided visual decision surfaces; in the login-from-anywhere cycle (spec c25/c39); findings aggregate here,issue #270 / docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md
 273,finish work,operator hand-turns for nodes.culture.dev + Jira service account; ticked as done during the login-from-anywhere cycle,issue #273 / SCRUM-8
+275,finish work,"drop the webglass retry loop in web.yml for a single call once webglass-cli#16 ships a wait-for-condition primitive",issue #275 / agentculture/webglass-cli#16

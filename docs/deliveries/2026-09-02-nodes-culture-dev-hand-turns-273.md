@@ -7,7 +7,7 @@ baseline: `devague summary skeleton`
 
 > nodes.culture.dev is live: 0.47.0 runs on thor and orin, the tunnel unit on thor serves the loopback Access listener, the Access app pins an 8h session to ori's email, ticket-page links carry the public origin, and the sweep and jira bridge act as the dedicated service account so the operator's own Jira comments count as human facts — every host step ticked on #273 with its output
 
-After: Both prod hosts run 857cb49; <https://nodes.culture.dev> answers through the tunnel with the same revision as the LAN port; the Access app allows ori.nachum@gmail.com with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads <https://nodes.culture.dev/tickets/><KEY>; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as `jira_bot_account_id`; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc
+After: Both prod hosts run 857cb49; <https://nodes.culture.dev> answers through the tunnel with the same revision as the LAN port; the Access app allows `ori.nachum@gmail.com` with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads <https://nodes.culture.dev/tickets/><KEY>; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as `jira_bot_account_id`; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc
 
 ## Planned Work
 

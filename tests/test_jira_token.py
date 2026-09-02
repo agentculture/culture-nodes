@@ -466,7 +466,8 @@ def test_verify_prompts_with_getpass_on_a_tty(
     rc = main(["jira-token", "verify"])
     captured = capsys.readouterr()
     assert rc == 0
-    assert prompts and "no echo" in prompts[0]
+    assert prompts
+    assert "no echo" in prompts[0]
     assert captured.out == f"accountId: {jira_token.SERVICE_ACCOUNT_ID}\n"
     expected = base64.b64encode(
         f"{jira_token.SERVICE_ACCOUNT_EMAIL}:{FAKE_TOKEN}".encode()

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.12] - 2026-09-02
+
+### Changed
+
+- `test_verify_prompts_with_getpass_on_a_tty` asserts `prompts` is non-empty and asserts `"no echo"` is in `prompts[0]` as two statements instead of one `and` — the `verify` twin of the `seal` split in 0.47.10. The two clauses fail for different reasons: `verify` never prompted at all on a tty, versus it prompted without warning that the typed token is not echoed. Only the second hands an operator a prompt that looks broken while it is working. Order still guards the index: the empty-list assert runs first, so the `prompts[0]` read cannot raise `IndexError` (PR #282, SonarCloud python:S9073)
+
 ## [0.47.11] - 2026-09-02
 
 ### Changed

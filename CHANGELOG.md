@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.9] - 2026-09-02
+
+### Changed
+
+- `test_seal_pipes_token_on_stdin_never_in_argv` asserts the grant argv carries `--purpose` and asserts it carries `--rotate-howto` as two statements instead of one `and`. The two flags label the sealed secret with different things — why it exists, and how to rotate it when it expires — so a `seal` that dropped either one still leaves an operator reading the wrong half of the label. The composite form failed identically for both and named neither (PR #282, SonarCloud python:S9073)
+
 ## [0.47.8] - 2026-09-02
 
 ### Changed

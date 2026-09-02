@@ -196,7 +196,8 @@ def test_seal_pipes_token_on_stdin_never_in_argv(
     call = calls[0]
     argv = call["argv"]
     assert argv[:5] == [FAKE_GRANT, "set", "JIRA_SERVICE_ACCOUNT_TOKEN", "-", "--hidden"]
-    assert "--purpose" in argv and "--rotate-howto" in argv
+    assert "--purpose" in argv
+    assert "--rotate-howto" in argv
     assert call["input"] == FAKE_TOKEN
     assert FAKE_TOKEN not in " ".join(argv)
     assert call.get("shell", False) is False

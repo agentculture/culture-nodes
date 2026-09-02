@@ -176,18 +176,15 @@ func TestTheLANPublishIsUnchangedBesideTheTunnel(t *testing.T) {
 	}
 }
 
-// TestTunnelUnitIsTokenModeLoopbackAndUnprivileged is fact 3, read from the
-// unit file itself. Each assertion is a property the doc relies on rather
-// than the unit's byte content, so a comment edit cannot fail it while a
-// change to what the unit DOES cannot pass it.
-func TestTunnelUnitIsTokenModeLoopbackAndUnprivileged(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(prodComposeDir(t), tunnelUnit))
-	if err != nil {
-		t.Fatalf("deploy/prod/%s is missing: %v", tunnelUnit, err)
-	}
-	unit := string(raw)
+// parseTunnelUnit splits the unit into what systemd actually reads: the
+// KEY=value directives, and the effective (comment-free) text. Comments are
+// dropped deliberately — the sections carry explanations of why config.yml
+// and the LAN port are absent, and an explanation must not trip the check
+// that enforces it.
+func parseTunnelUnit(t *testing.T, unit string) (map[string]string, string) {
+	t.Helper()
 	directives := map[string]string{}
-	var active []string // every non-comment, non-section line: what systemd reads
+	var active []string
 	for _, line := range strings.Split(unit, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
@@ -201,7 +198,14 @@ func TestTunnelUnitIsTokenModeLoopbackAndUnprivileged(t *testing.T) {
 		}
 		directives[key] = value
 	}
-	effective := strings.Join(active, "\n")
+	return directives, strings.Join(active, "\n")
+}
+
+// assertTunnelUnitDirectives is the token-mode shape: the exact directives
+// proven on spark's cloudflared units, plus the two properties of ExecStart
+// that make it token mode at all.
+func assertTunnelUnitDirectives(t *testing.T, directives map[string]string) {
+	t.Helper()
 	wantExact := map[string]string{
 		"Type":            "simple",
 		"Environment":     "TUNNEL_TOKEN_FILE=" + tunnelTokenFile,
@@ -223,9 +227,13 @@ func TestTunnelUnitIsTokenModeLoopbackAndUnprivileged(t *testing.T) {
 	if !strings.HasPrefix(exec, "/") {
 		t.Errorf("%s: ExecStart=%q must be an absolute path; systemd does not consult PATH", tunnelUnit, exec)
 	}
-	// The next three scan the EFFECTIVE unit only — the comments above the
-	// sections explain why config.yml and the LAN port are absent, and an
-	// explanation must not trip the check that enforces it.
+}
+
+// assertTunnelUnitCarriesNoLocalIngress reads the EFFECTIVE unit only: no
+// spark path, no local ingress config that could drift from the remote one,
+// and no mention of the LAN listener the tunnel must never target.
+func assertTunnelUnitCarriesNoLocalIngress(t *testing.T, effective string) {
+	t.Helper()
 	if strings.Contains(effective, "/home/spark") {
 		t.Errorf("%s names /home/spark; the unit runs on thor and must use %%h-relative or /usr/local/bin paths", tunnelUnit)
 	}
@@ -237,6 +245,26 @@ func TestTunnelUnitIsTokenModeLoopbackAndUnprivileged(t *testing.T) {
 	if strings.Contains(effective, "18080") {
 		t.Errorf("%s names the LAN listener; the tunnel must target the loopback Access listener only (spec c43)", tunnelUnit)
 	}
+}
+
+// TestTunnelUnitIsTokenModeLoopbackAndUnprivileged is fact 3, read from the
+// unit file itself. Each assertion is a property the doc relies on rather
+// than the unit's byte content, so a comment edit cannot fail it while a
+// change to what the unit DOES cannot pass it.
+//
+// The three groups it asks about are three helpers rather than one long
+// body: the parse, the directives, and what the unit must NOT carry. They
+// are separate questions, and reading the answer to one should not mean
+// reading the other two (SonarCloud S3776 on PR #274).
+func TestTunnelUnitIsTokenModeLoopbackAndUnprivileged(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(prodComposeDir(t), tunnelUnit))
+	if err != nil {
+		t.Fatalf("deploy/prod/%s is missing: %v", tunnelUnit, err)
+	}
+	unit := string(raw)
+	directives, effective := parseTunnelUnit(t, unit)
+	assertTunnelUnitDirectives(t, directives)
+	assertTunnelUnitCarriesNoLocalIngress(t, effective)
 	// The unit's own header must say where it forwards to, because the
 	// ingress that actually does so lives outside the repo: this comment is
 	// the only in-tree statement of the origin, and it must match the doc.

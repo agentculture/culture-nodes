@@ -122,11 +122,33 @@ jobs:
           curl -sf -o /dev/null http://127.0.0.1:4173/
 
       - name: page extract '#agent-state'
+        # Re-extract until the page settles, up to a bounded wait. `ready`
+        # means "this view FINISHED its initial load", which is a state the
+        # page arrives at a moment after the document loads — so asserting it
+        # from a single instantaneous extract is a race, and it lost one:
+        # run 33588165040 read `{"status":"loading","route":"/"}` on a commit
+        # whose only change from a green run was a JSON document under
+        # .devague/ (#274). The loop does not weaken the assertion — a page
+        # that never settles still fails, with its last payload printed — it
+        # only stops the job from asking the question before the page can
+        # have an answer.
         run: |
-          .venv/bin/webglass page extract \
-            --url http://127.0.0.1:4173 \
-            --selector '#agent-state' \
-            --policy-profile webglass-profile.json --json | tee webglass-extract.json
+          for attempt in $(seq 1 15); do
+            .venv/bin/webglass page extract \
+              --url http://127.0.0.1:4173 \
+              --selector '#agent-state' \
+              --policy-profile webglass-profile.json --json > webglass-extract.json
+            if jq -e '.content.untrusted.matches | length == 1' webglass-extract.json > /dev/null \
+               && jq -e '.content.untrusted.matches[0].text | fromjson | .status == "ready"' \
+                  webglass-extract.json > /dev/null; then
+              echo "#agent-state settled on attempt $attempt"
+              cat webglass-extract.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "#agent-state never reached \"ready\" in 15 attempts; last extract:" >&2
+          cat webglass-extract.json
           jq -e '.content.untrusted.matches | length == 1' webglass-extract.json
           jq -e '.content.untrusted.matches[0].text | fromjson | .status == "ready"' \
             webglass-extract.json

@@ -298,7 +298,9 @@ def test_verify_200_prints_account_id(
     assert captured.err == ""
     assert seen["url"] == jira_token.GATEWAY_BASE + "/rest/api/3/myself"
     assert str(seen["auth"]).startswith("Basic ")
-    assert seen["timeout"] is not None and float(seen["timeout"]) <= 30
+    # Order is load-bearing: float(None) raises, so the presence check guards the bound.
+    assert seen["timeout"] is not None
+    assert float(seen["timeout"]) <= 30
 
 
 @pytest.mark.parametrize("other", ["712020:9999aaaa-0000-1111-2222-333344445555", "5f0a1b2c3d"])

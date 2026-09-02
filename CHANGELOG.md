@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.14] - 2026-09-02
+
+### Changed
+
+- `test_verify_200_prints_account_id` asserts `verify` passed a timeout to `urlopen` at all and asserts that timeout is at most 30s as two statements instead of one `and` — the fifth split of this shape on this PR. The two clauses are different failures of the gateway call: no timeout argument reaching `urlopen`, versus a timeout that is present but too generous. Only the first makes the call block indefinitely, so a hung gateway hangs `jira-token verify` forever with no output rather than erroring out. Order is load-bearing here, unlike the earlier splits: `float(None)` raises `TypeError`, so the presence assert must run before the bound assert, which sequential statements preserve (PR #282, SonarCloud python:S9073)
+
 ## [0.47.13] - 2026-09-02
 
 ### Changed

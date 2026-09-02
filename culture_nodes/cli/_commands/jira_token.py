@@ -139,12 +139,14 @@ INSTALL_STEPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
             '"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes",'
             '"jira_site":"agentculture.atlassian.net","jira_project":"SCRUM",'
             f'"jira_bot_account_id":"{SERVICE_ACCOUNT_ID}"}}]}}\'',
-            "deploy/prod/lanes/runner-env-write.sh",
-            "HOST=orin deploy/prod/lanes/runner-env-write.sh",
+            "bash deploy/prod/lanes/runner-env-write.sh",
+            "HOST=orin bash deploy/prod/lanes/runner-env-write.sh",
             'ssh thor "systemctl --user restart nodes-runner"',
             'ssh orin "systemctl --user restart nodes-runner"',
         ),
-        "runner-env-write.sh reads HOST, REVISION, NODES_API_URL, PR_UPKEEP_REPOSITORIES and"
+        "invoke the lane through bash: it is not executable and expects deploy.sh's helpers"
+        " (backup_env_file, say); standalone it still writes, only the backup and log lines are"
+        " skipped. It reads HOST, REVISION, NODES_API_URL, PR_UPKEEP_REPOSITORIES and"
         " the PR_UPKEEP_SWEEP_* overrides from the shell and retains what it is not given;"
         " every repository entry carries jira_bot_account_id so the sweep filters the"
         " bot's own comments as self-echo",

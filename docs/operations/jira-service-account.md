@@ -175,8 +175,8 @@ file.
    ```bash
    export HOST=thor REVISION=$(git rev-parse HEAD) NODES_API_URL=http://thor:18080
    export PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes","jira_site":"agentculture.atlassian.net","jira_project":"SCRUM","jira_bot_account_id":"712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615"}]}'
-   deploy/prod/lanes/runner-env-write.sh
-   HOST=orin deploy/prod/lanes/runner-env-write.sh
+   bash deploy/prod/lanes/runner-env-write.sh   # not executable; the lane expects deploy.sh helpers, standalone it still writes
+   HOST=orin bash deploy/prod/lanes/runner-env-write.sh
    ssh thor "systemctl --user restart nodes-runner"
    ssh orin "systemctl --user restart nodes-runner"
    ```

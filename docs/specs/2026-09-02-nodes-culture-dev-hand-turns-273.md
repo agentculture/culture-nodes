@@ -10,7 +10,7 @@
 ## Before → After
 
 - Before: Thor serves 15fefdef, no loopback listener, nodes.culture.dev unresolved, ticket links point at <http://thor:18080>, the sweep still acts as the operator's own Jira user so every operator comment is self-echo, and the token minted on 2026-09-02 exists only on the operator's clipboard
-- After: Both prod hosts run 857cb49; <https://nodes.culture.dev> answers through the tunnel with the same revision as the LAN port; the Access app allows `ori.nachum@gmail.com` with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads <https://nodes.culture.dev/tickets/>`KEY`; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as `jira_bot_account_id`; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc
+- After: Both prod hosts run 857cb49; <https://nodes.culture.dev> answers through the tunnel with the same revision as the LAN port; the Access app allows `<operator-email>` with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads <https://nodes.culture.dev/tickets/>`KEY`; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as `jira_bot_account_id`; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc
 
 ## Requirements
 
@@ -23,9 +23,9 @@
 - Install cloudflared 2026.8.3 cloudflared-linux-arm64 (thor is aarch64, sudo is NOPASSWD) at /usr/local/bin/cloudflared, the absolute path deploy/prod/cloudflared-nodes.service execs; record the version on #273
   - instruction: ssh thor: curl -fsSL -o /tmp/cloudflared <https://github.com/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-arm64> && sudo install -m 0755 /tmp/cloudflared /usr/local/bin/cloudflared && /usr/local/bin/cloudflared --version
   - honesty: /usr/local/bin/cloudflared --version prints 2026.8.3 on thor and the version is written on #273
-- Run cultureflare remote-login setup over ssh thor bash -ic: cultureflare 0.15.0 lives in thor's ~/.local/bin and the Cloudflare credentials exist only in its interactive rc (never printed); pass --allow `ori.nachum@gmail.com` (the identity chat.agentculture.org-allow already uses) and --session-duration 8h at creation, because people.md says only a created app takes the flag; today the account has one Access app (chat.agentculture.org, 24h) and two tunnels, and nodes.culture.dev does not resolve
-  - instruction: ssh -t thor bash -ic 'cultureflare remote-login setup --hostname nodes.culture.dev --service <http://127.0.0.1:18081> --allow `ori.nachum@gmail.com` --session-duration 8h' first without --apply to read the plan, then with --apply; capture the printed AUD and tunnel token from the terminal only
-  - honesty: The Access apps list shows nodes.culture.dev with `session_duration` 8h and one allow policy naming `ori.nachum@gmail.com`; a tunnel named for nodes.culture.dev is healthy; no Cloudflare credential is printed in any transcript
+- Run cultureflare remote-login setup over ssh thor bash -ic: cultureflare 0.15.0 lives in thor's ~/.local/bin and the Cloudflare credentials exist only in its interactive rc (never printed); pass --allow `<operator-email>` (the identity chat.agentculture.org-allow already uses) and --session-duration 8h at creation, because people.md says only a created app takes the flag; today the account has one Access app (chat.agentculture.org, 24h) and two tunnels, and nodes.culture.dev does not resolve
+  - instruction: ssh -t thor bash -ic 'cultureflare remote-login setup --hostname nodes.culture.dev --service <http://127.0.0.1:18081> --allow `<operator-email>` --session-duration 8h' first without --apply to read the plan, then with --apply; capture the printed AUD and tunnel token from the terminal only
+  - honesty: The Access apps list shows nodes.culture.dev with `session_duration` 8h and one allow policy naming `<operator-email>`; a tunnel named for nodes.culture.dev is healthy; no Cloudflare credential is printed in any transcript
 - After setup, write `NODES_ACCESS_LISTEN`=:8081, `NODES_ACCESS_TEAM_DOMAIN`=agentculture.cloudflareaccess.com and `NODES_ACCESS_AUD`=<the new app's aud> into thor's prod.env by hand and restart the api container: install-secrets.sh writes no `NODES_ACCESS_`\* key, and the server refuses a partial tuple
   - instruction: On thor append `NODES_ACCESS_LISTEN`=:8081, `NODES_ACCESS_TEAM_DOMAIN`=agentculture.cloudflareaccess.com, `NODES_ACCESS_AUD`=`aud` to ~/.culture-nodes/prod.env (umask 077), then docker compose -f deploy/prod/compose.thor.yml up -d api; ss -ltn '( sport = :18081 )'
   - honesty: thor's prod.env carries exactly the three `NODES_ACCESS_`\* keys, the api container restarted, and ss shows 127.0.0.1:18081 only
@@ -81,7 +81,7 @@
   - seeds: `c3`
 - `s3` — `thor uname/sudo + cloudflare/cloudflared releases/latest`: aarch64, sudo NOPASSWD, no cloudflared anywhere; latest release 2026.8.3 ships cloudflared-linux-arm64
   - seeds: `c4`
-- `s4` — `thor bash -ic cultureflare + Cloudflare Access apps/tunnels/policies (names only)`: cultureflare 0.15.0 in ~/.local/bin, creds only in the interactive rc; one Access app (chat.agentculture.org, 24h, allow `ori.nachum@gmail.com`), tunnels chat + vllm only; nodes.culture.dev unresolved
+- `s4` — `thor bash -ic cultureflare + Cloudflare Access apps/tunnels/policies (names only)`: cultureflare 0.15.0 in ~/.local/bin, creds only in the interactive rc; one Access app (chat.agentculture.org, 24h, allow `<operator-email>`), tunnels chat + vllm only; nodes.culture.dev unresolved
   - seeds: `c5`, `c14`
 - `s5` — `deploy/prod/install-secrets.sh + orin docker inspect worker env`: writes no `NODES_ACCESS_`\* key; `NODES_UI_BASE_URL` add-if-absent (orin worker still <http://thor:18080>); line 790 refuses to rewrite runner-secrets.env without the Jira pair
   - seeds: `c6`, `c7`

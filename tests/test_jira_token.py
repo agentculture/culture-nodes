@@ -22,8 +22,15 @@ from culture_nodes.cli import main
 from culture_nodes.cli._commands import jira_token
 from culture_nodes.explain import known_paths
 
-FAKE_TOKEN = "FAKE-TOKEN-ATATT3xFfGF0-do-not-print"  # noqa: S105 - test fixture
-FAKE_EMAIL = "culture-spark-9lgwfn7mz2@serviceaccount.atlassian.com"
+#: Deliberately NOT credential-shaped: the fixture keeps the ``ATATT`` prefix so
+#: it reads as a Jira token, but the body after it is short prose, so the
+#: committed-credential lint (tests/lint) sees a placeholder rather than a
+#: token. A fixture that trips that gate would redden every build.
+FAKE_TOKEN = "FAKE-TOKEN-ATATT-do-not-print"  # noqa: S105 - test fixture
+#: A reserved-domain stand-in, deliberately NOT the module constant: the tests
+#: that set ``JIRA_ACCOUNT_EMAIL`` to it prove the environment value is what
+#: reaches the wire, which an alias of ``SERVICE_ACCOUNT_EMAIL`` could not.
+FAKE_EMAIL = "service-account@example.invalid"
 FAKE_GRANT = "/fake/bin/grant"
 INJECT = "grant run --inject JIRA_API_TOKEN=JIRA_SERVICE_ACCOUNT_TOKEN --"
 #: What /myself answers for the service account — the only identity

@@ -93,9 +93,31 @@ var protocolLocalParts = map[string]bool{
 	"x-access-token@github.com": true,
 }
 
+// machineAccountDomains are vendor namespaces whose addresses identify a
+// MACHINE account rather than a person: the local part is minted by the vendor,
+// the domain has no mailbox behind it, and the account exists only to hold an
+// API credential. `serviceaccount.atlassian.com` is Atlassian's namespace for
+// Jira Cloud service accounts, and culture_nodes/cli/_commands/jira_token.py's
+// SERVICE_ACCOUNT_EMAIL plus docs/operations/jira-service-account.md's runbook
+// carry one: the address is the non-secret half of the bot's Basic-auth pair,
+// and the same lines already commit the account's `accountId`, which is the
+// stronger identifier for the same account and which this lint has never
+// objected to. Redacting the email while committing the id would be a rule
+// that costs a runbook its usable value and buys no privacy.
+//
+// Matched EXACTLY, not as a domain suffix -- `someone@atlassian.com` is a real
+// person at a real company and must still trip the rule. That is the same
+// reasoning protocolLocalParts uses for keeping `git@github.com` an exact
+// address rather than a bare `git@` local part, and the planted-fixture test
+// below pins it.
+var machineAccountDomains = map[string]bool{
+	"serviceaccount.atlassian.com": true,
+}
+
 // emailDomainIsReserved reports whether an email-shaped match cannot be a real
-// account -- either because its domain can never route, or because the match is
-// one of the git protocol usernames above.
+// PERSONAL account -- because its domain can never route, because the match is
+// one of the git protocol usernames above, or because it names a vendor-minted
+// machine account.
 func emailDomainIsReserved(match string) bool {
 	if protocolLocalParts[strings.ToLower(match)] {
 		return true
@@ -105,6 +127,9 @@ func emailDomainIsReserved(match string) bool {
 		return false
 	}
 	domain := strings.ToLower(match[at+1:])
+	if machineAccountDomains[domain] {
+		return true
+	}
 	for _, reserved := range reservedEmailDomains {
 		if domain == reserved || strings.HasSuffix(domain, "."+reserved) {
 			return true
@@ -263,6 +288,15 @@ func TestCredentialLintFlagsPlantedIdentities(t *testing.T) {
 			wantRule: ruleAccountEmail,
 		},
 		{
+			// machineAccountDomains is an exact-domain set for the same
+			// reason: a person at Atlassian has a mailbox at the company
+			// domain, and only the service-account namespace under it is
+			// mailbox-less. A suffix match would swallow the whole company.
+			name:     "person at the vendor's own domain, not its service-account namespace",
+			fixture:  `owner: some.person@atlassian.com`,
+			wantRule: ruleAccountEmail,
+		},
+		{
 			name:     "github classic personal access token",
 			fixture:  "GITHUB_TOKEN=" + plantedToken("ghp_", 36),
 			wantRule: ruleAPIToken,
@@ -333,6 +367,10 @@ func TestCredentialLintAcceptsNeutralPlaceholders(t *testing.T) {
 		// Prose naming the prefixes this lint looks for -- including this
 		// task's own plan entry, which must not trip the lint it describes.
 		"Patterns: account emails, ATATT/gho_/ghp_ token prefixes, known personal handles.",
+		// Atlassian's service-account namespace: a vendor-minted machine
+		// identity with no mailbox, carried by the jira-token runbook and its
+		// CLI constant.
+		`SERVICE_ACCOUNT_EMAIL = "culture-spark-9lgwfn7mz2@serviceaccount.atlassian.com"`,
 		// Git's protocol usernames. Email-shaped, but they name a transport
 		// role rather than a person, and the documentation that teaches the
 		// safe push command cannot be written without them.

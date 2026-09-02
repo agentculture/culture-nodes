@@ -66,14 +66,14 @@
     {
       "id": "c5",
       "kind": "requirement",
-      "text": "Run cultureflare remote-login setup over ssh thor bash -ic: cultureflare 0.15.0 lives in thor's ~/.local/bin and the Cloudflare credentials exist only in its interactive rc (never printed); pass --allow ori.nachum@gmail.com (the identity chat.agentculture.org-allow already uses) and --session-duration 8h at creation, because people.md says only a created app takes the flag; today the account has one Access app (chat.agentculture.org, 24h) and two tunnels, and nodes.culture.dev does not resolve",
+      "text": "Run cultureflare remote-login setup over ssh thor bash -ic: cultureflare 0.15.0 lives in thor's ~/.local/bin and the Cloudflare credentials exist only in its interactive rc (never printed); pass --allow <operator-email> (the identity chat.agentculture.org-allow already uses) and --session-duration 8h at creation, because people.md says only a created app takes the flag; today the account has one Access app (chat.agentculture.org, 24h) and two tunnels, and nodes.culture.dev does not resolve",
       "deferred": false,
       "deferred_reason": ""
     },
     {
       "id": "h4",
       "kind": "honesty",
-      "text": "The Access apps list shows nodes.culture.dev with session_duration 8h and one allow policy naming ori.nachum@gmail.com; a tunnel named for nodes.culture.dev is healthy; no Cloudflare credential is printed in any transcript",
+      "text": "The Access apps list shows nodes.culture.dev with session_duration 8h and one allow policy naming <operator-email>; a tunnel named for nodes.culture.dev is healthy; no Cloudflare credential is printed in any transcript",
       "deferred": false,
       "deferred_reason": ""
     },
@@ -206,7 +206,7 @@
     {
       "id": "c17",
       "kind": "after_state",
-      "text": "Both prod hosts run 857cb49; https://nodes.culture.dev answers through the tunnel with the same revision as the LAN port; the Access app allows ori.nachum@gmail.com with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads https://nodes.culture.dev/tickets/<KEY>; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as jira_bot_account_id; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc",
+      "text": "Both prod hosts run 857cb49; https://nodes.culture.dev answers through the tunnel with the same revision as the LAN port; the Access app allows <operator-email> with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads https://nodes.culture.dev/tickets/<KEY>; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as jira_bot_account_id; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc",
       "deferred": false,
       "deferred_reason": ""
     },
@@ -301,8 +301,8 @@
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
-        "cultureflare remote-login setup --hostname nodes.culture.dev --service http://127.0.0.1:18081 --allow ori.nachum@gmail.com --session-duration 8h is run over ssh -t thor bash -ic, first without --apply then with it",
-        "the Access apps list (domain, aud, session_duration only) shows nodes.culture.dev with 8h and its policy names only ori.nachum@gmail.com; the tunnel is listed; dig nodes.culture.dev resolves; no Cloudflare credential appears in any transcript",
+        "cultureflare remote-login setup --hostname nodes.culture.dev --service http://127.0.0.1:18081 --allow <operator-email> --session-duration 8h is run over ssh -t thor bash -ic, first without --apply then with it",
+        "the Access apps list (domain, aud, session_duration only) shows nodes.culture.dev with 8h and its policy names only <operator-email>; the tunnel is listed; dig nodes.culture.dev resolves; no Cloudflare credential appears in any transcript",
         "the AUD tag and the tunnel token are captured from the terminal for t5/t6 and the AUD (not the token) is pasted on #273"
       ],
       "deps": [],

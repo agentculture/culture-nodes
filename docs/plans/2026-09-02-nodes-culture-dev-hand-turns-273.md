@@ -30,8 +30,8 @@ slug: `nodes-culture-dev-hand-turns-273` · status: `exported` · from frame: `n
 
 - covers: c5, h4
 - acceptance:
-  - cultureflare remote-login setup --hostname nodes.culture.dev --service <http://127.0.0.1:18081> --allow `ori.nachum@gmail.com` --session-duration 8h is run over ssh -t thor bash -ic, first without --apply then with it
-  - the Access apps list (domain, aud, `session_duration` only) shows nodes.culture.dev with 8h and its policy names only `ori.nachum@gmail.com`; the tunnel is listed; dig nodes.culture.dev resolves; no Cloudflare credential appears in any transcript
+  - cultureflare remote-login setup --hostname nodes.culture.dev --service <http://127.0.0.1:18081> --allow `<operator-email>` --session-duration 8h is run over ssh -t thor bash -ic, first without --apply then with it
+  - the Access apps list (domain, aud, `session_duration` only) shows nodes.culture.dev with 8h and its policy names only `<operator-email>`; the tunnel is listed; dig nodes.culture.dev resolves; no Cloudflare credential appears in any transcript
   - the AUD tag and the tunnel token are captured from the terminal for t5/t6 and the AUD (not the token) is pasted on #273
 
 ### t5 — Pin the Access tuple in thor's prod.env and restart the api (hand-turn)

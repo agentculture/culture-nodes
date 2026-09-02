@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.17] - 2026-09-02
+
+### Fixed
+
+- `TestNoCommittedCredentialOrPersonalIdentifier` is green again: this branch had added 24 violations of the committed-identity gate, so every `go test ./...` on it went red. Three distinct strings, three different remedies. (1) The operator's own address was written out 19 times across the devague frame, plan, and their exported spec/plan/delivery markdown, in Cloudflare Access allow-policy claims — replaced with `<operator-email>`, which is the placeholder `docs/operations/nodes-culture-dev.md` had already declared for exactly this value ("no real address is committed") and then not applied to its own records. (2) `tests/test_jira_token.py`'s `FAKE_TOKEN` embedded a 20-character run after `ATATT`, which is credential-*shaped* and so tripped the token rule the fixture was only imitating; the body is now short prose. Its `FAKE_EMAIL` re-spelled the production constant verbatim, which also made `test_verify_json_shape` assert nothing — a reserved-domain stand-in restores the point of the test, that the environment value is what reaches the wire. (3) The Jira service account's own address stays committed, and the gate now says so: `machineAccountDomains` allows Atlassian's `serviceaccount.atlassian.com` namespace, whose local parts are vendor-minted, mailbox-less and attached to an API-only machine account. The same lines already commit that account's `accountId` — the stronger identifier for the same account — so redacting the email would have cost the runbook its usable value and bought no privacy. The allowance is an exact-domain match, not a suffix, and a planted fixture — a person at the vendor's own `atlassian.com` domain, outside the service-account namespace — holds it there (PR #282)
+
 ## [0.47.16] - 2026-09-02
 
 ### Fixed

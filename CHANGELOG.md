@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.13] - 2026-09-02
+
+### Changed
+
+- `test_install_lists_the_five_steps` asserts the install output carries a `rotation:` line and asserts that line says `repeat steps 2-5` as two statements instead of one `and` — the fourth split of this shape on this PR. The two clauses are different failures: `install` printing no rotation guidance at all, versus printing guidance that stops at re-sealing and never sends the operator back through steps 2-5. Only the second leaves a rotated token sealed but never installed, deployed or re-granted, so the bridge keeps authenticating with the revoked one. The composite form reported both as the identical bare `assert` (PR #282, SonarCloud python:S9073)
+
 ## [0.47.12] - 2026-09-02
 
 ### Changed

@@ -562,7 +562,8 @@ def test_install_lists_the_five_steps(capsys: pytest.CaptureFixture[str]) -> Non
     assert "systemctl --user restart nodes-runner" in out
     assert "hand edit on thor" in out
     assert "self-echo" in out
-    assert "rotation:" in out and "repeat steps 2-5" in out
+    assert "rotation:" in out
+    assert "repeat steps 2-5" in out
     # The order is the contract: seal before verify before install-secrets
     # before deploy before the re-grant.
     assert (

@@ -156,9 +156,11 @@ INSTALL_STEPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
             'ssh thor "systemctl --user restart nodes-runner"',
             'ssh orin "systemctl --user restart nodes-runner"',
         ),
-        "invoke the lane through bash: it is not executable and expects deploy.sh's helpers"
-        " (backup_env_file, say); standalone it still writes, only the backup and log lines are"
-        " skipped. It reads HOST, REVISION, NODES_API_URL, PR_UPKEEP_REPOSITORIES and"
+        "invoke the lane through bash: it is not executable. Run this way it has no"
+        " deploy.sh around it, so it supplies deploy.sh's own shell options and helpers"
+        " itself — it takes the same timestamped runner.env backup, prints the restore"
+        " command, and a clean re-grant exits 0 (before 0.47.4 it exited 127 on success"
+        " and took no backup). It reads HOST, REVISION, NODES_API_URL, PR_UPKEEP_REPOSITORIES and"
         " the PR_UPKEEP_SWEEP_* overrides from the shell and retains what it is not given;"
         " every repository entry carries jira_bot_account_id so the sweep filters the"
         " bot's own comments as self-echo",

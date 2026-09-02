@@ -200,11 +200,19 @@ file.
    ```bash
    export HOST=thor REVISION=$(git rev-parse HEAD) NODES_API_URL=http://thor:18080
    export PR_UPKEEP_REPOSITORIES='{"cycle":0,"repositories":[{"github_repo":"agentculture/culture-nodes","sonar_component":"agentculture_culture-nodes","jira_site":"agentculture.atlassian.net","jira_project":"SCRUM","jira_bot_account_id":"712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615"}]}'
-   bash deploy/prod/lanes/runner-env-write.sh   # not executable; the lane expects deploy.sh helpers, standalone it still writes
+   bash deploy/prod/lanes/runner-env-write.sh   # not executable; run it through bash
    HOST=orin bash deploy/prod/lanes/runner-env-write.sh
    ssh thor "systemctl --user restart nodes-runner"
    ssh orin "systemctl --user restart nodes-runner"
    ```
+
+   The lane is normally `source`d by `deploy.sh`, which brings `set -euo
+   pipefail`, `say` and the timestamped-backup helper with it. Run standalone
+   it supplies all three itself, so this hand-turn takes the same
+   `runner.env.bak-<UTC>` on each host, prints the restore command, and exits
+   `0` when the re-grant lands and non-zero only when it refuses. (Before
+   0.47.4 the two helpers were simply missing here: the backup was skipped and
+   a successful re-grant exited `127` — PR #282 review.)
 
 Then: one sweep interval later the `pr-upkeep-sweep-cycle` run is green,
 and a comment posted from the **operator's own browser login** is recorded

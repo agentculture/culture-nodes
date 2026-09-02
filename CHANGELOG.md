@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.4] - 2026-09-02
+
+### Fixed
+
+- `deploy/prod/lanes/runner-env-write.sh` supplies `set -euo pipefail`, `say` and the timestamped-backup helper itself when it is run standalone, instead of only when `deploy.sh` sources it. Step 5 of the Jira service-account runbook re-grants `runner.env` without a deploy (`bash deploy/prod/lanes/runner-env-write.sh`), and there both helper calls were `command not found`: the backup that env-backup.sh exists to take was skipped, and a re-grant that had in fact written the file exited `127`. A documented step that reports failure on success is one an operator learns to ignore — and then misses a real refusal. Each addition is guarded on absence, so `deploy.sh` keeps its own (PR #282, Qodo "Standalone lane exits with failure")
+
 ## [0.47.3] - 2026-09-02
 
 ### Fixed

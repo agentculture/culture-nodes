@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.15] - 2026-09-02
+
+### Changed
+
+- `test_verify_unauthorized_exits_2_and_names_gateway` asserts the 401/403 hint names the `site URL` and asserts it says `401` as two statements instead of one `and` — the sixth split of this shape on this PR. The two clauses carry different halves of the same explanation: a hint that never names the site URL leaves an operator with no reason why `JIRA_API_BASE` is pinned to the gateway, while a hint that names it but drops the `401` never says what the site URL actually does with a service-account token — which is the fact that tells the operator a 401 here is a revoked or mistyped token, not a wrong base. That second reading matters most on the 403 leg of the parametrization, where the `401` in the text is about the site URL rather than about the response just received. The composite form reported both as the identical bare `assert` (PR #282, SonarCloud python:S9073)
+
 ## [0.47.14] - 2026-09-02
 
 ### Changed

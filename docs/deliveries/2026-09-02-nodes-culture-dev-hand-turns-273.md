@@ -65,7 +65,7 @@ After: Both prod hosts run 857cb49; <https://nodes.culture.dev> answers through 
 - lint: `scripts/lint-all.sh root` — all lint steps passed; `uv run teken cli doctor . --strict` — exit 0
 - commits: `857cb49..91fd8f7` on `hand-turns/273` (incl. the upkeep actor's `d300361..41b830a`)
 - PRs / issues: PR #282; #273 (ledger comments 2026-09-02); #276 #277 #278 #279 #280 #281; cultureflare#55; grant#28
-- devague: obligations `o1`–`o14`, evidence `e1`–`e14` (`e13` = fail), deltas `b1`–`b6`, all proposed; deviations `d1`, `d2` approved
+- devague: obligations `o1`–`o14`, evidence `e1`–`e14` (`e13` = fail), deltas `b1`–`b6` — all approved by the operator 2026-09-02, as are deviations `d1`, `d2`
 - live: `signal_events` rows for SCRUM-8 comments 10267/10307; run `01M1GHBH67PWM005EA1ZB9KCEP` (sweep exit 0); run `01M1GMSN91PXWM2EJ7BXDFRX9J` (comment_posted)
 
 ## Delivery Claims
@@ -84,7 +84,6 @@ After: Both prod hosts run 857cb49; <https://nodes.culture.dev> answers through 
 
 ## Remaining Work / Follow-up
 
-- Confirm the proposed validation records (`o1`–`o14`, `e1`–`e14`, `b1`–`b6`) — operator.
 - #273 items 10 and 11: Access Bypass policy for `/v1alpha1/webhooks/jira`, Jira system webhook registration + auth mode — operator hand-turns.
 - t18 second measurement sitting (rows a, b, d are now measurable; `whoami` for row b is blocked by #280) — operator lane.
 - `remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET` on thor, sequenced after the sitting — operator.

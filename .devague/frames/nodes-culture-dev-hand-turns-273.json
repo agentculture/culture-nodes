@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-02T05:00:14Z",
-  "updated": "2026-09-02T08:53:36Z",
+  "updated": "2026-09-02T09:21:07Z",
   "claims": [
     {
       "id": "c1",
@@ -497,7 +497,7 @@
       "behavior": "both control-plane images report revision 857cb49 after the deploy pair",
       "source_text": "Deploy 0.47.0 (main 857cb49) to thor then orin before any tunnel step: thor's /v1alpha1/version reports revision 15fefdef, nothing listens on 127.0.0.1:18081, and prod.env has no NODES_ACCESS_* key; deploy/prod/compose.thor.yml on main already publishes 127.0.0.1:18081:8081 and reads NODES_ACCESS_LISTEN/TEAM_DOMAIN/AUD from prod.env",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o2",
@@ -506,7 +506,7 @@
       "behavior": "clones are clean at preflight; leftovers preserved in a stash",
       "source_text": "Clean the culture-codex engine clones first or deploy.sh refuses at provision (lanes/preflight.sh:42, lanes/unix-user.sh:339): thor's clone has 19 modified tracked files on top of the merged t8 commit, orin's 7 on top of merged t16 \u2014 codex leftovers whose handover refs were already harvested; stash them as the account (reversible) rather than discard, and count it as a hand-turn",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o3",
@@ -515,7 +515,7 @@
       "behavior": "cloudflared 2026.8.3 arm64 is at the unit's absolute path",
       "source_text": "Install cloudflared 2026.8.3 cloudflared-linux-arm64 (thor is aarch64, sudo is NOPASSWD) at /usr/local/bin/cloudflared, the absolute path deploy/prod/cloudflared-nodes.service execs; record the version on #273",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o4",
@@ -524,7 +524,7 @@
       "behavior": "tunnel, CNAME, Access app (8h, operator email), service token exist",
       "source_text": "Run cultureflare remote-login setup over ssh thor bash -ic: cultureflare 0.15.0 lives in thor's ~/.local/bin and the Cloudflare credentials exist only in its interactive rc (never printed); pass --allow ori.nachum@gmail.com (the identity chat.agentculture.org-allow already uses) and --session-duration 8h at creation, because people.md says only a created app takes the flag; today the account has one Access app (chat.agentculture.org, 24h) and two tunnels, and nodes.culture.dev does not resolve",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o5",
@@ -533,7 +533,7 @@
       "behavior": "the three NODES_ACCESS_* keys are set and :8081 is bound on loopback only",
       "source_text": "After setup, write NODES_ACCESS_LISTEN=:8081, NODES_ACCESS_TEAM_DOMAIN=agentculture.cloudflareaccess.com and NODES_ACCESS_AUD=<the new app's aud> into thor's prod.env by hand and restart the api container: install-secrets.sh writes no NODES_ACCESS_* key, and the server refuses a partial tuple",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o6",
@@ -542,7 +542,7 @@
       "behavior": "NODES_UI_BASE_URL is the public origin everywhere a person-facing link is rendered",
       "source_text": "Re-grant NODES_UI_BASE_URL on both hosts (orin's worker env still reads http://thor:18080): remove-secret.sh NODES_UI_BASE_URL --yes thor orin, then install-secrets.sh, then redeploy; install-secrets.sh:790 leaves runner-secrets.env untouched when the Jira pair is unset in the shell, so this re-run cannot repeat the #253 clobber",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o7",
@@ -551,7 +551,7 @@
       "behavior": "the sweep and the bridge authenticate as the service account at the gateway base and the bot id is granted",
       "source_text": "Install the Jira service account with JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN and JIRA_API_BASE=https://api.atlassian.com/ex/jira/<cloud-id> all exported in the deploying shell: runner-secrets.env on thor and orin carries the old pair and no JIRA_API_BASE, jira-bridge-jira.env on thor likewise; deploy.sh deploy_jira (line 670) merges JIRA_API_BASE only when exported; then re-grant PR_UPKEEP_REPOSITORIES with jira_bot_account_id=712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615 via lanes/runner-env-write.sh and restart nodes-runner on both hosts and jira-bridge on thor between sessions",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o8",
@@ -560,7 +560,7 @@
       "behavior": "an operator browser comment is emitted as a human fact and the bot's own comment is not",
       "source_text": "The operator's jira skill (.claude/skills/jira/scripts/jira.sh:93-110) reads thor's runner-secrets.env, so once the bot pair is installed it posts AS the bot; the final proof that an operator comment is a human fact must be a comment from the operator's own Jira login in the browser, never via the skill",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o9",
@@ -569,7 +569,7 @@
       "behavior": "NODES_HUMAN_DECISION_TOKEN_SECRET is still present; break-glass exists and whoami answers",
       "source_text": "NODES_HUMAN_DECISION_TOKEN_SECRET stays in thor's prod.env until the break-glass credential exists: people.md break-glass step 1 (issue-dialin-credential.sh company/<handle> thor) needs a registered human actor (register-actor.sh + scripts/bind-identity.sh) first, and step 2's whoami must answer provider nodes-inbound-credential before remove-secret.sh runs (h25/c48)",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o10",
@@ -578,7 +578,7 @@
       "behavior": "the Bypass policy and the Jira webhook are listed as checklist items 10 and 11",
       "source_text": "Two hand-turns from the recipe's ledger are missing from #273's checklist and get added as a comment: the path-scoped Access Bypass policy for /v1alpha1/webhooks/jira and the Jira system webhook registration (with which auth mode the tenant supplies)",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o11",
@@ -587,7 +587,7 @@
       "behavior": "mint/seal/verify/install behave as specified and never print the token",
       "source_text": "A nodes CLI verb (new _commands module, e.g. nodes jira-token with mint|verify|install subverbs, catalog entry included) plus docs/operations/jira-service-account.md carry the token runbook: where in Atlassian admin the service account culture-nodes lives and how a token is minted or re-minted (the UI is the only place that mints; the CLI cannot), the gateway base https://api.atlassian.com/ex/jira/<cloud-id> and why site-URL auth 401s for a service account, the myself check that must print the accountId, then the exact install sequence (install-secrets.sh Jira lane on thor+orin with all three exported, deploy_jira/bridge restart, runner-env-write.sh re-grant with jira_bot_account_id, nodes-runner restarts). verify runs the myself check; install runs the lane; nothing in the verb ever prints or stores the token",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o12",
@@ -596,7 +596,7 @@
       "behavior": "the version bodies through the tunnel and on the LAN are identical",
       "source_text": "curl of /v1alpha1/version through the tunnel (with the Access cookie or a service token) and on the LAN return identical revision bodies; ss shows 18081 bound on 127.0.0.1 only; grep NODES_UI_BASE_URL on both hosts prints the public origin; myself via the gateway prints the accountId; one sweep after the re-grant is green and a comment posted from the operator's own browser login is recorded as a human fact, not self-echo; nodes jira-token verify exits 0 on thor",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o13",
@@ -605,7 +605,7 @@
       "behavior": "a service-token caller reaches the control plane and is recognised as a principal (spec c9)",
       "source_text": "curl of /v1alpha1/version through the tunnel (with the Access cookie or a service token) and on the LAN return identical revision bodies; ss shows 18081 bound on 127.0.0.1 only; grep NODES_UI_BASE_URL on both hosts prints the public origin; myself via the gateway prints the accountId; one sweep after the re-grant is green and a comment posted from the operator's own browser login is recorded as a human fact, not self-echo; nodes jira-token verify exits 0 on thor",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "o14",
@@ -614,7 +614,7 @@
       "behavior": "the unit runs under the login user through grant run with the sealed token",
       "source_text": "The tunnel unit runs under thor's login user: it owns prod.env and the control plane, Linger is already yes, and ~/.config/cloudflared does not exist yet",
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     }
   ]
 }

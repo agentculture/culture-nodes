@@ -2,7 +2,7 @@
   "plan_slug": "nodes-culture-dev-hand-turns-273",
   "schema_version": 2,
   "created": "2026-09-02T06:12:09Z",
-  "updated": "2026-09-02T08:53:36Z",
+  "updated": "2026-09-02T09:21:08Z",
   "deviations": [
     {
       "id": "d1",
@@ -48,7 +48,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 3
     },
@@ -67,7 +67,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 4
     },
@@ -86,7 +86,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 5
     },
@@ -105,7 +105,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 6
     },
@@ -124,7 +124,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 7
     },
@@ -143,7 +143,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 8
     },
@@ -162,7 +162,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 9
     },
@@ -181,7 +181,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 10
     },
@@ -200,7 +200,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 11
     },
@@ -219,7 +219,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 12
     },
@@ -238,7 +238,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 13
     },
@@ -257,7 +257,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 14
     },
@@ -276,7 +276,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 15
     },
@@ -295,7 +295,7 @@
         "commit": "7015a9d"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 16
     }
@@ -312,7 +312,7 @@
         "e14"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -326,7 +326,7 @@
         "e11"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -340,7 +340,7 @@
         "e14"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -354,7 +354,7 @@
         "e7"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -368,7 +368,7 @@
         "e9"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -382,7 +382,7 @@
         "e8"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     }
   ],

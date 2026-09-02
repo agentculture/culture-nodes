@@ -311,6 +311,14 @@ the cycle's issue, when it is applied:
 9. Add the path-scoped Access Bypass policy for the Jira receiver.
 10. Register and test the Jira system webhook and record which authentication
     mode the tenant supplies.
+11. `remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET` on thor (h25) —
+    **sequenced after** the c48 break-glass credential exists. That
+    credential is minted by task t18's operator run of break-glass step 1 in
+    `docs/operations/people.md`; until it is on thor and `whoami` answers
+    with `provider: nodes-inbound-credential`, the shared decision secret is
+    the only LAN break-glass there is, and removing it first would lock every
+    human out of a misconfigured Access policy — exactly what c48 forbids.
+    Record both runs, in that order, on the cycle issue.
 
 Adding a person later is a further hand-turn on the Access policy (one of
 c46's three places) and is counted the same way.

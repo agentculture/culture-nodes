@@ -5,9 +5,12 @@ This is the operator recipe for letting a **person** decide human tasks on
 again. It is task t13 of the login-from-anywhere cycle
 (`docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`)
 and covers spec claims c26, c37, c38, c46 and c48 and honesty conditions
-h25, h32 and h34. It assumes the tunnel, Access application and first allow
-policy from `docs/operations/nodes-culture-dev.md` (task t19) already exist
-and that the control plane runs with task t8's Access listener enabled
+h25, h32 and h34. Its break-glass section was amended by task t22, which
+built the control-plane half c48 needs (deviation d2) and turned this
+document's recorded gap into a recipe. It assumes the tunnel, Access
+application and first allow policy from
+`docs/operations/nodes-culture-dev.md` (task t19) already exist and that the
+control plane runs with task t8's Access listener enabled
 (`NODES_ACCESS_LISTEN`, `NODES_ACCESS_TEAM_DOMAIN`, `NODES_ACCESS_AUD` set
 in thor's `prod.env`).
 
@@ -230,18 +233,127 @@ Verify by reading the app back (`GET …/access/apps/$APP_ID` →
 Spec c48 wants a path that a wrong allow policy, a wrong AUD, or a dead
 tunnel cannot close: **an issued service credential bound to the operator's
 own human actor**, usable from `curl` on the LAN to decide a human task.
-This section records what exists today, what it costs, and the exact gap
-between that and c48.
 
-### What works today
+Task t13 wrote this section as a gap: the credential could be minted but the
+control plane did not honour it, so the only real LAN break-glass was the
+shared decision secret. Task t22 closed it (`internal/api/breakglass.go`).
+What follows is the recipe, then the older path it replaces.
 
-The LAN listener (`http://thor:18080`, `Handler` in
-`internal/api/principal.go`) ignores `Cf-Access-Jwt-Assertion` entirely, so
-nothing about Access can affect it. On that listener a decision is
+### The credential, and what it grants
+
+It is an ordinary **issued dial-in credential** (`cnd_…`, `crypto/rand`,
+digest at rest, revealed once, `RequireControlPlaneIssued`) — the same class
+every bridge dials in with. Nothing about issuance was widened for this: a
+credential is issued for a *party*, a party is any `namespace/name` key
+(`internal/actors.ValidateInboundParty`), and a person's registered human
+actor is one.
+
+What is new is where it is **verified**. On the LAN listener (`Handler`),
+and only there, a `Bearer cnd_…` on a route the principal gate protects is
+resolved through the dial-in path's own
+`internal/actors.InboundAuthenticator.Authenticate` — same store, same
+per-credential lock, same order: revoked → control-plane-issued → lockout →
+rate window → constant-time verifier. It is the same door, not a second one.
+
+An admitted credential binds to **that party's newest registered actor
+revision**:
+
+| The party's actor kind | The principal it becomes | May |
+|---|---|---|
+| `human` | non-synthetic, subject = the party key, role `approver` | decide human tasks, review, reply, grade — what c48's break-glass is for |
+| anything else (`agent`, …) | the machine principal `actorbearer.go` already defines, role `viewer` | write only where agents may; a human decision under it is refused `403 forbidden_role` |
+| no registered actor | bound to nothing | every write refused `403 unbound`, the same visible refusal an unbound person gets |
+
+It is deliberately **not** `namespace_administrator`. An operator locked out
+of Access can decide the human task that is blocking the lane; they cannot
+register actors or publish workflows with it.
+
+The **loopback Access listener never honours it** — that listener exists so
+an Access JWT is accepted only where the tunnel can reach (c43), and a second
+credential class there would widen exactly the surface that split keeps
+narrow.
+
+### 1. Mint it (hand-turn, once, and on every rotation)
+
+```bash
+DIALIN_PREFIX=BREAK_GLASS DIALIN_HOST=thor \
+DIALIN_DESTINATION=env:.culture-nodes/dialin/break-glass.env \
+  deploy/prod/issue-dialin-credential.sh company/<operator-handle> thor
+```
+
+`company/<operator-handle>` is the **human actor registered in step 2 of
+onboarding**, not a bridge. The party is not added to `dialin_bridges()` —
+a person is not a bridge this deployment runs, and the three one-off
+overrides above are the whole mechanism.
+
+The lane's guarantees are unchanged for a person's credential: the plaintext
+lands in exactly one mode-0600 file on thor
+(`~/.culture-nodes/dialin/break-glass.env`, under the operator's own
+account), the control plane keeps only its SHA-256 digest, the command
+prints the digest and never the value, and `audit-credentials.sh` fails if a
+copy ever reaches `prod.env`.
+
+### 2. Prove it works before you need it
+
+`whoami` resolves the credential without deciding anything, so the check
+costs no ledger record and can be repeated after any rotation:
+
+```bash
+# on thor, on the LAN; the credential never enters an argv
+. ~/.culture-nodes/dialin/break-glass.env
+cat <<CURLRC | curl -fsS -K -
+url = "http://127.0.0.1:18080/v1alpha1/whoami"
+header = "Authorization: Bearer $BREAK_GLASS_DIAL_TOKEN"
+CURLRC
+# {"principal":{"provider":"nodes-inbound-credential","subject":"company/<handle>"},
+#  "actor_id":"01J…","roles":["approver"]}
+```
+
+`provider` is the tell: `nodes-inbound-credential` is this credential,
+`cloudflare-access` is a signed-in person, `transition` is the old shared
+secret below.
+
+### 3. Decide with it
+
+```bash
+# on thor, on the LAN
+. ~/.culture-nodes/dialin/break-glass.env
+cat <<CURLRC | curl -fsS -K -
+url = "http://127.0.0.1:18080/v1alpha1/human-tasks/<task-id>/decision"
+request = "POST"
+header = "Authorization: Bearer $BREAK_GLASS_DIAL_TOKEN"
+header = "Content-Type: application/json"
+data = "{\"outcome\":\"approved\",\"expected_ledger_version\":<n>}"
+CURLRC
+```
+
+**No `decider_actor_id` is typed.** That is the whole difference from the
+shared secret: the origin on the ledger record is the actor the *credential*
+is bound to, stamped server-side, not an actor the body claimed.
+
+### 4. Retire it
+
+`deploy/prod/issue-dialin-credential.sh --revoke company/<operator-handle>`
+(with the same three overrides) ends authority at the control plane and
+removes the only plaintext. A revoked credential then refuses with reason
+class **`credential_revoked`** — logged with the party key and counted on
+`api.auth_refusals.count`, never as `no_principal`, because "revoked" and
+"there is no such credential" are different facts to an operator reading a
+log during an incident. Its siblings are `credential_locked`,
+`credential_rate_limited`, `credential_not_issued` and `credential_invalid`.
+A `cnd_` value no record matches is still an unknown bearer: `401
+no_principal`, unchanged.
+
+Re-minting is how a rotation works, and it clears revocation and lockout —
+issuing a new secret *is* the act of granting authority again.
+
+### The older path this replaces: the shared decision secret
+
+The LAN listener ignores `Cf-Access-Jwt-Assertion` entirely, so nothing about
+Access can affect it. Before the credential above, a decision there was
 authenticated by the **decision transition bearer**,
-`NODES_HUMAN_DECISION_TOKEN_SECRET`, which lives in thor's `prod.env` and
-is read on the host — never exported into the operator's shell, the same
-custody shape `issue-dialin-credential.sh` uses for the issuance bearer:
+`NODES_HUMAN_DECISION_TOKEN_SECRET`, read on the host out of thor's
+`prod.env`:
 
 ```bash
 # on thor, on the LAN; the secret never leaves the host or enters an argv
@@ -259,70 +371,18 @@ What that path is, honestly: the principal is the synthetic
 `transition-bearer` (provider `transition`, role `namespace_administrator`),
 and the operator's actor appears on the ledger only because the body's
 `decider_actor_id` **claims** it. The credential does not identify a person;
-it identifies whoever could read `prod.env`. It is a break-glass, not the
-c48 one, and every use of it is recorded on the cycle's issue with the task
-id and the reason Access was unusable (h34's "its use is recorded").
+it identifies whoever could read `prod.env`. Any use of it is recorded on the
+cycle's issue with the task id and the reason Access was unusable (h34's
+"its use is recorded") — and so is any use of the c48 credential above.
 
 **Sequencing constraint for h25.** h25 has the operator stop holding
 `NODES_HUMAN_DECISION_TOKEN_SECRET` (`remove-secret.sh` run recorded).
-Removing it from `prod.env` before the c48 credential below exists removes
-the only LAN break-glass there is — a misconfigured policy would then lock
-every human out, which is exactly what c48 forbids. Run that
-`remove-secret.sh` **after** the gap below is closed, not before, and say so
-on the measurement sitting.
-
-### The c48-shaped credential, and why it is not scripted here
-
-`deploy/prod/issue-dialin-credential.sh` can already mint an issued
-credential for the operator's human actor without any code change — the
-party is not required to be a bridge, only shaped like an actor key
-(`internal/actors.ValidateInboundParty`), and the three destination
-overrides exist for one-offs:
-
-```bash
-DIALIN_PREFIX=BREAK_GLASS DIALIN_HOST=thor \
-DIALIN_DESTINATION=env:.culture-nodes/dialin/break-glass.env \
-  deploy/prod/issue-dialin-credential.sh company/<operator-handle> thor
-```
-
-That command is deliberately **not** part of the recipe, because the
-control plane would not honour what it produced. An issued `cnd_…`
-credential is verified in exactly one place, `authenticateInbound` in
-`internal/api/inbound_transport.go`, and only for the machine surfaces
-`/v1alpha1/inbound/poll` and `/v1alpha1/inbound/<id>/complete`. The
-principal middleware never consults `inbound_authentication`. A
-`POST /human-tasks/<id>/decision` carrying `Authorization: Bearer cnd_…` on
-the LAN answers `401 no_principal`. Minting it today would leave a live
-secret on a host that opens nothing — a dead credential in the exact shape
-`audit-credentials.sh` exists to catch.
-
-The gap is three pieces of `internal/` work, none of which this task writes:
-
-1. `internal/api/principal.go`, `principalMiddleware`, LAN handler only
-   (never the loopback Access listener, or c43's replay split is gone): when
-   no principal is present and the request carries `Authorization: Bearer
-   cnd_…`, verify it through the same verifier `authenticateInbound` uses
-   (`party_kind=actor`, SHA-256 against `inbound_authentication`, honouring
-   revocation and lockout), then build a `Principal` whose `Subject` is the
-   party key and whose `ActorID` is that key's newest actor revision, with
-   `Synthetic=false` so the `unbound` / `forbidden_role` checks apply.
-2. Roles for that principal. Either read them from an `actor_identities`
-   row with a third provider value (say `nodes-inbound-credential`, subject
-   = the party key) — which needs an expand-only migration widening
-   `actor_identities_provider_check` in `0053`, and a `bind-identity.sh`
-   provider entry — or derive them from the actor row. The first keeps one
-   authorization table; the second means an issued credential is always an
-   administrator, which is more than c48 asks for.
-3. Refusal telemetry: a bad or revoked `cnd_` bearer must produce the same
-   reason-classed log line and counter as a bad JWT (`bad_signature` /
-   `expired` are the existing classes; a revoked issued credential wants its
-   own, e.g. `revoked`), never the credential.
-
-With those in place the recipe becomes: mint with the command above, keep
-the file on thor at mode 0600 under the operator's account, and decide from
-the LAN with `curl -K -` reading `BREAK_GLASS_DIAL_TOKEN` from it — a
-credential that names the operator's actor, that `--revoke` retires, and
-that `prod.env` never holds.
+Removing it from `prod.env` before the c48 credential exists removes the only
+LAN break-glass there is — a misconfigured policy would then lock every human
+out, which is exactly what c48 forbids. Run that `remove-secret.sh` **after**
+step 1 above has been applied on thor and step 2 has answered, not before,
+and say so on the measurement sitting. The same ordering is item 11 of
+`docs/operations/nodes-culture-dev.md`'s hand-turn ledger.
 
 ## Hand-turn ledger for this document
 
@@ -339,10 +399,13 @@ the cycle's issue, when it is applied:
 4. Revoke a departing person's Access session (offboarding step 2).
 5. Remove a departing person's email from the allow policy (offboarding
    step 3).
-6. Any use of the LAN break-glass bearer, with the task id and the reason
-   Access was unusable.
-7. Running `remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET` — only
-   after the c48 credential gap is closed.
+6. Any use of a LAN break-glass credential — the c48 one or the older
+   shared decision bearer — with the task id and the reason Access was
+   unusable.
+7. Minting the c48 break-glass credential onto thor (break-glass step 1),
+   and re-minting it on every rotation.
+8. Running `remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET` — only
+   after item 7 has been applied and break-glass step 2 has answered.
 
 Registering the human actor and binding / revoking the identity are script
 runs against the control plane and are not counted as hand-turns; they are

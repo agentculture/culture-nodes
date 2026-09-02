@@ -1,0 +1,1120 @@
+{
+  "plan_slug": "login-from-anywhere-sso-identity-permissions-jira",
+  "schema_version": 2,
+  "created": "2026-09-01T22:07:52Z",
+  "updated": "2026-09-02T00:08:56Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Jira Cloud service-account tokens are scoped tokens that authenticate only through the api.atlassian.com/ex/jira/<cloudId> gateway (verified 2026-09-02: site URL 401 AUTHENTICATED_FAILED, gateway 200); the sweep, all four jira bridge verbs and the operator skill build URLs from a bare site host name and the bridge refuses a non-host JIRA_SITE, so the confirmed identity decision c52 cannot be installed without a separate configurable Jira API base (JIRA_API_BASE) while the site host keeps rendering browse links",
+      "task_ref": "t4",
+      "reason": "decision c52 (service account) was taken after the plan converged; the gateway constraint was unknown until the token was minted",
+      "affects": [
+        "t15",
+        "t16",
+        "t18"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Break-glass for the operator on the LAN (spec c48): an issued dial-in credential can be minted for the operator's human actor without code, but the control plane honours cnd_ credentials only on /inbound/poll and /inbound/{id}/complete \u2014 principalMiddleware never consults inbound_authentication, so a decision POST with it is 401 no_principal; the only LAN break-glass today is the NODES_HUMAN_DECISION_TOKEN_SECRET transition bearer, which means remove-secret.sh for that secret (c29 f, t18) must wait until a principal can be built from an issued credential",
+      "task_ref": "t13",
+      "reason": "found while writing docs/operations/people.md: the credential lifecycle exists but the principal resolver does not read it",
+      "affects": [
+        "t18"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 20
+    },
+    {
+      "id": "d3",
+      "what": "Codex lane capacity exhausted at 01:27 local (attempt error class capacity_exhausted: 'You've hit your usage limit ... try again at 5:59 AM') after 10 codex sessions in ~3.5h; runs 01M1FHBA1W53C60NQP917W1B58 (t14) and 01M1FHH733J79G0SB5SVQQCH5S (t11) failed with no handover; per the approved split plan's fallback (risk r1/r6) t14 is rerouted to the developer actor and t11 to a worktree subagent; t12/t17 were already Claude-lane; t22 and any codex retry wait for the window reset",
+      "task_ref": "t14",
+      "reason": "the ChatGPT quota is one pool shared by codex-thor and codex-orin; the earlier \u224812 packages/hour estimate held (10 sessions, two failed)",
+      "affects": [
+        "t11",
+        "t12",
+        "t17",
+        "t22"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 21
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "internal/auth: TestVerifyValidInteractiveToken, TestVerifyValidServiceToken, TestVerifyRefusalReasons, TestVerifyMalformedClaims",
+      "behavior_text": "valid RS256 token yields a Principal; wrong aud/iss, expired, nbf, unknown kid, bad signature refuse with distinct reason classes",
+      "contract_text": "Verify(token) against a fake JWKS server: valid RS256 token passes and yields {subject, email|common_name, kind}; wrong aud, wrong iss, expired, nbf in future, unknown kid after one refetch, and bad signature each refuse with a distinct reason class",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/auth/... green on the merged branch at the t1 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 2
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "internal/auth: TestJWKSCacheAntiFloodsKidMisses, TestJWKSCacheSurvivesKeyRotation",
+      "behavior_text": "kid-keyed cache refetches once per anti-flood window and verifies under a rotated key",
+      "contract_text": "JWKS cache is keyed by kid, refetches once on a miss with an anti-flood window, and survives a key rotation test (old key dropped, new key served)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/auth/... green at the t1 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 3
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "go list -deps ./internal/auth; scripts/check-zero-runtime-deps.sh; go test ./tests/lint",
+      "behavior_text": "stdlib-only deps; guards pass; no logging call in the package",
+      "contract_text": "go list -deps ./internal/auth shows only standard library packages; scripts/check-zero-runtime-deps.sh and tests/lint import guards pass; no log line in the package contains the token value",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at the t1 gate: deps stdlib only, zero-dep script and tests/lint green",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "go test ./migrations/... + review of migrations/0053_actor_identities.sql",
+      "behavior_text": "0053 highest applied, additive, no email/credential column; pending/0036 untouched",
+      "contract_text": "Migration file is the highest-numbered, additive, creates actor_identities(provider, subject, actor_id FK actors, roles text[], created_at, revoked_at) with UNIQUE(provider, subject) and no email or credential column; migrations/pending/0036 unchanged",
+      "evidence_type": "integration",
+      "strength": "fidelity",
+      "strength_basis": "migration applied by the store harness; column shape checked by reading the file",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "internal/store/postgres: TestBindAndLookupIdentity, TestBindIdentityRejectsDuplicateLiveBinding, TestRevokeIdentityHidesBinding, TestBindIdentityAppendsAfterRevoke, TestBindIdentityRejectsInvalidRole; internal/auth: TestParseRole*",
+      "behavior_text": "bind/lookup/revoke on temp Postgres; revoked hidden; closed role set",
+      "contract_text": "Store methods BindIdentity/LookupIdentity/RevokeIdentity are covered by tests against the embedded Postgres; a revoked binding is not returned by lookup; roles are validated against the closed set {viewer, approver, namespace_administrator}",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test -count=1 ./internal/store/postgres/... green on the operator host at the t2 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "internal/api: TestStreamEventsWritesKeepaliveWhileIdle, TestStreamRunEventsWritesKeepaliveWhileIdle, TestSSEKeepaliveIntervalDefaultsTo25s",
+      "behavior_text": "comment keepalive on both streams while idle, none after disconnect, default 25s",
+      "contract_text": "internal/api/events.go writes an SSE comment line every 25 s on /v1alpha1/events and /v1alpha1/runs/{id}/events while idle; a test with a fake clock observes two keepalives in 60 s and no keepalive after the client disconnects",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t3 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "web: useRunEvents.test.tsx, useSharedEvents.test.tsx (t3 blocks)",
+      "behavior_text": "body-less frames ignored; reconnect from last real event id after a forced drop",
+      "contract_text": "web/src EventSource consumers ignore comment frames and reconnect after a forced drop (vitest with a mocked EventSource)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "npm test -- --run: 598 tests green at the t3 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/deploy t4 fake-host tests (go test ./tests/deploy/...)",
+      "behavior_text": "deploy_jira writes targets+prefix without clobbering credentials; grant-check names both",
+      "contract_text": "deploy/prod/deploy.sh's deploy_jira writes JIRA_TRANSITION_TARGETS='In Progress,Pending,In Review,Done' and JIRA_TRANSITION_PROJECT_PREFIX into jira-bridge-jira.env from deploy-time values, and lanes/grant-check.sh names both keys; a tests/deploy test asserts the written file",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./tests/deploy/... green at the t4 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "adapters/jira/tests/test_transition_issue.py; tests/test_pr_upkeep_sweep_jira.py; test_jira_comment_fact_schema.py; tests/deploy/jirabridgeaudit_test.go",
+      "behavior_text": "four targets accepted, fifth refused; protected suites unchanged and green",
+      "contract_text": "adapters/jira/tests/test_transition_issue.py gains cases for In Review and Done accepted and a fifth name refused; test_bridge.py, tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and tests/test_jira_comment_fact_schema.py pass unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "33 adapter + 40 root tests green at the t4 gate; protected files unmodified",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "docs/decisions/2026-09-02-jira-transition-allowlist.md; 2026-08-18 record superseded pointer",
+      "behavior_text": "list form, engine-side policy, Done as a human node stated",
+      "contract_text": "docs/decisions/2026-08-18-jira-transition-custody.md is superseded by docs/decisions/2026-09-XX-jira-transition-allowlist.md stating the list form, engine-side policy, and that Done is a human node (c32)",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "read after merge; no automated test asserts prose",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/behavioral placeholders (go test -tags behavioral; pytest); tests/test_lint_all.py",
+      "behavior_text": "convention declared; placeholders pass; lint job list unchanged",
+      "contract_text": "tests/behavioral/README.md declares the convention (dedicated folder; Go tests tagged //go:build behavioral, pytest marker behavioral) and scripts/lint-all.sh --list shows it is not part of lint; one placeholder test exists per language",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test -tags behavioral ok; pytest 743 passed at the t5 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "devague oblige --list / devague plan oblige --list",
+      "behavior_text": "22 frame + 52 plan obligations filed; status PASSED before and after",
+      "contract_text": "devague oblige is run for every confirmed requirement claim on the frame and devague plan oblige for every acceptance criterion of confirmed tasks; devague status shows no unmet-obligation warning that names a claim without an obligation",
+      "evidence_type": "observation",
+      "strength": "coverage",
+      "strength_basis": "counts read from the CLI after the t5 merge",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "docs/operations/validate-delivery-lane.md",
+      "behavior_text": "when the leg runs and the no-Done-before-evidence rule are stated",
+      "contract_text": "docs/operations/validate-delivery-lane.md explains when the leg runs (after each wave merges, before summarize-delivery) and that a merge never asks a human node for Done before evidence is filed",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "read after merge; markdownlint green",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "internal/api/authgate_test.go (t8 exhaustive mutating-route table)",
+      "behavior_text": "every mutating route 401 without principal, 403 for viewer",
+      "contract_text": "internal/api has one principal middleware; the six require*Auth helpers are deleted or delegate to it; every mutating route in the server.go table (incl. grades, runs create/cancel/patch, workflows, workflow-generations, namespaces, schedules, preflights, plan-imports) returns 401 without a principal and 403 for a viewer; authgate_test.go's table lists every mutating route and asserts both",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t8 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "internal/api principal/listener tests (t8); cmd/nodes serve dual listeners",
+      "behavior_text": "JWT honoured only on NODES_ACCESS_LISTEN; bearers still work on NODES_LISTEN; SSE/GET accept the principal",
+      "contract_text": "cmd/nodes serve gains NODES_ACCESS_LISTEN (loopback) + NODES_ACCESS_TEAM_DOMAIN + NODES_ACCESS_AUD; a valid Access JWT is honoured only on the loopback listener and ignored on NODES_LISTEN; GETs and both SSE streams (registered outside wrap) accept the principal; the existing bearer secrets keep working on NODES_LISTEN for the transition",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... ./cmd/... green at the t8 gate; prod measurement pending (t18)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o16",
+      "test_ref": "internal/api whoami tests (t8)",
+      "behavior_text": "bound, unbound and unauthenticated shapes; unbound writes 403",
+      "contract_text": "GET /v1alpha1/whoami returns {principal, actor_id, roles} or 200 {unbound: true} for an allowlisted principal with no binding, and every write for an unbound principal is 403 reason unbound",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t8 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o17",
+      "test_ref": "internal/api refusal logging/telemetry tests (t8)",
+      "behavior_text": "one classified log line per refusal, counter per reason, token never logged",
+      "contract_text": "Refusals log one line with reason class (no_principal, bad_signature, bad_audience, expired, unbound, forbidden_role) and subject, never the token; a counter per reason is exposed via internal/telemetry; a test greps the log output for the token and finds nothing",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t8 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e18",
+      "obligation_ref": "o18",
+      "test_ref": "openapi contract test (t8); grep internal/ web/src",
+      "behavior_text": "authless paragraph replaced; no forbidden identity surface",
+      "contract_text": "api/openapi/openapi.yaml replaces the 'authless by design' paragraph with the principal scheme; a contract test still passes; grep web/src and internal/ finds no OAuth client, session issuer, password hash or users table",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "contract test green at the t8 gate; grep clean",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:19:01Z",
+        "commit": "f8464a2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e19",
+      "obligation_ref": "o19",
+      "test_ref": "web: identity-boundary.test.ts, no-bundled-secrets.test.ts",
+      "behavior_text": "no decision-token.ts/DeciderActorField/storage keys/identity labels in web/src; postJson sends no Authorization",
+      "contract_text": "web/src/api/decision-token.ts is deleted; grep web/src finds no sessionStorage decision token, no localStorage actor id, no DeciderActorField, no free-text reviewer/replier input; postJson sends no Authorization header (the edge cookie carries identity)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest 619 green at the t9 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 22
+    },
+    {
+      "id": "e20",
+      "obligation_ref": "o20",
+      "test_ref": "web: Header.test.tsx (+4), IdentityGate.test.tsx (5), useWhoami.test.tsx (6)",
+      "behavior_text": "signed-in email in Header; unbound full page naming the principal; allowlist shrunk to zero",
+      "contract_text": "Header renders the signed-in email from GET /v1alpha1/whoami and an unbound principal sees a full-page 'no actor is bound to this login' state naming the principal; no-bundled-secrets.test.ts passes with its allowlist shrunk to zero entries",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest green at the t9 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 23
+    },
+    {
+      "id": "e21",
+      "obligation_ref": "o21",
+      "test_ref": "web: Inbox/Decisions/TicketView tests re-cut; e2e ticket-view.spec.ts (no token typed)",
+      "behavior_text": "identity fields removed; e2e asserts authorization undefined and exact body",
+      "contract_text": "Inbox, Decisions and TicketView tests pass with the identity fields removed; e2e ticket-view.spec.ts no longer types a token",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest 619 + Playwright 80 green at the t9 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 24
+    },
+    {
+      "id": "e22",
+      "obligation_ref": "o22",
+      "test_ref": "internal/api t10 tests: body naming another actor is overridden with 200 + warning on all eight write routes",
+      "behavior_text": "stored origin_actor_id is the principal's actor",
+      "contract_text": "For replies, frame posts, freeze, human-task decisions, reviews, grades, suite-verdicts and gate-reports an API test sends a body naming a different actor than the principal and the stored record's origin_actor_id is the principal's actor; the body field is accepted only when equal, otherwise ignored with a 200 and a warning field",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green on the operator host at the t10 gate (Postgres suites ran)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 25
+    },
+    {
+      "id": "e23",
+      "obligation_ref": "o23",
+      "test_ref": "internal/api + engine t10 dial-in tests: mismatched completion -> 422, diagnostic naming both ids, no redispatch",
+      "behavior_text": "dial-in completion bound to the credential's actor",
+      "contract_text": "A dial-in completion whose ledger delta names an actor other than the authenticated actor key is refused at accept time with a diagnostic on the run naming both ids and no redispatch (#183); inbound_transport.go no longer hardcodes party kind",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... ./internal/engine/... ./internal/store/postgres/... green at the t10 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 26
+    },
+    {
+      "id": "e24",
+      "obligation_ref": "o24",
+      "test_ref": "internal/engine/humantaskfanout_test.go payload invariant (Cf-Access-Jwt-Assertion, CF_Authorization)",
+      "behavior_text": "no Access assertion in any fan-out payload",
+      "contract_text": "humantaskfanout_test.go's payload invariant also asserts no Cf-Access-Jwt-Assertion value appears in any fan-out payload",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/engine/... green at the t10 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 27
+    },
+    {
+      "id": "e25",
+      "obligation_ref": "o30",
+      "test_ref": "docs/operations/people.md; scripts/bind-identity.sh; tests/deploy/bindidentity_test.go (8), registeractor_test.go TestRegisterHumanActorHasNoEndpoint",
+      "behavior_text": "three-place recipe, 8h session policy, bind/revoke script refuses invalid role/provider before psql",
+      "contract_text": "docs/operations/people.md is the three-place recipe (Access policy, human actor revision via register-actor.sh, BindIdentity via a new scripts/bind-identity.sh) plus offboarding (revoke Access session, RevokeIdentity) and the recorded Access session duration; a second person is allowlisted and bound and decides a human task from off-LAN (recorded)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./tests/deploy/... green at the t13 gate; the second-person off-LAN proof is still a t18 placeholder",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 28
+    },
+    {
+      "id": "e26",
+      "obligation_ref": "o31",
+      "test_ref": "docs/operations/people.md break-glass section; manual read of internal/api/principal.go vs internal/actors/inbound_authentication.go",
+      "behavior_text": "an issued dial-in credential is NOT honoured by the principal middleware \u2014 break-glass via issued credential does not work yet",
+      "contract_text": "scripts/issue-dialin-credential.sh (or a sibling) can issue a service credential bound to the operator's human actor for LAN break-glass; the credential decides a human task from curl on the LAN and the run records it",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "recorded as deviation d2 / task t22; the only LAN break-glass today is the transition bearer",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 29
+    },
+    {
+      "id": "e27",
+      "obligation_ref": "o32",
+      "test_ref": "internal/api/ticketreviews_test.go: served-version guard with an append between read and submit",
+      "behavior_text": "pending_records per run at the served ledger_version; stale submit refused",
+      "contract_text": "GET /v1alpha1/tickets/{id} returns pending_records grouped per run with the ledger_version each group was read at, in one response; a test proves a record appended after the read is refused by the guard when the client submits the served version",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t14 gate (Postgres ran on the developer host and the operator host)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 30
+    },
+    {
+      "id": "e28",
+      "obligation_ref": "o33",
+      "test_ref": "internal/api/ticketreviews_test.go: per-run commit while one conflicts; eight whole-request refusals",
+      "behavior_text": "one review per run in order; conflict isolated; rationale + human reviewer required",
+      "contract_text": "POST /v1alpha1/tickets/{id}/reviews accepts {runs: [{run_id, expected_ledger_version, records, verdict}], rationale} and commits one review per run in order, returning per-run results; a stale run reports conflict while the others commit (decision c40)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t14 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 31
+    },
+    {
+      "id": "e29",
+      "obligation_ref": "o34",
+      "test_ref": "internal/api/ticketreviews_test.go mirror cases; tests/test_jira_comment_fact_schema.py",
+      "behavior_text": "reply origin = principal's actor; mirror 'via <display name>'; fact schema unchanged",
+      "contract_text": "A page reply's engine fact carries origin actor = the principal's actor and the Jira mirror reads the text followed by 'via' and the verified display name; the fact still validates against schemas/events/jira_comment.schema.json and jira_comment_is_self_echo is unchanged",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go + pytest green at the t14 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 32
+    },
+    {
+      "id": "e30",
+      "obligation_ref": "o35",
+      "test_ref": "tests/test_pr_upkeep_*.py (152) + engine lifecycle-planning test (t15)",
+      "behavior_text": "pr.opened emitted once per PR; In Review planned once",
+      "contract_text": "examples/pr-upkeep/sweep.py emits pr.opened {repository, number, url, issue_key} using merged_pr_fact's correlation; a workflow or engine hook plans transition_issue In Review from it exactly once per PR (idempotent on the fan-out UNIQUE)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "pytest green at the t15 gate; In Review planning covered by engine test",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 33
+    },
+    {
+      "id": "e31",
+      "obligation_ref": "o36",
+      "test_ref": "internal/engine + store tests (t15) incl. operator fixups: TestMergedPRFactFreezesLinkedTicketProjection, TestMergedPRFactExpiresThePendingApprovalAndCompletesTheRun",
+      "behavior_text": "pr.merged freezes and raises exactly one Ticket done? task; no Done intent until the done outcome; the task is not expired by the merge",
+      "contract_text": "pr.merged no longer only freezes the ticket: in the same transaction it raises a human task 'Ticket done?' whose options are done / not yet, addressed to the approver role, and whose done outcome plans transition_issue Done; the transition is never planned from pr.merged directly (test asserts absence) \u2014 decisions c32, c35",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "green after two operator fixups (no-run tickets; expiry exclusion) at the t15 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 34
+    },
+    {
+      "id": "e32",
+      "obligation_ref": "o37",
+      "test_ref": "docs/drive-from-jira.md trigger table + Done section; tests/test_pr_upkeep_sweep_jira.py self-echo tests",
+      "behavior_text": "docs rewritten; bot-authored In Review/Done filtered",
+      "contract_text": "docs/drive-from-jira.md trigger table and the 'Move a ticket to Done' section are rewritten to the new behaviour in the same PR; test_pr_upkeep_sweep_jira.py's transition self-echo tests pass with the bot account authoring In Review and Done",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "pytest green; docs read after merge",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 35
+    },
+    {
+      "id": "e33",
+      "obligation_ref": "o38",
+      "test_ref": "internal/api t16 tests: loopback-only route, HMAC/URL-token auth closed by default, Python/Go parity fixture, in-order/reversed/duplicated deliveries",
+      "behavior_text": "receiver is a wake-up that hydrates and replays through the sweep seam with identical source keys/watermarks; duplicates absorbed",
+      "contract_text": "POST /v1alpha1/webhooks/jira (on the loopback listener only) verifies the webhook secret (X-Hub-Signature HMAC where the tenant supports it, else a per-webhook URL token compared constant-time), normalises the payload with pr_upkeep_jira's functions (cited copy, byte-identical test), and forwards to the same DeliverSignalEvent path with the same source keys and watermark; a fixture test proves receiver and sweep emit byte-identical facts",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/... green at the t16 gate (parity test runs python3)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 36
+    },
+    {
+      "id": "e34",
+      "obligation_ref": "o39",
+      "test_ref": "docs/operations/nodes-culture-dev.md (Bypass policy + webhook registration); deploy/prod compose + install-secrets names",
+      "behavior_text": "operator steps documented; secrets named not valued",
+      "contract_text": "docs/operations/nodes-culture-dev.md gains the Bypass policy (path /v1alpha1/webhooks/jira, Everyone) and the Jira webhook registration steps; a comment posted on a SCRUM ticket produces a pr-upkeep.jira.comment fact within seconds and the next sweep pass reports duplicate=true",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "read after merge; the live webhook is a hand-turn (#273)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 37
+    },
+    {
+      "id": "e35",
+      "obligation_ref": "o40",
+      "test_ref": "examples/pr-upkeep/sweep-cycle.workflow.yaml schedule unchanged",
+      "behavior_text": "sweep stays at five minutes until a week of push runs green",
+      "contract_text": "The sweep schedule stays at five minutes until a week of push runs green; the relaxation is a recorded follow-up, not part of this task (decision c51: no Automation rules)",
+      "evidence_type": "observation",
+      "strength": "coverage",
+      "strength_basis": "schedule file unchanged in the diff",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 38
+    },
+    {
+      "id": "e36",
+      "obligation_ref": "o47",
+      "test_ref": "tests/deploy/nodesculturedev_test.go (unit shape, loopback, no /home/spark); docs/operations/nodes-culture-dev.md",
+      "behavior_text": "token-mode unit targeting 127.0.0.1:18081; recipe with AUD location and session duration deferred to t13",
+      "contract_text": "deploy/prod carries cloudflared-nodes.service (token-mode, TUNNEL_TOKEN_FILE 0600, the cloudflared-chat.service shape) targeting the loopback listener port on thor over plain HTTP, and docs/operations/nodes-culture-dev.md records the one-time cultureflare remote-login setup command with placeholders, the AUD tag location, and the session-duration value",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./tests/deploy/... green at the t19 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 39
+    },
+    {
+      "id": "e37",
+      "obligation_ref": "o48",
+      "test_ref": "tests/deploy/nodesculturedev_test.go + ticketpagelink_test.go",
+      "behavior_text": "both compose files and install-secrets carry https://nodes.culture.dev; 18080:8080 unchanged",
+      "contract_text": "compose.thor.yml and compose.orin.yml plus install-secrets' prod.env block carry NODES_UI_BASE_URL=https://nodes.culture.dev; a grep test in tests/deploy asserts both files agree; the LAN publish 18080:8080 is unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./tests/deploy/... green at the t19 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 40
+    },
+    {
+      "id": "e38",
+      "obligation_ref": "o50",
+      "test_ref": "adapters/jira/tests/test_read_issue.py (closed shape, prefix/limit refusal, cap, exact GET path)",
+      "behavior_text": "read_issue verb behaves as specified",
+      "contract_text": "adapters/jira/src/jira_bridge/read_issue.py accepts exactly {verb, issue} and returns summary, description (ADF flattened, 4000-char cap), status, up to JIRA_READ_COMMENT_LIMIT comments (id, author accountId, created, body) and issue links; refuses a key outside JIRA_TRANSITION_PROJECT_PREFIX and refuses everything when the limit is unset",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "33 adapter tests green at the t20 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 41
+    },
+    {
+      "id": "e39",
+      "obligation_ref": "o51",
+      "test_ref": "adapters/jira/tests/test_read_issue.py + test_create_issue.py capabilities; test_no_transitions.py; client.py sha unchanged",
+      "behavior_text": "dispatch + capabilities advertised; protected files unchanged",
+      "contract_text": "server.py dispatches it, /v1/capabilities lists it under verbs with the read custody block; tests cover prefix refusal, empty-config refusal, cap, and the exact GET path; test_no_transitions.py still passes and client.py is unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "adapter suite green at the t20 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 42
+    },
+    {
+      "id": "e40",
+      "obligation_ref": "o52",
+      "test_ref": "adapters/jira/tests/test_read_issue.py ledger record assertions",
+      "behavior_text": "result is authority proposed, origin agent",
+      "contract_text": "The result ledger record is authority proposed, origin agent, like the three write verbs (decision c41)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "adapter suite green at the t20 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T22:57:32Z",
+        "commit": "e19bb9a"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 43
+    },
+    {
+      "id": "e41",
+      "obligation_ref": "o25",
+      "test_ref": "tests/test_agent_lanes_carry_no_human_token.py; tests/test_merge_gate.py; tests/test_collect_handover.py; internal/api/actorbearer_test.go (verdict lands agent/proposed)",
+      "behavior_text": "no human decision token in agent lanes; merge-gate + collect-handover authenticate with NODES_ACTOR_MERGE_GATE_TOKEN; verdicts agent/proposed",
+      "contract_text": "grep across docs/operations, scripts/, deploy/ and examples/ finds no NODES_HUMAN_DECISION_TOKEN outside install-secrets' generation; scripts/merge-gate.py and collect-handover.py authenticate with NODES_ACTOR_*_TOKEN or an issued dial-in credential and their suite verdicts land origin agent, authority proposed",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "pytest 754 + go test ./internal/api/... green at the t11 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:02:13Z",
+        "commit": "6e308fa"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 44
+    },
+    {
+      "id": "e42",
+      "obligation_ref": "o26",
+      "test_ref": "docs/operations/spec-chain-lane.md \u00a72 + 't11 consumer list' section; tests/test_spec_chain_lane.py",
+      "behavior_text": "claude_env lists the agent credential; consumers of verdict authority listed with their handling",
+      "contract_text": "docs/operations/spec-chain-lane.md \u00a72 claude_env no longer lists the human token; the flows that relied on human-authority verdicts are listed in the PR body and re-pointed at a human node or accepted as proposed",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "pytest green; doc read after merge",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:02:13Z",
+        "commit": "6e308fa"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 45
+    },
+    {
+      "id": "e43",
+      "obligation_ref": "o27",
+      "test_ref": "web: RunDecisionCard.test.tsx, TicketView.test.tsx (TicketClaimReviews), e2e/ticket-view.spec.ts 'confirms a claim on the ticket page and shows each run's own outcome'",
+      "behavior_text": "per-run claim reviews at the served version with per-run results; decided record still reads proposed with the review beside it",
+      "contract_text": "TicketView renders pending records per run with confirm/reject, required rationale, and one submit that calls the per-run review endpoint and shows per-run results; a confirmed record still reads proposed with a confirmed review beside it",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest 645 + Playwright 92 green on a fresh build at the t12 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:27:18Z",
+        "commit": "c0c368b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 46
+    },
+    {
+      "id": "e44",
+      "obligation_ref": "o28",
+      "test_ref": "web: grading-boundary.test.ts; Decisions.test.tsx (Pending tab links, no checkbox); TicketView frame-claims section",
+      "behavior_text": "frame claims read-only; no grading form in web/src; inert checkbox removed",
+      "contract_text": "Frame claims from the custody checkout render read-only with their confirmation state; no grading form exists anywhere in web/src; /decisions' inert claim checkbox is removed",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest green at the t12 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:27:18Z",
+        "commit": "c0c368b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 47
+    },
+    {
+      "id": "e45",
+      "obligation_ref": "o29",
+      "test_ref": "web/e2e/ticket-view.spec.ts (decide-a-task + confirm-a-claim, exact bodies incl. expected_ledger_version); NEW e2e/inbox.spec.ts, e2e/decisions.spec.ts",
+      "behavior_text": "browser-level coverage of the three deciding surfaces with intercepted API",
+      "contract_text": "Playwright: web/e2e/ticket-view.spec.ts walks decide-a-task and confirm-a-claim with intercepted API and asserts the exact request bodies; new inbox.spec.ts and decisions.spec.ts exist",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright 92 passed after rebuilding dist (the preview server serves a stale bundle otherwise \u2014 operator fixup: awaited route mocks, fixture split)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:27:18Z",
+        "commit": "c0c368b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 48
+    },
+    {
+      "id": "e46",
+      "obligation_ref": "o41",
+      "test_ref": "web: domain/ticket-flow.test.ts, TicketView.test.tsx (above-the-fold structure), e2e/ticket-view.spec.ts; shots-after/ticket-above-fold.png",
+      "behavior_text": "first screen = SVG flow rail + the pending decision; claims/runs/replies in tabs below",
+      "contract_text": "The ticket page's first screen is a flow diagram (xyflow/elk, reusing ActiveGraphCanvas primitives) of where the ticket is plus the one pending decision with its buttons; claims, runs and the reply thread are below or in tabs",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest 665 + Playwright 97 green on a fresh build at the t17 gate; the visual judgment is the operator's (h12)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:47:55Z",
+        "commit": "5f8d472"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 49
+    },
+    {
+      "id": "e47",
+      "obligation_ref": "o42",
+      "test_ref": "web: routes/Home.test.tsx, e2e/home.spec.ts; Header nav groups",
+      "behavior_text": "first-visit page at / naming tickets waiting on others; Inbox/Decisions demoted, none retired (c33)",
+      "contract_text": "A signed-in person with nothing pending lands on a first-visit page that names the tickets waiting on others and how to get a link; Inbox and Decisions become secondary views reachable from the header, or are retired where the ticket page replaces them (decision c33), with the retirement named in the PR; non-human-facing pages unchanged except shared components (c39)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest + Playwright green at the t17 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:47:55Z",
+        "commit": "5f8d472"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 50
+    },
+    {
+      "id": "e48",
+      "obligation_ref": "o46",
+      "test_ref": "git diff --stat main...feat/login-from-anywhere -- internal/actors/token.go internal/actors/inbound_issuance.go internal/awsauth/ (empty); grep of server.go diff for the callback route patterns (empty); go test ./internal/actors/... ./internal/awsauth/...",
+      "behavior_text": "the attempt token, dial-in issuance, awsauth and the unversioned callback registration are unchanged and their tests pass",
+      "contract_text": "git diff main...branch shows no change under internal/actors/token.go, internal/actors/inbound_issuance.go, internal/awsauth/ or server.go's unversioned callback registration; go test ./internal/actors/... ./internal/awsauth/... passes unchanged",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "diff empty across 168 changed files; both packages' suites green on the merged branch",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:48:36Z",
+        "commit": "5f8d472"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 51
+    },
+    {
+      "id": "e49",
+      "obligation_ref": "o53",
+      "test_ref": "tests/test_pr_upkeep_sweep_jira_api_base.py; adapters/jira/tests/test_api_base.py (base set/unset, exact URLs, config-file refusal); browse links asserted unchanged",
+      "behavior_text": "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+      "contract_text": "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "773 root + 59 adapter tests + tests/deploy green at the t21 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:53:05Z",
+        "commit": "6164e0c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 52
+    },
+    {
+      "id": "e50",
+      "obligation_ref": "o54",
+      "test_ref": "tests/deploy (install-secrets / deploy_jira / grant-check write JIRA_API_BASE); sweep-cycle.workflow.yaml environmentRefs; protected suites unchanged",
+      "behavior_text": "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+      "contract_text": "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "773 root + 59 adapter tests + tests/deploy green at the t21 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:53:05Z",
+        "commit": "6164e0c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 53
+    },
+    {
+      "id": "e51",
+      "obligation_ref": "o55",
+      "test_ref": "docs/drive-from-jira.md + adapters/jira/README.md gateway paragraphs",
+      "behavior_text": "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base",
+      "contract_text": "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "773 root + 59 adapter tests + tests/deploy green at the t21 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:53:05Z",
+        "commit": "6164e0c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 54
+    },
+    {
+      "id": "e52",
+      "obligation_ref": "o44",
+      "test_ref": "docs/audits/2026-09-02-login-from-anywhere-measurement-sitting.md (first, pre-deploy sitting)",
+      "behavior_text": "the sitting exists and records every c29 measurement \u2014 five as unmeasured/superseded because the branch is not deployed, and the secret removal as not done (sequenced after t22)",
+      "contract_text": "A dated docs/audits/ measurement sitting for login-from-anywhere records all six c29 measurements with the exact command, id or record, failures recorded as failures; NODES_HUMAN_DECISION_TOKEN_SECRET is removed from every human's hands via remove-secret.sh and the run is recorded",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "criterion not met yet: measurements a-e need the deploy and #273 hand-turns; f is deliberately deferred to after t22 \u2014 recorded as FAIL, to be superseded by the post-deploy sitting",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-01T23:53:28Z",
+        "commit": "1ca78d2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 55
+    },
+    {
+      "id": "e53",
+      "obligation_ref": "o45",
+      "test_ref": "docs/audits/2026-09-02-login-from-anywhere-measurement-sitting.md \u00a7'Prod floor as found' (live curl/ssh 2026-09-02 03:10)",
+      "behavior_text": "the 2026-08-30 audit re-verified live: revision moved, grades line corrected, whoami/tunnel/JIRA_API_BASE absent pre-deploy; hand-turn and fixup counts recorded",
+      "contract_text": "The 2026-08-30 audit is re-verified live and every changed line gets a dated correction; the delivery summary maps each after-state sentence to a measurement and quotes the Done/In Review hand-turn counts before and after and decisions under the secret vs under a principal",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured against prod at 15fefde; the delivery-summary mapping of after-state sentences to measurements is written in the summary",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-01T23:53:28Z",
+        "commit": "1ca78d2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 56
+    },
+    {
+      "id": "e54",
+      "obligation_ref": "o56",
+      "test_ref": "internal/api/breakglass_test.go (human actor decides on the LAN with an issued credential; revoked -> credential_revoked; agent kind -> 403 forbidden_role; unknown cnd_ -> 401); internal/telemetry/telemetry_test.go",
+      "behavior_text": "a cnd_ credential on the LAN listener resolves through the existing InboundAuthenticator into a non-synthetic approver principal; revoked/locked refuse with new classified reasons",
+      "contract_text": "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "go test ./... green (Postgres) on the merged branch at the t22 gate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T00:08:56Z",
+        "commit": "844a014"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 57
+    },
+    {
+      "id": "e55",
+      "obligation_ref": "o57",
+      "test_ref": "tests/deploy/dialincredential_test.go (mint/deliver/revoke for company/operator); docs/operations/people.md break-glass recipe; nodes-culture-dev.md ledger item 11",
+      "behavior_text": "break-glass mint + curl recipe documented; remove-secret.sh sequenced after the credential exists",
+      "contract_text": "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "tests/deploy green; docs read after merge, markdownlint 0 errors",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T00:08:56Z",
+        "commit": "844a014"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 58
+    },
+    {
+      "id": "e56",
+      "obligation_ref": "o31",
+      "test_ref": "internal/api/breakglass_test.go (t22) \u2014 supersedes the earlier FAIL evidence on this obligation",
+      "behavior_text": "an issued dial-in credential bound to the operator's human actor now decides a human task from curl on the LAN; revocation refuses",
+      "contract_text": "scripts/issue-dialin-credential.sh (or a sibling) can issue a service credential bound to the operator's human actor for LAN break-glass; the credential decides a human task from curl on the LAN and the run records it",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "the d2 gap closed by t22 at 844a014; the live use of the credential on prod is still a hand-turn (#273)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T00:08:56Z",
+        "commit": "844a014"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 59
+    }
+  ],
+  "deltas": [],
+  "supersessions": []
+}

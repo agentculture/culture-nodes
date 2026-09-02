@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-01T20:34:34Z",
-  "updated": "2026-09-01T22:25:12Z",
+  "updated": "2026-09-01T23:53:05Z",
   "targets": [
     {
       "id": "c1",
@@ -1576,6 +1576,56 @@
       "criterion_snapshot": "The result ledger record is authority proposed, origin agent, like the three write verbs (decision c41)",
       "seam": "adapters/jira read_issue.py + server.py dispatch + /v1/capabilities + ledger authority",
       "behavior": "The result ledger record is authority proposed, origin agent, like the three write verbs (decision c41)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o53",
+      "task_id": "t21",
+      "criterion_index": 1,
+      "criterion_snapshot": "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+      "seam": "sweep + jira bridge + operator skills + deploy lanes (Jira REST base)",
+      "behavior": "examples/pr-upkeep/pr_upkeep_jira.py, all four jira bridge verbs (client.py, transition_issue.py, create_issue.py, read_issue.py) and .claude/skills/jira*/scripts read an optional JIRA_API_BASE (e.g. https://api.atlassian.com/ex/jira/<cloudId>) used for every REST call, defaulting to https://<JIRA_SITE> when unset; browse links (details_url, page links) still use the site host; the bridge's config accepts it from env only (not _FILE_FIELDS)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o54",
+      "task_id": "t21",
+      "criterion_index": 2,
+      "criterion_snapshot": "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+      "seam": "sweep + jira bridge + operator skills + deploy lanes (Jira REST base)",
+      "behavior": "Tests: the sweep and each bridge verb are exercised with JIRA_API_BASE set and unset, asserting the exact URL; tests/deploy/jirabridgeaudit_test.go, tests/test_pr_upkeep_sweep_jira.py and test_jira_comment_fact_schema.py pass unchanged; the deploy lanes (install-secrets Jira lane, deploy_jira, grant-check, sweep environmentRefs) carry JIRA_API_BASE beside the credential pair",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o55",
+      "task_id": "t21",
+      "criterion_index": 3,
+      "criterion_snapshot": "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base",
+      "seam": "sweep + jira bridge + operator skills + deploy lanes (Jira REST base)",
+      "behavior": "docs/drive-from-jira.md and adapters/jira/README.md state that a scoped service-account token requires the gateway base",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o56",
+      "task_id": "t22",
+      "criterion_index": 1,
+      "criterion_snapshot": "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+      "seam": "internal/api principal resolution on the LAN listener (issued dial-in credential)",
+      "behavior": "internal/api/principal.go resolves a Bearer cnd_ credential on the LAN listener through inbound_authentication (party kind actor, human actor) into a non-synthetic Principal bound to that actor with role approver; a revoked or locked credential refuses with a new reason class credential_revoked and increments the refusal counter; test: the operator's human actor decides a human task from curl with the credential, and a revoked one is refused",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o57",
+      "task_id": "t22",
+      "criterion_index": 2,
+      "criterion_snapshot": "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18",
+      "seam": "internal/api principal resolution on the LAN listener (issued dial-in credential)",
+      "behavior": "scripts/bind-identity.sh or issue-dialin-credential.sh documents the exact mint command for the break-glass credential and docs/operations/people.md's break-glass section drops the gap note; remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is sequenced after this task in t18",
       "origin": "llm",
       "status": "proposed"
     }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.6] - 2026-09-02
+
+### Changed
+
+- `test_deploy_sh_keeps_its_own_helpers_when_it_sources_the_lane` asserts the marker file exists and asserts its contents as two statements instead of one `and`. The composite form reported both failures the same way, but they are not the same fact: an absent marker means `deploy.sh`'s own `say` was overridden by the lane's — the exact regression the test guards — while a present-but-wrong marker means it ran and logged something else. Short-circuit order still guards the `read_text()` (PR #282, SonarCloud python:S9073)
+
 ## [0.47.5] - 2026-09-02
 
 ### Fixed

@@ -257,4 +257,8 @@ def test_deploy_sh_keeps_its_own_helpers_when_it_sources_the_lane(tmp_path: Path
     )
 
     assert result.returncode == 0, result.stderr
-    assert marker.exists() and "granted the pr-upkeep sweep source" in marker.read_text()
+    # Split, not composite: "the caller's say never ran at all" and "it ran but
+    # logged something else" are different failures, and only the first one
+    # explains a missing file. The order still guards the read.
+    assert marker.exists(), "deploy.sh's own say() was overridden by the lane's"
+    assert "granted the pr-upkeep sweep source" in marker.read_text()

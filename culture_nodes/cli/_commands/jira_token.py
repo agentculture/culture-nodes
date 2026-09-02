@@ -66,6 +66,11 @@ SERVICE_ACCOUNT_NAME = "culture-nodes"
 SERVICE_ACCOUNT_EMAIL = "culture-spark-9lgwfn7mz2@serviceaccount.atlassian.com"
 SERVICE_ACCOUNT_ID = "712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615"
 SITE_URL = "https://agentculture.atlassian.net"
+#: The browse host, without the scheme. ``JIRA_SITE`` is a BARE HOST
+#: everywhere it is read — the bridge refuses anything with a ``/`` or a
+#: ``:`` as "JIRA_SITE must be a host name" — so it cannot be spelled
+#: ``SITE_URL``.
+SITE_HOST = SITE_URL.split("://", 1)[1]
 CLOUD_ID = "0610b05c-63f8-4935-bd7f-a30f907bba8c"
 GATEWAY_BASE = f"https://api.atlassian.com/ex/jira/{CLOUD_ID}"
 ADMIN_PATH = (
@@ -76,6 +81,12 @@ MYSELF_PATH = "/rest/api/3/myself"
 ENV_EMAIL = "JIRA_ACCOUNT_EMAIL"
 ENV_TOKEN = "JIRA_API_TOKEN"  # nosec B105
 ENV_BASE = "JIRA_API_BASE"
+#: Read by ``deploy.sh``'s ``deploy_jira``, not by any verb here. It is in
+#: this module because the install sequence is the thing that has to set it:
+#: ``deploy_jira`` RETURNS EARLY when it is unset, so a step 4 that omits it
+#: prints one ``say`` line in the middle of a long deploy log and merges
+#: nothing, restarts nothing, and still exits 0.
+ENV_SITE = "JIRA_SITE"
 
 #: The grant secret that holds the token. grant (0.9.0 on spark) accepts
 #: only ``^[A-Z_][A-Z0-9_]{0,63}$`` as a name, so this is upper-case.
@@ -133,10 +144,15 @@ INSTALL_STEPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "merge the keys into the jira bridge env and restart it (thor only)",
         (
+            f"export {ENV_SITE}={SITE_HOST}",
             "ssh thor \"pgrep -af '[j]ira'\"  # pre-check: no jira bridge session in flight",
             f"{INJECT_PREFIX} deploy/prod/deploy.sh thor",
         ),
-        f"deploy_jira merges {ENV_BASE} (exported in step 3, with the transition keys)"
+        f"the {ENV_SITE} export is load-bearing and it is a BARE HOST: deploy_jira"
+        f" returns at its unset-{ENV_SITE} guard, so without it deploy.sh says one line"
+        " mid-log, merges nothing, restarts nothing and still exits 0 — which is how the"
+        " bridge was last reinstalled by hand (t29). Then"
+        f" deploy_jira merges {ENV_BASE} (exported in step 3, with the transition keys)"
         " into ~/.culture-nodes/jira-bridge-jira.env and restarts jira-bridge; the pair"
         " in that file is written by no lane: it is a hand edit on thor (umask 077),"
         " and the token reaches it by the operator pasting it once, or by sealing it"

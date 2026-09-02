@@ -14,6 +14,7 @@ import io
 import json
 import subprocess
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -568,6 +569,40 @@ def test_install_lists_the_five_steps(capsys: pytest.CaptureFixture[str]) -> Non
         < out.index("runner-env-write.sh")
         < out.index("restart nodes-runner")
     )
+
+
+def test_install_step_four_exports_the_site_before_deploy(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """deploy_jira returns at its unset-JIRA_SITE guard, silently and with 0.
+
+    A step 4 that only injects the token runs a deploy that says one line
+    mid-log and merges nothing -- the bridge is never reconfigured and never
+    restarted, and the operator has no failure to notice.
+    """
+    rc = main(["jira-token", "install"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    export = f"export JIRA_SITE={jira_token.SITE_HOST}"
+    assert export in out
+    assert out.index(export) < out.index("deploy.sh thor")
+    # A bare host: the bridge refuses a scheme or a path outright.
+    assert "://" not in jira_token.SITE_HOST and "/" not in jira_token.SITE_HOST
+    assert jira_token.SITE_URL.endswith(jira_token.SITE_HOST)
+
+
+def test_deploy_jira_still_guards_on_the_key_step_four_exports() -> None:
+    """The other half of the coupling, so neither side drifts alone.
+
+    If the guard is ever removed or renamed, this fails next to the step
+    that exists only to satisfy it.
+    """
+    deploy_sh = (Path(__file__).resolve().parents[1] / "deploy/prod/deploy.sh").read_text(
+        encoding="utf-8"
+    )
+    body = deploy_sh.split("deploy_jira() {", 1)[1].split("\n}\n", 1)[0]
+    assert f'if [ -z "${{{jira_token.ENV_SITE}:-}}" ]; then' in body
+    assert "return 0" in body
 
 
 def test_install_no_step_sources_a_file() -> None:

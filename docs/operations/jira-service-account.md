@@ -178,13 +178,21 @@ file.
    bridge mid-session:
 
    ```bash
+   export JIRA_SITE=agentculture.atlassian.net
    ssh thor "pgrep -af '[j]ira'"
    grant run --inject JIRA_API_TOKEN=JIRA_SERVICE_ACCOUNT_TOKEN -- deploy/prod/deploy.sh thor
    ```
 
-   `deploy_jira` merges `JIRA_API_BASE` (exported in step 3, with the
-   transition keys) into `~/.culture-nodes/jira-bridge-jira.env` and
-   restarts `jira-bridge`. The pair in that file is written by **no lane**:
+   The `JIRA_SITE` export is load-bearing, and it is a **bare host** (the
+   bridge refuses a scheme or a path as `JIRA_SITE must be a host name`).
+   `deploy_jira` returns at its unset-`JIRA_SITE` guard, so without it
+   `deploy.sh` prints one `say` line in the middle of a long deploy log,
+   merges nothing, restarts nothing, and still exits `0` — which is exactly
+   how this bridge came to be reinstalled by hand once (`t29`).
+
+   With it set, `deploy_jira` merges `JIRA_API_BASE` (exported in step 3,
+   with the transition keys) into `~/.culture-nodes/jira-bridge-jira.env`
+   and restarts `jira-bridge`. The pair in that file is written by **no lane**:
    it is a hand edit on thor (`umask 077`, mode stays `0600`). The token
    reaches that file by the operator pasting it once, or — if it is also
    sealed on thor's grant — by writing the line under `grant run` there.

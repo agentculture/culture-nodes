@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.5] - 2026-09-02
+
+### Fixed
+
+- Step 4 of `nodes jira-token install` exports `JIRA_SITE` before it runs `deploy/prod/deploy.sh thor`. `deploy_jira` returns at its unset-`JIRA_SITE` guard, so the printed sequence ran a deploy that said one line in the middle of a long log, never merged `JIRA_API_BASE` into `jira-bridge-jira.env`, never restarted `jira-bridge`, and still exited `0`. That is the same silent skip that had this bridge reinstalled by hand once (`t29`). The value is the bare host, which is what the bridge accepts (`JIRA_SITE must be a host name`); a companion test pins deploy.sh's guard beside the step that exists to satisfy it, so neither side can drift alone. The runbook and the `explain` entry say the same (PR #282, Qodo "Bridge deployment always skips")
+
 ## [0.47.4] - 2026-09-02
 
 ### Fixed

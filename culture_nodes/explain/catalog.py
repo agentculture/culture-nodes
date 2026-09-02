@@ -598,9 +598,11 @@ Prints the ordered operator steps that land a verified pair on thor and
 orin, none of which sources a file: `seal` (once), `verify` under
 `grant run --inject`, `install-secrets.sh` under the same wrapper with the
 non-secret email and base exported (runner-secrets.env on both hosts), the
-`pgrep` pre-check and `deploy.sh thor` (`deploy_jira` merges the base into
-the bridge env and restarts jira-bridge; the pair in that file is a hand
-edit on thor), then the `runner-env-write.sh` re-grant with
+`JIRA_SITE` export, the `pgrep` pre-check and `deploy.sh thor`
+(`deploy_jira` merges the base into the bridge env and restarts
+jira-bridge; without `JIRA_SITE` — a bare host — it returns at its guard
+and does neither, quietly and with exit `0`; the pair in that file is a
+hand edit on thor), then the `runner-env-write.sh` re-grant with
 `jira_bot_account_id` on every repository entry and a runner restart on
 each host. Rotation is: mint a new token, revoke the old one in the admin
 UI, `seal` again (it overwrites), repeat steps 2-5.

@@ -2,7 +2,7 @@
   "plan_slug": "nodes-culture-dev-hand-turns-273",
   "schema_version": 2,
   "created": "2026-09-02T06:12:09Z",
-  "updated": "2026-09-02T06:17:58Z",
+  "updated": "2026-09-02T08:50:00Z",
   "deviations": [
     {
       "id": "d1",
@@ -14,7 +14,7 @@
         "c14"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 1
     },
@@ -27,7 +27,7 @@
         "c15"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 2
     }

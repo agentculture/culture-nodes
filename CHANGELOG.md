@@ -1,5 +1,117 @@
 # Changelog
 
+## [0.47.17] - 2026-09-02
+
+### Fixed
+
+- `TestNoCommittedCredentialOrPersonalIdentifier` is green again: this branch had added 24 violations of the committed-identity gate, so every `go test ./...` on it went red. Three distinct strings, three different remedies. (1) The operator's own address was written out 19 times across the devague frame, plan, and their exported spec/plan/delivery markdown, in Cloudflare Access allow-policy claims — replaced with `<operator-email>`, which is the placeholder `docs/operations/nodes-culture-dev.md` had already declared for exactly this value ("no real address is committed") and then not applied to its own records. (2) `tests/test_jira_token.py`'s `FAKE_TOKEN` embedded a 20-character run after `ATATT`, which is credential-*shaped* and so tripped the token rule the fixture was only imitating; the body is now short prose. Its `FAKE_EMAIL` re-spelled the production constant verbatim, which also made `test_verify_json_shape` assert nothing — a reserved-domain stand-in restores the point of the test, that the environment value is what reaches the wire. (3) The Jira service account's own address stays committed, and the gate now says so: `machineAccountDomains` allows Atlassian's `serviceaccount.atlassian.com` namespace, whose local parts are vendor-minted, mailbox-less and attached to an API-only machine account. The same lines already commit that account's `accountId` — the stronger identifier for the same account — so redacting the email would have cost the runbook its usable value and bought no privacy. The allowance is an exact-domain match, not a suffix, and a planted fixture — a person at the vendor's own `atlassian.com` domain, outside the service-account namespace — holds it there (PR #282)
+
+## [0.47.16] - 2026-09-02
+
+### Fixed
+
+- Step 3 of `docs/operations/nodes-culture-dev.md` resolves `TUNNEL_ID` before it uses it. The connector-token read is per-tunnel (`GET cfd_tunnel/$TUNNEL_ID/token`), but the variable was only named in a comment ("TUNNEL_ID from `cultureflare remote-login show`") and never assigned, so an operator following the recipe literally requested `cfd_tunnel//token`. That does not fail the `curl`: Cloudflare answers an error envelope, and the old one-liner piped `json.load(...)["result"]` straight into `grant set`, so the failure surfaced much later as a connector that never registers. The step now lists the account's tunnels and exports the id first, and the seal pipeline asserts the response actually carries a token string before anything reaches `grant set` (PR #282, Qodo Reliability/Medium "Tunnel ID remains undefined")
+
+## [0.47.15] - 2026-09-02
+
+### Changed
+
+- `test_verify_unauthorized_exits_2_and_names_gateway` asserts the 401/403 hint names the `site URL` and asserts it says `401` as two statements instead of one `and` — the sixth split of this shape on this PR. The two clauses carry different halves of the same explanation: a hint that never names the site URL leaves an operator with no reason why `JIRA_API_BASE` is pinned to the gateway, while a hint that names it but drops the `401` never says what the site URL actually does with a service-account token — which is the fact that tells the operator a 401 here is a revoked or mistyped token, not a wrong base. That second reading matters most on the 403 leg of the parametrization, where the `401` in the text is about the site URL rather than about the response just received. The composite form reported both as the identical bare `assert` (PR #282, SonarCloud python:S9073)
+
+## [0.47.14] - 2026-09-02
+
+### Changed
+
+- `test_verify_200_prints_account_id` asserts `verify` passed a timeout to `urlopen` at all and asserts that timeout is at most 30s as two statements instead of one `and` — the fifth split of this shape on this PR. The two clauses are different failures of the gateway call: no timeout argument reaching `urlopen`, versus a timeout that is present but too generous. Only the first makes the call block indefinitely, so a hung gateway hangs `jira-token verify` forever with no output rather than erroring out. Order is load-bearing here, unlike the earlier splits: `float(None)` raises `TypeError`, so the presence assert must run before the bound assert, which sequential statements preserve (PR #282, SonarCloud python:S9073)
+
+## [0.47.13] - 2026-09-02
+
+### Changed
+
+- `test_install_lists_the_five_steps` asserts the install output carries a `rotation:` line and asserts that line says `repeat steps 2-5` as two statements instead of one `and` — the fourth split of this shape on this PR. The two clauses are different failures: `install` printing no rotation guidance at all, versus printing guidance that stops at re-sealing and never sends the operator back through steps 2-5. Only the second leaves a rotated token sealed but never installed, deployed or re-granted, so the bridge keeps authenticating with the revoked one. The composite form reported both as the identical bare `assert` (PR #282, SonarCloud python:S9073)
+
+## [0.47.12] - 2026-09-02
+
+### Changed
+
+- `test_verify_prompts_with_getpass_on_a_tty` asserts `prompts` is non-empty and asserts `"no echo"` is in `prompts[0]` as two statements instead of one `and` — the `verify` twin of the `seal` split in 0.47.10. The two clauses fail for different reasons: `verify` never prompted at all on a tty, versus it prompted without warning that the typed token is not echoed. Only the second hands an operator a prompt that looks broken while it is working. Order still guards the index: the empty-list assert runs first, so the `prompts[0]` read cannot raise `IndexError` (PR #282, SonarCloud python:S9073)
+
+## [0.47.11] - 2026-09-02
+
+### Changed
+
+- `test_seal_grant_missing_is_env_error` asserts the missing-`grant` error carries a `hint:` line and asserts that hint names `uv tool install grant` as two statements instead of one `and`. The two clauses are different failures of the same error path — a rubric-required `hint:` line that is absent altogether, versus a hint that is present but never says how to install the missing tool — and only the second leaves an operator told what is wrong with no way to fix it. The composite form reported both as the identical bare `assert` (PR #282, SonarCloud python:S9073)
+
+## [0.47.10] - 2026-09-02
+
+### Changed
+
+- `test_seal_uses_getpass_on_a_tty` asserts `prompts` is non-empty and asserts `"no echo"` is in `prompts[0]` as two statements instead of one `and`. The two clauses fail for different reasons — `seal` never prompted at all on a tty, versus it prompted without warning that the input is not echoed — and the composite form reported both as the same bare `assert`. Splitting keeps the guard: the empty-list check still runs first, so the `prompts[0]` read cannot raise `IndexError` (PR #282, SonarCloud python:S9073)
+
+## [0.47.9] - 2026-09-02
+
+### Changed
+
+- `test_seal_pipes_token_on_stdin_never_in_argv` asserts the grant argv carries `--purpose` and asserts it carries `--rotate-howto` as two statements instead of one `and`. The two flags label the sealed secret with different things — why it exists, and how to rotate it when it expires — so a `seal` that dropped either one still leaves an operator reading the wrong half of the label. The composite form failed identically for both and named neither (PR #282, SonarCloud python:S9073)
+
+## [0.47.8] - 2026-09-02
+
+### Changed
+
+- `test_verify_unauthorized_exits_2_and_names_gateway` asserts the 401/403 hint names `re-mint` and asserts it names `re-seal` as two statements instead of one `and`. The two are separate remediation steps — `nodes jira-token mint` issues a replacement token, `nodes jira-token seal` installs it — and an operator who does only the first has a valid token that no bridge reads. The composite form reported a hint that had dropped either half as the identical failure, so it never said which step went missing (PR #282, SonarCloud python:S9073)
+
+## [0.47.7] - 2026-09-02
+
+### Changed
+
+- `test_install_step_four_exports_the_site_before_deploy` asserts `SITE_HOST` carries no scheme and asserts it carries no path as two statements instead of one `and`. The two halves stand for different drifts of the same constant — a `https://` prefix pasted from a browser, or a trailing `/rest/api/3` left on the base URL — and the bridge refuses each with the same `JIRA_SITE must be a host name`; the composite form reported whichever one happened as the identical failure (PR #282, SonarCloud python:S9073)
+
+## [0.47.6] - 2026-09-02
+
+### Changed
+
+- `test_deploy_sh_keeps_its_own_helpers_when_it_sources_the_lane` asserts the marker file exists and asserts its contents as two statements instead of one `and`. The composite form reported both failures the same way, but they are not the same fact: an absent marker means `deploy.sh`'s own `say` was overridden by the lane's — the exact regression the test guards — while a present-but-wrong marker means it ran and logged something else. Short-circuit order still guards the `read_text()` (PR #282, SonarCloud python:S9073)
+
+## [0.47.5] - 2026-09-02
+
+### Fixed
+
+- Step 4 of `nodes jira-token install` exports `JIRA_SITE` before it runs `deploy/prod/deploy.sh thor`. `deploy_jira` returns at its unset-`JIRA_SITE` guard, so the printed sequence ran a deploy that said one line in the middle of a long log, never merged `JIRA_API_BASE` into `jira-bridge-jira.env`, never restarted `jira-bridge`, and still exited `0`. That is the same silent skip that had this bridge reinstalled by hand once (`t29`). The value is the bare host, which is what the bridge accepts (`JIRA_SITE must be a host name`); a companion test pins deploy.sh's guard beside the step that exists to satisfy it, so neither side can drift alone. The runbook and the `explain` entry say the same (PR #282, Qodo "Bridge deployment always skips")
+
+## [0.47.4] - 2026-09-02
+
+### Fixed
+
+- `deploy/prod/lanes/runner-env-write.sh` supplies `set -euo pipefail`, `say` and the timestamped-backup helper itself when it is run standalone, instead of only when `deploy.sh` sources it. Step 5 of the Jira service-account runbook re-grants `runner.env` without a deploy (`bash deploy/prod/lanes/runner-env-write.sh`), and there both helper calls were `command not found`: the backup that env-backup.sh exists to take was skipped, and a re-grant that had in fact written the file exited `127`. A documented step that reports failure on success is one an operator learns to ignore — and then misses a real refusal. Each addition is guarded on absence, so `deploy.sh` keeps its own (PR #282, Qodo "Standalone lane exits with failure")
+
+## [0.47.3] - 2026-09-02
+
+### Fixed
+
+- `nodes jira-token verify` compares the answered `accountId` with the service account's instead of accepting any non-empty one, and exits `2` naming both on a mismatch. A 200 proved the token was valid, not that it was ours: a personal token or a second service account authenticates identically at the gateway and would have installed cleanly, and the sweep filters its own Jira comments by that one id — so the wrong account would have made the bot's comments read back as human facts (PR #282, Qodo 2)
+
+## [0.47.2] - 2026-09-02
+
+### Security
+
+- `nodes jira-token verify` pins `JIRA_API_BASE` to the Atlassian gateway
+  instead of accepting any `https://` URL. `verify` attaches the
+  service-account email and token as Basic auth to whatever base it is
+  handed, so an environment able to set that variable — but not to read the
+  hidden grant secret, which is the whole point of sealing it — could point
+  the credential at a host of its own. Scheme, host and path are now compared
+  against `GATEWAY_BASE`; anything else is exit `1` with a hint and no
+  request is built, so the token is never encoded into an `Authorization`
+  header for another host. The account's token authenticates at exactly one
+  address, so nothing legitimate is lost (PR #282 review, Qodo "Arbitrary
+  host receives token")
+
+## [0.47.1] - 2026-09-02
+
+### Added
+
+- `nodes jira-token` (mint | seal | verify | install): the runbook for the Jira service-account token as a verb — where a token is minted (Atlassian admin UI only), `seal` (reads it without echo, or one line of stdin, and stores it hidden in `grant` as `JIRA_SERVICE_ACCOUNT_TOKEN` — never a plaintext file on spark), a stdlib `GET /rest/api/3/myself` at the API gateway base that prints the accountId and never the token (the token reaches it via `grant run --inject`), and the ordered install-secrets / deploy_jira / runner-env-write / restart hand-turn sequence, printed not run; `docs/operations/jira-service-account.md` is the long form (issue #273, plan task t11)
+
 ## [0.47.0] - 2026-09-02
 
 The login-from-anywhere cycle (spec `docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`,

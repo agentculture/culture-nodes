@@ -156,27 +156,66 @@ change on the hand-turn issue. Offboarding — revoking a person's Access
 session and retiring their binding — is likewise t13's recipe; this document
 only makes sure the session length is a decision rather than a default.
 
-## Step 3 — place the tunnel token file (hand-turn)
+## Step 3 — seal the tunnel token in grant (hand-turn)
 
-The unit reads `TUNNEL_TOKEN_FILE=%h/.config/cloudflared/nodes-culture-dev.token`
-(`%h` is the unit user's home on thor). The setup run emits the tunnel's
-connector token; put exactly that token, and nothing else, in the file:
+The unit does not read a token file. Its `ExecStart` is
+`%h/.local/bin/grant run --inject TUNNEL_TOKEN=NODES_CULTURE_DEV_TUNNEL_TOKEN -- /usr/local/bin/cloudflared tunnel --no-autoupdate run`:
+the connector token is a **hidden** secret in the unit user's `grant` store
+(the secrets manager formerly named shushu; `grant explain hidden`), and
+`grant run` hands it to cloudflared as `TUNNEL_TOKEN` at exec time. Nothing
+on disk holds it in a form any process can `cat`, `grant get` refuses to
+print it, and rotation is one `grant set` (deviation d1 of the #273 cycle;
+the t19 shape with `TUNNEL_TOKEN_FILE` is retired).
+
+The connector token to seal is the one the Cloudflare API returns for the
+tunnel — **not** the `tunnel_token` field of cultureflare 0.15.0's
+`setup --json` envelope, which cloudflared rejects as "Provided Tunnel token
+is not valid" (observed 2026-09-02; reported upstream).
+
+That read is per-tunnel, so it needs the id of the tunnel step 2 created.
+Resolve it first: the id is not a secret, so unlike the token it may sit in a
+shell variable.
 
 ```bash
-# on thor, as the user that will run the unit
-install -d -m 0700 ~/.config/cloudflared
-umask 077
-printf '%s' '<tunnel token from the setup run>' > ~/.config/cloudflared/nodes-culture-dev.token
-chmod 0600 ~/.config/cloudflared/nodes-culture-dev.token
-stat -c '%a %n' ~/.config/cloudflared/nodes-culture-dev.token   # 600
+# on thor, as the unit user, in a shell where CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID are exported
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel?is_deleted=false" \
+  | python3 -c 'import json,sys; [print(t["id"], t["name"]) for t in json.load(sys.stdin)["result"]]'
+export TUNNEL_ID=<the id printed beside the nodes.culture.dev tunnel>
 ```
 
+Then read the token and seal it in one pipeline, so it never lands in a
+terminal or a file:
+
+```bash
+# the same shell: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and TUNNEL_ID set
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/token" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d.get("result"), str) and d["result"], d; sys.stdout.write(d["result"])' \
+  | grant set NODES_CULTURE_DEV_TUNNEL_TOKEN - --hidden \
+      --purpose "cloudflared connector token for the nodes.culture.dev tunnel" \
+      --rotate-howto "re-read GET cfd_tunnel/<id>/token and grant set again"
+grant show NODES_CULTURE_DEV_TUNNEL_TOKEN     # metadata only: hidden: True
+```
+
+The `assert` is load-bearing: an unset or wrong `TUNNEL_ID` does not fail the
+`curl`. Cloudflare answers with an error envelope whose `result` is `null`,
+and piping that onward would seal a secret that is not a token — which
+surfaces much later, as a connector that never registers. If the pipeline
+does fail, read `grant show` before retrying to see what is sealed.
+
+Secret names in grant are `[A-Z_][A-Z0-9_]*`. The Access service token's
+client secret goes in the same store as `NODES_CULTURE_DEV_SERVICE_TOKEN_SECRET`
+(its client id is not secret and stays in the scrubbed setup envelope,
+`~/.culture-nodes/nodes-culture-dev.setup.json`).
+
 This per-tunnel token is the **only** Cloudflare credential that lives on
-thor's disk. It can run this one tunnel and nothing else — which is why the
+thor at all. It can run this one tunnel and nothing else — which is why the
 account-wide API token can stay in the shell that ran step 2 (finding s8).
-The token file is never committed, never copied into `prod.env`, and never
-read by any deploy script; `audit-credentials.sh` does not see it because
-nothing in compose consumes it.
+It is never committed, never copied into `prod.env`, and never read by any
+deploy script; `audit-credentials.sh` does not see it because nothing in
+compose consumes it.
 
 ## Step 4 — install and enable the unit (hand-turn)
 
@@ -317,8 +356,8 @@ the cycle's issue, when it is applied:
 3. Read the Access app's AUD tag and write it into thor's `prod.env` under
    t8's variable name (step 2).
 4. Set the Access session duration to the value t13 records (step 2).
-5. Write the tunnel token to `~/.config/cloudflared/nodes-culture-dev.token`,
-   mode `0600` (step 3).
+5. Seal the connector token in grant as `NODES_CULTURE_DEV_TUNNEL_TOKEN`
+   (step 3).
 6. Install `cloudflared-nodes.service` into `~/.config/systemd/user/`,
    `daemon-reload`, `enable --now`, and `loginctl enable-linger` (step 4).
 7. `remove-secret.sh NODES_UI_BASE_URL` on thor and orin, re-run

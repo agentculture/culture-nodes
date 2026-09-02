@@ -1,0 +1,390 @@
+{
+  "plan_slug": "nodes-culture-dev-hand-turns-273",
+  "schema_version": 2,
+  "created": "2026-09-02T06:12:09Z",
+  "updated": "2026-09-02T09:21:08Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "The nodes.culture.dev tunnel token is sealed as a hidden secret in thor's grant store (NODES_CULTURE_DEV_TUNNEL_TOKEN) and cloudflared-nodes.service execs through 'grant run --inject TUNNEL_TOKEN=...' instead of reading TUNNEL_TOKEN_FILE from a 0600 file; deploy/prod/cloudflared-nodes.service and docs/operations/nodes-culture-dev.md step 3 change accordingly, which widens the spec's non-goal c11 (no deploy/ changes) by one unit file and one doc",
+      "task_ref": "t9",
+      "reason": "operator decision 2026-09-02: no plaintext token on disk; grant (the renamed shushu secrets manager) is installed on thor and spark, hidden secrets are consumable only via grant run, and rotation becomes one grant set",
+      "affects": [
+        "c11",
+        "c14"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "The Jira service-account token is sealed hidden in spark's grant as JIRA_SERVICE_ACCOUNT_TOKEN by a new 'nodes jira-token seal' verb (getpass or stdin) and every install step consumes it via grant run --inject; the 0600 env file ~/.config/agent/jira-service-account.env that t11's first build and the plan text assumed is gone",
+      "task_ref": "t11",
+      "reason": "operator decision 2026-09-02: the token must not be saved to disk in plaintext; grant is installed on spark and thor",
+      "affects": [
+        "c15"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "curl /v1alpha1/version on thor:18080 + docker inspect orin worker (#273 ledger)",
+      "behavior_text": "thor api and orin worker both stamp 857cb49ddd95; sweep schedule resumed",
+      "contract_text": "Deploy 0.47.0 (main 857cb49) to thor then orin before any tunnel step",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "live probe on both hosts 2026-09-02 07:0x UTC, outputs pasted on #273",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 3
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "git stash list as culture-codex on thor and orin (#273 ledger)",
+      "behavior_text": "stash@{0}: #273 codex leftovers 2026-09-02 on both; status --short empty",
+      "contract_text": "Clean the engine clones or deploy.sh refuses; stash rather than discard",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "run as the account over ssh, output on #273",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "/usr/local/bin/cloudflared --version on thor",
+      "behavior_text": "cloudflared version 2026.8.3 (built 2026-08-31-10:05 UTC)",
+      "contract_text": "Install cloudflared 2026.8.3 at /usr/local/bin/cloudflared and record the version",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "binary installed and version read on thor, recorded on #273",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "cultureflare remote-login show --hostname nodes.culture.dev --json; dig; curl -sI",
+      "behavior_text": "app nodes.culture.dev session 8h, allow policy = operator email, svc policy non_identity; tunnel nodes-culture-dev healthy; edge 302",
+      "contract_text": "Run cultureflare setup with --allow <email> --session-duration 8h; no credential printed",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "read back from the API after --apply; no credential in any transcript",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "grep ^NODES_ACCESS_ prod.env; ss -ltn '( sport = :18081 )'; api log",
+      "behavior_text": "NODES_ACCESS_LISTEN/TEAM_DOMAIN/AUD present; 127.0.0.1:18081 only; 'Access API listening on :8081'",
+      "contract_text": "Write the Access tuple into thor's prod.env by hand and restart the api",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "live on thor after the container recreate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "grep ^NODES_UI_BASE_URL= on thor+orin; docker inspect env on api/scheduler/worker(thor) + worker(orin)",
+      "behavior_text": "all read https://nodes.culture.dev; runner-secrets.env kept its five refs",
+      "contract_text": "Re-grant NODES_UI_BASE_URL on both hosts and redeploy",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "live probe after remove-secret + install-secrets + recreate",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "sweep tick 01M1GHBH67PWM005EA1ZB9KCEP (exit 0, emitted 98); consumer run 01M1GMSN91PXWM2EJ7BXDFRX9J (comment_posted as 712020:5e0ae915)",
+      "behavior_text": "sweep green; bridge posts SCRUM-8 #10308 as the service account",
+      "contract_text": "Install the Jira service-account trio and re-grant jira_bot_account_id; sweep green",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "read from the control plane and Jira after the install; the first green tick needed the v3 republish and the NODES_API_URL restore (see deltas)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "signal_events: source jira:...:SCRUM-8:history:comment:10267 present (07:42:01Z); comment 10268 (bot) absent",
+      "behavior_text": "10267 emitted as pr-upkeep.jira.comment; 10268 filtered",
+      "contract_text": "The human-fact proof must be a comment from the operator's own browser login, never via the skill",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "SQL read on thor's Postgres; jira skill reports the service account as the self-echo id",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "cut -d= -f1 prod.env | grep NODES_HUMAN_DECISION; whoami on thor with break-glass",
+      "behavior_text": "key present; whoami: provider nodes-inbound-credential, subject company/ori, roles approver",
+      "contract_text": "The shared decision secret stays until the break-glass credential exists and whoami answers",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "live on thor 2026-09-02",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "gh issue comment 273 (ledger comment, 2026-09-02)",
+      "behavior_text": "items 10 and 11 added with tick boxes",
+      "contract_text": "Two hand-turns from the recipe are added to #273 as a comment",
+      "evidence_type": "observation",
+      "strength": "coverage",
+      "strength_basis": "the comment exists; the items are unticked by design",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_jira_token.py (238 passed) + uv run teken cli doctor . --strict + scripts/lint-all.sh root",
+      "behavior_text": "parser, seal via stdin (not argv), verify 200/401/missing-env paths, install steps, token-leak matrix",
+      "contract_text": "A nodes CLI verb plus operations doc carry the token runbook; nothing prints or stores the token",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "pytest run at 7015a9d, all green; live verify printed the accountId",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "curl with CF_Authorization via https://nodes.culture.dev vs http://192.168.1.146:18080 (#273 ledger)",
+      "behavior_text": "identical bodies, revision 857cb49",
+      "contract_text": "Success signals: identical version bodies, loopback-only 18081, public UI URL, myself accountId, sweep green, human fact, verify exit 0",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "cmp on the two bodies; other signals covered by e6/e7/e8/e9/e15",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "curl -H CF-Access-Client-Id/-Secret https://nodes.culture.dev/v1alpha1/version (#273 ledger)",
+      "behavior_text": "request reaches the control plane; refused 401 reason=malformed, subject empty",
+      "contract_text": "A signal that cannot be run is recorded as unmeasured, not assumed",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "live probe; filed as #277",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "tests/deploy/nodesculturedev_test.go (TestTunnelUnitIsTokenModeLoopbackAndUnprivileged, TestTunnelDocNamesTheSamePortAndVerification) + systemctl --user show",
+      "behavior_text": "ExecStart via %h/.local/bin/grant run --inject TUNNEL_TOKEN=NODES_CULTURE_DEV_TUNNEL_TOKEN; User= empty; Linger=yes; 4 registered connections",
+      "contract_text": "The tunnel unit runs under thor's login user",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test at 7015a9d + live unit status",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-02T08:52:22Z",
+        "commit": "7015a9d"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 16
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "The tunnel unit injects the connector token from grant (NODES_CULTURE_DEV_TUNNEL_TOKEN) via grant run; no TUNNEL_TOKEN_FILE exists on thor",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e14"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "The Jira service-account token lives hidden in spark's grant (JIRA_SERVICE_ACCOUNT_TOKEN) via nodes jira-token seal; no env file",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "The connector token sealed on thor is read from GET cfd_tunnel/<id>/token, because cultureflare 0.15.0's setup envelope tunnel_token is rejected by cloudflared (cultureflare#55)",
+      "caused_by": [
+        "c5"
+      ],
+      "evidence_refs": [
+        "e14"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "pr-upkeep-sweep-cycle v3 was published (the v2 bootstrap never fetched pr_upkeep_emit.py) and NODES_API_URL was restored to the LAN IP on both hosts after the deploy rewrote it to http://thor:18080 (#281); both were required before c8's sweep could go green",
+      "caused_by": [
+        "c8"
+      ],
+      "evidence_refs": [
+        "e7"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "added",
+      "behavior_text": "Operator identity exists: company/ori registered (revision 1), bound to the Access subject with approver+namespace_administrator, break-glass credential minted on thor (digest 8b376fd3\u2026); the bound identity is the only namespace-admin write path (#279)",
+      "caused_by": [
+        "c19"
+      ],
+      "evidence_refs": [
+        "e9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "added",
+      "behavior_text": "Every historical operator comment became a human fact when the self-echo id switched to the service account; the bridge replied to a backlog of old comments (SCRUM-8 #10308-#10310)",
+      "caused_by": [
+        "c9"
+      ],
+      "evidence_refs": [
+        "e8"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

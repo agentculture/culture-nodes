@@ -1,0 +1,527 @@
+{
+  "slug": "nodes-culture-dev-hand-turns-273",
+  "title": "nodes-culture-dev hand-turns (#273)",
+  "frame_slug": "nodes-culture-dev-hand-turns-273",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-02T05:15:07Z",
+  "updated": "2026-09-02T05:22:53Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "nodes.culture.dev is live: 0.47.0 runs on thor and orin, the tunnel unit on thor serves the loopback Access listener, the Access app pins an 8h session to ori's email, ticket-page links carry the public origin, and the sweep and jira bridge act as the dedicated service account so the operator's own Jira comments count as human facts \u2014 every host step ticked on #273 with its output",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Every clause of the announcement is backed by a ticked #273 step with pasted output, or is listed on #273 as not done; no clause is claimed from a plan",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Deploy 0.47.0 (main 857cb49) to thor then orin before any tunnel step: thor's /v1alpha1/version reports revision 15fefdef, nothing listens on 127.0.0.1:18081, and prod.env has no NODES_ACCESS_* key; deploy/prod/compose.thor.yml on main already publishes 127.0.0.1:18081:8081 and reads NODES_ACCESS_LISTEN/TEAM_DOMAIN/AUD from prod.env",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Both hosts' /v1alpha1/version report revision 857cb49 after deploy.sh thor then deploy.sh orin, and the sweep is not left paused (deploy exits 0 on both)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Clean the culture-codex engine clones first or deploy.sh refuses at provision (lanes/preflight.sh:42, lanes/unix-user.sh:339): thor's clone has 19 modified tracked files on top of the merged t8 commit, orin's 7 on top of merged t16 \u2014 codex leftovers whose handover refs were already harvested; stash them as the account (reversible) rather than discard, and count it as a hand-turn",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "git stash list as culture-codex on thor and orin each shows one new entry dated today, and the clones are clean at the deploy's preflight",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Install cloudflared 2026.8.3 cloudflared-linux-arm64 (thor is aarch64, sudo is NOPASSWD) at /usr/local/bin/cloudflared, the absolute path deploy/prod/cloudflared-nodes.service execs; record the version on #273",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "/usr/local/bin/cloudflared --version prints 2026.8.3 on thor and the version is written on #273",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Run cultureflare remote-login setup over ssh thor bash -ic: cultureflare 0.15.0 lives in thor's ~/.local/bin and the Cloudflare credentials exist only in its interactive rc (never printed); pass --allow <operator-email> (the identity chat.agentculture.org-allow already uses) and --session-duration 8h at creation, because people.md says only a created app takes the flag; today the account has one Access app (chat.agentculture.org, 24h) and two tunnels, and nodes.culture.dev does not resolve",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The Access apps list shows nodes.culture.dev with session_duration 8h and one allow policy naming <operator-email>; a tunnel named for nodes.culture.dev is healthy; no Cloudflare credential is printed in any transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "After setup, write NODES_ACCESS_LISTEN=:8081, NODES_ACCESS_TEAM_DOMAIN=agentculture.cloudflareaccess.com and NODES_ACCESS_AUD=<the new app's aud> into thor's prod.env by hand and restart the api container: install-secrets.sh writes no NODES_ACCESS_* key, and the server refuses a partial tuple",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "thor's prod.env carries exactly the three NODES_ACCESS_* keys, the api container restarted, and ss shows 127.0.0.1:18081 only",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Re-grant NODES_UI_BASE_URL on both hosts (orin's worker env still reads http://thor:18080): remove-secret.sh NODES_UI_BASE_URL --yes thor orin, then install-secrets.sh, then redeploy; install-secrets.sh:790 leaves runner-secrets.env untouched when the Jira pair is unset in the shell, so this re-run cannot repeat the #253 clobber",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "grep NODES_UI_BASE_URL on thor and orin prints https://nodes.culture.dev and the orin worker's docker inspect env agrees; runner-secrets.env still lists all five sweep refs afterwards",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Install the Jira service account with JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN and JIRA_API_BASE=https://api.atlassian.com/ex/jira/<cloud-id> all exported in the deploying shell: runner-secrets.env on thor and orin carries the old pair and no JIRA_API_BASE, jira-bridge-jira.env on thor likewise; deploy.sh deploy_jira (line 670) merges JIRA_API_BASE only when exported; then re-grant PR_UPKEEP_REPOSITORIES with jira_bot_account_id=712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615 via lanes/runner-env-write.sh and restart nodes-runner on both hosts and jira-bridge on thor between sessions",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "runner-secrets.env on both hosts and jira-bridge-jira.env on thor carry JIRA_API_BASE; the runner grant carries jira_bot_account_id; the next sweep run is green",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "The operator's jira skill (.claude/skills/jira/scripts/jira.sh:93-110) reads thor's runner-secrets.env, so once the bot pair is installed it posts AS the bot; the final proof that an operator comment is a human fact must be a comment from the operator's own Jira login in the browser, never via the skill",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The human-fact proof on #273 cites a Jira comment id whose author accountId is the operator's own (557058:dbaf9fdd-\u2026), posted from the browser, and the sweep log shows it raised a human fact",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "NODES_HUMAN_DECISION_TOKEN_SECRET stays in thor's prod.env until the break-glass credential exists: people.md break-glass step 1 (issue-dialin-credential.sh company/<handle> thor) needs a registered human actor (register-actor.sh + scripts/bind-identity.sh) first, and step 2's whoami must answer provider nodes-inbound-credential before remove-secret.sh runs (h25/c48)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "remove-secret.sh NODES_HUMAN_DECISION_TOKEN_SECRET is not run in this cycle unless #273 already carries the break-glass mint digest and a whoami output naming provider nodes-inbound-credential",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "Two hand-turns from the recipe's ledger are missing from #273's checklist and get added as a comment: the path-scoped Access Bypass policy for /v1alpha1/webhooks/jira and the Jira system webhook registration (with which auth mode the tenant supplies)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "A comment on #273 lists the Bypass policy and the Jira webhook as steps 10 and 11 with tick boxes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "The t18 second measurement sitting (docs/audits/2026-09-02-login-from-anywhere-measurement-sitting.md rows a, b, d unmeasured) is triggered by these hand-turns, not part of them; it runs after #273 items 1-6 and appends to the audit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The t18 audit gains a second-sitting section dated after #273 items 1-6 are ticked, and this cycle claims none of rows a, b, d as measured",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "A nodes CLI verb (new _commands module, e.g. nodes jira-token with mint|verify|install subverbs, catalog entry included) plus docs/operations/jira-service-account.md carry the token runbook: where in Atlassian admin the service account culture-nodes lives and how a token is minted or re-minted (the UI is the only place that mints; the CLI cannot), the gateway base https://api.atlassian.com/ex/jira/<cloud-id> and why site-URL auth 401s for a service account, the myself check that must print the accountId, then the exact install sequence (install-secrets.sh Jira lane on thor+orin with all three exported, deploy_jira/bridge restart, runner-env-write.sh re-grant with jira_bot_account_id, nodes-runner restarts). verify runs the myself check; install runs the lane; nothing in the verb ever prints or stores the token",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "uv run nodes jira-token --help lists mint, verify and install; teken cli doctor --strict stays green with the new catalog entry; the doc names the Atlassian admin path and the gateway base; no test or doc contains a token value",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "audience",
+      "text": "The operator applying the hand-turns today, and whoever rotates the Jira service-account token or re-provisions the tunnel later without this session's context",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "docs/operations/jira-service-account.md can be followed by someone without this session: it names the admin path, the gateway base, the accountId, and the install commands verbatim",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "after_state",
+      "text": "Both prod hosts run 857cb49; https://nodes.culture.dev answers through the tunnel with the same revision as the LAN port; the Access app allows <operator-email> with an 8h session and its AUD is pinned in thor's prod.env; every Jira page link reads https://nodes.culture.dev/tickets/<KEY>; the sweep and jira bridge authenticate as the service account via the gateway base with its accountId granted as jira_bot_account_id; every step is ticked on #273 with the output the recipe asks for; the token runbook is a nodes verb and a doc",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Each clause of the after-state maps to one ticked #273 line whose pasted output shows it; a clause without output stays unticked",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "before_state",
+      "text": "Thor serves 15fefdef, no loopback listener, nodes.culture.dev unresolved, ticket links point at http://thor:18080, the sweep still acts as the operator's own Jira user so every operator comment is self-echo, and the token minted on 2026-09-02 exists only on the operator's clipboard",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "The before-state facts are the ones the /scope entries s1-s11 recorded on 2026-09-02, and the delivery summary quotes them as the starting point",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "curl of /v1alpha1/version through the tunnel (with the Access cookie or a service token) and on the LAN return identical revision bodies; ss shows 18081 bound on 127.0.0.1 only; grep NODES_UI_BASE_URL on both hosts prints the public origin; myself via the gateway prints the accountId; one sweep after the re-grant is green and a comment posted from the operator's own browser login is recorded as a human fact, not self-echo; nodes jira-token verify exits 0 on thor",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Every success signal is a command whose output is pasted on #273; a signal that cannot be run (e.g. the tunnel curl without a service token or cookie) is recorded as unmeasured, not assumed",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Stash the codex engine-clone leftovers on thor and orin (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "git stash push -m '#273 codex leftovers' run as culture-codex on both hosts; git status --short is empty and git stash list shows the new entry on each; both outputs pasted on #273"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Deploy 0.47.0 (857cb49) to thor then orin (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy/prod/deploy.sh thor and deploy/prod/deploy.sh orin both exit 0 from a clean main checkout at 857cb49",
+        "curl http://thor:18080/v1alpha1/version reports revision 857cb49 and orin's worker docker inspect env shows the same revision; the sweep is not left paused"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Install cloudflared 2026.8.3 arm64 at /usr/local/bin/cloudflared on thor (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "/usr/local/bin/cloudflared --version prints 2026.8.3 on thor; the version line is pasted on #273"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h3"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Provision the tunnel, CNAME, Access app and allow policy with cultureflare from thor (hand-turn, once)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "cultureflare remote-login setup --hostname nodes.culture.dev --service http://127.0.0.1:18081 --allow <operator-email> --session-duration 8h is run over ssh -t thor bash -ic, first without --apply then with it",
+        "the Access apps list (domain, aud, session_duration only) shows nodes.culture.dev with 8h and its policy names only <operator-email>; the tunnel is listed; dig nodes.culture.dev resolves; no Cloudflare credential appears in any transcript",
+        "the AUD tag and the tunnel token are captured from the terminal for t5/t6 and the AUD (not the token) is pasted on #273"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Pin the Access tuple in thor's prod.env and restart the api (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "prod.env on thor gains exactly NODES_ACCESS_LISTEN=:8081, NODES_ACCESS_TEAM_DOMAIN=agentculture.cloudflareaccess.com, NODES_ACCESS_AUD=<aud>, written under umask 077; docker compose up -d api recreates the container",
+        "ss -ltn '( sport = :18081 )' on thor shows 127.0.0.1:18081 only, and curl http://127.0.0.1:18081/v1alpha1/version answers with revision 857cb49; both pasted on #273"
+      ],
+      "deps": [
+        "t2",
+        "t4"
+      ],
+      "covers": [
+        "c6",
+        "h5"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Re-grant NODES_UI_BASE_URL to the public origin on both hosts and redeploy (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "remove-secret.sh NODES_UI_BASE_URL --yes thor orin, then install-secrets.sh with the Jira pair unset (log line: defaulted to the public SSO origin), then deploy.sh thor and deploy.sh orin",
+        "grep ^NODES_UI_BASE_URL= on both hosts prints https://nodes.culture.dev; orin's worker docker inspect env agrees; runner-secrets.env on both hosts still lists JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN, GITHUB_TOKEN, SONAR_TOKEN, NODES_EVENT_TOKEN"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c7",
+        "h6"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Install the Jira service-account trio on thor and orin and re-grant jira_bot_account_id (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "in one spark shell JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN and JIRA_API_BASE are exported; the myself check prints 712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615 before any install runs",
+        "install-secrets.sh's Jira lane rewrites runner-secrets.env on both hosts keeping all five refs and adding JIRA_API_BASE; deploy.sh thor's deploy_jira merges the three keys into jira-bridge-jira.env while jira-bridge has no session in flight, then jira-bridge is restarted",
+        "lanes/runner-env-write.sh re-grants PR_UPKEEP_REPOSITORIES with jira_bot_account_id set on both hosts and nodes-runner is restarted on both; the next pr-upkeep-sweep-cycle run is green (read via nodes run <id>)"
+      ],
+      "deps": [
+        "t2",
+        "t6"
+      ],
+      "covers": [
+        "c8",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Prove an operator comment is a human fact under the service account (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a comment posted on SCRUM-8 from the operator's own browser login (author accountId 557058:dbaf9fdd-\u2026), not via the jira skill, is picked up by the next sweep as a human fact rather than self-echo; the comment id and the run id are pasted on #273"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c9",
+        "h11"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Place the tunnel token file and enable cloudflared-nodes.service under thor's login user (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "~/.config/cloudflared/nodes-culture-dev.token exists on thor with mode 600 under /home/thor, containing only the token; install -D of deploy/prod/cloudflared-nodes.service, daemon-reload, enable --now; loginctl show-user thor -p Linger prints yes",
+        "systemctl --user is-active cloudflared-nodes prints active, show reports no User= override, and journalctl shows Registered tunnel connection lines; pasted on #273"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Run the verification pair through the tunnel and on the LAN (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "curl -sI https://nodes.culture.dev/ returns a 302 to agentculture.cloudflareaccess.com, never a 502/1033",
+        "curl https://nodes.culture.dev/v1alpha1/version with the CF_Authorization cookie from a browser sign-in and curl http://192.168.1.146:18080/v1alpha1/version return identical bodies; both bodies pasted on #273, or the tunnel half is recorded as unmeasured with the reason"
+      ],
+      "deps": [
+        "t5",
+        "t6",
+        "t9"
+      ],
+      "covers": [
+        "c19",
+        "h19"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Add the nodes jira-token verb (mint | verify | install) and docs/operations/jira-service-account.md (repo change, PR)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "culture_nodes/cli/_commands/jira_token.py registers jira-token with subverbs mint (prints the Atlassian admin runbook: service account culture-nodes, where a token is minted or re-minted, the gateway base and why site-URL auth 401s), verify (reads JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN/JIRA_API_BASE from env, calls /rest/api/3/myself via urllib, prints the accountId and exits 0, exits 2 with a hint otherwise, never prints the token) and install (prints the exact install-secrets/deploy_jira/runner-env-write/restart sequence); --json on all three",
+        "explain/catalog.py has entries for the new paths; tests cover the parser, verify with a stubbed urlopen, and that no output contains the token; uv run pytest -n auto, scripts/lint-all.sh root and uv run teken cli doctor . --strict are green",
+        "docs/operations/jira-service-account.md names the admin path, the gateway base https://api.atlassian.com/ex/jira/<cloud-id>, the accountId 712020:5e0ae915-\u2026, and the install sequence verbatim; git diff main touches only the new module, the catalog, tests, the doc, CHANGELOG.md and pyproject.toml (patch bump)"
+      ],
+      "deps": [],
+      "covers": [
+        "c15",
+        "h9",
+        "c16",
+        "h16"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Close the #273 ledger: tick every step with output, add the two missing hand-turns, record the boundaries (hand-turn)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every #273 checklist line is ticked with the date and the pasted output from t1-t11, or left unticked with the reason",
+        "a comment on #273 adds two checklist lines: the path-scoped Access Bypass policy for /v1alpha1/webhooks/jira and the Jira system webhook registration with the auth mode observed",
+        "the same comment states that NODES_HUMAN_DECISION_TOKEN_SECRET was not removed (break-glass not yet minted), that the t18 second sitting is next and rows a, b, d stay unmeasured until it runs, and quotes the before-state facts from the spec's scope entries; SCRUM-8 gets one status comment via the jira skill"
+      ],
+      "deps": [
+        "t10",
+        "t11",
+        "t8"
+      ],
+      "covers": [
+        "c1",
+        "h10",
+        "c12",
+        "h8",
+        "c10",
+        "h12",
+        "c13",
+        "h14",
+        "c17",
+        "h17",
+        "c18",
+        "h18"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Stashing the codex leftovers could hide work that was never harvested: the diffs on thor (t8 files) and orin (t16 files) were not compared against main before stashing; the stash keeps them recoverable",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "deploy_jira restarts the jira bridge; a restart with a session in flight kills it (exit 143) and leaves the run running \u2014 t10 must check pgrep '[j]ira' first",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "The Jira tenant's webhook auth mode (X-Hub-Signature vs URL token) is unknown until the webhook is registered, which is outside this plan (added to #273 as a further hand-turn)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "deploy_jira restarts the jira bridge; a restart with a session in flight kills it (exit 143) and leaves the run running \u2014 t7 must check pgrep '[j]ira' first",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "The Jira tenant's webhook auth mode (X-Hub-Signature vs URL token) is unknown until the webhook is registered, which is outside this plan (added to #273 as a further hand-turn)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "prod-api-1's first JWKS fetch to agentculture.cloudflareaccess.com is proven only at the first browser login after t5; if container egress fails, the tunnel half of the verification is unmeasured and the fix is a follow-up",
+      "kind": "unknown_nonblocking",
+      "task_id": "t10",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

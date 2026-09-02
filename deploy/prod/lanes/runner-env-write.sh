@@ -1,3 +1,28 @@
+# Two callers arrive here with different things in scope. deploy.sh `source`s
+# this lane with `set -euo pipefail` already on and with `say` and
+# backup_env_file already defined. The re-grant hand-turn runs it standalone --
+# `bash deploy/prod/lanes/runner-env-write.sh`, step 5 of
+# docs/operations/jira-service-account.md -- where neither is true: both helper
+# calls below were `command not found`, which skipped the timestamped backup
+# the whole of env-backup.sh exists to take, and left 127 as the exit status of
+# a run that had in fact written runner.env. A documented step that reports
+# failure on success is a step an operator learns to ignore, and the operator
+# it teaches to ignore it is the one who then misses a real refusal.
+#
+# So the standalone entry supplies exactly what deploy.sh would have: the same
+# shell options, the real backup helper, and deploy.sh's own `say`. Each is
+# guarded on absence, so a caller that already has them keeps its own.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+	set -euo pipefail
+fi
+if ! declare -F backup_env_file >/dev/null 2>&1; then
+	# shellcheck source=deploy/prod/lanes/env-backup.sh
+	. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env-backup.sh"
+fi
+if ! declare -F say >/dev/null 2>&1; then
+	say() { printf '==> %s\n' "$*"; }
+fi
+
 # RUNNER_ENV_WRITE_START -- tests/test_deploy_runner_env.py executes this real
 # block against a fake host. Keep the marker at the first statement needed by
 # the block and its mate after the atomic write.

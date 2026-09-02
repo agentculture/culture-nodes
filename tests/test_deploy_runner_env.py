@@ -36,7 +36,7 @@ def _fake_ssh(tmp_path: Path) -> Path:
     return bin_dir
 
 
-def _run_block(tmp_path: Path, *, shell_api_url: str | None = None) -> subprocess.CompletedProcess:
+def _lane_env(tmp_path: Path, *, shell_api_url: str | None = None) -> dict[str, str]:
     host_home = tmp_path / "host"
     host_home.mkdir(exist_ok=True)
     bin_dir = _fake_ssh(tmp_path)
@@ -55,6 +55,11 @@ def _run_block(tmp_path: Path, *, shell_api_url: str | None = None) -> subproces
     }
     if shell_api_url is not None:
         env["NODES_API_URL"] = shell_api_url
+    return env
+
+
+def _run_block(tmp_path: Path, *, shell_api_url: str | None = None) -> subprocess.CompletedProcess:
+    env = _lane_env(tmp_path, shell_api_url=shell_api_url)
     # deploy.sh has the timestamped-backup helper in scope by the time it
     # sources this lane (task t5, issue #253), the same way it has `say` —
     # sourced here from the real file rather than stubbed, so this harness
@@ -174,3 +179,86 @@ def test_runner_env_paths_are_absolute_on_the_target(tmp_path):
     assert (
         f"NODES_RUNNER_SECRET_FILE={tmp_path / 'host'}/.culture-nodes/runner.secret" in written
     ), written
+
+
+# --- the standalone entry (PR #282 review, Qodo "Standalone lane exits with
+# --- failure") ---------------------------------------------------------------
+#
+# Step 5 of docs/operations/jira-service-account.md re-grants runner.env
+# WITHOUT a deploy: `bash deploy/prod/lanes/runner-env-write.sh`. The whole
+# file runs, not the block above, and deploy.sh's `say` and backup_env_file
+# are not in scope — so the lane has to supply them itself. It did not, and
+# the documented step wrote the file and then exited 127.
+
+
+def _run_lane_standalone(
+    tmp_path: Path, *, shell_api_url: str | None = None
+) -> subprocess.CompletedProcess:
+    return subprocess.run(  # nosec B603 - fixed bash and a repository script path
+        ["bash", str(RUNNER_ENV_LANE)],
+        env=_lane_env(tmp_path, shell_api_url=shell_api_url),
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_standalone_lane_succeeds_and_takes_the_backup(tmp_path: Path):
+    runner_dir = tmp_path / "host/.culture-nodes"
+    runner_dir.mkdir(parents=True)
+    original = b"NODES_API_URL=http://192.0.2.44:18080\nPR_UPKEEP_REPOSITORIES='{\"cycle\":3}'\n"
+    (runner_dir / "runner.env").write_bytes(original)
+
+    result = _run_lane_standalone(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "command not found" not in result.stderr, result.stderr
+    # The backup is the point of the exercise, not just the exit code: a
+    # `command not found` at backup_env_file left the replaced bytes nowhere.
+    backups = list(runner_dir.glob("runner.env.bak-*"))
+    assert len(backups) == 1, sorted(p.name for p in runner_dir.iterdir())
+    assert backups[0].read_bytes() == original
+    assert "restore it with:" in result.stdout
+
+
+def test_standalone_lane_still_refuses_a_missing_grant(tmp_path: Path):
+    # `set -euo pipefail` is supplied to the standalone run too, so a refusal
+    # reads the same either way — a nonzero exit has to keep MEANING refused.
+    runner_dir = tmp_path / "host/.culture-nodes"
+    runner_dir.mkdir(parents=True)
+    original = b"KEEP=this-file-byte-exact\n"
+    (runner_dir / "runner.env").write_bytes(original)
+
+    result = _run_lane_standalone(tmp_path)
+
+    assert result.returncode != 0
+    assert "refusing:" in result.stderr
+    assert (runner_dir / "runner.env").read_bytes() == original
+
+
+def test_deploy_sh_keeps_its_own_helpers_when_it_sources_the_lane(tmp_path: Path):
+    # The guards are on absence: a caller that already defines `say` must keep
+    # its own, or deploy.sh's log formatting silently becomes the lane's.
+    marker = tmp_path / "said"
+    snippet = (
+        "set -euo pipefail\n"
+        f'say() {{ printf "%s\\n" "$*" >> "{marker}"; }}\n'
+        "backup_env_file() { :; }\n"
+        f'. "{RUNNER_ENV_LANE}"\n'
+    )
+    result = subprocess.run(  # nosec B603 - fixed bash and extracted repository script
+        ["bash", "-c", snippet],
+        env=_lane_env(tmp_path, shell_api_url="http://api.test"),
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    # Split, not composite: "the caller's say never ran at all" and "it ran but
+    # logged something else" are different failures, and only the first one
+    # explains a missing file. The order still guards the read.
+    assert marker.exists(), "deploy.sh's own say() was overridden by the lane's"
+    assert "granted the pr-upkeep sweep source" in marker.read_text()

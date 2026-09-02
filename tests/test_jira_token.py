@@ -231,7 +231,8 @@ def test_seal_uses_getpass_on_a_tty(
     monkeypatch.setattr(jira_token.getpass, "getpass", fake_getpass)
     calls = _stub_grant(monkeypatch)
     assert main(["jira-token", "seal"]) == 0
-    assert prompts and "no echo" in prompts[0]
+    assert prompts
+    assert "no echo" in prompts[0]
     assert calls[0]["input"] == FAKE_TOKEN
     assert "NOT-READ-FROM-STDIN" not in capsys.readouterr().out
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.10] - 2026-09-02
+
+### Changed
+
+- `test_seal_uses_getpass_on_a_tty` asserts `prompts` is non-empty and asserts `"no echo"` is in `prompts[0]` as two statements instead of one `and`. The two clauses fail for different reasons — `seal` never prompted at all on a tty, versus it prompted without warning that the input is not echoed — and the composite form reported both as the same bare `assert`. Splitting keeps the guard: the empty-list check still runs first, so the `prompts[0]` read cannot raise `IndexError` (PR #282, SonarCloud python:S9073)
+
 ## [0.47.9] - 2026-09-02
 
 ### Changed

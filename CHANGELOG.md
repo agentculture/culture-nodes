@@ -57,7 +57,12 @@ d1-d3 and every hand-turn are recorded on the plan and on #273.
   from a single instantaneous extract — which lost the race on a commit whose
   only change from a green run was a JSON document under `.devague/`. The
   extract now retries for a bounded 15 attempts; a page that never settles
-  still fails, with its last payload printed.
+  still fails, with its last payload printed. The loop is a workaround with an
+  exit condition, not the intended shape: `webglass` navigates with
+  `wait_until="load"` plus a fixed 100 ms settle and exposes no
+  `--wait-for`/`--settle-ms`, so the condition cannot be expressed where it
+  belongs (agentculture/webglass-cli#16); #275 tracks deleting the loop when
+  it can.
 - `TestTunnelUnitIsTokenModeLoopbackAndUnprivileged` is three helpers — the
   parse, the directives, and what the unit must not carry — rather than one
   body over SonarCloud's cognitive-complexity threshold (S3776). They are

@@ -132,6 +132,15 @@ jobs:
         # that never settles still fails, with its last payload printed — it
         # only stops the job from asking the question before the page can
         # have an answer.
+        #
+        # This is a WORKAROUND with an exit condition, not the intended shape.
+        # webglass navigates with wait_until="load" plus a fixed 100 ms settle
+        # and exposes no --wait-for/--settle-ms, so the condition cannot be
+        # expressed where it belongs: agentculture/webglass-cli#16. Note what
+        # the loop can and cannot say — `--url` re-navigates every attempt, so
+        # it asserts "a fresh load settles within 15 tries", not "this load
+        # settled". Delete it for a single call when that issue ships; #275
+        # tracks doing so.
         run: |
           for attempt in $(seq 1 15); do
             .venv/bin/webglass page extract \

@@ -49,9 +49,22 @@ const (
 )
 
 // Per-run outcome words. `conflict` is specifically "the ledger moved under
-// you, nothing was written" — it is not an error the decider caused, and it
-// is the one outcome a page should answer by re-reading and offering the
+// you, no decision was written" — it is not an error the decider caused, and
+// it is the one outcome a page should answer by re-reading and offering the
 // decision again.
+//
+// "No decision" is narrower than "nothing", and the difference is reported
+// rather than hidden. The pair below is two ledger transactions: the request
+// commits first, and PRD §10.8's promise is that a stale COMMIT applies
+// nothing and leaves that request at `requested`
+// (ledger.TestCommitReviewRejectsAStaleLedgerAndAppliesNothing pins it). So
+// a conflict can leave an open review request behind, and this route names
+// it in `review_id` so the decider can retry that review instead of
+// discovering an orphan later (#274 review, Qodo finding 2). Collapsing the
+// two into one transaction was the alternative; it was not taken, because
+// the two-step shape is the ledger's own contract, shared with POST
+// /v1alpha1/runs/{id}/reviews, and re-deciding it under one route is how the
+// two surfaces would come to mean different things by "conflict".
 const (
 	ticketReviewCommitted = "committed"
 	ticketReviewConflict  = "conflict"
@@ -88,8 +101,16 @@ type ticketReviewsRequest struct {
 type TicketReviewRunResultOut struct {
 	RunID  string `json:"run_id"`
 	Status string `json:"status"`
-	// ReviewID is the committed review, present only on `committed`. A
-	// conflict writes nothing, so there is no review to name.
+	// ReviewID is the review this run's outcome belongs to. On `committed`
+	// it is the committed review. It is ALSO present when the commit half
+	// failed after the request half succeeded: the two are separate ledger
+	// transactions (PRD §10.8 pins that a stale commit applies nothing and
+	// leaves the request at `requested`), so a conflict here does not undo
+	// the open review request it was going to commit. Naming it is what
+	// keeps that request findable — GET /v1alpha1/reviews/{id} reads it and
+	// POST /v1alpha1/reviews/{id}/commit retries it at a fresh version
+	// (#274 review, Qodo finding 2). Empty means no review was created at
+	// all, which is every failure of the request half.
 	ReviewID string `json:"review_id,omitempty"`
 	// LedgerVersion is the run's version AFTER the commit, present only on
 	// `committed` — what a caller re-submitting against this run next
@@ -236,6 +257,9 @@ func (s *Server) commitTicketRunReview(r *http.Request, req ticketReviewsRequest
 		ledger.WithRationale(req.Rationale))
 	if err != nil {
 		out.Status, out.Message = ticketRunReviewFailure(err)
+		// The request is already durable and still open. Report it rather
+		// than let the caller read "conflict" as "nothing happened".
+		out.ReviewID = created.ID
 		return out
 	}
 	out.Status, out.ReviewID, out.LedgerVersion = ticketReviewCommitted, result.ReviewID, result.LedgerVersion

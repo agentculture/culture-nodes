@@ -51,6 +51,25 @@ d1-d3 and every hand-turn are recorded on the plan and on #273.
 
 ### Fixed
 
+- The ticket projection no longer serves a silently truncated page (Qodo
+  finding 3 on PR #274). Both paged reads in `internal/api/tickets.go`
+  stopped at `ticketMaxPages` and returned the prefix they had collected even
+  with a cursor still outstanding, so a ticket carrying more than 10,000 runs
+  — or that many pending claims — would have shown a decider a page that
+  looked complete while omitting decidable records. Reaching the cap is now
+  an explicit refusal naming it: the cap is a runaway stop, not a result
+  limit.
+- `POST /v1alpha1/tickets/{id}/reviews` names the review request a failed
+  commit leaves open (Qodo finding 2). The request and the commit are two
+  ledger transactions and both take the run lock, so a writer landing between
+  them leaves a `requested` review behind while the per-run result said only
+  `conflict` and carried no id. `review_id` is now present on that outcome
+  too, and `POST /v1alpha1/reviews/{id}/commit` retries it at a fresh
+  version. The two-step ledger contract is deliberately unchanged: it is
+  PRD §10.8's, shared with `POST /v1alpha1/runs/{id}/reviews`, and collapsing
+  it under one route is how the two surfaces would come to mean different
+  things by "conflict".
+
 - The landing page settles: `Home` publishes `#agent-state` on the same terms
   as every other routed view (`loading` on mount, `ready` when the initial
   load finishes — including finishing badly), and `/` no longer bounces to

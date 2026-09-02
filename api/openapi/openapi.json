@@ -3627,14 +3627,14 @@
             "type": "string"
           },
           "review_id": {
-            "description": "The committed review. Present only on `committed`.",
+            "description": "The review this outcome belongs to: the committed review on `committed`, and on a failed commit the review request that is still open — retry it at a fresh version with POST /v1alpha1/reviews/{id}/commit. Absent when no review was created.",
             "type": "string"
           },
           "run_id": {
             "type": "string"
           },
           "status": {
-            "description": "`conflict` means the ledger moved under the decider and NOTHING was written — the one outcome a page answers by re-reading and offering the decision again.",
+            "description": "`conflict` means the ledger moved under the decider and no DECISION was written — the one outcome a page answers by re-reading and offering the decision again. It does not mean nothing exists: the review request opened for this run is a separate ledger transaction and stays open at `requested` (PRD §10.8), and `review_id` names it.",
             "enum": [
               "committed",
               "conflict",

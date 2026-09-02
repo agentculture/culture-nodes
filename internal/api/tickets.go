@@ -354,6 +354,13 @@ func (s *Server) handlePostTicketFrame(w http.ResponseWriter, r *http.Request) e
 // makes. A decision surface may not lose a run — or a claim on one — to a
 // page limit, so each read walks its cursor to the end rather than serving
 // the first page and calling it the answer (task t18).
+//
+// ticketMaxPages is a runaway stop, not a result limit, and the difference
+// is visible in what happens when it is reached: both readers REFUSE with
+// an error naming the cap rather than returning the prefix they collected.
+// A truncated ticket page is indistinguishable from a complete one to the
+// person deciding on it, and that is the failure this projection may not
+// have (#274 review, Qodo finding 3).
 const (
 	ticketPageSize = 500
 	ticketMaxPages = 20
@@ -381,7 +388,7 @@ func (s *Server) ticketRuns(ctx context.Context, ticketID string) ([]RunOut, err
 		}
 		runs = append(runs, pageRuns...)
 		if next == "" {
-			break
+			return runs, nil
 		}
 		decoded, err := decodeNodeRunCursor(next)
 		if err != nil {
@@ -389,7 +396,13 @@ func (s *Server) ticketRuns(ctx context.Context, ticketID string) ([]RunOut, err
 		}
 		cursor = &decoded
 	}
-	return runs, nil
+	// The cap was reached with a cursor still outstanding. Returning what we
+	// have would be a page that LOOKS complete while omitting runs — and the
+	// decision surface reads this list to say which runs a ticket owns, so a
+	// silent prefix is a run nobody can decide and nobody can see is missing
+	// (#274 review, Qodo finding 3).
+	return nil, fmt.Errorf("api: ticket %s has more than %d runs (%d pages of %d); "+
+		"raise ticketMaxPages or narrow the ticket", ticketID, ticketPageSize*ticketMaxPages, ticketMaxPages, ticketPageSize)
 }
 
 // ticketPendingRecords is the ticket's undecided ledger claims, grouped by
@@ -430,6 +443,7 @@ func (s *Server) ticketPendingRecords(ctx context.Context, runIDs []string, vers
 			out = append(out, group)
 		}
 		if next == "" {
+			cursor = nil
 			break
 		}
 		decoded, err := decodeNodeRunCursor(next)
@@ -437,6 +451,13 @@ func (s *Server) ticketPendingRecords(ctx context.Context, runIDs []string, vers
 			return nil, fmt.Errorf("api: decode ticket pending-record cursor: %w", err)
 		}
 		cursor = &decoded
+	}
+	if cursor != nil {
+		// Same refusal as ticketRuns, and it matters more here: an undecided
+		// claim dropped off the end of a truncated read is a record the
+		// ticket page shows as absent rather than as pending.
+		return nil, fmt.Errorf("api: ticket runs carry more than %d pending records (%d pages of %d); "+
+			"decide the open ones, or raise ticketMaxPages", ticketPageSize*ticketMaxPages, ticketMaxPages, ticketPageSize)
 	}
 	for i := range out {
 		v, err := version(out[i].RunID)

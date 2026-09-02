@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.1] - 2026-09-02
+
+### Added
+
+- `nodes jira-token` (mint | verify | install): the runbook for the Jira service-account token as a verb — where a token is minted (Atlassian admin UI only), a stdlib `GET /rest/api/3/myself` at the API gateway base that prints the accountId and never the token, and the ordered install-secrets / deploy_jira / runner-env-write / restart hand-turn sequence, printed not run; `docs/operations/jira-service-account.md` is the long form (issue #273, plan task t11)
+
 ## [0.47.0] - 2026-09-02
 
 The login-from-anywhere cycle (spec `docs/specs/2026-09-01-login-from-anywhere-sso-identity-permissions-jira.md`,

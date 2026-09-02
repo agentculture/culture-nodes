@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.7] - 2026-09-02
+
+### Changed
+
+- `test_install_step_four_exports_the_site_before_deploy` asserts `SITE_HOST` carries no scheme and asserts it carries no path as two statements instead of one `and`. The two halves stand for different drifts of the same constant — a `https://` prefix pasted from a browser, or a trailing `/rest/api/3` left on the base URL — and the bridge refuses each with the same `JIRA_SITE must be a host name`; the composite form reported whichever one happened as the identical failure (PR #282, SonarCloud python:S9073)
+
 ## [0.47.6] - 2026-09-02
 
 ### Changed

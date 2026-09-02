@@ -586,8 +586,9 @@ def test_install_step_four_exports_the_site_before_deploy(
     export = f"export JIRA_SITE={jira_token.SITE_HOST}"
     assert export in out
     assert out.index(export) < out.index("deploy.sh thor")
-    # A bare host: the bridge refuses a scheme or a path outright.
-    assert "://" not in jira_token.SITE_HOST and "/" not in jira_token.SITE_HOST
+    # A bare host: the bridge refuses a scheme outright, and a path with it.
+    assert "://" not in jira_token.SITE_HOST
+    assert "/" not in jira_token.SITE_HOST
     assert jira_token.SITE_URL.endswith(jira_token.SITE_HOST)
 
 

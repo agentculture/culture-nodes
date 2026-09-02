@@ -34,9 +34,25 @@ Two listeners, on purpose (spec c43 / finding s35):
 | `0.0.0.0:18080` on thor (LAN, published by `compose.thor.yml` as `18080:8080`) | the sweep, both workers, the bridges, and anyone on the LAN/tailnet | no — a JWT captured on the plaintext LAN cannot be replayed here |
 
 The loopback port is configured by task t8 with
-`NODES_ACCESS_LISTEN=127.0.0.1:8081` inside the API container.
+`NODES_ACCESS_LISTEN=:8081` inside the API container, and
 `compose.thor.yml` publishes it as `127.0.0.1:18081:8081` (a loopback-only
-publish, never `18081:8081`, which would put it on every interface). Set
+publish, never `18081:8081`, which would put it on every interface).
+
+**The value inside the container is `:8081`, not `127.0.0.1:8081`, and the
+difference is the whole listener.** Loopback here means *thor's* loopback,
+and it is the host-side publish that enforces it. A published port is
+forwarded to the container's bridge-network address, not to the container's
+own loopback interface, so a server bound to `127.0.0.1:8081` inside the
+container accepts nothing from `127.0.0.1:18081` on the host: `cloudflared`
+gets a connection refused and `nodes.culture.dev` serves a Cloudflare 502.
+Binding `:8081` inside the container costs nothing in reachability, because
+the container port is published on thor's loopback only — no LAN interface
+carries it, so the c43 replay split below is unchanged, and the
+`ss -ltn '( sport = :18081 )'` check in "Verification" is what proves it.
+(A deployment that runs the control plane as a bare host process, with no
+container between the two, would set `127.0.0.1:8081` and publish nothing.)
+
+Set
 `NODES_ACCESS_TEAM_DOMAIN` and `NODES_ACCESS_AUD` in the same `prod.env`
 change; the server refuses a partial three-variable tuple, while all three
 unset leaves the Access feature off and preserves the LAN-only behaviour.

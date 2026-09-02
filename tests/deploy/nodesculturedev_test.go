@@ -278,3 +278,78 @@ func TestTunnelDocNamesTheSamePortAndVerification(t *testing.T) {
 		t.Errorf("%s carries a real email address; the allow policy entry is a placeholder in the tree", tunnelDoc)
 	}
 }
+
+// accessPublishPrefix is the loopback-only publish task t8 adds beside the
+// LAN one. What follows it is the CONTAINER port the Access listener has to
+// bind, and it is the number the doc's NODES_ACCESS_LISTEN value must carry.
+const accessPublishPrefix = "127.0.0.1:18081:"
+
+// TestDocumentedAccessListenIsReachableThroughThePublish pins the one detail
+// that makes the tunnel work or serve a 502: the value the doc tells an
+// operator to put in prod.env must bind an address the published port can
+// actually reach.
+//
+// Docker forwards a published port to the container's bridge-network
+// address, never to the container's own loopback interface. So
+// `NODES_ACCESS_LISTEN=127.0.0.1:8081` inside the container — which reads
+// like the safest possible value, and is the right value for a bare host
+// process — makes `127.0.0.1:18081` on thor a connection refused, and
+// nodes.culture.dev a Cloudflare 502 that looks like a tunnel fault. The
+// loopback property spec c43 wants is enforced by the host-side publish
+// asserted in TestTheLANPublishIsUnchangedBesideTheTunnel, not by what the
+// container binds, so `:8081` gives up nothing.
+func TestDocumentedAccessListenIsReachableThroughThePublish(t *testing.T) {
+	doc := loadOtelCompose(t, filepath.Join("prod", "compose.thor.yml"))
+	api, ok := doc.Services["api"]
+	if !ok {
+		t.Fatal("compose.thor.yml declares no api service")
+	}
+	containerPort := ""
+	for _, p := range api.Ports {
+		if strings.HasPrefix(p, accessPublishPrefix) {
+			containerPort = strings.TrimPrefix(p, accessPublishPrefix)
+		}
+	}
+	if containerPort == "" {
+		t.Skip("compose.thor.yml publishes no loopback Access port yet; nothing prescribes a listen value")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), tunnelDoc))
+	if err != nil {
+		t.Fatalf("%s is missing: %v", tunnelDoc, err)
+	}
+	values := assignedListenValues(string(raw))
+	if len(values) == 0 {
+		t.Fatalf("%s prescribes no NODES_ACCESS_LISTEN=<value>; the operator has to guess the one value that is easy to get wrong", tunnelDoc)
+	}
+	for _, value := range values {
+		if strings.HasPrefix(value, "127.0.0.1:") || strings.HasPrefix(value, "localhost:") {
+			t.Errorf("%s prescribes NODES_ACCESS_LISTEN=%q; a container-loopback bind is unreachable from the published %s port, so cloudflared gets a connection refused", tunnelDoc, value, accessPublishPrefix+containerPort)
+		}
+		if value != ":"+containerPort {
+			t.Errorf("%s prescribes NODES_ACCESS_LISTEN=%q, but compose publishes container port %s; want %q", tunnelDoc, value, containerPort, ":"+containerPort)
+		}
+	}
+}
+
+// assignedListenValues returns every prescriptive `NODES_ACCESS_LISTEN=<value>`
+// in a document — the assignment form an operator copies into prod.env. Prose
+// that merely names the variable is not an assignment and is not returned.
+func assignedListenValues(doc string) []string {
+	const key = "NODES_ACCESS_LISTEN="
+	var out []string
+	for rest := doc; ; {
+		i := strings.Index(rest, key)
+		if i < 0 {
+			return out
+		}
+		rest = rest[i+len(key):]
+		end := strings.IndexAny(rest, " \t\n`\"'")
+		if end < 0 {
+			end = len(rest)
+		}
+		if value := rest[:end]; value != "" {
+			out = append(out, value)
+		}
+	}
+}

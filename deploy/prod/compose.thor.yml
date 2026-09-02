@@ -158,7 +158,14 @@ services:
       JIRA_SITE: ${JIRA_SITE:-}
       JIRA_PROJECT: ${JIRA_PROJECT:-SCRUM}
       JIRA_BOT_ACCOUNT_ID: ${JIRA_BOT_ACCOUNT_ID:-}
-      # Cloudflare Access is accepted only on this container-side loopback-origin listener.
+      # Cloudflare Access is accepted only on this second listener, the one
+      # published below on thor's loopback alone. Set it to `:8081` in
+      # prod.env — NOT `127.0.0.1:8081`: a published port is forwarded to the
+      # container's bridge address, never to the container's own loopback, so
+      # a container-loopback bind is unreachable from 127.0.0.1:18081 and
+      # cloudflared gets a connection refused. The loopback restriction is
+      # the host-side publish's job, and it does that job whatever the
+      # container binds (docs/operations/nodes-culture-dev.md, "Topology").
       NODES_ACCESS_LISTEN: ${NODES_ACCESS_LISTEN:-}
       NODES_ACCESS_TEAM_DOMAIN: ${NODES_ACCESS_TEAM_DOMAIN:-}
       NODES_ACCESS_AUD: ${NODES_ACCESS_AUD:-}

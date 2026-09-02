@@ -51,6 +51,16 @@ d1-d3 and every hand-turn are recorded on the plan and on #273.
 
 ### Fixed
 
+- The documented container-side value for the Access listener,
+  `NODES_ACCESS_LISTEN`, is `:8081` rather than `127.0.0.1:8081`. Docker
+  forwards a published port to the container's bridge address and never to
+  the container's own loopback, so the loopback form made
+  `127.0.0.1:18081` on thor a connection refused and `nodes.culture.dev` a
+  Cloudflare 502. The c43 replay split is unchanged: it is enforced by the
+  loopback-only publish `127.0.0.1:18081:8081`, which is what
+  `tests/deploy/nodesculturedev_test.go` pins, now alongside the listen
+  value the recipe prescribes.
+
 ## [0.46.1] - 2026-09-01
 
 ### Added

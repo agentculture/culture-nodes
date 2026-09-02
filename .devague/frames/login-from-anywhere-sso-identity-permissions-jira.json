@@ -291,7 +291,7 @@
       "honesty_conditions": [
         {
           "id": "h7",
-          "text": "prod bridge env lists four targets and the deploy lane writes that file (grant-check names it); a merged PR moves the ticket to Done and the sweep's next pass records that transition as self-echo without re-triggering intake; docs/drive-from-jira.md's trigger table and the custody decision record are updated in the same PR",
+          "text": "prod bridge env lists four targets and the deploy lane writes that file (grant-check names it); a merged PR raises exactly one 'Ticket done?' human task and the ticket moves to Done only once that task's done outcome is recorded, after which the sweep's next pass records that transition as self-echo without re-triggering intake; docs/drive-from-jira.md's trigger table and the custody decision record are updated in the same PR",
           "status": "confirmed",
           "instruction": ""
         },
@@ -557,7 +557,7 @@
     {
       "id": "c27",
       "kind": "after_state",
-      "text": "Opening https://nodes.culture.dev from any network redirects through Cloudflare SSO and lands a signed-in person on what is waiting for them; every decision, reply, review and grade carries that person's identity as the ledger origin; every bridge completion carries the actor the credential belongs to; no human holds NODES_HUMAN_DECISION_TOKEN_SECRET; an agent can read the Jira ticket it works on; the board moves to In Review when a PR opens, Pending on a parked question, Done on merge, without an operator hand-turn; the ticket page decides everything and looks like a guided flow rather than a wall of lists",
+      "text": "Opening https://nodes.culture.dev from any network redirects through Cloudflare SSO and lands a signed-in person on what is waiting for them; every decision, reply, review and grade carries that person's identity as the ledger origin; every bridge completion carries the actor the credential belongs to; no human holds NODES_HUMAN_DECISION_TOKEN_SECRET; an agent can read the Jira ticket it works on; the board moves to In Review when a PR opens, Pending on a parked question, and Done when the post-merge 'Ticket done?' human node is answered done, without an operator hand-turn; the ticket page decides everything and looks like a guided flow rather than a wall of lists",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -571,7 +571,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Opening https://nodes.culture.dev from any network redirects through Cloudflare SSO and lands a signed-in person on what is waiting for them; every decision, reply, review and grade carries that person's identity as the ledger origin; every bridge completion carries the actor the credential belongs to; no human holds NODES_HUMAN_DECISION_TOKEN_SECRET; an agent can read the Jira ticket it works on; the board moves to In Review when a PR opens, Pending on a parked question, Done on merge, without an operator hand-turn; the ticket page decides everything and looks like a guided flow rather than a wall of lists",
+          "kind": "after_state",
+          "reason": "Qodo #1 (PR #272): Done follows the 'Ticket done?' human node's outcome (c32/c15), never the merge fact"
+        }
+      ]
     },
     {
       "id": "c28",
@@ -595,7 +601,7 @@
     {
       "id": "c29",
       "kind": "success_signal",
-      "text": "Measured on prod after deploy: (a) an unauthenticated curl to https://nodes.culture.dev/v1alpha1/tickets/SCRUM-N gets an Access redirect, and the same path via the LAN address with no principal gets 401 on writes; (b) a human-task decision made on the ticket page from off-LAN lands a ledger record whose origin_actor_id is the actor bound to the signed-in email, with no decider field typed; (c) one bridge completion with a self-declared foreign origin_actor_id is refused with a diagnostic naming the mismatch and consumes no redispatch; (d) an intake run's agent output quotes a comment from the ticket it could not see before; (e) a merged PR naming a SCRUM key moves the ticket to Done inside one sweep interval with zero operator transitions in the changelog; (f) the shared decision secret is removed from every human's hands (remove-secret.sh run recorded)",
+      "text": "Measured on prod after deploy: (a) an unauthenticated curl to https://nodes.culture.dev/v1alpha1/tickets/SCRUM-N gets an Access redirect, and the same path via the LAN address with no principal gets 401 on writes; (b) a human-task decision made on the ticket page from off-LAN lands a ledger record whose origin_actor_id is the actor bound to the signed-in email, with no decider field typed; (c) one bridge completion with a self-declared foreign origin_actor_id is refused with a diagnostic naming the mismatch and consumes no redispatch; (d) an intake run's agent output quotes a comment from the ticket it could not see before; (e) a merged PR naming a SCRUM key leaves the ticket not Done and raises exactly one 'Ticket done?' human task; answering that task done moves the ticket to Done inside one sweep interval of that outcome, with zero operator transitions in the changelog; (f) the shared decision secret is removed from every human's hands (remove-secret.sh run recorded)",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -609,7 +615,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Measured on prod after deploy: (a) an unauthenticated curl to https://nodes.culture.dev/v1alpha1/tickets/SCRUM-N gets an Access redirect, and the same path via the LAN address with no principal gets 401 on writes; (b) a human-task decision made on the ticket page from off-LAN lands a ledger record whose origin_actor_id is the actor bound to the signed-in email, with no decider field typed; (c) one bridge completion with a self-declared foreign origin_actor_id is refused with a diagnostic naming the mismatch and consumes no redispatch; (d) an intake run's agent output quotes a comment from the ticket it could not see before; (e) a merged PR naming a SCRUM key moves the ticket to Done inside one sweep interval with zero operator transitions in the changelog; (f) the shared decision secret is removed from every human's hands (remove-secret.sh run recorded)",
+          "kind": "success_signal",
+          "reason": "Qodo #1 (PR #272): Done follows the 'Ticket done?' human node's outcome (c32/c15), never the merge fact"
+        }
+      ]
     },
     {
       "id": "c30",

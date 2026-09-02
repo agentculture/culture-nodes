@@ -84,3 +84,55 @@ func (s *Store) UpdateInboundAuthentication(ctx context.Context, partyKind, part
 	}
 	return decision, nil
 }
+
+// InboundCredentialRecord is one credential row's identity and its stored
+// one-way verifier. It carries no admission state and no presented value:
+// it exists so a caller holding a presentation can find out WHICH party a
+// digest belongs to, and then ask UpdateInboundAuthentication — the only
+// surface that decides admission — about that party.
+type InboundCredentialRecord struct {
+	PartyKind string
+	PartyKey  string
+	Digest    []byte
+}
+
+// ListInboundCredentialDigests returns every digest-backed credential row of
+// one party kind, newest-updated first.
+//
+// The dial-in transport never needs this: a bridge names its own party in
+// the X-Culture-Nodes-Actor-Key header, so the row is looked up by key. The
+// break-glass principal (login-from-anywhere task t22) has no such header —
+// an operator on the LAN presents a bearer and nothing else — so the party
+// is resolved FROM the credential, the same way an agent actor's own bearer
+// is resolved by walking the actor rows (internal/api/actorbearer.go).
+//
+// Rows are returned regardless of revocation, lockout or issuance
+// provenance. Filtering them here would turn a revoked credential into an
+// unknown one, and "no principal" is a materially different (and, for an
+// operator staring at a locked-out site, a misleading) fact from "this
+// credential was revoked". The admission decision stays where it already
+// lives.
+//
+// Only the digest leaves this function — the same value migration 0031 says
+// is the only credential-shaped thing the database may hold.
+func (s *Store) ListInboundCredentialDigests(ctx context.Context, partyKind string) ([]InboundCredentialRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT party_kind, party_key, verifier_sha256
+		FROM inbound_authentication
+		WHERE party_kind = $1 AND verifier_sha256 IS NOT NULL
+		ORDER BY updated_at DESC`, partyKind)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list inbound credential digests: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]InboundCredentialRecord, 0)
+	for rows.Next() {
+		var record InboundCredentialRecord
+		if err := rows.Scan(&record.PartyKind, &record.PartyKey, &record.Digest); err != nil {
+			return nil, fmt.Errorf("postgres: list inbound credential digests: scan: %w", err)
+		}
+		out = append(out, record)
+	}
+	return out, rows.Err()
+}

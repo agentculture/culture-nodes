@@ -72,6 +72,35 @@
 # The only things this script's own process handles are an actor key, a host
 # name, a URL and a digest.
 #
+# THE LAN BREAK-GLASS: A PERSON'S CREDENTIAL, THROUGH THIS SAME LANE
+# (login-from-anywhere task t22, spec c48; docs/operations/people.md).
+#
+# A dial-in credential is issued for a PARTY, and a party is any key shaped
+# like an actor key -- namespace/name, per internal/actors.ValidateInboundParty
+# and migration 0031. A person's registered HUMAN actor is such a key, so the
+# operator's break-glass credential is minted here, with no widening of
+# anything: the three destination overrides below already exist for one-offs.
+#
+#   DIALIN_PREFIX=BREAK_GLASS DIALIN_HOST=thor \
+#   DIALIN_DESTINATION=env:.culture-nodes/dialin/break-glass.env \
+#     deploy/prod/issue-dialin-credential.sh company/<operator-handle> thor
+#
+# Two things stay deliberately true of that command:
+#
+#   - the party is NOT added to dialin_bridges(). A person is not a bridge
+#     this deployment runs, and a row here would mean a redeploy lane mints
+#     for them. The one-off overrides are the whole mechanism.
+#   - the credential's authority is decided entirely by the control plane's
+#     actors table. Presented on the LAN listener it resolves to that party's
+#     newest actor revision (internal/api/breakglass.go); a HUMAN actor gets
+#     the `approver` role -- enough to decide a human task when Cloudflare
+#     Access is misconfigured, and nothing more. An agent-kind actor's
+#     credential keeps agent semantics and cannot decide.
+#
+# Everything else in this file applies to it unchanged: one plaintext in one
+# mode-0600 file on one host, a digest at the control plane, `--revoke` as the
+# retirement, and audit-credentials.sh failing if a copy reaches prod.env.
+#
 # Exit codes follow the repo's policy: 0 ok, 1 a user error (an actor this
 # deployment runs no bridge for, a malformed key), 2 the issuance or the
 # delivery could not be completed.

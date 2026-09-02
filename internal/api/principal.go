@@ -129,6 +129,20 @@ func (s *Server) principalMiddleware(accessListener bool, next http.Handler) htt
 				present = true
 			}
 		}
+		if !present && !accessListener && breakGlassRoute(r.Method, r.URL.Path) {
+			// The LAN break-glass (breakglass.go): an issued dial-in
+			// credential, admitted through the dial-in path's own
+			// authenticator, so a misconfigured Access policy cannot lock
+			// every human out (spec c48). LAN only — the loopback listener
+			// honours Access assertions and nothing else.
+			operator, ok, handled := s.breakGlassAdmit(w, r)
+			if handled {
+				return
+			}
+			if ok {
+				p, present = operator, true
+			}
+		}
 		if !present && agentMayWrite(r.Method, r.URL.Path) {
 			// An agent actor's own bearer (actorbearer.go): resolved only on
 			// the routes an agent may write, so the credential opens those

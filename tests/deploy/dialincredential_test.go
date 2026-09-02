@@ -780,3 +780,80 @@ func TestIssuanceSecretNeverLeavesTheControlPlaneHost(t *testing.T) {
 		t.Fatalf("walk %s: %v", sparkHome, err)
 	}
 }
+
+// --- the LAN break-glass (login-from-anywhere task t22, spec c48) ---------
+
+// TestBreakGlassCredentialForAHumanActorUsesTheSameLane is the deploy half of
+// t22. c48 requires an operator on the LAN to keep a break-glass path — "an
+// issued service credential bound to the operator's actor" — so a
+// misconfigured Access policy cannot lock every human out.
+//
+// The point of this test is that closing that gap needs NO new issuance
+// surface. A dial-in credential is issued for a PARTY, and a party is any
+// key shaped like an actor key (internal/actors.ValidateInboundParty); a
+// person's registered human actor is one. So the break-glass credential is
+// minted by the lane that already exists, through the three one-off
+// destination overrides that already exist, with the same single-custody
+// guarantees the rest of this file pins — and nothing is added to
+// dialin_bridges(), because a person is not a bridge this deployment runs.
+//
+// What made the credential USEFUL is the control-plane half
+// (internal/api/breakglass.go); this pins that the operator recipe in
+// docs/operations/people.md is a command that works.
+func TestBreakGlassCredentialForAHumanActorUsesTheSameLane(t *testing.T) {
+	issuer := newFakeIssuer(t)
+	c := dialInCluster(t, issuer)
+
+	stdout, stderr, code := runIssue(t, c, issuer, []string{"company/operator"},
+		"DIALIN_PREFIX=BREAK_GLASS",
+		"DIALIN_HOST=thor",
+		"DIALIN_DESTINATION=env:.culture-nodes/dialin/break-glass.env")
+	if code != 0 {
+		t.Fatalf("issue for a human actor exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	path := dialFilePath(t, c, "thor", "break-glass")
+	body := readFileString(t, path)
+	credential := issuer.mintedAt(t, 0)
+	if !strings.Contains(body, "BREAK_GLASS_DIAL_TOKEN="+credential) {
+		t.Fatalf("%s does not carry the issued credential;\nfile:\n%s", path, body)
+	}
+	if !strings.Contains(body, "BREAK_GLASS_ACTOR_KEY=company/operator") {
+		t.Errorf("%s does not name the human actor the credential is bound to;\nfile:\n%s", path, body)
+	}
+
+	issuer.mu.Lock()
+	requested := append([]string(nil), issuer.requests...)
+	issuer.mu.Unlock()
+	if len(requested) != 1 || requested[0] != "company/operator" {
+		t.Errorf("the control plane was asked to issue for %v, want exactly [company/operator]", requested)
+	}
+	sum := sha256.Sum256([]byte(credential))
+	if got, want := issuer.digestFor(t, "company/operator"), hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("control plane verifier = %s, want %s", got, want)
+	}
+
+	// Single custody holds for a person's credential exactly as it does for a
+	// bridge's: one plaintext, in the operator's own mode-0600 file, and
+	// nowhere else — in particular not in prod.env, which is what
+	// audit-credentials.sh fails on.
+	assertAbsentEverywhere(t, c, "the break-glass credential", credential, path)
+	if strings.Contains(stdout+stderr, credential) {
+		t.Error("the lane printed the break-glass credential; only the digest may be reported")
+	}
+
+	// And it is retired the same way, by the same command.
+	if stdout, stderr, code := runIssue(t, c, issuer, []string{"--revoke", "company/operator"},
+		"DIALIN_PREFIX=BREAK_GLASS",
+		"DIALIN_HOST=thor",
+		"DIALIN_DESTINATION=env:.culture-nodes/dialin/break-glass.env"); code != 0 {
+		t.Fatalf("revoke exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	issuer.mu.Lock()
+	revoked := issuer.revoked["company/operator"]
+	issuer.mu.Unlock()
+	if !revoked {
+		t.Error("revoking the break-glass credential did not reach the control plane")
+	}
+	assertAbsentEverywhere(t, c, "the revoked break-glass credential", credential)
+}

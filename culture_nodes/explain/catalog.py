@@ -577,10 +577,15 @@ is exit `1` and no request is built, because `verify` hands the Basic
 credential to whatever base it is given and an environment that can set
 that variable must not thereby choose who receives the token. Without a
 token: a TTY is prompted with `getpass`; a non-TTY is exit `2` with the
-`grant run` hint. On 200 it prints `accountId: <id>` (`--json`:
-`account_id`, `email`, `api_base`) and exits `0`. A 401/403 or a network
-failure is a structured `error:`/`hint:` failure with exit `2`. The token
-value is never printed, not even in an error.
+`grant run` hint. On 200 it compares the answered `accountId` with the
+service account's: equal, it prints `accountId: <id>` (`--json`:
+`account_id`, `email`, `api_base`) and exits `0`; anything else is exit `2`
+naming both ids — a 200 proves the token is valid, not that it is *ours*, a
+personal token or a second service account authenticates just as well, and
+the sweep filters its own Jira comments by this one id, so an installed
+wrong account would read its own comments back as human facts. A 401/403 or
+a network failure is a structured `error:`/`hint:` failure with exit `2`.
+The token value is never printed, not even in an error.
 
 The trap the hint names: a service-account token authenticates only at the
 API gateway base `https://api.atlassian.com/ex/jira/<cloudId>`. The site

@@ -103,10 +103,21 @@ grant run --inject JIRA_API_TOKEN=JIRA_SERVICE_ACCOUNT_TOKEN -- nodes jira-token
 accountId: 712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615
 ```
 
+That id is checked, not merely printed. A 200 says the token is *valid*;
+it does not say it is *ours* — an operator's own token, or a second service
+account, authenticates at this gateway just as well and would install
+cleanly through the remaining steps. The sweep filters its own Jira
+comments by `jira_bot_account_id`, which is exactly this id, so a pair
+installed under the wrong account would make the bot's comments read back
+as human facts. `verify` therefore exits `2` on any other `accountId`,
+naming both, and the mismatch stops at step 2 rather than at step 5.
+
 Email defaults to the constant above and may be overridden by exporting
-`JIRA_ACCOUNT_EMAIL`. The base is different: `JIRA_API_BASE` may only ever
-name the gateway above. Any other value — another host, another cloud id, a
-`http://` spelling — is exit `1` with a hint, and no request is built.
+`JIRA_ACCOUNT_EMAIL`; overriding it does not widen what passes, because the
+answered account is compared either way. The base is different:
+`JIRA_API_BASE` may only ever name the gateway above. Any other value —
+another host, another cloud id, a `http://` spelling — is exit `1` with a
+hint, and no request is built.
 
 That is deliberate, and it is a security property rather than a
 convenience. `verify` attaches the service-account email and token to
@@ -120,8 +131,9 @@ nothing.
 
 Without a token in the environment, a terminal is prompted with `getpass`
 (no echo) and a non-terminal exits `2` with the `grant run` line above as
-its hint. Exit `2` with an `error:`/`hint:` pair on a 401/403 or a network
-failure. The token value never appears in any output, `--json` included.
+its hint. Exit `2` with an `error:`/`hint:` pair on a 401/403, a wrong
+account, or a network failure. The token value never appears in any output,
+`--json` included.
 
 ## Install — five operator hand-turns, run from spark
 

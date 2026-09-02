@@ -25,6 +25,9 @@ FAKE_TOKEN = "FAKE-TOKEN-ATATT3xFfGF0-do-not-print"  # noqa: S105 - test fixture
 FAKE_EMAIL = "culture-spark-9lgwfn7mz2@serviceaccount.atlassian.com"
 FAKE_GRANT = "/fake/bin/grant"
 INJECT = "grant run --inject JIRA_API_TOKEN=JIRA_SERVICE_ACCOUNT_TOKEN --"
+#: What /myself answers for the service account — the only identity
+#: `verify` accepts, so every success-path stub returns exactly this.
+_MYSELF_BODY = json.dumps({"accountId": jira_token.SERVICE_ACCOUNT_ID}).encode()
 
 
 class _FakeResponse(io.BytesIO):
@@ -294,18 +297,55 @@ def test_verify_200_prints_account_id(
     assert seen["timeout"] is not None and float(seen["timeout"]) <= 30
 
 
+@pytest.mark.parametrize("other", ["712020:9999aaaa-0000-1111-2222-333344445555", "5f0a1b2c3d"])
+def test_verify_other_account_exits_2_and_names_both_ids(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, other: str
+) -> None:
+    """A valid token for the wrong Jira account must not pass verification.
+
+    It authenticates fine — the gateway answers 200 — and every later step
+    would install it as the bot credential, which the sweep then fails to
+    recognise as its own.
+    """
+    _set_env(monkeypatch)
+    _stub_urlopen(monkeypatch, body=json.dumps({"accountId": other}).encode())
+    rc = main(["jira-token", "verify"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out == ""
+    assert other in captured.err
+    assert jira_token.SERVICE_ACCOUNT_ID in captured.err
+    assert "hint:" in captured.err
+    assert FAKE_TOKEN not in captured.err
+
+
+def test_verify_other_account_json_error_is_not_a_result(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_env(monkeypatch)
+    _stub_urlopen(monkeypatch, body=json.dumps({"accountId": "712020:not-ours"}).encode())
+    rc = main(["jira-token", "verify", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out == ""
+    payload = json.loads(captured.err)
+    assert payload["code"] == 2
+    assert "712020:not-ours" in payload["message"]
+    assert jira_token.SERVICE_ACCOUNT_ID in payload["message"]
+
+
 def test_verify_defaults_email_and_base_from_constants(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_env(monkeypatch)
     monkeypatch.setenv("JIRA_API_TOKEN", FAKE_TOKEN)
     _stub_stdin(monkeypatch, "", tty=False)
-    seen = _stub_urlopen(monkeypatch, body=b'{"accountId":"712020:abc"}')
+    seen = _stub_urlopen(monkeypatch, body=_MYSELF_BODY)
     rc = main(["jira-token", "verify", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
-        "account_id": "712020:abc",
+        "account_id": jira_token.SERVICE_ACCOUNT_ID,
         "email": jira_token.SERVICE_ACCOUNT_EMAIL,
         "api_base": jira_token.GATEWAY_BASE,
     }
@@ -320,12 +360,12 @@ def test_verify_json_shape(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_env(monkeypatch, base=jira_token.GATEWAY_BASE + "/")
-    _stub_urlopen(monkeypatch, body=json.dumps({"accountId": "712020:abc"}).encode())
+    _stub_urlopen(monkeypatch, body=_MYSELF_BODY)
     rc = main(["jira-token", "verify", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
-        "account_id": "712020:abc",
+        "account_id": jira_token.SERVICE_ACCOUNT_ID,
         "email": FAKE_EMAIL,
         "api_base": jira_token.GATEWAY_BASE,
     }
@@ -417,12 +457,12 @@ def test_verify_prompts_with_getpass_on_a_tty(
         return FAKE_TOKEN
 
     monkeypatch.setattr(jira_token.getpass, "getpass", fake_getpass)
-    seen = _stub_urlopen(monkeypatch, body=b'{"accountId":"712020:abc"}')
+    seen = _stub_urlopen(monkeypatch, body=_MYSELF_BODY)
     rc = main(["jira-token", "verify"])
     captured = capsys.readouterr()
     assert rc == 0
     assert prompts and "no echo" in prompts[0]
-    assert captured.out == "accountId: 712020:abc\n"
+    assert captured.out == f"accountId: {jira_token.SERVICE_ACCOUNT_ID}\n"
     expected = base64.b64encode(
         f"{jira_token.SERVICE_ACCOUNT_EMAIL}:{FAKE_TOKEN}".encode()
     ).decode()
@@ -490,7 +530,7 @@ def test_verify_accepts_the_gateway_however_it_is_spelled(
     monkeypatch: pytest.MonkeyPatch, base: str
 ) -> None:
     _set_env(monkeypatch, base=base)
-    seen = _stub_urlopen(monkeypatch, body=b'{"accountId":"712020:abc"}')
+    seen = _stub_urlopen(monkeypatch, body=_MYSELF_BODY)
     assert main(["jira-token", "verify"]) == 0
     # However it was spelled, one canonical address is what gets requested.
     assert seen["url"] == jira_token.GATEWAY_BASE + "/rest/api/3/myself"
@@ -593,7 +633,7 @@ def test_token_never_appears_in_any_output(
     else:
         _stub_stdin(monkeypatch, FAKE_TOKEN + "\n", tty=False)
     monkeypatch.setattr(jira_token.getpass, "getpass", lambda *a, **k: FAKE_TOKEN)
-    _stub_urlopen(monkeypatch, status=status, body=b'{"accountId":"712020:abc"}')
+    _stub_urlopen(monkeypatch, status=status, body=_MYSELF_BODY)
     _stub_grant(monkeypatch, returncode=grant_rc, stderr=f"grant: boom {FAKE_TOKEN}")
     try:
         main(argv)

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.3] - 2026-09-02
+
+### Fixed
+
+- `nodes jira-token verify` compares the answered `accountId` with the service account's instead of accepting any non-empty one, and exits `2` naming both on a mismatch. A 200 proved the token was valid, not that it was ours: a personal token or a second service account authenticates identically at the gateway and would have installed cleanly, and the sweep filters its own Jira comments by that one id — so the wrong account would have made the bot's comments read back as human facts (PR #282, Qodo 2)
+
 ## [0.47.2] - 2026-09-02
 
 ### Security

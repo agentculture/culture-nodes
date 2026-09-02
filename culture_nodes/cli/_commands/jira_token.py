@@ -13,7 +13,13 @@ Four verbs, none of which holds a secret for longer than one call:
 * ``verify`` reads ``JIRA_API_TOKEN`` from the environment (the
   ``grant run --inject`` path, or a ``getpass`` prompt on a TTY) and calls
   ``GET <base>/rest/api/3/myself`` with the standard library. Exit ``0`` and
-  the ``accountId`` on 200; exit ``2`` with a hint otherwise. Email and base
+  the ``accountId`` on 200 **only when that accountId is
+  ``SERVICE_ACCOUNT_ID``**; exit ``2`` with a hint otherwise. Verifying the
+  *identity* and not merely the *credential* is the point: a token minted
+  under any other Jira account — an operator's own, a second service
+  account — authenticates perfectly well and would install cleanly, and the
+  sweep's self-echo filter keys on this one id, so the wrong account would
+  make the bot's own comments read back as human facts. Email and base
   default to the module constants — they are not secrets. The base is more
   than a default: it is *pinned* to the gateway, because ``verify`` hands the
   Basic credential to whatever base it is given, and an environment that can
@@ -109,7 +115,8 @@ INSTALL_STEPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "verify the token against the gateway base",
         (f"{INJECT_PREFIX} nodes jira-token verify",),
-        f"must print accountId: {SERVICE_ACCOUNT_ID}; stop here on anything else"
+        f"must print accountId: {SERVICE_ACCOUNT_ID}; verify itself exits 2 on any other"
+        " account, so a token minted under the wrong one stops here rather than at step 5"
         f" ({ENV_EMAIL} and {ENV_BASE} default to the service account and the gateway base)",
     ),
     (
@@ -196,7 +203,7 @@ def _mint_text() -> str:
     return "\n".join(
         [
             f"service account: {SERVICE_ACCOUNT_NAME} ({SERVICE_ACCOUNT_EMAIL})",
-            f"accountId: {SERVICE_ACCOUNT_ID}",
+            f"accountId: {SERVICE_ACCOUNT_ID}  (verify refuses a token for any other account)",
             f"mint at: {ADMIN_PATH}",
             "  (no API mints a service-account token; this CLI cannot mint one either)",
             f"api base: {GATEWAY_BASE}",
@@ -429,11 +436,41 @@ def _raise_http(status: int, base: str) -> NoReturn:
     ) from None
 
 
+def _check_identity(account_id: str) -> None:
+    """Refuse a token that authenticates as anything but the service account.
+
+    A 200 proves the credential is *valid*, not that it is *ours*. Any Jira
+    token — an operator's personal one, a second service account — answers 200
+    at this gateway with its own ``accountId``, and every step after verify
+    treats the pair as the bot's: ``install-secrets.sh`` writes it to both
+    runners, and the sweep filters its own Jira comments by
+    ``jira_bot_account_id``, which is this constant. Installed under the wrong
+    account, the sweep would read its own comments back as human facts. So the
+    id is compared here rather than left to the operator reading step 2's
+    output. Account ids are not secrets (this one is a source constant), so the
+    mismatch names both.
+    """
+    if account_id != SERVICE_ACCOUNT_ID:
+        raise CliError(
+            code=EXIT_ENV_ERROR,
+            message=(
+                f"{ENV_TOKEN} authenticates as accountId {account_id}, not the"
+                f" {SERVICE_ACCOUNT_NAME} service account {SERVICE_ACCOUNT_ID}"
+            ),
+            remediation=(
+                "the token is valid but belongs to another Jira account; do not install it"
+                f" (the sweep filters its own comments by {SERVICE_ACCOUNT_ID}). Mint one at"
+                f" {ADMIN_PATH} and re-seal it with 'nodes jira-token seal'"
+            ),
+        )
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     email, token, base = _read_env()
     payload = _myself(email, token, base)
     account_id = str(payload["accountId"])
+    _check_identity(account_id)
     if json_mode:
         emit_result(
             {"account_id": account_id, "email": email, "api_base": base},

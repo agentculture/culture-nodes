@@ -4,7 +4,7 @@
 
 ### Added
 
-- `nodes jira-token` (mint | verify | install): the runbook for the Jira service-account token as a verb — where a token is minted (Atlassian admin UI only), a stdlib `GET /rest/api/3/myself` at the API gateway base that prints the accountId and never the token, and the ordered install-secrets / deploy_jira / runner-env-write / restart hand-turn sequence, printed not run; `docs/operations/jira-service-account.md` is the long form (issue #273, plan task t11)
+- `nodes jira-token` (mint | seal | verify | install): the runbook for the Jira service-account token as a verb — where a token is minted (Atlassian admin UI only), `seal` (reads it without echo, or one line of stdin, and stores it hidden in `grant` as `JIRA_SERVICE_ACCOUNT_TOKEN` — never a plaintext file on spark), a stdlib `GET /rest/api/3/myself` at the API gateway base that prints the accountId and never the token (the token reaches it via `grant run --inject`), and the ordered install-secrets / deploy_jira / runner-env-write / restart hand-turn sequence, printed not run; `docs/operations/jira-service-account.md` is the long form (issue #273, plan task t11)
 
 ## [0.47.0] - 2026-09-02
 

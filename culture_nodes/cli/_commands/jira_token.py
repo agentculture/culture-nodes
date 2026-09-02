@@ -1,20 +1,28 @@
 """``nodes jira-token`` — the runbook for the Jira SERVICE ACCOUNT token.
 
-Three verbs, none of which holds a secret for longer than one HTTP call:
+Four verbs, none of which holds a secret for longer than one call:
 
 * ``mint`` prints where a token is minted (the Atlassian admin UI — no API
-  mints a service-account token, so the CLI cannot either) and the shape of
-  the 0600 env file the other two verbs expect. Reads nothing.
-* ``verify`` reads ``JIRA_ACCOUNT_EMAIL`` / ``JIRA_API_TOKEN`` /
-  ``JIRA_API_BASE`` from the environment and calls
+  mints a service-account token, so the CLI cannot either) and how the
+  other verbs consume it. Reads nothing.
+* ``seal`` reads the token once — ``getpass`` on a TTY, one line of stdin
+  otherwise — and hands it to ``grant set <name> - --hidden`` on stdin. The
+  token never appears in an argv and is never written to a plaintext file
+  by this CLI; a *hidden* grant secret can only be consumed through
+  ``grant run --inject``.
+* ``verify`` reads ``JIRA_API_TOKEN`` from the environment (the
+  ``grant run --inject`` path, or a ``getpass`` prompt on a TTY) and calls
   ``GET <base>/rest/api/3/myself`` with the standard library. Exit ``0`` and
-  the ``accountId`` on 200; exit ``2`` with a hint otherwise.
+  the ``accountId`` on 200; exit ``2`` with a hint otherwise. Email and base
+  default to the module constants — they are not secrets.
 * ``install`` prints the ordered operator hand-turn sequence that lands a
   verified pair on thor and orin. It prints; it does not run.
 
 The token is never rendered: not in results, not in error text, not in
 ``--json`` payloads. The whole point of this module is that the token was
-lost once (issue #273) and the recovery path lived in nobody's head.
+lost once (issue #273) and the recovery path lived in nobody's head — and
+the operator's decision on the amendment: it must never sit in a plaintext
+file on spark either.
 
 Why a gateway base at all: a Jira Cloud *service-account* token authenticates
 only against ``https://api.atlassian.com/ex/jira/<cloudId>``. The site URL
@@ -27,8 +35,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import json
 import os
+import re
+import shutil
+import subprocess  # nosec B404 - argv list only, never a shell
+import sys
 import urllib.error
 import urllib.request
 from typing import NoReturn
@@ -47,47 +60,76 @@ GATEWAY_BASE = f"https://api.atlassian.com/ex/jira/{CLOUD_ID}"
 ADMIN_PATH = (
     "admin.atlassian.com -> Directory -> Service accounts -> culture-nodes -> API tokens -> Create"
 )
-ENV_FILE = "~/.config/agent/jira-service-account.env"
 MYSELF_PATH = "/rest/api/3/myself"
 
 ENV_EMAIL = "JIRA_ACCOUNT_EMAIL"
 ENV_TOKEN = "JIRA_API_TOKEN"  # nosec B105
 ENV_BASE = "JIRA_API_BASE"
 
+#: The grant secret that holds the token. grant (0.9.0 on spark) accepts
+#: only ``^[A-Z_][A-Z0-9_]{0,63}$`` as a name, so this is upper-case.
+SECRET_NAME = "JIRA_SERVICE_ACCOUNT_TOKEN"  # nosec B105 - a name, not a value
+#: grant's name rule (0.9.0 on spark, 0.11.0 on thor); a rename that breaks
+#: it fails at import, not at the operator's seal.
+GRANT_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+assert GRANT_NAME_RE.fullmatch(SECRET_NAME), SECRET_NAME  # nosec B101
+SECRET_STORE = "grant"  # nosec B105 - a store name, not a value
+GRANT_BIN = "grant"
+#: The only way a hidden grant secret reaches a process.
+INJECT_PREFIX = f"grant run --inject {ENV_TOKEN}={SECRET_NAME} --"
+GRANT_PURPOSE = (
+    f"Jira service account {SERVICE_ACCOUNT_NAME} ({SERVICE_ACCOUNT_ID}) API token;"
+    f" consumed via {INJECT_PREFIX}"
+)
+GRANT_ROTATE_HOWTO = (
+    "mint a new token at admin.atlassian.com -> Directory -> Service accounts ->"
+    " culture-nodes -> API tokens, then nodes jira-token seal, then nodes jira-token install"
+)
+_REDACTED = "<redacted>"
+
 _VERIFY_TIMEOUT_SECONDS = 15.0
 
 #: The install sequence. Each entry is (title, [executable lines], note).
 #: `install` renders exactly these, in order; the doc repeats them verbatim.
+#: No step sources a file: the token lives in grant, hidden, and reaches a
+#: lane only through `grant run --inject`.
 INSTALL_STEPS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
-        "export the pair and the gateway base in ONE shell",
-        (f"set -a; . {ENV_FILE}; set +a",),
-        "the file is 0600 and holds JIRA_ACCOUNT_EMAIL, JIRA_API_TOKEN, JIRA_API_BASE;"
-        " every later step runs from this same shell on spark",
+        "seal the token in grant (once)",
+        ("nodes jira-token seal",),
+        f"prompts without echo and stores it hidden as {SECRET_NAME}; skip when"
+        f" 'grant show {SECRET_NAME}' already succeeds; the token is never written to a"
+        " plaintext file on spark",
     ),
     (
         "verify the token against the gateway base",
-        ("nodes jira-token verify",),
-        f"must print accountId: {SERVICE_ACCOUNT_ID}; stop here on anything else",
+        (f"{INJECT_PREFIX} nodes jira-token verify",),
+        f"must print accountId: {SERVICE_ACCOUNT_ID}; stop here on anything else"
+        f" ({ENV_EMAIL} and {ENV_BASE} default to the service account and the gateway base)",
     ),
     (
         "land the pair in the runner secrets on thor and orin",
-        ("deploy/prod/install-secrets.sh",),
-        "its Jira lane rewrites ~/.culture-nodes/runner-secrets.env on both hosts with"
-        " the pair + JIRA_API_BASE; it refuses when only one of email/token is set and"
-        " leaves the file untouched when all three are unset",
+        (
+            f"export {ENV_EMAIL}={SERVICE_ACCOUNT_EMAIL} {ENV_BASE}={GATEWAY_BASE}",
+            f"{INJECT_PREFIX} deploy/prod/install-secrets.sh",
+        ),
+        "the lane reads the three from its environment: email and base are non-secret"
+        " exports, the token is injected for that one process; its Jira lane rewrites"
+        " ~/.culture-nodes/runner-secrets.env on both hosts, refuses when only one of"
+        " email/token is set, and leaves the file untouched when all three are unset",
     ),
     (
         "merge the keys into the jira bridge env and restart it (thor only)",
         (
             "ssh thor \"pgrep -af '[j]ira'\"  # pre-check: no jira bridge session in flight",
-            "deploy/prod/deploy.sh thor",
+            f"{INJECT_PREFIX} deploy/prod/deploy.sh thor",
         ),
-        "deploy_jira merges JIRA_API_BASE (with the transition keys) into"
-        " ~/.culture-nodes/jira-bridge-jira.env and restarts jira-bridge; the pair"
-        " in that file is written by no lane, so on rotation edit its"
-        " JIRA_ACCOUNT_EMAIL/JIRA_API_TOKEN lines by hand on thor first (umask 077);"
-        " never restart a bridge mid-session",
+        f"deploy_jira merges {ENV_BASE} (exported in step 3, with the transition keys)"
+        " into ~/.culture-nodes/jira-bridge-jira.env and restarts jira-bridge; the pair"
+        " in that file is written by no lane: it is a hand edit on thor (umask 077),"
+        " and the token reaches it by the operator pasting it once, or by sealing it"
+        " on thor's grant too and writing the line under grant run there; do it before"
+        " deploy.sh on a rotation; never restart a bridge mid-session",
     ),
     (
         "re-grant the bot account id to the sweep and restart the runners",
@@ -116,6 +158,11 @@ INSTALL_EPILOGUE = (
     " posts as the bot, which the sweep filters as self-echo."
 )
 
+ROTATION = (
+    "mint a new token in the admin UI, revoke the old one there, 'nodes jira-token seal'"
+    " (overwrites the sealed secret), repeat steps 2-5"
+)
+
 
 # --- mint --------------------------------------------------------------------
 
@@ -129,8 +176,10 @@ def _mint_payload() -> dict[str, object]:
         "api_base": GATEWAY_BASE,
         "mint_at": ADMIN_PATH,
         "mints_via_api": False,
-        "env_file": ENV_FILE,
-        "env_file_mode": "0600",
+        "secret_store": SECRET_STORE,
+        "secret_name": SECRET_NAME,
+        "seal": "nodes jira-token seal",
+        "inject": f"{INJECT_PREFIX} <cmd>",
         "env_keys": [ENV_EMAIL, ENV_TOKEN, ENV_BASE],
         "doc": DOC_PATH,
     }
@@ -146,12 +195,12 @@ def _mint_text() -> str:
             f"api base: {GATEWAY_BASE}",
             f"  (the site URL {SITE_URL} answers 401 for a service-account token;"
             " only the gateway base answers 200)",
-            f"env file ({ENV_FILE}, chmod 600):",
-            f"  {ENV_EMAIL}={SERVICE_ACCOUNT_EMAIL}",
-            f"  {ENV_TOKEN}=<paste from the admin UI>",
-            f"  {ENV_BASE}={GATEWAY_BASE}",
-            "next: source it in one shell, then 'nodes jira-token verify' and"
-            " 'nodes jira-token install'",
+            f"seal it: nodes jira-token seal  (stores it hidden in {SECRET_STORE} as"
+            f" {SECRET_NAME}; no plaintext file on spark)",
+            f"consume it: {INJECT_PREFIX} <cmd>",
+            f"  ({ENV_EMAIL} and {ENV_BASE} are not secrets and default to the values above)",
+            f"next: 'nodes jira-token seal', then '{INJECT_PREFIX} nodes jira-token verify',"
+            " then 'nodes jira-token install'",
             f"doc: {DOC_PATH}",
         ]
     )
@@ -163,23 +212,116 @@ def cmd_mint(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- seal --------------------------------------------------------------------
+
+
+def _prompt_token(prompt: str) -> str:
+    """Read the token without echo on a TTY, or one line of stdin otherwise."""
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt).strip()
+    return sys.stdin.readline().rstrip("\r\n").strip()
+
+
+def _scrub(text: str, token: str) -> str:
+    return text.replace(token, _REDACTED) if token else text
+
+
+def _seal(token: str) -> None:
+    """``grant set SECRET_NAME - --hidden ...`` with the token on stdin only."""
+    grant = shutil.which(GRANT_BIN)
+    if grant is None:
+        raise CliError(
+            code=EXIT_ENV_ERROR,
+            message=f"{GRANT_BIN} (the secrets manager) is not on PATH",
+            remediation=(
+                f"uv tool install {GRANT_BIN} (or add the operator's install path, e.g."
+                " ~/.local/bin, to PATH), then rerun 'nodes jira-token seal'"
+            ),
+        )
+    argv = [
+        grant,
+        "set",
+        SECRET_NAME,
+        "-",
+        "--hidden",
+        "--purpose",
+        GRANT_PURPOSE,
+        "--rotate-howto",
+        GRANT_ROTATE_HOWTO,
+    ]
+    try:
+        completed = subprocess.run(  # nosec B603 - literal argv, shell=False
+            argv,
+            input=token,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as err:
+        raise CliError(
+            code=EXIT_ENV_ERROR,
+            message=f"could not run {GRANT_BIN}: {_scrub(str(err), token)}",
+            remediation=f"check that {grant} is executable, then rerun 'nodes jira-token seal'",
+        ) from None
+    if completed.returncode != 0:
+        stderr = _scrub(completed.stderr.strip(), token) or "(no stderr)"
+        raise CliError(
+            code=EXIT_ENV_ERROR,
+            message=f"{GRANT_BIN} set exited {completed.returncode}: {stderr!r}",
+            remediation=f"run '{GRANT_BIN} doctor' and '{GRANT_BIN} explain set', then rerun",
+        )
+
+
+def cmd_seal(args: argparse.Namespace) -> int:
+    json_mode = bool(getattr(args, "json", False))
+    token = _prompt_token("Jira service-account token (no echo): ")
+    if not token:
+        raise CliError(
+            code=EXIT_USER_ERROR,
+            message="empty token; nothing sealed",
+            remediation=(
+                "paste the token minted in the admin UI at the prompt, or pipe it:"
+                ' printf %s "$TOKEN" | nodes jira-token seal'
+            ),
+        )
+    _seal(token)
+    next_command = f"{INJECT_PREFIX} nodes jira-token verify"
+    if json_mode:
+        emit_result(
+            {
+                "sealed": SECRET_NAME,
+                "hidden": True,
+                "secret_store": SECRET_STORE,
+                "next": next_command,
+            },
+            json_mode=True,
+        )
+    else:
+        emit_result(f"sealed: {SECRET_NAME} (hidden)\nnext: {next_command}", json_mode=False)
+    return 0
+
+
 # --- verify ------------------------------------------------------------------
 
 
 def _read_env() -> tuple[str, str, str]:
-    """Read the three variables; name the MISSING ones, never a value."""
-    values = {name: os.environ.get(name, "") for name in (ENV_EMAIL, ENV_TOKEN, ENV_BASE)}
-    missing = [name for name, value in values.items() if not value]
-    if missing:
+    """Email and base default to the constants; the token is the only secret."""
+    email = os.environ.get(ENV_EMAIL, "") or SERVICE_ACCOUNT_EMAIL
+    base = (os.environ.get(ENV_BASE, "") or GATEWAY_BASE).rstrip("/")
+    token = os.environ.get(ENV_TOKEN, "")
+    if not token and sys.stdin.isatty():
+        token = getpass.getpass("Jira service-account token (no echo): ").strip()
+    if not token:
         raise CliError(
             code=EXIT_ENV_ERROR,
-            message=f"missing environment variable(s): {', '.join(missing)}",
+            message=f"{ENV_TOKEN} is not set",
             remediation=(
-                f"set -a; . {ENV_FILE}; set +a  (or export {ENV_EMAIL}, {ENV_TOKEN} and"
-                f" {ENV_BASE}); 'nodes jira-token mint' prints the file shape"
+                f"{INJECT_PREFIX} nodes jira-token verify  (seal it first with"
+                " 'nodes jira-token seal' if 'grant show"
+                f" {SECRET_NAME}' fails)"
             ),
         )
-    return values[ENV_EMAIL], values[ENV_TOKEN], values[ENV_BASE].rstrip("/")
+    return email, token, base
 
 
 def _check_base(base: str) -> None:
@@ -240,6 +382,7 @@ def _raise_http(status: int, base: str) -> NoReturn:
                 f"a service-account token is refused (401) at the site URL {SITE_URL};"
                 f" {ENV_BASE} must be the gateway base {GATEWAY_BASE}. If it already is,"
                 " the token was revoked or mistyped: re-mint it ('nodes jira-token mint')"
+                " and re-seal it ('nodes jira-token seal')"
             ),
         ) from None
     raise CliError(
@@ -275,7 +418,9 @@ def _install_payload() -> dict[str, object]:
             for index, (title, commands, note) in enumerate(INSTALL_STEPS, start=1)
         ],
         "then": INSTALL_EPILOGUE,
-        "rotation": "mint a new token in the admin UI, revoke the old one there, repeat steps 1-5",
+        "rotation": ROTATION,
+        "secret_store": SECRET_STORE,
+        "secret_name": SECRET_NAME,
         "doc": DOC_PATH,
     }
 
@@ -291,7 +436,7 @@ def _install_text() -> str:
         lines.append(f"   # {note}")
     lines.append("")
     lines.append(INSTALL_EPILOGUE)
-    lines.append("rotation: mint a new token in the admin UI, revoke the old one there, repeat 1-5")
+    lines.append(f"rotation: {ROTATION}")
     lines.append(f"doc: {DOC_PATH}")
     return "\n".join(lines)
 
@@ -307,7 +452,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 
 def _bare_noun(args: argparse.Namespace) -> int:
     emit_result(
-        "usage: nodes jira-token {mint,verify,install} ...\n"
+        "usage: nodes jira-token {mint,seal,verify,install} ...\n"
         "run 'nodes explain jira-token' for details",
         json_mode=False,
     )
@@ -317,20 +462,34 @@ def _bare_noun(args: argparse.Namespace) -> int:
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "jira-token",
-        help="Runbook for the Jira service-account token: mint, verify, install.",
+        help="Runbook for the Jira service-account token: mint, seal, verify, install.",
     )
     p.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     p.set_defaults(func=_bare_noun, json=False)
     noun_sub = p.add_subparsers(dest="jira_token_command", parser_class=type(p))
 
     mint = noun_sub.add_parser(
-        "mint", help="Print where the token is minted and the env file shape."
+        "mint", help="Print where the token is minted and how it is sealed and consumed."
     )
     mint.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     mint.set_defaults(func=cmd_mint)
 
+    seal = noun_sub.add_parser(
+        "seal",
+        help=(
+            f"Read the token (no echo, or one line of stdin) and store it hidden in grant"
+            f" as {SECRET_NAME}."
+        ),
+    )
+    seal.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    seal.set_defaults(func=cmd_seal)
+
     verify = noun_sub.add_parser(
-        "verify", help="GET /rest/api/3/myself at JIRA_API_BASE with the pair from the environment."
+        "verify",
+        help=(
+            "GET /rest/api/3/myself at the gateway base with JIRA_API_TOKEN from the"
+            " environment (grant run --inject)."
+        ),
     )
     verify.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     verify.set_defaults(func=cmd_verify)

@@ -533,11 +533,14 @@ _JIRA_SERVICE_ACCOUNT = """\
 The runbook for the Jira SERVICE ACCOUNT token (`culture-nodes`,
 accountId `712020:5e0ae915-ba1a-43ef-bce0-c0d5ff9bb615`), kept as a verb so
 the recovery path no longer lives in one operator's head (issue #273). The
-long form is `docs/operations/jira-service-account.md`.
+long form is `docs/operations/jira-service-account.md`. The token is never
+written to a plaintext file on spark: it lives hidden in `grant`, the
+per-user secrets manager, as `JIRA_SERVICE_ACCOUNT_TOKEN`.
 
 ## Usage
 
     culture-nodes jira-token mint
+    culture-nodes jira-token seal
     culture-nodes jira-token verify
     culture-nodes jira-token install
 
@@ -546,19 +549,34 @@ long form is `docs/operations/jira-service-account.md`.
 A service-account token is minted ONLY in the Atlassian admin UI
 (admin.atlassian.com -> Directory -> Service accounts -> culture-nodes ->
 API tokens -> Create). No API mints one, so this CLI cannot either: `mint`
-prints that path, the gateway base, the accountId to expect, and the shape
-of the 0600 env file (`~/.config/agent/jira-service-account.env`). It reads
-nothing.
+prints that path, the gateway base, the accountId to expect, and how the
+token is sealed (`seal`) and consumed
+(`grant run --inject JIRA_API_TOKEN=JIRA_SERVICE_ACCOUNT_TOKEN -- <cmd>`).
+It reads nothing.
+
+## seal — store the token hidden in grant
+
+Reads the token once — `getpass` without echo on a TTY, one line of stdin
+otherwise (`printf %s "$TOKEN" | culture-nodes jira-token seal`) — and
+runs `grant set JIRA_SERVICE_ACCOUNT_TOKEN - --hidden` with the token on
+stdin, never in an argv. A hidden grant secret can only be consumed through
+`grant run --inject`; `grant get`/`grant env` refuse it and `grant show`
+prints metadata only. An empty token is exit `1`; `grant` missing from
+PATH, or a non-zero `grant set`, is exit `2` (grant's stderr is quoted
+with the token scrubbed). Re-sealing overwrites, which is how rotation
+works.
 
 ## verify — the one call that proves the pair
 
-Reads `JIRA_ACCOUNT_EMAIL`, `JIRA_API_TOKEN` and `JIRA_API_BASE` from the
-environment and calls `GET $JIRA_API_BASE/rest/api/3/myself` with Basic
-auth. On 200 it prints `accountId: <id>` (`--json`: `account_id`, `email`,
-`api_base`) and exits `0`. A missing variable, a 401/403, or a network
-failure is a structured `error:`/`hint:` failure with exit `2`; a
-non-https base is exit `1`. The token value is never printed, not even in
-an error.
+Reads `JIRA_API_TOKEN` from the environment — the `grant run --inject`
+path — and calls `GET $JIRA_API_BASE/rest/api/3/myself` with Basic auth.
+`JIRA_ACCOUNT_EMAIL` and `JIRA_API_BASE` are not secrets and default to
+the service account and the gateway base. Without a token: a TTY is
+prompted with `getpass`; a non-TTY is exit `2` with the `grant run` hint.
+On 200 it prints `accountId: <id>` (`--json`: `account_id`, `email`,
+`api_base`) and exits `0`. A 401/403 or a network failure is a structured
+`error:`/`hint:` failure with exit `2`; a non-https base is exit `1`. The
+token value is never printed, not even in an error.
 
 The trap the hint names: a service-account token authenticates only at the
 API gateway base `https://api.atlassian.com/ex/jira/<cloudId>`. The site
@@ -567,13 +585,15 @@ URL `https://agentculture.atlassian.net` answers 401 for it.
 ## install — the hand-turn sequence, printed not run
 
 Prints the ordered operator steps that land a verified pair on thor and
-orin: source the env file in one shell, `verify`, `install-secrets.sh`
-(runner-secrets.env on both hosts), the `pgrep` pre-check and
-`deploy.sh thor` (`deploy_jira` merges the base into the bridge env and
-restarts jira-bridge), then the `runner-env-write.sh` re-grant with
+orin, none of which sources a file: `seal` (once), `verify` under
+`grant run --inject`, `install-secrets.sh` under the same wrapper with the
+non-secret email and base exported (runner-secrets.env on both hosts), the
+`pgrep` pre-check and `deploy.sh thor` (`deploy_jira` merges the base into
+the bridge env and restarts jira-bridge; the pair in that file is a hand
+edit on thor), then the `runner-env-write.sh` re-grant with
 `jira_bot_account_id` on every repository entry and a runner restart on
-each host. Rotation is the same sequence after minting a new token and
-revoking the old one in the admin UI.
+each host. Rotation is: mint a new token, revoke the old one in the admin
+UI, `seal` again (it overwrites), repeat steps 2-5.
 """
 
 
@@ -626,6 +646,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("dispatch", "confirm"): _DISPATCH,
     ("jira-token",): _JIRA_SERVICE_ACCOUNT,
     ("jira-token", "mint"): _JIRA_SERVICE_ACCOUNT,
+    ("jira-token", "seal"): _JIRA_SERVICE_ACCOUNT,
     ("jira-token", "verify"): _JIRA_SERVICE_ACCOUNT,
     ("jira-token", "install"): _JIRA_SERVICE_ACCOUNT,
 }

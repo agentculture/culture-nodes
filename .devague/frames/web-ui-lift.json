@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-03T15:17:16Z",
-  "updated": "2026-09-03T15:44:31Z",
+  "updated": "2026-09-03T15:50:37Z",
   "claims": [
     {
       "id": "c1",
@@ -59,14 +59,20 @@
     {
       "id": "c3",
       "kind": "assumption",
-      "text": "The mesh is a star by construction, not by data: web/src/domain/mesh.ts assembleMeshGraph emits only actor\u2192control-plane and run\u2192actor edges and layoutMesh puts actors on a ring around the center, so the picture carries no relationship between actors. The records already hold more: Actor rows carry kind, protocol, endpoint_ref (host), capabilities and metadata (web/src/api/types.ts), node-run rows carry run_id, node_id and actor_id, and published workflow IRs name which actor each node  \u2014 enough to draw actor\u2194host, actor\u2194workflow-node, run\u2194workflow and capability groupings instead of spokes.",
+      "text": "The mesh is a star by construction, not by data: web/src/domain/mesh.ts assembleMeshGraph emits only actor\u2192control-plane and run\u2192actor edges and layoutMesh puts actors on a ring around the center, so the picture carries no relationship between actors. The records already hold more: Actor rows carry kind, protocol, capabilities and metadata (web/src/api/types.ts) \u2014 the capabilities document holding the host block each bridge measured about itself, hostname included \u2014 node-run rows carry run_id, node_id and actor_id, and published workflow IRs name which actor each node \u2014 enough to draw actor\u2194machine from that reported hostname, actor\u2194workflow-node, run\u2194workflow and capability groupings instead of spokes. The endpoint_ref column those rows also carry is NOT that host fact: it is nullable caller-supplied address text, one stale copy per superseded revision, dropped by migrations/pending/0036 after the dial-in cutover and absent entirely on a dial-in bridge.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The mesh is a star by construction, not by data: web/src/domain/mesh.ts assembleMeshGraph emits only actor\u2192control-plane and run\u2192actor edges and layoutMesh puts actors on a ring around the center, so the picture carries no relationship between actors. The records already hold more: Actor rows carry kind, protocol, endpoint_ref (host), capabilities and metadata (web/src/api/types.ts), node-run rows carry run_id, node_id and actor_id, and published workflow IRs name which actor each node  \u2014 enough to draw actor\u2194host, actor\u2194workflow-node, run\u2194workflow and capability groupings instead of spokes.",
+          "kind": "assumption",
+          "reason": "Same PR #284 finding as c23: this assumption is what grounded the endpoint_ref\u2192machine edge, so correcting c23 alone would leave the spec still asserting that endpoint_ref gives host attribution. endpoint_ref is a nullable, caller-supplied, per-revision address that migrations/pending/0036 drops and that a dial-in bridge never has; the host fact the records actually hold is the bridge's own capabilities.preflight.host block."
+        }
+      ]
     },
     {
       "id": "c4",
@@ -362,7 +368,7 @@
     {
       "id": "c23",
       "kind": "requirement",
-      "text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine (endpoint_ref host), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay.",
+      "text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine keyed on the hostname each bridge reports for ITSELF under capabilities.preflight.host.hostname (preflight.Surface's host block, which checkHost already refuses empty, and which the package doc pins as a fact only the party that can measure it may supply), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay. No machine is derived from endpoint_ref: that column is nullable caller-supplied address text on an immutable actor revision, it goes stale on every superseded revision, migrations/pending/0036 drops it after the dial-in cutover, and a dial-in bridge has no address to read \u2014 so an actor whose surface reports no hostname is drawn as an unattributed actor rather than joined to a machine invented from an address.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -371,12 +377,24 @@
           "text": "Every node and edge traces to a row (actor, run, node-run, workflow version, probe/heartbeat record) named in the node's inspect panel; a failed or missing probe renders 'unknown' with the probe's own error text, never green or blank; particles remain one-to-one with committed events; no secret value ever reaches the API or the page \u2014 actor-key names only.",
           "status": "confirmed",
           "instruction": ""
+        },
+        {
+          "id": "h26",
+          "text": "Machine identity is self-reported, never inferred from an address: a mesh test asserts the payload is byte-identical when every actor's endpoint_ref is NULL, two actors share one machine node only when they reported the same hostname, and an actor whose capability surface carries no hostname comes back with machine null and renders as an unattributed actor \u2014 never merged into another machine and never given an invented one.",
+          "status": "confirmed",
+          "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Server: add GET /v1alpha1/mesh returning actors (deduped), machines derived from endpoint_ref hosts, the control plane's /version, each bridge's cached deployment block (collected by the control plane on a timer with the actor token it already holds), and worker heartbeats carrying configured actor-key names. Web: domain/mesh.ts assembles typed nodes/edges from that payload; ELK layered or force layout on the terminal ground; keep the #agent-state mesh block and add machine_count / probe_failures.",
-      "revisions": []
+      "instruction": "Server: add GET /v1alpha1/mesh returning actors (deduped), machines keyed by the hostname each bridge reports for itself under capabilities.preflight.host.hostname, the control plane's /version, each bridge's cached deployment block (collected by the control plane on a timer with the actor token it already holds, refreshing that reported hostname alongside the revision), and worker heartbeats carrying configured actor-key names. The mesh query does not read actors.endpoint_ref at all, so migrations/pending/0036 dropping that column changes nothing here; an actor with no reported hostname is returned with machine null. Web: domain/mesh.ts assembles typed nodes/edges from that payload, drawing a machine-less actor as unattributed; ELK layered or force layout on the terminal ground; keep the #agent-state mesh block and add machine_count / probe_failures / unattributed_actors.",
+      "revisions": [
+        {
+          "text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine (endpoint_ref host), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay.",
+          "kind": "requirement",
+          "reason": "PR #284 review (qodo, High/Correctness, 'Endpoint invents machine identity'): endpoint_ref is not a machine identity. It is nullable caller-supplied text on an immutable actor revision (migrations/0001_namespaces_and_identity.sql), every superseded revision keeps its stale copy, migrations/pending/0036_retire_stored_participant_addresses.sql drops the column once the dial-in cutover completes, and a dial-in bridge has no address at all \u2014 so deriving machines from it would merge unrelated hosts, retain dead ones, and leave dial-in actors with no attribution, against h3's 'every node and edge traces to a row'. The machine's own self-report is used instead."
+        }
+      ]
     },
     {
       "id": "c24",

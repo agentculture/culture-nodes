@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.20] - 2026-09-03
+
+### Fixed
+
+- The web-ui-lift spec no longer derives machine identity from `actors.endpoint_ref`. c23 drew the mesh's actor→machine edge from "endpoint_ref host", and c3 asserted the actor rows already hold enough to draw actor↔host — but that column is not a machine key. It is nullable caller-supplied text (`migrations/0001_namespaces_and_identity.sql`), actor identity is append-only so every superseded revision keeps its own stale copy (`internal/store/postgres/actorregister.go` INSERTs revision max+1, never UPDATEs), `migrations/pending/0036_retire_stored_participant_addresses.sql` drops it once the dial-in cutover completes, and a dial-in bridge has no stored address at all (`internal/actors/dialin_presence.go`; `inbound_actor_presence` keeps no peer address by design). Deriving machines from it would merge unrelated hosts behind one address, keep dead ones alive, and leave dial-in actors unattributed — breaking h3's "every node and edge traces to a row". Both claims now key the machine on the hostname each bridge reports for ITSELF under `capabilities.preflight.host.hostname` — `preflight.Surface`'s host block, which `checkHost` refuses empty and whose package doc pins as a fact only the party that can measure it may supply — refreshed by the same timed deployment probe c23 already specified. New honesty condition h26 pins it to tests: the mesh payload is byte-identical with every `endpoint_ref` NULL, two actors share a machine node only when they reported the same hostname, and an actor with no reported hostname comes back with `machine` null and renders unattributed rather than being given an invented machine (PR #284, Qodo Correctness/High "Endpoint invents machine identity")
+
 ## [0.47.19] - 2026-09-03
 
 ### Fixed

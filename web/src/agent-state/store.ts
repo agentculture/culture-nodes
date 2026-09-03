@@ -154,6 +154,34 @@ export interface AgentActiveGraphsState {
   reduced_motion: boolean;
 }
 
+/**
+ * The Design gallery's machine-readable mirror (task t8, c24/c31/c36): the
+ * graph on screen is a canvas, and a canvas claims things webglass cannot
+ * read. So every fact the gallery's pixels assert is stated here too — which
+ * version is selected, how big its graph is, and how many bytes of stored
+ * source the source pane can show. `run_count` is deliberately included:
+ * claim c31 is that a graph is drawn for a workflow with ZERO runs, and a
+ * reader can only check that if the count is visible next to the node count.
+ * Optional and absent from every other view's state (undefined keys are
+ * dropped by `JSON.stringify` — the mesh/authoring/statistics convention).
+ */
+export interface AgentDesignState {
+  /** Published workflow_keys in the gallery index. */
+  workflow_count: number;
+  /** The selected workflow, or null when nothing is published. */
+  workflow_key: string | null;
+  version: number | null;
+  digest: string | null;
+  /** Nodes and edges actually drawn for the selected version. */
+  node_count: number;
+  edge_count: number;
+  /** Length of the stored source this version can show verbatim. */
+  source_bytes: number;
+  source_open: boolean;
+  /** Recent runs of the selected workflow — 0 is a fact, not a failure. */
+  run_count: number;
+}
+
 export interface AgentState {
   status: AgentStatus;
   route: string;
@@ -162,6 +190,7 @@ export interface AgentState {
   statistics?: AgentStatisticsState | null;
   mesh?: AgentMeshState | null;
   active_graphs?: AgentActiveGraphsState | null;
+  design?: AgentDesignState | null;
 }
 
 const INITIAL: AgentState = { status: "loading", route: "/", run: null };
@@ -291,6 +320,25 @@ function shallowEqualActiveGraphs(
   );
 }
 
+function shallowEqualDesign(
+  a: AgentDesignState | null | undefined,
+  b: AgentDesignState | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.workflow_count === b.workflow_count &&
+    a.workflow_key === b.workflow_key &&
+    a.version === b.version &&
+    a.digest === b.digest &&
+    a.node_count === b.node_count &&
+    a.edge_count === b.edge_count &&
+    a.source_bytes === b.source_bytes &&
+    a.source_open === b.source_open &&
+    a.run_count === b.run_count
+  );
+}
+
 /**
  * Merge a patch into the agent state. No-ops when nothing actually changed,
  * so a re-render storm cannot make the `<script>` node churn.
@@ -304,7 +352,8 @@ export function setAgentState(patch: Partial<AgentState>): void {
     shallowEqualAuthoring(next.authoring, current.authoring) &&
     shallowEqualStatistics(next.statistics, current.statistics) &&
     shallowEqualMesh(next.mesh, current.mesh) &&
-    shallowEqualActiveGraphs(next.active_graphs, current.active_graphs)
+    shallowEqualActiveGraphs(next.active_graphs, current.active_graphs) &&
+    shallowEqualDesign(next.design, current.design)
   ) {
     return;
   }

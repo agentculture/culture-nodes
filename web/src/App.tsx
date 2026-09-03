@@ -12,13 +12,13 @@ import IdentityGate from "./components/IdentityGate";
 import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
+import Design from "./routes/Design";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
 import Home from "./routes/Home";
 import Inbox from "./routes/Inbox";
 import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
 import Mesh from "./routes/Mesh";
-import NodeGraphs from "./routes/NodeGraphs";
 import PlanView from "./routes/PlanView";
 import RunView from "./routes/RunView";
 import RunsBoard from "./routes/RunsBoard";
@@ -42,6 +42,7 @@ const ROUTE_TITLES: ReadonlyArray<readonly [string, string]> = [
   ["/mesh", "Mesh"],
   ["/stats", "Statistics"],
   ["/graphs", "Node Graphs"],
+  ["/design", "Design"],
   ["/plan", "Plan"],
   ["/workflows/new", "New workflow"],
   ["/workflows/generate", "Generate workflow"],
@@ -135,15 +136,17 @@ export function App() {
           <Route path="/decisions" element={<Decisions />} />
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
-          <Route path="/graphs" element={<NodeGraphs />} />
+          <Route path="/design" element={<Design />} />
+          {/* The retired view's URL (task t8). /graphs named a view that
+              drew cards, not graphs; /workflows named the tab that became
+              its sub-tab. Both land on Design, so old links and bookmarks
+              reach the view that renders what they were looking for. */}
+          <Route path="/graphs" element={<Navigate to="/design" replace />} />
           <Route path="/plan" element={<PlanView />} />
           <Route path="/plan/:slug" element={<PlanView />} />
-          {/* The old Workflows tab's URL — old links/bookmarks survive by
-              landing on the sub-tab that renders the same content the
-              route used to (task t28, issue #56). */}
           <Route
             path="/workflows"
-            element={<Navigate to="/graphs?tab=graphs" replace />}
+            element={<Navigate to="/design" replace />}
           />
           <Route path="/workflows/new" element={<AuthorWorkflow />} />
           <Route path="/workflows/generate" element={<GenerateWorkflow />} />

@@ -1,4 +1,6 @@
 import type { Run, WorkflowVersion } from "../api/types";
+import { parseWorkflowGraph, type WorkflowGraph } from "./graph";
+import { parseWorkflowSourceForPreview } from "./workflow-source";
 
 /**
  * One published workflow, as the Workflows view (task t8) renders it: every
@@ -93,4 +95,110 @@ export function withRunsByWorkflowKey(
     ...group,
     recentRuns: (runsByKey.get(group.workflowKey) ?? []).slice(0, limit),
   }));
+}
+
+/**
+ * The stored document, exactly as it was published (task t8, claim c36).
+ *
+ * `WorkflowVersion` carries BOTH halves of a published version: the
+ * compiler's `normalized_ir` and the operator's own `source` bytes with the
+ * `source_format` they were submitted in (api/openapi/openapi.yaml's
+ * WorkflowVersion; the list endpoint selects the `source` column too, see
+ * internal/api/queries.go's `workflowVersionColumns`). This accessor exists
+ * to make it impossible to reach for the wrong one by accident: the Design
+ * view's source pane shows THESE bytes, never a re-serialization of the IR.
+ *
+ * A round trip through the IR would lose every comment, every blank line and
+ * the author's key order — which is exactly the difference h28 asks a test to
+ * prove, so the readout has to come from here.
+ */
+export function storedSource(version: WorkflowVersion): {
+  source: string;
+  format: "yaml" | "json";
+} {
+  return { source: version.source, format: version.source_format };
+}
+
+/**
+ * The graph the Design gallery draws: the published, normalized IR parsed by
+ * the one parser every canvas in this app uses (`domain/graph.ts`). No run is
+ * involved anywhere in this path — that is claim c31: a workflow published
+ * and never run still has a graph, because the graph is a property of the
+ * published version, not of any execution of it.
+ */
+export function graphFromPublishedIR(version: WorkflowVersion): WorkflowGraph {
+  return parseWorkflowGraph(version.normalized_ir);
+}
+
+/**
+ * The same version's graph, derived from its STORED SOURCE instead — the
+ * path an editor takes when it opens a published version (c36).
+ *
+ * `null` when the bytes do not parse into a workflow shape at all. A source
+ * the server accepted always will; a UI still may not throw on a document it
+ * did not itself validate (see `parseWorkflowSourceForPreview`).
+ */
+export function graphFromStoredSource(
+  version: WorkflowVersion,
+): WorkflowGraph | null {
+  const { source, format } = storedSource(version);
+  const ir = parseWorkflowSourceForPreview(source, format);
+  return ir ? parseWorkflowGraph(ir) : null;
+}
+
+/**
+ * A graph's identity as two sorted sets — `id:kind` per node, and each edge's
+ * `source.outcome->target` key.
+ *
+ * This is what h28's "identical node and edge sets" means operationally.
+ * Sorted and stringified deliberately: the two parses reach their nodes in
+ * different orders (an IR's key order is the compiler's, a document's is the
+ * author's), and a comparison that cared about order would fail on a
+ * difference nobody can see on screen. Layout, depth and the raw node object
+ * are all left out for the same reason — they are how the graph is drawn,
+ * not what it is.
+ */
+export function graphTopology(graph: WorkflowGraph): {
+  nodes: string[];
+  edges: string[];
+} {
+  return {
+    nodes: graph.nodes.map((node) => `${node.id}:${node.kind}`).sort(),
+    edges: graph.edges.map((edge) => edge.id).sort(),
+  };
+}
+
+/** One gallery selection: which workflow, and which of its versions. */
+export interface GallerySelection {
+  group: WorkflowGroup;
+  version: WorkflowVersion;
+}
+
+/**
+ * Resolve the `?workflow=`/`?version=` pair the Design gallery keeps in the
+ * URL against what is actually published (task t8).
+ *
+ * Selection lives in the URL rather than in component state for the reason
+ * every other view here does it (`useTimeRange`, the sub-tab param): a graph
+ * an agent or a colleague cannot link to is a graph they have to be talked
+ * through. That means the params are *reader-supplied* and may name anything
+ * at all, so both halves fall back rather than render nothing: an unknown
+ * key lands on the first published workflow, an unknown version on that
+ * workflow's newest one. `null` only when nothing is published — the one
+ * case where an empty gallery is the honest answer (h14).
+ */
+export function selectGalleryVersion(
+  groups: WorkflowGroup[],
+  workflowKey: string | null,
+  version: number | null,
+): GallerySelection | null {
+  if (groups.length === 0) return null;
+  const group =
+    groups.find((candidate) => candidate.workflowKey === workflowKey) ??
+    groups[0];
+  const selected =
+    group.versions.find((candidate) => candidate.version === version) ??
+    group.versions[0];
+  if (!selected) return null;
+  return { group, version: selected };
 }

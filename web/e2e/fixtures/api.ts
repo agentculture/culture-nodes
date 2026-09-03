@@ -18,6 +18,7 @@ import {
   JOB_RUNS_PAGE_2,
 } from "../../src/fixtures/node-runs-fixture";
 import {
+  NODE_CATALOG_WORKFLOW_VERSIONS,
   WORKFLOW_VERSIONS,
   WORKFLOWS_RUNS,
   workflowsRunsFor,
@@ -65,6 +66,14 @@ export { RUN_ID, WORKFLOW_DIGEST };
 export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_NAMED_RUNS, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
+export {
+  DELIVER_CHANGE_V1_SOURCE,
+  DELIVER_CHANGE_V2_DIGEST,
+  DESIGN_GRAPH_SIZES,
+  HELLO_WORLD_DIGEST,
+  NODE_CATALOG_WORKFLOW_VERSIONS,
+  ORPHAN_DIGEST,
+} from "../../src/fixtures/workflows-fixture";
 export {
   ACTIVE_EVENTS_TOTAL,
   ACTIVE_LAST_EVENT_ID,
@@ -438,25 +447,34 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
 }
 
 /**
- * Serve the Node Graphs tab's "Node Graphs" sub-tab (task t8, re-homed under
- * task t28's tab shell): `GET /v1alpha1/workflows` returns WORKFLOW_VERSIONS
- * (two workflow_keys, three versions total) and `GET /v1alpha1/runs`
- * answers WORKFLOWS_RUNS, honoring the `workflow_key` filter exactly as the
- * server does (join to the run's workflow version, internal/api/
- * queries.go) — the workflow-cards panel asks once per published key
- * (task t8), the Active Graphs sub-tab asks unfiltered. Every fixture run's
- * own `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal RunView)
- * too, so following a card's recent-run link doesn't 404.
+ * Serve the Design view (task t8): `GET /v1alpha1/workflows` returns
+ * NODE_CATALOG_WORKFLOW_VERSIONS (three workflow_keys, four versions total)
+ * and `GET /v1alpha1/runs` answers WORKFLOWS_RUNS, honoring the
+ * `workflow_key` filter exactly as the server does (join to the run's
+ * workflow version, internal/api/queries.go) — the gallery asks once per
+ * published key, the Active graphs sub-view asks unfiltered. Every fixture
+ * run's own `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal
+ * RunView) too, so following a recent-run link doesn't 404.
  *
- * The Nodes sub-tab (task t29's catalog, rendered by t31) derives from the
- * same workflows listing. The Active Graphs sub-tab (task t31) additionally
- * reads `GET /v1alpha1/node-runs` (ACTIVE_NODE_RUNS: one running row on the
- * one non-terminal run) and the cross-run SSE stream `GET /v1alpha1/events`
+ * `runs: "none"` serves a namespace with ZERO runs while keeping every
+ * published workflow — the fixture claim c31/h21 asks for, since the whole
+ * point of the gallery is that a graph does not depend on a run. It is a
+ * separate answer rather than a separate fixture file because the workflows
+ * half must be identical for the comparison to mean anything.
+ *
+ * The Nodes sub-view (task t29's catalog) derives from the same workflows
+ * listing. The Active graphs sub-view (task t31) additionally reads
+ * `GET /v1alpha1/node-runs` (ACTIVE_NODE_RUNS: one running row on the one
+ * non-terminal run) and the cross-run SSE stream `GET /v1alpha1/events`
  * (ACTIVE_EVENTS: one committed event on the known run — a visible pulse —
  * and one naming a run the view never loaded, which must be a no-op, h14).
  * The events route honours both resume spellings exactly like mockMeshApi.
  */
-export async function mockNodeGraphsApi(page: Page): Promise<void> {
+export async function mockDesignApi(
+  page: Page,
+  options: { runs?: "all" | "none" } = {},
+): Promise<void> {
+  const noRuns = options.runs === "none";
   const runViewById = new Map<string, RunView>(
     WORKFLOWS_RUNS.map((run) => [run.id, { run, tokens: [], node_runs: [] }]),
   );
@@ -471,22 +489,24 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
     }
 
     if (path === "/v1alpha1/workflows") {
-      await route.fulfill(json({ items: WORKFLOW_VERSIONS }));
+      await route.fulfill(json({ items: NODE_CATALOG_WORKFLOW_VERSIONS }));
       return;
     }
     if (path === "/v1alpha1/runs") {
       const workflowKey = url.searchParams.get("workflow_key");
       await route.fulfill(
         json({
-          items: workflowKey
-            ? workflowsRunsFor(workflowKey)
-            : WORKFLOWS_RUNS,
+          items: noRuns
+            ? []
+            : workflowKey
+              ? workflowsRunsFor(workflowKey)
+              : WORKFLOWS_RUNS,
         }),
       );
       return;
     }
     if (path === "/v1alpha1/node-runs") {
-      await route.fulfill(json({ items: ACTIVE_NODE_RUNS }));
+      await route.fulfill(json({ items: noRuns ? [] : ACTIVE_NODE_RUNS }));
       return;
     }
     if (path === "/v1alpha1/events") {
@@ -526,7 +546,9 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
       return;
     }
     const digest = path.replace("/v1alpha1/workflows/", "");
-    const version = WORKFLOW_VERSIONS.find((v) => v.digest === digest);
+    const version = NODE_CATALOG_WORKFLOW_VERSIONS.find(
+      (v) => v.digest === digest,
+    );
     if (version && path === `/v1alpha1/workflows/${digest}`) {
       await route.fulfill(json(version));
       return;
@@ -829,6 +851,17 @@ export async function readAgentState(page: Page): Promise<{
     events_total: number;
     pulses_total: number;
     reduced_motion: boolean;
+  } | null;
+  design?: {
+    workflow_count: number;
+    workflow_key: string | null;
+    version: number | null;
+    digest: string | null;
+    node_count: number;
+    edge_count: number;
+    source_bytes: number;
+    source_open: boolean;
+    run_count: number;
   } | null;
 }> {
   const text = await page.locator("#agent-state").textContent();

@@ -23,6 +23,7 @@ services:
         REVISION: ${NODES_BUILD_REVISION:-}
     command: ["worker"]
     environment:
+      NODES_HOSTNAME: ${NODES_HOSTNAME:-orin}
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the external PostgreSQL URL in prod.env}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:?deploy.sh writes this after thor's first boot}
       NODES_WORKER_ID: orin-worker-1

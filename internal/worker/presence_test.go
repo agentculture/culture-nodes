@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,20 @@ import (
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/worker"
 )
+
+func TestPresenceHostnamePrefersNodesHostnameAndFlagsContainerID(t *testing.T) {
+	t.Setenv(worker.HostnameEnv, "thor")
+	hostname, err := worker.PresenceHostname()
+	if err != nil || hostname != "thor" {
+		t.Fatalf("PresenceHostname() = %q, %v; want thor, nil", hostname, err)
+	}
+	if reason := worker.HostnameReason("53ceb94f0a51"); !strings.Contains(reason, "container id") {
+		t.Fatalf("container-id reason = %q", reason)
+	}
+	if reason := worker.HostnameReason(hostname); reason != "" {
+		t.Fatalf("host hostname reason = %q, want empty", reason)
+	}
+}
 
 func TestWorkerWritesPresenceWithinOnePollInterval(t *testing.T) {
 	s := testStore

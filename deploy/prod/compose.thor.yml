@@ -213,6 +213,7 @@ services:
     image: culture-nodes:prod
     command: ["scheduler"]
     environment:
+      NODES_HOSTNAME: ${NODES_HOSTNAME:-thor}
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
       NODES_SCHEDULER_ID: thor-scheduler-1
       # See the api service's note: whichever process mints the run renders
@@ -244,6 +245,7 @@ services:
     image: culture-nodes:prod
     command: ["worker"]
     environment:
+      NODES_HOSTNAME: ${NODES_HOSTNAME:-thor}
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
       # Set by deploy.sh after the API's first boot mints the namespace id.
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}

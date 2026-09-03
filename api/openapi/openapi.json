@@ -2072,6 +2072,10 @@
           "error": {
             "type": "string"
           },
+          "hostname": {
+            "description": "Hostname reported by capabilities.preflight.host.hostname.",
+            "type": "string"
+          },
           "observed_at": {
             "format": "date-time",
             "type": "string"
@@ -2106,6 +2110,10 @@
           },
           "last_seen": {
             "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Present when the hostname looks like a container id rather than a host identity.",
             "type": "string"
           },
           "revision": {

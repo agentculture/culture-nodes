@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/mesh"
+	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
 type meshActor struct {
@@ -24,6 +25,7 @@ type meshWorker struct {
 	Revision  string    `json:"revision"`
 	ActorKeys []string  `json:"actor_keys"`
 	LastSeen  time.Time `json:"last_seen"`
+	Reason    string    `json:"reason,omitempty"`
 }
 type meshOut struct {
 	Actors   []meshActor            `json:"actors"`
@@ -68,6 +70,7 @@ func meshWorkers(ctx context.Context, s *Server) ([]meshWorker, error) {
 		if err := rows.Scan(&row.WorkerID, &row.Hostname, &row.Revision, &row.ActorKeys, &row.LastSeen); err != nil {
 			return nil, err
 		}
+		row.Reason = worker.HostnameReason(row.Hostname)
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -81,8 +84,8 @@ func buildMesh(actorRows []meshActorRow, workers []meshWorker, version string, o
 			observation.Error = "not observed by the bridge collector"
 		}
 		actor := meshActor{ActorKey: row.key, Bridge: observation}
-		if row.hostname != "" {
-			hostname := row.hostname
+		if observation.Hostname != "" {
+			hostname := observation.Hostname
 			actor.Machine = &hostname
 			machine := out.Machines[hostname]
 			machine.Actors = append(machine.Actors, row.key)

@@ -5203,6 +5203,7 @@ components:
     MeshBridgeObservation:
       type: object
       properties:
+        hostname: {type: string, description: Hostname reported by capabilities.preflight.host.hostname.}
         deployment: {type: object, additionalProperties: true}
         observed_at: {type: string, format: date-time}
         error: {type: string}
@@ -5215,6 +5216,7 @@ components:
         revision: {type: string}
         actor_keys: {type: array, items: {type: string}}
         last_seen: {type: string, format: date-time}
+        reason: {type: string, description: Present when the hostname looks like a container id rather than a host identity.}
 
     Actor:
       type: object

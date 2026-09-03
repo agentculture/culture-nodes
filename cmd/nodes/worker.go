@@ -201,7 +201,7 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if cliErr != nil {
 		return 0, cliErr
 	}
-	hostname, err := os.Hostname()
+	hostname, err := worker.PresenceHostname()
 	if err != nil {
 		return 0, &clifmt.CliError{Code: clifmt.ExitEnvError, Message: fmt.Sprintf("reading worker hostname: %v", err)}
 	}
@@ -522,7 +522,7 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	if cliErr != nil {
 		return nil, nil, cliErr
 	}
-	hostname, err := os.Hostname()
+	hostname, err := worker.PresenceHostname()
 	if err != nil {
 		return nil, nil, &clifmt.CliError{Code: clifmt.ExitEnvError, Message: fmt.Sprintf("reading worker hostname: %v", err)}
 	}

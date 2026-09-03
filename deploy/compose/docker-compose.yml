@@ -150,6 +150,7 @@ services:
     image: culture-nodes:local
     command: ["scheduler"]
     environment:
+      NODES_HOSTNAME: ${NODES_HOSTNAME:-${HOSTNAME:-localhost}}
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
       # See the api service's note: unset means telemetry off.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -181,6 +182,7 @@ services:
     image: culture-nodes:local
     command: ["worker"]
     environment:
+      NODES_HOSTNAME: ${NODES_HOSTNAME:-${HOSTNAME:-localhost}}
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set it to the bundled or external PostgreSQL URL}
       NODES_NAMESPACE_ID: ${NODES_NAMESPACE_ID:-default}
       NODES_ARTIFACT_S3_ENDPOINT: minio:9000

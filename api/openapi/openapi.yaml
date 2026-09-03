@@ -2362,7 +2362,12 @@ paths:
         sequence spanning multiple runs): send `Last-Event-ID` (a
         previously received `id:` field) to resume after a disconnect, or
         the `from` query parameter for a client that cannot set headers
-        before its first connection. Each frame is
+        before its first connection. Pass `from=latest` for tail-only mode:
+        the first frame is
+        `id: <current-max-id>\nevent: stream.snapshot\ndata: {"snapshot_id":"<current-max-id>"}\n\n`,
+        followed only by events committed strictly after that snapshot id.
+        Without `from=latest`, the cursor-less default remains the full
+        available history. Each committed-event frame is
         `id: <ulid>\nevent: <type>\ndata: <envelope JSON>\n\n`. Ordering
         promise: events are delivered in the order this control-plane
         process committed them (ULID generation order within one process,
@@ -2384,7 +2389,11 @@ paths:
             type: string
         - name: from
           in: query
-          description: Resume after this event id (a ULID), when a Last-Event-ID header cannot be set.
+          description: >-
+            Resume after this event id (a ULID), when a Last-Event-ID header
+            cannot be set. Use `latest` to receive a `stream.snapshot` marker
+            carrying the namespace's current maximum event id, then only
+            events committed strictly after that id.
           schema:
             type: string
       responses:

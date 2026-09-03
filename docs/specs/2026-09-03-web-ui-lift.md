@@ -155,7 +155,7 @@
 
 - Operator decision 2026-09-03 (q1): Option 2 — one graph language — then Option 3 — design canvas — in the same cycle. Wave order: replay fix + shared node + real mesh + graphs for idle workflows + nav consolidation first; the validate-round-trip spike and then the on-canvas editor second. This reopens the issue-12 won't-do on on-canvas mutation and must be recorded as a decision record before the editor wave builds.
 - Operator decision 2026-09-03 (q3): the lifted mesh becomes the cross-machine awareness surface issue #226 asks for — machines, code revisions, checkout state, actor-token configuration and liveness drawn as nodes and edges alongside actors, workflows and runs.
-- Operator decision 2026-09-03 (q4, from the challenge pass): when a canvas edit changes only comments or formatting and the IR digest is unchanged, Publish creates no version — the canvas says "no semantic change; version <digest> already exists; your comments live in your file" and offers Download. Versions stay immutable and digest-keyed; the stored source of an existing version is never rewritten.
+- Operator decision 2026-09-03 (q4, from the challenge pass): when a canvas edit changes only comments or formatting and the IR digest is unchanged, Publish creates no version — the canvas says "no semantic change; version DIGEST already exists; your comments live in your file" and offers Download. Versions stay immutable and digest-keyed; the stored source of an existing version is never rewritten.
 
 ## Hard questions
 

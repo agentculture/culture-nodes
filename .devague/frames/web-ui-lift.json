@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-03T15:17:16Z",
-  "updated": "2026-09-03T16:32:36Z",
+  "updated": "2026-09-03T16:32:57Z",
   "claims": [
     {
       "id": "c1",
@@ -779,14 +779,20 @@
     {
       "id": "c42",
       "kind": "decision",
-      "text": "Operator decision 2026-09-03 (q4, from the challenge pass): when a canvas edit changes only comments or formatting and the IR digest is unchanged, Publish creates no version \u2014 the canvas says \"no semantic change; version <digest> already exists; your comments live in your file\" and offers Download. Versions stay immutable and digest-keyed; the stored source of an existing version is never rewritten.",
+      "text": "Operator decision 2026-09-03 (q4, from the challenge pass): when a canvas edit changes only comments or formatting and the IR digest is unchanged, Publish creates no version \u2014 the canvas says \"no semantic change; version DIGEST already exists; your comments live in your file\" and offers Download. Versions stay immutable and digest-keyed; the stored source of an existing version is never rewritten.",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Operator decision 2026-09-03 (q4, from the challenge pass): when a canvas edit changes only comments or formatting and the IR digest is unchanged, Publish creates no version \u2014 the canvas says \"no semantic change; version <digest> already exists; your comments live in your file\" and offers Download. Versions stay immutable and digest-keyed; the stored source of an existing version is never rewritten.",
+          "kind": "decision",
+          "reason": "angle-bracket placeholder fails markdownlint MD033 on export"
+        }
+      ]
     }
   ],
   "open_vagueness": [

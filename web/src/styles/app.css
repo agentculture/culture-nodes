@@ -3056,3 +3056,15 @@ button.timeline__node {
 .culture-source { margin: 0; white-space: pre; overflow: auto; }
 .culture-source__ins { background: color-mix(in srgb, var(--accent) 14%, transparent); display: inline; }
 .design-canvas__status { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); margin: 0.5rem 0 0; }
+
+/* Design canvas page: palette | canvas | inspector on wide screens, stacked
+   below the layout breakpoint (tokens only). */
+.design-canvas-view > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.design-canvas-view > header > div { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.design-canvas-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr) 340px; gap: 1rem; align-items: start; }
+.design-canvas-layout > aside { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.design-canvas-layout > aside h2 { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.25rem; }
+.design-canvas-layout > aside > button { text-align: left; }
+.design-canvas__canvas { border-radius: var(--radius); overflow: hidden; }
+.culture-source { font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5; max-height: 420px; }
+@media (max-width: 900px) { .design-canvas-layout { grid-template-columns: 1fr; } }

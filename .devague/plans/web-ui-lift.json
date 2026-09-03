@@ -1,0 +1,814 @@
+{
+  "slug": "web-ui-lift",
+  "title": "web-ui-lift",
+  "frame_slug": "web-ui-lift",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-03T17:10:55Z",
+  "updated": "2026-09-03T17:20:42Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes' web UI got a lift: one graph language across mesh, workflows and runs; the mesh draws the relationships the data already holds instead of a hub-and-spoke; every published workflow is readable as a graph, not only running ones; the mesh no longer replays history on arrival; and a workflow can be composed on canvas.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "The announcement is only true once both waves merged: a lift that ships wave A alone is announced as 'one graph language' and not as 'compose on canvas'; the delivery summary names which of the five announced outcomes has passing evidence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Mesh stops replaying history on arrival: web/src/hooks/useSharedEvents.tsx connects with no cursor on every page load, and internal/api/events.go's handleStreamEvents treats an absent Last-Event-ID/from as 'from the beginning of this namespace's event log', admitting every historical run.created/run.completed lifecycle event; routes/Mesh.tsx turns each into a run-added placeholder then a 3.4s linger-and-remove, so the whole run history animates through the mesh at speed. The fix is a server-side tail-only connect, ordered stream-first so the two reads have a defined boundary: the Mesh opens the stream in an explicit tail-only mode, the server's first frame is a snapshot marker naming the event-log high-water mark it will stream after, and only then does the Mesh load active runs from GET /runs, buffering every streamed event until that response lands and applying it on top keyed by run id. Reading the marker before the snapshot query makes that boundary at-least-once rather than at-most-once, which is what the data allows: GET /runs returns a pagination cursor over runs and can never carry the event log's ULID high-water mark, so no single call can hand back both atomically, and a transition committed between the two reads must therefore appear in both and reconcile, never fall between them. A Go change plus a client cursor-and-reconcile rule.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A fresh EventSource connect admits only events with an id after the server's snapshot cursor; a server test seeds terminal runs and asserts none of their lifecycle events are streamed on a cursor-less connect, and the Mesh e2e asserts mesh.events_total == 0 after load with no new activity.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "No run transition falls between the two reads: a run.created committed after the stream's snapshot marker but before GET /runs returns is present in the reconciled Mesh state exactly once, asserted by a test that interleaves the two, and the marker's id is read from the same events table the stream then advances through, so the boundary is one cursor and not two clocks.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "docs/decisions/issue-12-remaining-web-ux-scope.md (2026-08-15) recommended option B \u2014 stop at source authoring, mark on-canvas mutation won't-do \u2014 and ruled that any later editor proposal must be a new issue with a named user task and acceptance test, and that a spike should first prove one added node+edge round-trips through POST /v1alpha1/workflows/validate. Issue #12 is still open. Choosing an editor now reopens that decision explicitly (a recorded deviation/decision), never as drift.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "The 2026-08-15 brief is cited verbatim in the superseding decision record, and issue #12 is closed or re-scoped by that record rather than left implying the won't-do still stands.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Operator asks (2026-09-03): (1) mesh must not replay history on return; (2) graphs must be visible for any workflow, not only active/running ones; (3) workflows must be composable with the mouse (drag, drop, connect), not only as text; (4) the whole site must feel more intuitive and fluid; (5) the graph style should be the mesh node style; (6) the mesh must convey information about its nodes, which the sun-graph cannot.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Each of the six operator asks maps to at least one requirement (c2, c22\u2013c26, c28) and the delivery summary reports each ask as met, partly met, or not met with the evidence cited.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "audience",
+      "text": "Primary: the operator running the fleet from a wide display, who lives in Mesh, Runs and Design and needs to see at a glance what every machine is serving and what every workflow looks like. Secondary: a person arriving from a Jira comment to decide something (their pages \u2014 ticket, inbox, decisions \u2014 keep the treatment issue #270 gave them). Tertiary: agents reading #agent-state (webglass), which must keep asserting every fact the pixels claim.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The operator reviews the before/after screenshots (h12-style) and #agent-state keeps asserting every mesh and graph fact; the human pages' e2e specs still pass unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "after_state",
+      "text": "Opening the mesh shows the org as it is right now \u2014 machines, the control plane, bridges/actors, published workflows and active runs, joined by the relationships the records hold \u2014 with no history replay; every published workflow opens as a graph from Design; the same mesh-styled node draws mesh, workflow and run views; the nav is the PRD's spine instead of twelve tabs; and a workflow can be composed on canvas, validated live, and published as an immutable version whose digest matches the CLI path.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "Each clause of the after-state is one of the success signals c30\u2013c34 and none is announced without its check passing.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "before_state",
+      "text": "Today the mesh is a hub-and-spoke that replays every historical run on arrival and says nothing about hosts, revisions or which actor runs which workflow; a graph exists only for a running workflow or an open run; workflow graphs and the mesh use two visual substrates; twelve nav destinations include three projections of one dataset and omit the authoring page; and workflows are authored only as pasted text with a read-only preview.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "Every before-state sentence cites the file or issue it was read from in scope entries s1\u2013s9; a reviewer can reproduce each on the main branch as of 2026-09-03.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "why_it_matters",
+      "text": "The mesh is the product's face and the place where fleet divergence (#224: two workers, different token sets) should have been visible before a dispatch failed; a star hides exactly that. Graph-only-when-running means the design of a workflow is invisible until it costs money to run. Text-only authoring gates the product on YAML fluency, which the PRD's Design view was meant to remove.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "The #224-style divergence (two workers, different actor-key sets on one namespace) is visible on the lifted mesh as a difference between two machine nodes, demonstrated with a fixture in the mesh e2e.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "No sibling aesthetic (PRD \u00a78.1): every colour, radius, shadow and face comes from web/src/culture-design/tokens.css and palette.ts; the terminal ground stays TERMINAL_GROUND; nothing is picked by eye.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "A lint check fails on any hex colour, font name or radius literal in web/src outside culture-design/, and the screenshot review confirms no new palette entered.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "boundary",
+      "text": "Machine facts on the mesh come only from surfaces that already exist or that this cycle adds to the control plane: GET /v1alpha1/version, each bridge's /v1/capabilities deployment block (package, install_mode, revision, revision_is_dirty), actor rows, and a worker/bridge self-report of configured actor-key NAMES on its poll heartbeat \u2014 never secret values, never a shell probe of a host from the control plane. Deployment-checkout HEAD/dirty state needs host access the control plane does not have and is a follow-up unless a reporting path exists.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The mesh endpoint's response schema (api/openapi.yaml) carries no secret-bearing field; a test asserts that a worker heartbeat with a token value in it is rejected; deployment-checkout state, if absent, renders as 'not reported'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "A shared Culture node component (one file under web/src/culture-design/ or components/) renders on React Flow in the mesh idiom \u2014 dark terminal ground, kind-coloured glowing core, halo, label and sub-line, one-shot pulse rings \u2014 while keeping PRD \u00a78.5 zoom detail bands and the NodeCard's kind-specific content; RunView, Active Graphs, the Design gallery, the authoring preview and the Mesh all import this one component.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "One module, imported by all five views (a tests/lint guard pins it); zoom bands far/medium/close still change the content shown; prefers-reduced-motion renders exactly one static frame; the Canvas-2D MeshCanvas is deleted, not kept as a second path.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine keyed on the hostname each bridge reports for ITSELF under capabilities.preflight.host.hostname (preflight.Surface's host block, which checkHost already refuses empty, and which the package doc pins as a fact only the party that can measure it may supply), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay. No machine is derived from endpoint_ref: that column is nullable caller-supplied address text on an immutable actor revision, it goes stale on every superseded revision, migrations/pending/0036 drops it after the dial-in cutover, and a dial-in bridge has no address to read \u2014 so an actor whose surface reports no hostname is drawn as an unattributed actor rather than joined to a machine invented from an address.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "Every node and edge traces to a row (actor, run, node-run, workflow version, probe/heartbeat record) named in the node's inspect panel; a failed or missing probe renders 'unknown' with the probe's own error text, never green or blank; particles remain one-to-one with committed events; no secret value ever reaches the API or the page \u2014 actor-key names only.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "Machine identity is self-reported, never inferred from an address: a mesh test asserts the payload is byte-identical when every actor's endpoint_ref is NULL, two actors share one machine node only when they reported the same hostname, and an actor whose capability surface carries no hostname comes back with machine null and renders as an unattributed actor \u2014 never merged into another machine and never given an invented one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Every published workflow is readable as a graph without a run: a Design view lists each workflow_key with its versions and draws the selected version's graph from the published IR using the shared node; the misnamed 'Node Graphs' card sub-tab is replaced by this view and /graphs redirects to it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The gallery graph is derived from the published IR only (the same parse the authoring preview uses); an idle workflow with zero runs renders its full graph; the redirect from /graphs and /workflows lands on the equivalent view.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Navigation is consolidated onto the PRD \u00a78.6 spine without retiring any surface: eight destinations in two groups \u2014 Your work \u00b7 Inbox \u00b7 Decisions | Design (gallery + New workflow + Generate) \u00b7 Runs (list / board / jobs as one page with a segmented projection toggle) \u00b7 Mesh \u00b7 Ledger-and-plan (Plan) \u00b7 Statistics; every old URL redirects to the surface that now renders it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "No surface is retired without a replacement in the same PR (decision c33 of the login-from-anywhere spec); every route in today's App.tsx still resolves, by redirect where moved; the nav count is asserted in a Header test.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Fluidity: graph nodes never paint at fallback positions and then jump \u2014 the canvas stays hidden or faded until ELK positions land; one shared segmented-toggle component replaces every ad-hoc tab strip; view changes use one transition idiom; prefers-reduced-motion renders one static frame everywhere; the fixture screenshot pass gains Mesh and Active Graphs shots and the operator reviews before/after before merge.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "A Playwright check asserts no node position changes after first paint on RunView and the gallery; the /decisions tab strip renders as the shared segmented toggle; NODES_SHOTS captures mesh.png and active-graphs.png and the operator's review comment on #270 precedes merge.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Before the editor wave, the spike from docs/decisions/issue-12-remaining-web-ux-scope.md runs against q2's round-trip rule: load one hand-written YAML with comments, an anchor and a deliberate key order onto the canvas, add one node and one edge by mouse, and prove the emitted document validates through POST /v1alpha1/workflows/validate while the untouched lines are byte-identical; elapsed design/engineering time and every round-trip loss are recorded in a decision record and the operator gives go/no-go for the editor wave on that record.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The decision record states elapsed time, the exact losses observed (comments, key order, anchors, anything else), and the operator's go/no-go; the editor wave does not start before that record is committed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "The Design canvas composes workflows with the mouse and round-trips hand-written YAML (q2): the canvas edits the author's YAML document as a syntax tree, so comments, blank lines, anchors and key order survive every mutation; a palette of node kinds (from domain/node-catalog), drag to add, connect via handles (isConnectable on), select/delete, a per-kind property panel with the PRD \u00a78.3 fields, a source pane showing the live document, Validate with compiler diagnostics attached to the offending node or edge, and Publish shipping the document string verbatim as an immutable version \u2014 with a keyboard-only path for add, connect and edit.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Publish ships the emitted document string verbatim and the returned digest equals the CLI publish of that same string; diagnostics are the compiler's verbatim; every mouse action has a keyboard equivalent exercised by an e2e; nothing is published without an explicit Publish click.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "A hand-written fixture with comments, blank lines, an anchor and a deliberate key order round-trips byte-identical through open \u2192 no edit \u2192 Publish; adding one node and one edge changes only the lines that node and edge need (golden-file tests in web/src/domain); a document the Document API cannot mutate safely (e.g. a merge key at the mutation site) is refused with the reason shown, never silently re-serialized.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The reopen of the issue-12 won't-do is recorded before editor code merges: a docs/decisions/ record superseding the 2026-08-15 brief, a Record issue pointing at it (scripts/open-issue.sh), and a Feature issue naming the user task ('compose a workflow on canvas and publish it') with its acceptance test, as that brief required.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The decision record, the Record issue and the Feature issue exist and are linked from the editor PR before it merges; the PR body cites the issue-12 brief it supersedes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "Opening /mesh in a fresh tab against a namespace with many terminal runs animates zero historical lifecycle events: #agent-state mesh.events_total stays at the count of events committed after load (e2e seeds 50 terminal runs and asserts).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "internal/api/events_test.go seeds terminal runs and asserts a cursor-less connect streams none of their lifecycle events; web e2e asserts #agent-state mesh.events_total == 0 after load.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "success_signal",
+      "text": "Every published workflow_key has a graph reachable in one click from Design with no run in the namespace (e2e on fixtures with zero runs).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "e2e/design.spec.ts renders the gallery from a fixture with published workflows and zero runs and asserts a graph with the expected node count for each key.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "success_signal",
+      "text": "One node component: a lint test pins that Mesh, RunView, Active Graphs, Design gallery and the authoring preview import the same module and that no second node card exists.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "tests/lint pins the single node module's import in all five views and fails if a second node-card component is added.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "success_signal",
+      "text": "A canvas-authored workflow's published digest equals the digest of the CLI publish path on the same emitted source, and each compiler diagnostic shown on canvas is byte-identical to the validate response.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "An e2e publishes the same source via the canvas and via the CLI path and asserts identical digests; a diagnostics fixture asserts byte equality between the validate response and what the canvas renders.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "success_signal",
+      "text": "The mesh shows, from real rows, at least actor\u2192machine, run\u2192actor and run\u2192workflow edges plus per-machine revision and liveness, and a probe that failed renders as 'unknown', never as healthy; operator-reviewed screenshots of Mesh before/after are posted to #270.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "The mesh e2e fixture includes a failed bridge probe and asserts the machine node renders 'unknown' with the probe's error text; the #270 comment with the operator's screenshot review exists before merge.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "Challenge finding (adjacent-systems lens): WorkflowVersion already carries source, source_format, normalized_ir and digest (api/openapi/openapi.yaml WorkflowVersion). The Design gallery draws its graph from normalized_ir and offers \"Open in canvas\", which loads that version's stored source verbatim into the editor \u2014 so a published version's hand-written text, not a re-serialization, is what round-trips.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "Opening a published version in the canvas shows a source pane byte-identical to the stored source; the gallery graph and the canvas graph for the same digest have identical node and edge sets.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "Challenge finding (concurrency lens), reconciled with the sweep's 0.47.19 amendment of c2: the one app-wide EventSource is opened by SharedEventsProvider at app start on any route (web/src/main.tsx, hooks/useSharedEvents.tsx) and must never reconnect (c48/h41 of the operate-through-the-ui spec), so \"the Mesh connects with ?from=latest\" cannot mean a second connection. The shared manager itself opens with ?from=latest, stores the stream.snapshot marker id and exposes it; a view that mounts later reads the stored marker as its boundary and fetches REST state after subscribing; every view buffers streamed events until its REST response lands and applies them idempotently by id. The cursor-less server default stays unchanged for other clients \u2014 only the web client uses the cross-run stream today (culture_nodes/cli/_commands/run.py uses the per-run stream).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "A web test mounts the Mesh after the shared stream has been open for a while, commits a run.created between the Mesh's REST fetch and its subscription, and asserts the run is shown exactly once; a lint guard asserts exactly one EventSource construction site in web/src; the CLI test suite is unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "boundary",
+      "text": "Challenge finding (reversibility lens): web assets are embedded in the control-plane binary (webassets_embed.go), so each wave ships and rolls back as one image on thor (deploy/prod/deploy.sh); the SSE tail-only mode, the mesh endpoint and the UI that needs them are one deploy unit. The canvas adds NO new write route: Publish uses the same POST /v1alpha1/workflows and the same role gate as the text authoring page, so removing the canvas route is a pure UI rollback.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "No new mutating route appears in api/openapi/openapi.yaml for the canvas; an e2e proves a viewer-role principal gets the same refusal from the canvas Publish as from the text page.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "Challenge finding (failure-mode / observability lens): GET /v1alpha1/actors is already \"the heaviest read in the API\" because it fans out (internal/api/dialinpresence.go), so the mesh endpoint must never probe bridges inside a request. A collector runs on a timer with a per-probe timeout and bounded concurrency, caches each machine fact with observed_at and the probe's error text, and the endpoint reads the cache; the mesh renders the age of every machine fact and logs each probe failure with its target.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "A test with a bridge that never answers shows GET /mesh returning within its normal latency with that machine marked unknown and its error text; every machine fact in the payload carries observed_at; a metric or log line counts probe failures per target.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "Challenge finding (lifecycle lens): every publish is an immutable version and versions accumulate (domain/workflows.ts groupWorkflowVersions exists for that reason), so the mesh draws ONE workflow node per workflow_key (its newest version, with a version count) and edges from actor uses-refs and active runs attach to that key node; per-version detail stays in the Design gallery.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "The mesh e2e fixture holds three versions of one workflow_key and asserts one workflow node with a version count of 3 and edges attached to that node only.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Server: tail-only stream mode with a snapshot marker",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GET /v1alpha1/events?from=latest sends event: stream.snapshot as its first frame carrying the namespace's current max events-table id, then streams strictly after that id; the cursor-less default is unchanged (events_test.go)",
+        "A test seeds 50 terminal runs and asserts none of their lifecycle events is streamed on a ?from=latest connect",
+        "A test commits a run.created between the marker and a subsequent GET /runs read and asserts the event is delivered exactly once after the marker"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1",
+        "h25",
+        "c30",
+        "h20"
+      ],
+      "instruction": "internal/api/events.go: parse from=latest in the cross-run resume reader; on that mode SELECT max(id) FROM events WHERE namespace_id=$1, write one SSE frame (id: <max>, event: stream.snapshot, data: {\"snapshot_id\": ...}), then poll from that id. Add the frame to api/openapi/openapi.yaml streamEvents. Tests in internal/api/events_test.go only. No web files."
+    },
+    {
+      "id": "t2",
+      "summary": "Web: the one shared stream opens tail-only and views reconcile on the snapshot marker",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "useSharedEvents.tsx constructs its EventSource with ?from=latest, stores the stream.snapshot id, and exposes it via the manager snapshot; a lint test asserts exactly one EventSource construction site under web/src",
+        "Mesh.tsx and every other shared-stream view fetch REST state after subscribing and buffer streamed events until the response resolves, applying them idempotently by id; a vitest mounts Mesh after the stream has been open, commits a run.created between fetch and subscribe, and asserts the run renders once",
+        "web/e2e/mesh.spec.ts: with a fixture stream carrying 1,284 historical events, #agent-state mesh.events_total is 0 after load and increments by exactly one per committed event afterwards"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c37",
+        "h29",
+        "c30",
+        "h20"
+      ],
+      "instruction": "Files: web/src/hooks/useSharedEvents.tsx (manager: from=latest, snapshotId in snapshot, handle event stream.snapshot), web/src/api/client.ts meshEventsUrl(latest), web/src/routes/Mesh.tsx + Inbox/Decisions/RunsList/RunsBoard/JobsTimeline/Statistics/NodeGraphs (buffer-until-REST helper in hooks/useSnapshotReconcile.ts), web/src/fixtures/mesh-fixture.ts (snapshot marker), tests/lint/eventsource_test.go. Do not touch MeshCanvas.tsx or domain/mesh.ts (t6 owns them)."
+    },
+    {
+      "id": "t3",
+      "summary": "The one Culture node component on React Flow, in the mesh idiom",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "web/src/culture-design/CultureNode.tsx renders kind-coloured glowing core, halo, label, sub-line, optional state chip and one-shot pulse ring from tokens only; WorkflowNode.tsx and ActiveGraphNode are thin adapters over it; RunView, ActiveGraphCanvas and AuthorWorkflow preview render through it",
+        "Zoom bands far/medium/close still change what a node shows (NodeCard.test.tsx ported); prefers-reduced-motion renders one static frame (data-motion=static, no keyframes)",
+        "tests/lint/culturenode_test.go pins that RunView, ActiveGraphCanvas, Design gallery, authoring preview and Mesh import web/src/culture-design/CultureNode.tsx and that no second node-card component exists (NodeCard.tsx deleted or reduced to the adapter)"
+      ],
+      "deps": [],
+      "covers": [
+        "c22",
+        "c32",
+        "h22"
+      ],
+      "instruction": "Port the presence-node CSS from ActiveGraphCanvas.tsx (halo keyframes, pulse rings, motion gating) into culture-design/CultureNode.tsx + culture-design/node.css; NodeCard's kind-specific content and bandForZoom move into it. Keep the terminal ground for every canvas (.canvas surface class). Files: web/src/culture-design/CultureNode.tsx, node.css, components/WorkflowNode.tsx, components/ActiveGraphCanvas.tsx (adapter only), components/NodeCard.tsx (remove), styles/app.css (node rules move out), tests/lint/culturenode_test.go. Reference: docs/demos/web-ui-lift/culture-nodes-lifted.html .cn styles."
+    },
+    {
+      "id": "t4",
+      "summary": "Design-token lint guard: no colour, font or radius literal outside culture-design",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/lint/webtokens_test.go fails on any #rgb/#rrggbb, rgba(, font-family name or rem radius literal in web/src outside web/src/culture-design/ (a negative fixture proves it fires); the current tree passes after t3/t6/t7 land or the guard lists the files it exempts with a reason"
+      ],
+      "deps": [],
+      "covers": [
+        "c18",
+        "h18"
+      ],
+      "instruction": "Go test scanning web/src/**/*.{css,tsx,ts} with regexes; allowlist web/src/culture-design/; exempt list must be empty by the end of wave A. File-disjoint from every other task."
+    },
+    {
+      "id": "t5",
+      "summary": "Worker presence: additive table written by the worker loop, names only",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "migrations/00NN_worker_presence.sql adds worker_presence(worker_id, hostname, revision, actor_keys text[], last_seen) additively; nodes worker and nodes all upsert a row on every poll; a worker test asserts a row within one poll interval",
+        "A store test rejects an actor_keys entry that looks like a token value (contains ':' or is longer than 64 chars) and asserts only key NAMES are stored; api/openapi.yaml has no secret-bearing field in the mesh payload"
+      ],
+      "deps": [],
+      "covers": [
+        "c19",
+        "h19"
+      ],
+      "instruction": "Files: migrations/ (new), internal/store/postgres/workerpresence.go (+_test), internal/worker/presence.go (+_test) called from the poll loop with os.Hostname() and the configured NODES_ACTOR_* key names, cmd/nodes/worker.go wiring. No API handler here (t5b)."
+    },
+    {
+      "id": "t6",
+      "summary": "GET /v1alpha1/mesh: timed collector, probe cache with observed_at, machines keyed on self-reported hostname",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GET /v1alpha1/mesh returns actors (deduped), machines keyed by capabilities.preflight.host.hostname, the control plane's version, each bridge's cached deployment block with observed_at and error text, and worker presence rows; it never probes inside the request (a test with a never-answering bridge returns within normal latency with that machine unknown and its error text)",
+        "Payload is byte-identical when every actors.endpoint_ref is NULL; two actors share a machine only when they reported the same hostname; an actor with no reported hostname returns machine null",
+        "Probe failures are counted per target in a log line or metric; the collector has a per-probe timeout and bounded concurrency (config, tested)"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c23",
+        "h3",
+        "h26",
+        "c40",
+        "h32"
+      ],
+      "instruction": "Files: internal/api/mesh.go (+_test), internal/mesh/collector.go (+_test; timer, semaphore, http timeout, cache map with observed_at/error), cmd/nodes/serve.go wiring, api/openapi/openapi.yaml Mesh schema. Read-only routes under principalMiddleware like GET /actors. Do not read actors.endpoint_ref."
+    },
+    {
+      "id": "t7",
+      "summary": "Mesh rebuilt on React Flow from real relationships; MeshCanvas deleted",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "routes/Mesh.tsx draws typed CultureNodes (machine, control plane, bridge/actor, human, workflow-by-key, active run) with edges only from the mesh payload: actor\u2192machine, run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow (IR uses refs); web/src/components/MeshCanvas.tsx is deleted",
+        "Mesh e2e fixture: a failed bridge probe renders unknown with the probe's error text (never green); three versions of one workflow_key render one workflow node with count 3; two machines declaring different actor-key sets on one namespace render visibly different (the #224 fixture); an actor with machine null renders unattributed",
+        "#agent-state mesh block keeps actor_count/run_count/edge_count/connection/events_total and adds machine_count/probe_failures/unattributed_actors; committed events still pulse one-to-one along the relevant edge; hover and keyboard inspection name the row each node traces to"
+      ],
+      "deps": [
+        "t3",
+        "t6",
+        "t2"
+      ],
+      "covers": [
+        "c23",
+        "h3",
+        "c34",
+        "h24",
+        "c41",
+        "h33",
+        "c15",
+        "h17",
+        "h2"
+      ],
+      "instruction": "Files: web/src/domain/mesh.ts (rewrite: assemble typed graph from GET /mesh + runs + node-runs + workflows), web/src/routes/Mesh.tsx (React Flow + useElkLayout, terminal ground, inspect panel listing 'traces to' rows), web/src/fixtures/mesh-fixture.ts, web/e2e/mesh.spec.ts, api client getMesh. Delete MeshCanvas.tsx and its test. Reference: the Mesh view of docs/demos/web-ui-lift/culture-nodes-lifted.html."
+    },
+    {
+      "id": "t8",
+      "summary": "Design gallery: every published version as a graph, open its stored source",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "routes/Design.tsx lists workflow keys with versions from GET /workflows and draws the selected version's graph from normalized_ir through parseWorkflowGraph and CultureNode; web/e2e/design.spec.ts on a fixture with published workflows and zero runs asserts a graph with the expected node count for each key",
+        "Open in canvas / Open source shows the stored source byte-identical; gallery graph and source-parsed graph for the same digest have identical node and edge sets (vitest)",
+        "/graphs and /workflows redirect to /design; the Nodes sub-view (node-definition catalog) survives under /design?tab=nodes"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c24",
+        "h4",
+        "c31",
+        "h21",
+        "c36",
+        "h28"
+      ],
+      "instruction": "Files: web/src/routes/Design.tsx (replaces NodeGraphs.tsx's NodeGraphsPanel; keep NodesPanel), web/src/domain/workflows.ts (source accessors), web/e2e/design.spec.ts, web/src/fixtures/workflows-fixture.ts, App.tsx redirects for /graphs and /workflows only (t8 owns the rest of App.tsx). Reference: Design view of docs/demos/web-ui-lift/culture-nodes-lifted.html."
+    },
+    {
+      "id": "t9",
+      "summary": "Navigation on the PRD \u00a78.6 spine: eight links, one Runs page, redirects",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Header.tsx renders exactly eight primary links \u2014 Your work, Inbox, Decisions | Design, Runs, Mesh, Ledger-and-plan, Statistics \u2014 asserted by name in Header.test.tsx",
+        "/runs hosts list, board and jobs behind ?view=list|board|jobs with a segmented toggle; /board and /jobs redirect; /design/new and /design/generate host the authoring pages; /workflows/new and /workflows/generate redirect; a route test walks every path today's App.tsx resolves and asserts each resolves directly or by redirect; ROUTE_TITLES updated"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c25",
+        "h5"
+      ],
+      "instruction": "Files: web/src/components/Header.tsx (+test), web/src/App.tsx (+App.test.tsx route walk), web/src/routes/Runs.tsx (composes RunsList/RunsBoard/JobsTimeline bodies as projections), e2e specs that hardcode /board or /jobs updated to follow redirects. Do not restyle the toggle (t9 owns SegmentedToggle)."
+    },
+    {
+      "id": "t10",
+      "summary": "Fluidity: no layout jump, one SegmentedToggle, mesh + active-graph screenshots",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "useElkLayout exposes ready; every canvas renders at opacity 0 until positions land then fades (skipped under reduced motion); a Playwright check asserts no node position changes after first paint on RunView and Design",
+        "components/SegmentedToggle.tsx replaces .view-toggle in RunView, Design, Runs and Decisions; the /decisions tab strip renders as it (the unstyled top-left buttons are gone); inbox/ticket/home e2e specs pass unchanged",
+        "web/e2e/screenshots.spec.ts captures mesh.png, mesh-dark.png and active-graphs.png from fixtures; NODES_SHOTS documentation updated"
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t9"
+      ],
+      "covers": [
+        "c26",
+        "h6"
+      ],
+      "instruction": "Files: web/src/hooks/useElkLayout.ts, web/src/components/SegmentedToggle.tsx, small edits in RunView.tsx/Design.tsx/Runs.tsx/Decisions.tsx swapping the control, styles/app.css (.view-toggle rules), web/e2e/screenshots.spec.ts, web/e2e/no-jump.spec.ts."
+    },
+    {
+      "id": "t11",
+      "summary": "Acceptance reference: the demo page committed with a walkthrough map",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/demos/web-ui-lift/culture-nodes-lifted.html is tracked and docs/demos/web-ui-lift/README.md maps each of its six walkthrough checks (c30, c31, c32, c33, c34, fluid) to the e2e spec and fixture that proves it in the real app, and maps each of the six operator asks to the requirement and task that meets it",
+        "The README's before-state section cites scope entries s1\u2013s9 by file so a reviewer can reproduce each on main as of 2026-09-03"
+      ],
+      "deps": [],
+      "covers": [
+        "c11",
+        "h13",
+        "c14",
+        "h16"
+      ],
+      "instruction": "The HTML is already copied into docs/demos/web-ui-lift/. Write the README (markdownlint clean; no angle-bracket placeholders). Nothing else in the tree changes."
+    },
+    {
+      "id": "t12",
+      "summary": "Spike: yaml Document round-trip baseline and validate proof, decision record",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/decisions/YYYY-MM-DD-design-canvas-spike.md records elapsed time, the exact stringify options that make the no-edit round-trip byte-identical on deploy/compose/testdata/smoke.workflow.yaml and the frame's own fixtures (or the residual difference classes if none do), the diff of one addIn node + one edge, and the POST /workflows/validate result; it ends with a go/no-go line the operator fills in",
+        "The spike runs in a throwaway worktree; no code from it merges except the decision record"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c27",
+        "h7"
+      ],
+      "instruction": "Probe already showed flowCollectionPadding changes 4/82 lines by default. Try yaml Document toString options (flowCollectionPadding:false, lineWidth:0, indentSeq, etc.) until byte-identical; record what remains. Time-box: one session."
+    },
+    {
+      "id": "t13",
+      "summary": "Reopen the issue-12 won't-do: decision record, Record issue, Feature issue",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/decisions/YYYY-MM-DD-reopen-graphical-editor.md cites the 2026-08-15 brief verbatim, supersedes it, and cites the spike record; a Record issue points at it (scripts/open-issue.sh --type Record) and a Feature issue names the user task 'compose a workflow on canvas and publish it' with acceptance = c33; issue #12 is closed or re-scoped by that record"
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c29",
+        "h9",
+        "c7",
+        "h12"
+      ],
+      "instruction": "Docs and issues only. Link both issues from the editor PR body."
+    },
+    {
+      "id": "t14",
+      "summary": "workflow-document: surgical mutations on the author's YAML/JSON document",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "web/src/domain/workflow-document.ts wraps yaml.parseDocument with the spike's stringify options and exposes addNode, addEdge, setNodeProp, removeNode, removeEdge and toString; a commented fixture with a blank line, an anchor and a deliberate key order round-trips byte-identical through open \u2192 no edit \u2192 toString (golden-file test)",
+        "addNode + addEdge change only the inserted lines (golden diff test); a document whose mutation site holds a merge key is refused with a reason, never re-serialized; JSON-format sources take the same API"
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c28",
+        "h10"
+      ],
+      "instruction": "Pure module + vitest golden files under web/src/domain/__golden__/; no UI. Reference behaviour: addNodeToSource/addEdgeToSource/setPropInSource in docs/demos/web-ui-lift/culture-nodes-lifted.html (text-surgical, comments kept)."
+    },
+    {
+      "id": "t15",
+      "summary": "Design canvas: palette, connect, properties, diagnostics on nodes, verbatim Publish",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "routes/DesignCanvas.tsx: palette of kinds from deriveNodeDefinitions, drag or keyboard to add, connect via handles (isConnectable on), select/delete, per-kind property panel (agent: uses; code: runner/operation; decision: rule/outcomes; approval: authority/deadline; wait: signal; subworkflow: pinned digest), source pane showing the live document; every mouse action has a keyboard equivalent exercised by e2e",
+        "Validate (debounced) posts the document string to POST /workflows/validate and attaches each diagnostic to its node or edge by JSON path; the diagnostic text shown is byte-identical to the response",
+        "Publish ships the document string verbatim to the existing POST /workflows; an e2e publishes the same source via the canvas and via nodes workflow publish and asserts identical digests; when the digest already exists the canvas shows 'no semantic change \u2014 this version already exists; your comments live in your file' and offers Download (q4); a viewer-role principal gets the same refusal as on the text page; no new mutating route in openapi.yaml"
+      ],
+      "deps": [
+        "t14",
+        "t13",
+        "t10"
+      ],
+      "covers": [
+        "c28",
+        "h8",
+        "c33",
+        "h23",
+        "c39",
+        "h31"
+      ],
+      "instruction": "Files: web/src/routes/DesignCanvas.tsx (+test), web/e2e/canvas.spec.ts, web/src/fixtures/canvas-fixture.ts, App.tsx route /design/canvas. Uses the workflow-document module, CultureNode, SegmentedToggle. Reference: the editor in docs/demos/web-ui-lift/culture-nodes-lifted.html. Digest equality via the fixture API's deterministic digest."
+    },
+    {
+      "id": "t16",
+      "summary": "Operator review: before/after screenshots posted to #270, h12-style",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "NODES_SHOTS before (main) and after (branch) directories captured; the operator posts the review comment on #270 naming each page and whether it reads less intimidating; the comment exists before the wave-A PR merges"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c12",
+        "h14",
+        "h6",
+        "h24"
+      ],
+      "instruction": "Human task for the operator; the agent captures both shot sets and drafts the comment body, the operator signs it."
+    },
+    {
+      "id": "t17",
+      "summary": "Walkthrough e2e: replay the demo's six checks against the built app",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "web/e2e/walkthrough.spec.ts performs, in order, the six checks the demo's acceptance walkthrough lists \u2014 mesh events_total 0 after load with 1,284 historical events; nightly-regression (0 runs) draws its graph from Design; the same CultureNode module renders Mesh, a run, the gallery and the canvas (DOM class + import guard); canvas add+connect+validate+publish yields the CLI digest; mesh shows actor\u2192machine, run\u2192actor, run\u2192workflow edges and an unknown probe; no node position changes after first paint \u2014 each mapped to its spec id in the test name",
+        "The delivery summary names, per announced outcome, the walkthrough step that proves it; an outcome without a passing step is reported as not delivered"
+      ],
+      "deps": [
+        "t15",
+        "t7"
+      ],
+      "covers": [
+        "c1",
+        "h11",
+        "c13",
+        "h15",
+        "c30",
+        "c31",
+        "c32",
+        "c33",
+        "c34"
+      ],
+      "instruction": "One Playwright spec built on the existing fixtures; names like 'c30 no history replay'. It is the executable form of docs/demos/web-ui-lift/README.md."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Mesh layout algorithm: ELK layered (bundled, needs cycle breaking on a non-DAG mesh) versus a force layout (d3-force is a new web dependency). t7 decides and records; parked v4 on the frame.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "Server tasks t1, t5, t6 need a Postgres-backed test run; a codex sandbox cannot open sockets (#119), so they run on a lane with a database or the operator merges them with local tests.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "yaml Document stringify options may not reach byte-identical on every fixture; if a residual class remains, q4 already covers comment-only republish but the spike must say so before the workflow-document task starts.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "The bridge write path is unproven (#18); web tasks routed to codex actors may need the operator to land the patch by hand \u2014 counted as hand-turns.",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Wave A: t8 (design gallery) and t9 (nav) both edit App.tsx; t8 keeps its edit to the two Navigate lines so t9's merge stays trivial.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

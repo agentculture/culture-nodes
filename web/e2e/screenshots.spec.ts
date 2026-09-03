@@ -1,4 +1,4 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { TICKET_ID } from "../src/fixtures/ticket-fixture";
 import {
   RUN_ID,
@@ -63,6 +63,19 @@ test.describe("t27 site polish shots", () => {
   }
 
   async function shoot(page: Page, name: string) {
+    // ELK lays a graph canvas out asynchronously, and the canvas fades in over
+    // 180ms once its positions land (`.layout-canvas` in styles/app.css). A
+    // view's own readiness signal — a state chip, a first node — fires well
+    // before that, and a late layout pass restarts the fade, so a shot taken
+    // on that signal catches the canvas half-transparent over the page behind
+    // it: a washed-out light box rather than the terminal ground. Waiting on
+    // the fade's END STATE rather than a fixed beat is what makes the capture
+    // deterministic — `toHaveCSS` retries until it holds.
+    const canvases = page.locator(".layout-canvas");
+    for (let i = 0; i < (await canvases.count()); i += 1) {
+      await expect(canvases.nth(i)).toHaveCSS("opacity", "1");
+    }
+    await page.waitForTimeout(200);
     await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
   }
 

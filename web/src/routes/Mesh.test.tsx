@@ -31,7 +31,7 @@ vi.mock("@xyflow/react", () => ({
   Background: () => null, Handle: () => null,
   Position: { Left: "left", Right: "right" }, MarkerType: { ArrowClosed: "arrowclosed" },
 }));
-vi.mock("../hooks/useElkLayout", () => ({ NODE_WIDTH: 224, NODE_HEIGHT: 128, useElkLayout: () => ({ positions: {}, ready: false }) }));
+vi.mock("../hooks/useElkLayout", () => ({ NODE_WIDTH: 224, NODE_HEIGHT: 84, useElkLayout: () => ({ positions: {}, ready: false }) }));
 
 import { getMesh, listActors, listNodeRuns, listRuns, listWorkflows } from "../api/client";
 import { MESH_PAYLOAD, MESH_WORKFLOWS } from "../fixtures/mesh-fixture";

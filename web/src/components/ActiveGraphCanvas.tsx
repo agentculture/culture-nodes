@@ -167,8 +167,8 @@ export function ActiveGraphCanvas({
         target: edge.target,
         sourceHandle: edge.loop ? LOOP_SOURCE_HANDLE : undefined,
         targetHandle: edge.loop ? LOOP_TARGET_HANDLE : undefined,
-        type: "smoothstep" as const,
-        pathOptions: { borderRadius: 14, offset: edge.loop ? 28 : 12 },
+        // React Flow's default edge — the demo's canvas draws curves, and a
+        // right-angled smoothstep run was most of what read as "boxes".
         label: edge.outcome,
         className: ["flow-edge", "is-unwalked", edge.loop ? "is-loop" : ""]
           .filter(Boolean)

@@ -43,22 +43,33 @@ export interface EdgeStyle {
   meaning: string;
 }
 
-/** Confirmed / active — CliRuntimeStackDiagram.astro `.connector.solid`. */
+/**
+ * Confirmed / active — CliRuntimeStackDiagram.astro `.connector.solid`.
+ *
+ * The stroke is the demo's walked/active path (`.canvas__edges path.e--walked`
+ * → `var(--teal)`), not the page accent: these strokes are only ever drawn on
+ * the dark terminal canvas, where the light-theme `--accent-strong` was very
+ * nearly invisible. The 2.4 width stays the org diagram's — it is pinned by
+ * scripts/check-culture-design.mjs, which is why it is 2.4 and not the demo's
+ * 2.2.
+ */
 export const SOLID: EdgeStyle = {
   name: "SOLID",
-  stroke: "var(--accent-strong)",
+  stroke: "var(--culture-teal)",
   strokeWidth: 2.4,
   meaning: "confirmed / active",
 };
 
 /**
  * Proposed — org's `.layer-box.replaceable` dashed-border convention
- * (stroke-dasharray: 9 7), repurposed here for edges.
+ * (stroke-dasharray: 9 7), repurposed here for edges. Resting stroke and
+ * width are the demo's canvas edge: `rgba(233,236,248,.28)` at 1.6px, held in
+ * `--culture-edge` (node.css).
  */
 export const DASHED: EdgeStyle = {
   name: "DASHED",
-  stroke: "var(--ink-soft)",
-  strokeWidth: 2,
+  stroke: "var(--culture-edge)",
+  strokeWidth: 1.6,
   strokeDasharray: "9 7",
   meaning: "proposed",
 };
@@ -66,8 +77,8 @@ export const DASHED: EdgeStyle = {
 /** Reference / soft link — CliRuntimeStackDiagram.astro `.connector.dotted`. */
 export const DOTTED: EdgeStyle = {
   name: "DOTTED",
-  stroke: "var(--ink-soft)",
-  strokeWidth: 2,
+  stroke: "var(--culture-edge)",
+  strokeWidth: 1.6,
   strokeDasharray: "2 7",
   meaning: "reference / soft link",
 };

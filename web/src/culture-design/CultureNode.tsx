@@ -103,7 +103,7 @@ export function CultureNode({
       ) : band === "far" && (state === "failed" || state === "policy_denied") ? <StatusChip state={state} className="status-chip--compact" /> : live && band !== "far" ? <span className="culture-node__state active-node__badge"><span aria-hidden="true">●</span> active</span> : null}
 
       {execution && band === "close" ? (
-        <dl className="node-card__detail">
+        <dl className="culture-node__meta node-card__detail">
           <div><dt>attempts</dt><dd>{execution.attempts.length}{lastAttempt ? ` (${lastAttempt.status})` : ""}</dd></div>
           {execution.actorId ?? node.uses ? <div><dt>{node.kind === "code" ? "runner" : "actor"}</dt><dd>{execution.actorId ?? shortRef(node.uses)}</dd></div> : null}
           {node.raw.operation?.image ? <div><dt>image</dt><dd>{shortRef(node.raw.operation.image)}</dd></div> : null}

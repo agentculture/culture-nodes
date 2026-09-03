@@ -2,11 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import type { ELK as ElkInstance } from "elkjs/lib/elk-api";
 import type { WorkflowGraph } from "../domain/graph";
 
-// Kept in step with `.node-card`'s width/height in styles/app.css: React Flow
-// needs the box size before the DOM exists, so the two cannot be derived from
-// each other.
+// Kept in step with `.culture-node`'s box in culture-design/node.css: React
+// Flow needs the box size before the DOM exists, so the two cannot be derived
+// from each other.
+//
+// The card's height is CONTENT-driven now (`min-height: 64px`, no fixed
+// height) — the demo's `.cn`, not a 128px slab with empty space under the
+// text. 84 is the nominal a medium-band card measures: the 64px floor plus
+// the state-chip row. ELK spaces rows off this number, so a node that grows
+// past it (a close-zoom card with its fact list) overlaps nothing — the
+// nodeNode spacing below is 48px of slack.
 export const NODE_WIDTH = 224;
-export const NODE_HEIGHT = 128;
+export const NODE_HEIGHT = 84;
 
 export type NodePositions = Record<string, { x: number; y: number }>;
 

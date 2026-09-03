@@ -21,9 +21,23 @@
   --nodes-gap: 1rem;
 }
 
-/* Fixed terminal ground shared by every graph canvas. */
+/* Fixed terminal ground shared by every graph canvas, with the demo's 26px
+   dotted grid painted straight onto it
+   (docs/demos/web-ui-lift/culture-nodes-lifted.html `.canvas`). The grid sits
+   on the viewport rather than the world, exactly as the reference does, so
+   React Flow's own <Background> pattern is hidden below — one grid, at one
+   spacing, instead of two at different ones. */
 .canvas-surface.canvas-surface {
-  background: var(--terminal-ground);
+  background-color: var(--terminal-ground);
+  background-image: radial-gradient(
+    var(--culture-canvas-grid) 1px,
+    transparent 1px
+  );
+  background-size: 26px 26px;
+}
+
+.canvas-surface .react-flow__background {
+  display: none;
 }
 
 /* ---------- header ---------- */
@@ -657,14 +671,28 @@
   fill: var(--ink);
 }
 
+/* Edge labels ride the dark canvas, not a page surface: 10px mono in the
+   faint terminal ink, and NO label box — the demo draws bare
+   `.canvas__edges text`, and a white plate behind every outcome word was the
+   single loudest thing on the graph. */
 .react-flow__edge-text {
-  font-family: var(--font-body);
+  font-family: var(--font-mono);
   font-size: 10px;
-  fill: var(--ink-soft);
+  fill: var(--culture-faint);
 }
 
 .react-flow__edge-textbg {
-  fill: var(--surface);
+  fill: transparent;
+}
+
+/* The shared arrowhead, at the demo's `rgba(233,236,248,.5)`. React Flow
+   writes the marker into <defs> with its own fill; recolouring it here keeps
+   every canvas on one arrow without threading a colour through five call
+   sites. */
+.react-flow__arrowhead polyline,
+.react-flow__arrowhead path {
+  stroke: var(--culture-edge-marker);
+  fill: var(--culture-edge-marker);
 }
 
 /* Handles are edge anchors only — this canvas is read-only, nothing connects. */
@@ -677,8 +705,12 @@
   stroke-linecap: round;
 }
 
+/* Demo `.canvas__edges path.e--loop`: a return path is dashed. An unwalked
+   loop already carries the proposed-edge dasharray inline; this is what a
+   walked one (no inline dasharray) picks up. */
 .flow-edge.is-loop .react-flow__edge-path {
   stroke-linecap: butt;
+  stroke-dasharray: 5 5;
 }
 
 /* A walked loop edge is the one edge that must not read as "just another
@@ -690,6 +722,27 @@
 .flow-edge.is-loop.is-walked .react-flow__edge-text {
   fill: var(--accent);
   font-weight: 640;
+}
+
+/* Mesh relation tints — demo `.e--rel-machine` / `.e--rel-workflow` /
+   `.e--rel-run`: which machine an actor sits on reads blue, which workflow it
+   publishes reads yellow, and a live run's two attribution edges read amber. */
+.mesh-edge .react-flow__edge-path {
+  stroke: var(--culture-edge);
+  stroke-width: 1.6;
+}
+
+.mesh-edge--actor-machine .react-flow__edge-path {
+  stroke: var(--culture-edge-machine);
+}
+
+.mesh-edge--actor-workflow .react-flow__edge-path {
+  stroke: var(--culture-edge-workflow);
+}
+
+.mesh-edge--run-actor .react-flow__edge-path,
+.mesh-edge--run-workflow .react-flow__edge-path {
+  stroke: var(--culture-edge-run);
 }
 
 /* ---------- node card ---------- */

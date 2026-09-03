@@ -69,7 +69,7 @@ func TestEveryCanvasKeepsTerminalGround(t *testing.T) {
 		"web/src/routes/RunView.tsx",
 		"web/src/routes/AuthorWorkflow.tsx",
 		"web/src/components/ActiveGraphCanvas.tsx",
-		"web/src/components/MeshCanvas.tsx",
+		"web/src/routes/Mesh.tsx",
 	} {
 		if !strings.Contains(source(t, rel), "canvas-surface") {
 			t.Errorf("%s must carry canvas-surface", rel)

@@ -49,7 +49,10 @@ test("assembles the graph from fixture actors and active runs", async ({
   expect(mesh.run_count).toBe(MESH_ACTIVE_RUN_COUNT);
   expect(mesh.probe_failures).toBe(1);
   expect(mesh.unattributed_actors).toBe(1);
-  expect(mesh.edge_count).toBe(9);
+  // 8, not 9: four actor→machine, one actor→workflow, two run→workflow, and
+  // ONE run→actor — run-mesh-beta has no node-run attribution in the fixture,
+  // so it links to its workflow only; the mesh never invents an actor.
+  expect(mesh.edge_count).toBe(8);
 });
 
 test("failed probes, grouped versions, divergent machines, and unattributed actors stay explicit", async ({ page }) => {

@@ -73,13 +73,6 @@ type webTokenExemption struct {
 // file to fix it.
 var webTokenExemptions = []webTokenExemption{
 	{
-		file:     "web/src/components/MeshCanvas.tsx",
-		findings: 6,
-		reason: "the canvas paints the terminal palette imperatively: two `#7fdcc9` sprite " +
-			"colours and four `rgba(${rgb}, a)` gradient stops. t7 (wave 3) deletes this file " +
-			"outright and rebuilds Mesh on React Flow + CultureNode, so the entry goes with it.",
-	},
-	{
 		file:     "web/src/styles/app.css",
 		findings: 22,
 		reason: "three separate debts, and only two of them have an owner. " +

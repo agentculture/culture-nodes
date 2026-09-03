@@ -13,6 +13,7 @@ import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
 import Design from "./routes/Design";
+import DesignCanvas from "./routes/DesignCanvas";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
 import Home from "./routes/Home";
 import Inbox from "./routes/Inbox";
@@ -45,6 +46,7 @@ const ROUTE_TITLES: ReadonlyArray<readonly [string, string]> = [
   ["/mesh", "Mesh"],
   ["/stats", "Statistics"],
   ["/design", "Design"],
+  ["/design/canvas", "Design canvas"],
   ["/design/new", "New workflow"],
   ["/design/generate", "Generate workflow"],
   ["/graphs", "Design"],
@@ -170,6 +172,7 @@ export function App() {
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
           <Route path="/design" element={<Design />} />
+          <Route path="/design/canvas" element={<DesignCanvas />} />
           {/* The retired view's URL (task t8). /graphs named a view that
               drew cards, not graphs; /workflows named the tab that became
               its sub-tab. Both land on Design, so old links and bookmarks

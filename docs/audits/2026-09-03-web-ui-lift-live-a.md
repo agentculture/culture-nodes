@@ -10,7 +10,7 @@ Namespace `01KZJTJZS8Q03AQQPVFR7QNW90`. Evidence below is from the LAN API
 
 | Check | Spec | Result |
 | --- | --- | --- |
-| Tail-only connect: first frame is the snapshot marker, history not replayed | c2, h1, h25, c30 | **pass** — `GET /v1alpha1/events?from=latest` answered: `id: 01M1MDE2BTNEBSM05R9ED3PWRX event: stream.snapshot data: {"snapshot_id":"01M1MDE2BTNEBSM05R9ED3PWRX"} ` |
+| Tail-only connect: first frame is the snapshot marker, history not replayed | c2, h1, h25, c30 | **pass** — `GET /v1alpha1/events?from=latest` answered: `id: 01M1MDE2BTNEBSM05R9ED3PWRX event: stream.snapshot data: {"snapshot_id":"01M1MDE2BTNEBSM05R9ED3PWRX"}` |
 | Worker presence rows exist, names only | c19, h19, c38 | **pass with a finding** — `orin-worker-1` hostname=`2b8c7e0c574d` revision=`c89cee4` actor_keys=6 (names only); `thor-worker-1` hostname=`53ceb94f0a51` revision=`c89cee4` actor_keys=6 (names only). Finding: `hostname` is each worker's container id, not the host (fix package in flight). |
 | Mesh endpoint answers without probing in-request | c40, h32 | **pass (latency)** — `GET /v1alpha1/mesh` returns in well under a second. |
 | Machines keyed on self-reported hostname | c23, h26 | **not observable on this revision** — `machines` is empty and every actor's bridge block reads "not observed by the bridge collector": `cmd/nodes/serve.go` wires the collector with no targets. Fix package in flight (`fix-mesh-collector`). |

@@ -2,7 +2,7 @@
   "plan_slug": "web-ui-lift",
   "schema_version": 2,
   "created": "2026-09-03T20:58:40Z",
-  "updated": "2026-09-03T21:07:40Z",
+  "updated": "2026-09-03T21:08:23Z",
   "deviations": [
     {
       "id": "d1",
@@ -17,6 +17,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 16
+    },
+    {
+      "id": "d2",
+      "what": "The human-pages package under d1 is withdrawn before any work merged: the operator decided the work-group pages (Your work, Inbox, Decisions) and every other tab this cycle did not change are handed to a Feature issue with alignment guidance instead of being built in this fixes cycle; non-goal c20 stands as written.",
+      "task_ref": "t20",
+      "reason": "Operator instruction 2026-09-03, on seeing the deviation ask: no build now; open a Feature issue explaining how to handle them so later work stays aligned with today's changes.",
+      "affects": [
+        "t20",
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 17
     }
   ],
   "evidence": [

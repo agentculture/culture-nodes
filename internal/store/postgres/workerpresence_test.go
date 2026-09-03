@@ -51,8 +51,8 @@ func TestUpsertWorkerPresenceRejectsTokenShapedActorKeys(t *testing.T) {
 	var s *postgres.Store
 	for _, actorKey := range []string{"NODES_ACTOR_KEY:token-value", strings.Repeat("x", 65)} {
 		err := s.UpsertWorkerPresence(context.Background(), postgres.WorkerPresence{
-			WorkerID: "worker-rejected-actor-key",
-			Hostname: "worker.example",
+			WorkerID:  "worker-rejected-actor-key",
+			Hostname:  "worker.example",
 			ActorKeys: []string{actorKey},
 		})
 		if err == nil {

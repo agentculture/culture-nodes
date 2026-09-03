@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-03T15:17:16Z",
-  "updated": "2026-09-03T16:32:57Z",
+  "updated": "2026-09-03T20:58:42Z",
   "claims": [
     {
       "id": "c1",
@@ -994,5 +994,141 @@
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c30",
+      "seam": "GET /v1alpha1/events?from=latest + routes/Mesh.tsx",
+      "behavior": "a fresh Mesh load with 1,284 committed rows behind it shows events_total 0 and pulses_total 0",
+      "source_text": "Opening /mesh in a fresh tab against a namespace with many terminal runs animates zero historical lifecycle events: #agent-state mesh.events_total stays at the count of events committed after load (e2e seeds 50 terminal runs and asserts).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c31",
+      "seam": "routes/Design.tsx gallery + GET /workflows",
+      "behavior": "every published workflow_key draws its graph with zero runs in the namespace",
+      "source_text": "Every published workflow_key has a graph reachable in one click from Design with no run in the namespace (e2e on fixtures with zero runs).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c32",
+      "seam": "web/src/culture-design/CultureNode.tsx across Mesh, RunView, Design, canvas, Active graphs",
+      "behavior": "one node module draws every graph view; no second node card exists",
+      "source_text": "One node component: a lint test pins that Mesh, RunView, Active Graphs, Design gallery and the authoring preview import the same module and that no second node card exists.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c33",
+      "seam": "routes/DesignCanvas.tsx Publish \u2192 POST /v1alpha1/workflows",
+      "behavior": "the bytes published from the canvas equal the source pane and yield the same digest as the CLI path; diagnostics are the compiler's verbatim",
+      "source_text": "A canvas-authored workflow's published digest equals the digest of the CLI publish path on the same emitted source, and each compiler diagnostic shown on canvas is byte-identical to the validate response.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c34",
+      "seam": "routes/Mesh.tsx + GET /v1alpha1/mesh",
+      "behavior": "edges drawn only from rows by relation; a failed probe renders unknown with its error",
+      "source_text": "The mesh shows, from real rows, at least actor\u2192machine, run\u2192actor and run\u2192workflow edges plus per-machine revision and liveness, and a probe that failed renders as 'unknown', never as healthy; operator-reviewed screenshots of Mesh before/after are posted to #270.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c26",
+      "seam": "hooks/useElkLayout ready + components/SegmentedToggle",
+      "behavior": "nodes never paint at fallback positions then jump; one toggle component everywhere",
+      "source_text": "Fluidity: graph nodes never paint at fallback positions and then jump \u2014 the canvas stays hidden or faded until ELK positions land; one shared segmented-toggle component replaces every ad-hoc tab strip; view changes use one transition idiom; prefers-reduced-motion renders one static frame everywhere; the fixture screenshot pass gains Mesh and Active Graphs shots and the operator reviews before/after before merge.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c2",
+      "seam": "internal/api/events.go handleStreamEvents ?from=latest",
+      "behavior": "first frame is stream.snapshot with the max id; nothing at or before it streams; a run.created between marker and GET /runs is delivered exactly once",
+      "source_text": "Mesh stops replaying history on arrival: web/src/hooks/useSharedEvents.tsx connects with no cursor on every page load, and internal/api/events.go's handleStreamEvents treats an absent Last-Event-ID/from as 'from the beginning of this namespace's event log', admitting every historical run.created/run.completed lifecycle event; routes/Mesh.tsx turns each into a run-added placeholder then a 3.4s linger-and-remove, so the whole run history animates through the mesh at speed. The fix is a server-side tail-only connect, ordered stream-first so the two reads have a defined boundary: the Mesh opens the stream in an explicit tail-only mode, the server's first frame is a snapshot marker naming the event-log high-water mark it will stream after, and only then does the Mesh load active runs from GET /runs, buffering every streamed event until that response lands and applying it on top keyed by run id. Reading the marker before the snapshot query makes that boundary at-least-once rather than at-most-once, which is what the data allows: GET /runs returns a pagination cursor over runs and can never carry the event log's ULID high-water mark, so no single call can hand back both atomically, and a transition committed between the two reads must therefore appear in both and reconcile, never fall between them. A Go change plus a client cursor-and-reconcile rule.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c23",
+      "seam": "internal/mesh collector + GET /v1alpha1/mesh",
+      "behavior": "machines keyed on the bridge's self-reported preflight.host.hostname; a bridge that never answers marks its machine unknown with error text within normal latency",
+      "source_text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine keyed on the hostname each bridge reports for ITSELF under capabilities.preflight.host.hostname (preflight.Surface's host block, which checkHost already refuses empty, and which the package doc pins as a fact only the party that can measure it may supply), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay. No machine is derived from endpoint_ref: that column is nullable caller-supplied address text on an immutable actor revision, it goes stale on every superseded revision, migrations/pending/0036 drops it after the dial-in cutover, and a dial-in bridge has no address to read \u2014 so an actor whose surface reports no hostname is drawn as an unattributed actor rather than joined to a machine invented from an address.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c19",
+      "seam": "migrations/0055 worker_presence + internal/worker/presence.go",
+      "behavior": "presence rows carry actor-key NAMES only; a token-looking value is rejected; hostname from NODES_HOSTNAME",
+      "source_text": "Machine facts on the mesh come only from surfaces that already exist or that this cycle adds to the control plane: GET /v1alpha1/version, each bridge's /v1/capabilities deployment block (package, install_mode, revision, revision_is_dirty), actor rows, and a worker/bridge self-report of configured actor-key NAMES on its poll heartbeat \u2014 never secret values, never a shell probe of a host from the control plane. Deployment-checkout HEAD/dirty state needs host access the control plane does not have and is a follow-up unless a reporting path exists.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c28",
+      "seam": "web/src/domain/workflow-document.ts",
+      "behavior": "a commented fixture with an anchor and deliberate key order round-trips byte-identical; addNode+addEdge change only the inserted lines; merge keys are refused with a reason",
+      "source_text": "The Design canvas composes workflows with the mouse and round-trips hand-written YAML (q2): the canvas edits the author's YAML document as a syntax tree, so comments, blank lines, anchors and key order survive every mutation; a palette of node kinds (from domain/node-catalog), drag to add, connect via handles (isConnectable on), select/delete, a per-kind property panel with the PRD \u00a78.3 fields, a source pane showing the live document, Validate with compiler diagnostics attached to the offending node or edge, and Publish shipping the document string verbatim as an immutable version \u2014 with a keyboard-only path for add, connect and edit.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c22",
+      "seam": "web/src/culture-design/node.css + CultureNode.tsx",
+      "behavior": "the node treatment is the demo's: compact card, glowing core, breathing halo on live, bezier edges, mono labels; the Canvas-2D MeshCanvas is gone",
+      "source_text": "A shared Culture node component (one file under web/src/culture-design/ or components/) renders on React Flow in the mesh idiom \u2014 dark terminal ground, kind-coloured glowing core, halo, label and sub-line, one-shot pulse rings \u2014 while keeping PRD \u00a78.5 zoom detail bands and the NodeCard's kind-specific content; RunView, Active Graphs, the Design gallery, the authoring preview and the Mesh all import this one component.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c25",
+      "seam": "components/Header.tsx + App.tsx routes",
+      "behavior": "exactly eight primary links; every old path resolves directly or by redirect",
+      "source_text": "Navigation is consolidated onto the PRD \u00a78.6 spine without retiring any surface: eight destinations in two groups \u2014 Your work \u00b7 Inbox \u00b7 Decisions | Design (gallery + New workflow + Generate) \u00b7 Runs (list / board / jobs as one page with a segmented projection toggle) \u00b7 Mesh \u00b7 Ledger-and-plan (Plan) \u00b7 Statistics; every old URL redirects to the surface that now renders it.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c18",
+      "seam": "tests/lint/webtokens_test.go",
+      "behavior": "no colour, font or radius literal outside web/src/culture-design",
+      "source_text": "No sibling aesthetic (PRD \u00a78.1): every colour, radius, shadow and face comes from web/src/culture-design/tokens.css and palette.ts; the terminal ground stays TERMINAL_GROUND; nothing is picked by eye.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c12",
+      "seam": "operator review on issue #270 (h12 / h14)",
+      "behavior": "a person judges the before/after shots less intimidating and posts the verdict before merge",
+      "source_text": "Primary: the operator running the fleet from a wide display, who lives in Mesh, Runs and Design and needs to see at a glance what every machine is serving and what every workflow looks like. Secondary: a person arriving from a Jira comment to decide something (their pages \u2014 ticket, inbox, decisions \u2014 keep the treatment issue #270 gave them). Tertiary: agents reading #agent-state (webglass), which must keep asserting every fact the pixels claim.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c27",
+      "seam": "docs/decisions/2026-09-03-design-canvas-spike.md",
+      "behavior": "elapsed time, exact stringify options, the mutation diff and the compile result are recorded; the operator's verdict gates the editor wave",
+      "source_text": "Before the editor wave, the spike from docs/decisions/issue-12-remaining-web-ux-scope.md runs against q2's round-trip rule: load one hand-written YAML with comments, an anchor and a deliberate key order onto the canvas, add one node and one edge by mouse, and prove the emitted document validates through POST /v1alpha1/workflows/validate while the untouched lines are byte-identical; elapsed design/engineering time and every round-trip loss are recorded in a decision record and the operator gives go/no-go for the editor wave on that record.",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }

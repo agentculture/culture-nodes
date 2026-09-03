@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,12 +53,18 @@ func TestCollectorKeysSuccessfulBridgeByReportedHostnameAndKeepsTimeoutUnknown(t
 }
 
 func TestCollectorTimeoutConcurrencyAndFailureCount(t *testing.T) {
-	var active, maximum atomic.Int32
+	// Concurrency is measured by request START times, not by handlers alive:
+	// the collector releases a slot the moment its client gives up (the
+	// probe timeout), while the server-side handler only learns of the
+	// disconnect afterwards, so counting live handlers over-reports by one
+	// exactly at the timeout boundary. What the bound guarantees is that the
+	// third probe cannot start before the first probe has timed out.
+	var startMu sync.Mutex
+	var starts []time.Time
 	blocked := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		n := active.Add(1)
-		defer active.Add(-1)
-		for old := maximum.Load(); n > old && !maximum.CompareAndSwap(old, n); old = maximum.Load() {
-		}
+		startMu.Lock()
+		starts = append(starts, time.Now())
+		startMu.Unlock()
 		<-r.Context().Done()
 	}))
 	defer blocked.Close()
@@ -74,8 +82,14 @@ func TestCollectorTimeoutConcurrencyAndFailureCount(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 90*time.Millisecond {
 		t.Fatalf("collection took %s; per-probe timeout was not enforced", elapsed)
 	}
-	if maximum.Load() > 2 {
-		t.Fatalf("maximum concurrency = %d, want <= 2", maximum.Load())
+	startMu.Lock()
+	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	startMu.Unlock()
+	if len(starts) != 3 {
+		t.Fatalf("probe starts = %d, want 3", len(starts))
+	}
+	if gap := starts[2].Sub(starts[0]); gap < 15*time.Millisecond {
+		t.Fatalf("third probe started %s after the first; with MaxConcurrency 2 it must wait for a 20ms probe timeout", gap)
 	}
 	for _, key := range []string{"a", "b", "c"} {
 		if c.FailureCount(key) != 1 {

@@ -16,9 +16,12 @@ import {
  */
 
 const MESH: AgentMeshState = {
+  machine_count: 2,
   actor_count: 3,
   run_count: 2,
   edge_count: 5,
+  probe_failures: 1,
+  unattributed_actors: 1,
   connection: "live",
   last_event_id: "01ULID",
   events_total: 7,

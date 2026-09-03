@@ -114,9 +114,12 @@ export interface AgentStatisticsState {
  * `JSON.stringify` — same convention as `authoring`/`statistics`).
  */
 export interface AgentMeshState {
+  machine_count: number;
   actor_count: number;
   run_count: number;
   edge_count: number;
+  probe_failures: number;
+  unattributed_actors: number;
   /** `live` | `reconnecting` — never faked (t18 acceptance #2). */
   connection: string;
   last_event_id: string | null;

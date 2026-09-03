@@ -3,7 +3,39 @@ import type {
   EventEnvelope,
   NodeRunListItem,
   Run,
+  WorkflowVersion,
 } from "../api/types";
+import type { MeshPayload } from "../api/client";
+
+export const MESH_PAYLOAD: MeshPayload = {
+  version: "v0.48.0",
+  machines: {
+    thor: { actors: ["codex-thor", "headspace-runner"] },
+    orin: { actors: ["codex-orin"] },
+    reachy: { actors: ["reachy-bridge"] },
+  },
+  actors: [
+    { actor_key: "codex-thor", machine: "thor", bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+    { actor_key: "headspace-runner", machine: "thor", bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+    { actor_key: "codex-orin", machine: "orin", bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+    { actor_key: "reachy-bridge", machine: "reachy", bridge: { observed_at: "2026-08-12T09:00:00Z", error: "dial tcp 10.0.0.9:8090: i/o timeout" } },
+    { actor_key: "human/ori", machine: null, bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+  ],
+  workers: [
+    { worker_id: "worker-thor", hostname: "thor", revision: "4f2c9a7", actor_keys: ["codex-thor", "headspace-runner"], last_seen: "2026-08-12T09:00:00Z" },
+    { worker_id: "worker-orin", hostname: "orin", revision: "f9d50e9", actor_keys: ["codex-orin"], last_seen: "2026-08-12T09:00:00Z" },
+  ],
+};
+
+const meshWorkflow = (digest: string, version: number): WorkflowVersion => ({
+  id: `mesh-workflow-${version}`, workflow_key: "mesh-demo", version,
+  source_format: "yaml", source: "", digest, created_at: `2026-08-0${version}T00:00:00Z`,
+  normalized_ir: { spec: { entry: "work", nodes: {
+    work: { kind: "agent", uses: "actor://codex-thor" },
+    approve: { kind: "approval", approverRef: "actor://human/ori" },
+  }, edges: [] } },
+});
+export const MESH_WORKFLOWS = [meshWorkflow("sha256:mesh-old-1", 1), meshWorkflow("sha256:mesh-old-2", 2), meshWorkflow("sha256:mesh-wf", 3)];
 
 /**
  * The Mesh view's fixture slice (task t18): actors across the kind
@@ -63,7 +95,8 @@ export const MESH_ACTORS: Actor[] = [
 ];
 
 /** 5 rows -> 4 mesh nodes (codex-thor's two revisions collapse). */
-export const MESH_ACTOR_NODE_COUNT = 4;
+export const MESH_ACTOR_NODE_COUNT = 5;
+export const MESH_MACHINE_NODE_COUNT = 3;
 
 export const MESH_RUNS: Run[] = [
   {
@@ -116,7 +149,7 @@ export const MESH_NODE_RUNS: NodeRunListItem[] = [
     id: "nr-mesh-alpha-build",
     run_id: "run-mesh-alpha",
     node_id: "build",
-    actor_id: "actor-thor-r1",
+    actor_id: "codex-thor",
     state: "running",
     created_at: "2026-08-12T09:05:00Z",
     updated_at: "2026-08-12T09:30:00Z",

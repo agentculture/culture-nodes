@@ -440,6 +440,33 @@ export const decideHumanTask = (
 export const listActors = (signal?: AbortSignal) =>
   getJson<ActorList>("/actors", signal);
 
+export interface MeshBridgeObservation {
+  deployment?: Record<string, unknown>;
+  observed_at?: string;
+  error?: string;
+}
+
+export interface MeshPayload {
+  actors: Array<{
+    actor_key: string;
+    machine: string | null;
+    bridge: MeshBridgeObservation;
+  }>;
+  machines: Record<string, { actors: string[] }>;
+  version: string;
+  workers: Array<{
+    worker_id: string;
+    hostname: string;
+    revision: string;
+    actor_keys: string[];
+    last_seen: string;
+  }>;
+}
+
+/** The committed topology snapshot; the request itself never probes a bridge. */
+export const getMesh = (signal?: AbortSignal) =>
+  getJson<MeshPayload>("/mesh", signal);
+
 /**
  * `GET /v1alpha1/plan-imports?slug=` (task t23): every import snapshot of
  * one plan, most recent first — `items[0]` is "the current one". `slug` is

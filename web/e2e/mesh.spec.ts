@@ -45,8 +45,25 @@ test("assembles the graph from fixture actors and active runs", async ({
     .toBe(0);
   const mesh = (await readAgentState(page)).mesh!;
   expect(mesh.actor_count).toBe(MESH_ACTOR_NODE_COUNT);
+  expect(mesh.machine_count).toBe(3);
   expect(mesh.run_count).toBe(MESH_ACTIVE_RUN_COUNT);
-  expect(mesh.edge_count).toBe(MESH_ACTOR_NODE_COUNT + MESH_ACTIVE_RUN_COUNT);
+  expect(mesh.probe_failures).toBe(1);
+  expect(mesh.unattributed_actors).toBe(1);
+  expect(mesh.edge_count).toBe(9);
+});
+
+test("failed probes, grouped versions, divergent machines, and unattributed actors stay explicit", async ({ page }) => {
+  await openMesh(page);
+  const failed = page.locator('[data-node-id="reachy-bridge"]');
+  await expect(failed).toBeVisible();
+  await failed.hover();
+  await expect(page.locator("#mesh-tooltip")).toContainText("unknown");
+  await expect(page.locator("#mesh-tooltip")).toContainText("dial tcp 10.0.0.9:8090: i/o timeout");
+  await expect(failed).not.toHaveText(/answering/i);
+  await expect(page.locator('[data-node-id="mesh-demo"]')).toContainText("3 versions");
+  await expect(page.locator('[data-node-id="human/ori"]')).toContainText("unattributed");
+  await expect(page.locator('[data-node-id="thor"]')).toContainText("2 actor keys");
+  await expect(page.locator('[data-node-id="orin"]')).toContainText("1 actor keys");
 });
 
 test("1,284 historical events stay skipped and each later commit increments once", async ({
@@ -150,6 +167,7 @@ test("keyboard focus inspects nodes without a pointer", async ({ page }) => {
   const tooltip = page.locator("#mesh-tooltip");
   await expect(tooltip).toBeVisible();
   await expect(tooltip).toContainText("control plane");
+  await expect(tooltip).toContainText("traces to mesh: version");
   await page.keyboard.press("ArrowRight");
   await expect(tooltip).not.toContainText("control plane");
   await page.keyboard.press("Escape");

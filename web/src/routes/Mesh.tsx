@@ -22,8 +22,18 @@ type MeshFlowNode = Node<MeshFlowData, "mesh">;
 function FlowCultureNode({ data }: NodeProps<MeshFlowNode>) {
   const raw: WorkflowIRNode = { kind: data.item.kind };
   const node: GraphNode = { id: data.item.label, kind: data.item.kind, ownerRef: data.item.sub, outcomes: [], raw, depth: 0 };
-  return <><Handle type="target" position={Position.Left} isConnectable={false} /><CultureNode node={node} selected={data.selected} live={data.item.status === "answering"} pulseCount={data.pulseCount} />{data.item.status && data.item.status !== "answering" ? <p className="status-chip status-chip--unknown" title={data.item.error}>{data.item.status === "unsupported" ? "no capability surface" : data.item.status} · {data.item.error}</p> : null}<Handle type="source" position={Position.Right} isConnectable={false} /></>;
+  return <><Handle type="target" position={Position.Left} isConnectable={false} /><CultureNode node={node} selected={data.selected} live={data.item.status === "answering"} pulseCount={data.pulseCount} />{data.item.status && data.item.status !== "answering" ? <p className="status-chip status-chip--unknown" title={data.item.error}>{statusWord(data.item.status)} · {data.item.error}</p> : null}<Handle type="source" position={Position.Right} isConnectable={false} /></>;
 }
+/** The spec's vocabulary for a probe that did not answer (c34/h24): a failed
+ *  probe is "unknown", never a healthy word; a bridge with no capability
+ *  surface says so; an actor nobody probes is "not probeable". */
+function statusWord(status: string | undefined): string {
+  if (status === "failed") return "unknown";
+  if (status === "unsupported") return "no capability surface";
+  if (status === "unobserved") return "not probeable";
+  return status ?? "";
+}
+
 const NODE_TYPES = { mesh: FlowCultureNode };
 
 export function Mesh() {
@@ -81,7 +91,7 @@ export function Mesh() {
     <div id="mesh-canvas" className="mesh-canvas canvas-surface layout-canvas" data-motion={reducedMotion ? "static" : "animated"} data-layout-ready={layoutReady} tabIndex={0} onKeyDown={onKeyDown} style={{ height: 620 }}>
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} onInit={(instance) => { instanceRef.current = instance; }} nodesFocusable onNodeMouseEnter={(_, node) => setInspectedId(node.id)} onNodeClick={(_, node) => setInspectedId(node.id)}><Background /></ReactFlow>
     </div>
-    <aside id="mesh-tooltip" className="mesh-tooltip" hidden={!inspected} role="status">{inspected ? <><span className="mesh-tooltip__label">{inspected.label}</span><span className="mesh-tooltip__sub">{inspected.kind} · traces to {inspected.trace.surface}: {inspected.trace.row}{inspected.status && inspected.status !== "answering" ? ` · ${inspected.status === "unsupported" ? "no capability surface" : inspected.status} · ${inspected.error}` : ""}</span></> : null}</aside>
+    <aside id="mesh-tooltip" className="mesh-tooltip" hidden={!inspected} role="status">{inspected ? <><span className="mesh-tooltip__label">{inspected.label}</span><span className="mesh-tooltip__sub">{inspected.kind} · traces to {inspected.trace.surface}: {inspected.trace.row}{inspected.status && inspected.status !== "answering" ? ` · ${statusWord(inspected.status)} · ${inspected.error}` : ""}</span></> : null}</aside>
     <ul className="mesh-legend" aria-label="Mesh legend">{["machine", "control plane / bridge", "human", "workflow (by key)", "active run"].map((x) => <li key={x}>{x}</li>)}</ul>
     {graph.actorCount === 0 && !error ? <p className="muted" id="mesh-empty">No actors registered yet.</p> : null}
   </section>;

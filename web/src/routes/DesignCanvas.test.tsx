@@ -21,7 +21,9 @@ vi.mock("@xyflow/react", () => ({
   Position: { Left: "left", Right: "right" }, MarkerType: { ArrowClosed: "arrow" },
   applyNodeChanges: (_: unknown, nodes: unknown) => nodes,
   applyEdgeChanges: (_: unknown, edges: unknown) => edges,
+  useReactFlow: () => ({ screenToFlowPosition: (point: { x: number; y: number }) => point }),
 }));
+vi.mock("../hooks/useElkLayout", () => ({ NODE_WIDTH: 224, NODE_HEIGHT: 84, useElkLayout: () => ({ positions: {}, ready: true }) }));
 
 const validate = vi.mocked(validateWorkflow);
 const publish = vi.mocked(publishWorkflow);

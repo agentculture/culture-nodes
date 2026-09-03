@@ -3050,3 +3050,9 @@ button.timeline__node {
 .app-header__group--engine a {
   font-size: var(--ac-type-meta);
 }
+
+/* Design canvas (fixes cycle): the source pane marks the lines the last
+   canvas action inserted — tokens only (the token guard pins this file). */
+.culture-source { margin: 0; white-space: pre; overflow: auto; }
+.culture-source__ins { background: color-mix(in srgb, var(--accent) 14%, transparent); display: inline; }
+.design-canvas__status { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); margin: 0.5rem 0 0; }

@@ -118,3 +118,27 @@ the mutated result remains an explicit merge-gate check. The POST boundary was
 tested and failed closed without exposing a secret.
 
 Operator go/no-go: ______________________________
+
+## Operator addendum at the merge gate (2026-09-03)
+
+The validate step the sandbox could not finish was rerun on spark with the
+offline compiler the CLI ships (`go run ./cmd/nodes validate`): the same two
+mutations were replayed with the explicit editor baseline options on
+`deploy/compose/testdata/smoke.workflow.yaml` (no-edit round-trip byte-identical
+again), and the mutated document was compiled locally. Result, verbatim:
+
+```text
+valid: compose-smoke 1.0.0 (0 errors, 0 warnings)
+digest: sha256:a561b0deed31133824b132f6da9a87688f33f5f2466fd9bb76ee5e23f6f466eb
+```
+
+Exit code `0`. This is the compiler itself, not the HTTP route, so it
+proves the document compiles; the route adds only the principal check the
+sandbox lacked (issue #279).
+
+## Go / no-go
+
+Operator decision: pending. The record above is what the editor wave (t14,
+t15) is gated on; the operator fills in the verdict line here.
+
+- Verdict: _(operator)_

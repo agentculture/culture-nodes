@@ -5,7 +5,8 @@ import type { NodeRunListItem, Run } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import JobsTable from "../components/JobsTable";
 import TimeRangeFilter from "../components/TimeRangeFilter";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -81,7 +82,10 @@ export function JobsTimeline() {
     [],
   );
 
-  useSharedEvents(JOBS_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    JOBS_EVENT_TYPES,
+    scheduleReload,
+  );
 
   // Page one: refetched whenever the range changes. Pagination state resets
   // with it — a new range means a new result set, not more of the old one.
@@ -101,6 +105,7 @@ export function JobsTimeline() {
         if (controller.signal.aborted) return;
         setItems(page.items);
         setNextCursor(page.next_cursor);
+        resolveSnapshot();
         setAgentState({ status: "ready" });
       })
       .catch((cause: unknown) => {
@@ -111,12 +116,13 @@ export function JobsTimeline() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        resolveSnapshot();
         // "ready" means the initial load finished, including finishing it
         // badly — same convention RunsBoard/RunsList use.
         setAgentState({ status: "ready" });
       });
     return () => controller.abort();
-  }, [since, until]);
+  }, [since, until, resolveSnapshot]);
 
   // The name/category lookup (task t5): a separate, non-blocking fetch of
   // GET /v1alpha1/runs for the same window. It does not gate `status` —

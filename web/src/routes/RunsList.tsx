@@ -10,7 +10,8 @@ import RunStateChip from "../components/RunStateChip";
 import TimeRangeFilter from "../components/TimeRangeFilter";
 import { formatRelativeTime } from "../domain/run-board";
 import { runDisplayName } from "../domain/usage";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -89,7 +90,10 @@ export function RunsList() {
     [],
   );
 
-  useSharedEvents(RUNS_LIST_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    RUNS_LIST_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,6 +114,7 @@ export function RunsList() {
         if (controller.signal.aborted) return;
         setRuns(list.items);
         setNextCursor(list.next_cursor);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -120,13 +125,14 @@ export function RunsList() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        resolveSnapshot();
         // "ready" means the view finished its initial load — including
         // finishing it badly. An agent reading agent-state needs to know the
         // page has settled; the error is reported alongside, not instead.
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [since, until, stateFilter]);
+  }, [since, until, stateFilter, resolveSnapshot]);
 
   // The SSE-triggered background refresh (issue #46): fires only after the
   // initial load (reloadKey === 0 is that first render, already handled

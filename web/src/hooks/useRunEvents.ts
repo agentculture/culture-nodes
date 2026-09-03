@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { runEventsUrl } from "../api/client";
+import { openEventSource, runEventsUrl } from "../api/client";
 import type { EventEnvelope, RunEvent } from "../api/types";
 import { TERMINAL_EVENT_TYPES } from "../domain/run-state";
 
@@ -100,7 +100,7 @@ export function useRunEvents(runId: string | undefined): RunEventsResult {
     const connect = () => {
       if (disposed) return;
       setStatus("connecting");
-      source = new EventSource(runEventsUrl(runId, lastIdRef.current ?? undefined));
+      source = openEventSource(runEventsUrl(runId, lastIdRef.current ?? undefined));
       source.onopen = () => {
         reconnects = 0;
         setStatus("open");

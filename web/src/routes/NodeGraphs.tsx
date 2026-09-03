@@ -20,10 +20,10 @@ import {
 } from "../domain/workflows";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 import {
-  useSharedEvents,
   type SharedEvent,
   type SharedEventType,
 } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 
 /**
  * Every run-lifecycle event that can change a workflow card's "recent runs"
@@ -161,7 +161,10 @@ function NodeGraphsPanel() {
     [],
   );
 
-  useSharedEvents(NODE_GRAPHS_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    NODE_GRAPHS_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -173,18 +176,22 @@ function NodeGraphsPanel() {
       .then((loaded) => {
         if (controller.signal.aborted) return;
         setGroups(loaded);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
         setGroups([]);
         setError(toApiError(cause));
+        resolveSnapshot();
         // "ready" means the initial load finished, including finishing it
         // badly — the error renders alongside, not instead (same convention
         // as every other list view here).
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
+    // resolveSnapshot is stable for this mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // The SSE-triggered background refresh (issue #46): skips the very first
@@ -484,6 +491,7 @@ function ActiveGraphsPanel() {
         setVersions(workflowList.items);
         setRuns(runList.items);
         setNodeRuns(nodeRunList.items);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -492,11 +500,14 @@ function ActiveGraphsPanel() {
         setRuns([]);
         setNodeRuns([]);
         setError(toApiError(cause));
+        resolveSnapshot();
         // "ready" means the initial load finished, including finishing it
         // badly — the error renders alongside (the app-wide convention).
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
+    // resolveSnapshot is stable for this mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Debounced presence refresh: at most one runs+node-runs refetch per
@@ -587,28 +598,9 @@ function ActiveGraphsPanel() {
   // consistent with each other and with h14 (still exactly one pulse per
   // committed event, and still none for an event naming a genuinely
   // unknown run).
-  const pendingEvents = useRef<SharedEvent[]>([]);
-  const applyEventRef = useRef(applyEvent);
-  applyEventRef.current = applyEvent;
-
-  const onEvent = (event: SharedEvent) => {
-    if (runs === null) {
-      pendingEvents.current.push(event);
-      return;
-    }
-    applyEvent(event);
-  };
-
-  useEffect(() => {
-    if (runs === null || pendingEvents.current.length === 0) return;
-    const queued = pendingEvents.current;
-    pendingEvents.current = [];
-    for (const event of queued) applyEventRef.current(event);
-  }, [runs]);
-
-  const { status, lastEventId } = useSharedEvents(
+  const { status, lastEventId, resolveSnapshot } = useSnapshotReconcile(
     ACTIVE_GRAPH_EVENT_TYPES,
-    onEvent,
+    applyEvent,
   );
 
   const presence = useMemo(

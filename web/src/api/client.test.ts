@@ -8,8 +8,8 @@ import { meshEventsUrl } from "./client";
  * that this client previously never exposed.
  */
 describe("meshEventsUrl", () => {
-  it("defaults to the bare events endpoint with no query", () => {
-    expect(meshEventsUrl()).toBe("/v1alpha1/events");
+  it("opens a new shared stream at the latest committed row", () => {
+    expect(meshEventsUrl()).toBe("/v1alpha1/events?from=latest");
   });
 
   it("carries the resume cursor as ?from=", () => {
@@ -18,7 +18,7 @@ describe("meshEventsUrl", () => {
 
   it("carries a runs scope as a comma-joined ?runs=", () => {
     expect(meshEventsUrl(undefined, ["run-1", "run-2"])).toBe(
-      "/v1alpha1/events?runs=run-1,run-2",
+      "/v1alpha1/events?from=latest&runs=run-1,run-2",
     );
   });
 
@@ -29,7 +29,7 @@ describe("meshEventsUrl", () => {
   });
 
   it("treats an empty runs list the same as absent — omitted, not sent empty", () => {
-    expect(meshEventsUrl(undefined, [])).toBe("/v1alpha1/events");
+    expect(meshEventsUrl(undefined, [])).toBe("/v1alpha1/events?from=latest");
   });
 
   it("percent-encodes special characters in both from and each run id", () => {

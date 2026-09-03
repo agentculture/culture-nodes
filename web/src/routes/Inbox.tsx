@@ -17,7 +17,8 @@ import ErrorNotice from "../components/ErrorNotice";
 import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
 import StatusChip from "../components/StatusChip";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useWhoami } from "../hooks/useWhoami";
 
 /**
@@ -101,7 +102,10 @@ export function Inbox() {
     [],
   );
 
-  useSharedEvents(INBOX_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    INBOX_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -126,6 +130,7 @@ export function Inbox() {
         if (controller.signal.aborted) return;
         setPending(pendingList.items);
         setDecided(decidedList.items);
+        if (isInitialLoad) resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -133,10 +138,11 @@ export function Inbox() {
         setPending((prev) => prev ?? []);
         setDecided((prev) => prev ?? []);
         setError(toApiError(cause));
+        if (isInitialLoad) resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [reloadKey]);
+  }, [reloadKey, resolveSnapshot]);
 
   const actorId = whoami.status === "bound" ? whoami.actorId : null;
   const loaded = pending !== null && decided !== null;

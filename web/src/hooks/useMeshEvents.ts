@@ -1,9 +1,9 @@
 import type { EventEnvelope } from "../api/types";
 import {
   SHARED_EVENT_TYPES,
-  useSharedEvents,
   type SharedStreamStatus,
 } from "./useSharedEvents";
+import { useSnapshotReconcile } from "./useSnapshotReconcile";
 
 /**
  * Everything the cross-run stream can name in its `event:` field. Kept as
@@ -31,6 +31,8 @@ export interface MeshEvent {
 export interface MeshEventsResult {
   status: MeshStreamStatus;
   lastEventId: string | null;
+  snapshotId: string | null;
+  resolveSnapshot: () => void;
 }
 
 /**
@@ -49,5 +51,5 @@ export interface MeshEventsResult {
 export function useMeshEvents(
   onEvent: (event: MeshEvent) => void,
 ): MeshEventsResult {
-  return useSharedEvents(MESH_EVENT_TYPES, onEvent);
+  return useSnapshotReconcile(MESH_EVENT_TYPES, onEvent);
 }

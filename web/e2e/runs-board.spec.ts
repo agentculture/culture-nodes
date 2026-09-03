@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { BOARD_RUNS, mockRunsBoardApi, readAgentState } from "./fixtures/api";
+import { snapshotMarkerSse } from "./fixtures/api";
 
 test.beforeEach(async ({ page }) => {
   await mockRunsBoardApi(page);
@@ -167,11 +168,12 @@ test.describe("auto-refresh (issue #46, task t30)", () => {
         const headers = await request.allHeaders();
         const from =
           headers["last-event-id"] ?? requestUrl.searchParams.get("from") ?? "";
+        const latest = from === "latest";
         // The very first connection (no resume cursor yet) carries the
         // committed event; every reconnect after that is honestly empty —
         // the event is never replayed twice.
         const body =
-          from === ""
+          from === "" || latest
             ? `id: 01RUNSBOARD0000000000001\nevent: dev.culture.nodes.run.completed\ndata: ${JSON.stringify(
                 {
                   id: "01RUNSBOARD0000000000001",
@@ -191,7 +193,7 @@ test.describe("auto-refresh (issue #46, task t30)", () => {
             "content-type": "text/event-stream",
             "cache-control": "no-cache",
           },
-          body,
+          body: (latest ? snapshotMarkerSse("0") : "") + body,
         });
       },
     );

@@ -1,3 +1,14 @@
+/* The shared Culture node, its chips and its canvas edges.
+ *
+ * The acceptance reference is docs/demos/web-ui-lift/culture-nodes-lifted.html
+ * — its `.cn*`, `.canvas__edges*`, `@keyframes breathe` and `@keyframes ring`
+ * rules. This file reproduces that treatment; the values below are the demo's,
+ * not new invention. culture-design/ is the one directory allowed to write
+ * colour/radius literals (tests/lint/webtokens_test.go), so every literal the
+ * app needs for the dark canvas is declared here as a token and *referenced*
+ * from styles/app.css.
+ */
+
 :root {
   --terminal-ground: #10142b;
   --terminal-surface: #161b36;
@@ -12,22 +23,57 @@
   --culture-green: #9fd6a3;
   --culture-yellow: #e6cd7a;
   --culture-neutral: #a9b0cf;
-  --culture-node-radius: 0.85rem;
+
+  /* Demo `--term-soft` / `--term-faint`: the two muted inks the node's sub and
+     meta lines use on the terminal ground. `--terminal-soft` is kept as the
+     older spelling of the first so nothing that already referenced it breaks. */
+  --culture-soft: #a9b0cf;
+  --culture-faint: #8790b8;
+
+  --culture-node-radius: 0.9rem;
+  /* Demo `.cn`: a translucent card over the terminal ground, not an opaque
+     slab — the grid reads faintly through it. */
+  --culture-node-surface: rgba(22, 27, 54, 0.92);
+  --culture-node-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  --culture-node-shadow-lift: 0 4px 18px rgba(0, 0, 0, 0.4);
+
+  /* Demo `.canvas`: the 26px dotted grid painted on the ground itself. */
+  --culture-canvas-grid: rgba(233, 236, 248, 0.08);
+
+  /* Demo `.canvas__edges`: the resting edge, its arrowhead, and the three
+     mesh-relation tints. */
+  --culture-edge: rgba(233, 236, 248, 0.28);
+  --culture-edge-marker: rgba(233, 236, 248, 0.5);
+  --culture-edge-machine: rgba(127, 179, 242, 0.45);
+  --culture-edge-workflow: rgba(230, 205, 122, 0.45);
+  --culture-edge-run: rgba(242, 183, 116, 0.6);
+
+  /* State-chip outlines, at the demo's alphas. */
+  --culture-chip-done: rgba(159, 214, 163, 0.5);
+  --culture-chip-failed: rgba(242, 120, 154, 0.5);
 }
+
+/* ---------- the card ----------
+   Height comes from the content: `min-height` is a floor, never a fixed slab.
+   The 2.4rem left padding is the gutter the core dot and its halo sit in. */
 .culture-node {
   --k: var(--culture-neutral);
   position: relative;
   box-sizing: border-box;
   width: 224px;
-  min-height: 72px;
+  min-height: 64px;
   padding: 0.6rem 0.75rem 0.6rem 2.4rem;
   border: 1px solid var(--terminal-line);
   border-radius: var(--culture-node-radius);
-  background: var(--terminal-surface);
+  background: var(--culture-node-surface);
   color: var(--terminal-ink);
-  box-shadow: var(--shadow);
+  box-shadow: var(--culture-node-shadow);
   text-align: left;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
+
 .culture-node[data-kind="agent"] { --k: var(--culture-teal); }
 .culture-node[data-kind="code"] { --k: var(--culture-blue); }
 .culture-node[data-kind="decision"] { --k: var(--culture-violet); }
@@ -45,40 +91,251 @@
 .culture-node[data-kind="human"] { --k: var(--culture-neutral); }
 .culture-node[data-kind="workflow"] { --k: var(--culture-yellow); }
 .culture-node[data-kind="run"] { --k: var(--culture-amber); }
-.culture-node__core { position:absolute; left:.85rem; top:.95rem; width:.8rem; height:.8rem; border-radius:50%; background:var(--k); box-shadow:0 0 10px var(--k); }
-.culture-node__halo { position:absolute; left:.25rem; top:.35rem; width:2rem; height:2rem; border-radius:50%; background:radial-gradient(circle,var(--k) 0%,transparent 70%); opacity:.18; pointer-events:none; }
-.culture-node__label { font-weight:600; font-size:var(--ac-type-ui); line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.culture-node__sub { display:flex; gap:.5rem; margin-top:.15rem; font-size:var(--ac-type-meta); color:var(--terminal-soft); overflow:hidden; }
-.culture-node__state-row { margin-top:.35rem; }
-.culture-node__state { display:inline-flex; margin-top:.35rem; font-size:var(--ac-type-micro); }
-.node-card__owner { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.node-card__status { display:flex; flex-wrap:wrap; gap:.35rem; align-items:center; }
-.node-card__badge,.node-card__visits { display:inline-flex; align-items:center; gap:.3rem; border-radius:999px; padding:.1rem .55rem; font-size:var(--ac-type-micro); line-height:1.7; white-space:nowrap; }
-.node-card__badge { border:1px solid var(--culture-amber); color:color-mix(in srgb,var(--culture-amber) 55%,var(--ink)); }
-.node-card__badge--live { border-color:var(--accent-strong); color:var(--accent); }
-.node-card__badge--evidence { border-color:var(--culture-green); color:color-mix(in srgb,var(--culture-green) 55%,var(--ink)); }
-.node-card__visits { border:1px solid var(--line); color:var(--ink-soft); }
-.node-card__detail { margin:.15rem 0 0; display:grid; grid-template-columns:auto minmax(0,1fr); gap:0 .5rem; font-size:var(--ac-type-micro); color:var(--ink-soft); }
-.node-card__detail>div { display:contents; }
-.node-card__detail dt { letter-spacing:var(--ac-tracking-caps); text-transform:uppercase; }
-.node-card__detail dd { margin:0; font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
-.node-card--idle { opacity:.72; border-style:dotted; }
-.node-card--ready { border-style:dashed; border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
-.node-card--completed { border-color:color-mix(in srgb,var(--culture-green) 55%,var(--line)); }
-.node-card--active { border-color:var(--accent-strong); }
-.node-card--waiting { border-color:color-mix(in srgb,var(--culture-amber) 60%,var(--line)); }
-.node-card--failed,.node-card--policy_denied,.node-card--cancelled { border-color:color-mix(in srgb,var(--culture-pink) 65%,var(--line)); border-width:2px; }
-.culture-node[data-band="far"] { min-height:44px; height:64px; }
-.culture-node[data-band="medium"] { height:128px; }
-.culture-node[data-band="close"] { height:128px; }
-.culture-node.is-live { border-color:var(--k); box-shadow:var(--shadow),0 0 0 3px color-mix(in srgb,var(--k) 16%,transparent); }
-.culture-node.is-selected { outline:2px solid var(--k); outline-offset:2px; }
-.culture-node__pulse { position:absolute; inset:-5px; border-radius:calc(var(--culture-node-radius) + 5px); border:2px solid var(--k); opacity:0; pointer-events:none; }
-@media (prefers-reduced-motion: no-preference) {
-  .culture-node[data-motion="animated"].is-live .culture-node__halo { animation:culture-node-breathe 2.4s var(--ease-gentle) infinite; }
-  .culture-node[data-motion="animated"] .culture-node__pulse { animation:culture-node-ring .9s steps(8,end) 1; }
+
+/* ---------- core + halo ---------- */
+.culture-node__core {
+  position: absolute;
+  left: 0.85rem;
+  top: 0.95rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--k);
+  box-shadow: 0 0 10px var(--k);
 }
-.culture-node[data-motion="paused"] * { animation-play-state:paused; }
-.culture-node[data-motion="static"] .culture-node__halo { opacity:.32; }
-@keyframes culture-node-breathe { from { transform:scale(1); opacity:.18; } to { transform:scale(1.14); opacity:.42; } }
-@keyframes culture-node-ring { from { opacity:.85; transform:scale(1); } to { opacity:0; transform:scale(1.16); } }
+
+.culture-node__halo {
+  position: absolute;
+  left: 0.25rem;
+  top: 0.35rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--k) 0%, transparent 70%);
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+/* ---------- text ---------- */
+.culture-node__label {
+  font-weight: 600;
+  font-size: var(--ac-type-ui);
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.culture-node__sub {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+  font-size: var(--ac-type-meta);
+  color: var(--culture-soft);
+  overflow: hidden;
+}
+
+/* The demo's `.cn__meta`: the mono line of extra facts, at close zoom. */
+.culture-node__meta {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--culture-faint);
+}
+
+.culture-node__state-row {
+  margin-top: 0.35rem;
+}
+
+/* The bare "● active" pill a live node without an execution record shows —
+   demo `.cn__state--active`: filled teal on the dark card. */
+.culture-node__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--terminal-ground);
+  background: var(--culture-teal);
+}
+
+.node-card__owner {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- chips ----------
+   The node lives on the terminal ground, so its chips are re-inked here
+   rather than inheriting app.css's page-surface versions. Icon + word always
+   ride together (PRD §8.8); the colour is the third signal, never the only
+   one. */
+.culture-node .status-chip,
+.culture-node .node-card__badge,
+.culture-node .node-card__visits {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.7rem;
+  line-height: 1.7;
+  color: var(--culture-soft);
+  white-space: nowrap;
+}
+
+.culture-node .status-chip--active,
+.culture-node .status-chip--running {
+  color: var(--terminal-ground);
+  background: var(--culture-teal);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.culture-node .status-chip--completed {
+  color: var(--culture-green);
+  border-color: var(--culture-chip-done);
+}
+
+.culture-node .status-chip--failed,
+.culture-node .status-chip--policy_denied,
+.culture-node .status-chip--cancelled {
+  color: var(--culture-pink);
+  border-color: var(--culture-chip-failed);
+}
+
+.culture-node .status-chip--waiting,
+.culture-node .node-card__badge {
+  color: var(--culture-amber);
+  border-color: var(--culture-amber);
+}
+
+.culture-node .status-chip--unknown {
+  color: var(--culture-amber);
+  border-style: dashed;
+}
+
+.culture-node .status-chip--ready,
+.culture-node .status-chip--created {
+  border-style: dashed;
+}
+
+.culture-node .node-card__badge--live {
+  color: var(--culture-teal);
+  border-color: var(--culture-teal);
+}
+
+.culture-node .node-card__badge--evidence {
+  color: var(--culture-green);
+  border-color: var(--culture-chip-done);
+}
+
+.node-card__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+/* ---------- the close-zoom fact list ---------- */
+.node-card__detail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 0.5rem;
+}
+
+.node-card__detail > div { display: contents; }
+
+.node-card__detail dt {
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--culture-faint);
+}
+
+.node-card__detail dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--terminal-ink);
+}
+
+/* ---------- execution-state overlays ---------- */
+.node-card--idle { opacity: 0.72; border-style: dotted; }
+.node-card--ready { border-style: dashed; }
+.node-card--completed { border-color: var(--culture-chip-done); }
+.node-card--active { border-color: var(--culture-teal); }
+.node-card--waiting { border-color: var(--culture-amber); }
+.node-card--failed,
+.node-card--policy_denied,
+.node-card--cancelled {
+  border-color: var(--culture-chip-failed);
+  border-width: 2px;
+}
+
+/* ---------- zoom bands ----------
+   Bands are unchanged: the component decides what to *render* per band
+   (CultureNode.tsx — a failure still reads from far out, PRD §8.5). All this
+   does is give the far band a shorter floor, because there is less in it. */
+.culture-node[data-band="far"] {
+  min-height: 44px;
+  padding-bottom: 0.5rem;
+}
+
+/* ---------- selection, liveness, the one-shot ring ---------- */
+.culture-node.is-live {
+  border-color: var(--k);
+}
+
+.culture-node.is-selected {
+  border-color: var(--k);
+  box-shadow:
+    0 0 0 2px var(--k),
+    var(--culture-node-shadow-lift);
+}
+
+/* Demo `.cn .ring`: the one-shot pulse is a ring around the CORE, not a
+   halo around the whole card — an attempt starting is a small, local event. */
+.culture-node__pulse {
+  position: absolute;
+  left: 0.35rem;
+  top: 0.45rem;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  border: 2px solid var(--culture-amber);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .culture-node[data-motion="animated"].is-live .culture-node__halo {
+    animation: culture-node-breathe 2.4s ease-in-out infinite;
+  }
+
+  .culture-node[data-motion="animated"] .culture-node__pulse {
+    animation: culture-node-ring 0.9s ease-out forwards;
+  }
+}
+
+.culture-node[data-motion="paused"] * { animation-play-state: paused; }
+
+/* `data-motion="static"` and prefers-reduced-motion both leave the halo at
+   the resting frame of `breathe` (opacity .18, scale 1) — which is what the
+   rules above already give them, by never starting the animation. */
+
+@keyframes culture-node-breathe {
+  0%,
+  100% { opacity: 0.18; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.35); }
+}
+
+@keyframes culture-node-ring {
+  from { transform: scale(0.6); opacity: 0.9; }
+  to { transform: scale(2.6); opacity: 0; }
+}

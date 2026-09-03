@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-03T15:17:16Z",
-  "updated": "2026-09-03T16:29:59Z",
+  "updated": "2026-09-03T16:32:36Z",
   "claims": [
     {
       "id": "c1",
@@ -370,7 +370,7 @@
       "kind": "requirement",
       "text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine keyed on the hostname each bridge reports for ITSELF under capabilities.preflight.host.hostname (preflight.Surface's host block, which checkHost already refuses empty, and which the package doc pins as a fact only the party that can measure it may supply), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay. No machine is derived from endpoint_ref: that column is nullable caller-supplied address text on an immutable actor revision, it goes stale on every superseded revision, migrations/pending/0036 drops it after the dial-in cutover, and a dial-in bridge has no address to read \u2014 so an actor whose surface reports no hostname is drawn as an unattributed actor rather than joined to a machine invented from an address.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h3",
@@ -648,12 +648,12 @@
       "kind": "assumption",
       "text": "Challenge finding (data-flow lens): the workflow digest is computed over the normalized IR encoded as canonical JSON (internal/compiler/doc.go \"Determinism\"), and POST /v1alpha1/workflows publish is idempotent by digest \u2014 a repeat publish returns 200 with the EXISTING version (internal/api/workflows.go ~L101). Therefore a canvas edit that changes only comments, blank lines, key order or formatting has the same digest and publishes to the existing version, whose stored source is the ORIGINAL text. \"Comments survive Publish\" (c28/h10) is true for the file the author keeps and false for what the control plane stores, unless the version model changes.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h27",
           "text": "A server test publishes source A, then A with only a comment changed, and asserts the second publish returns 200 with the FIRST version's stored source \u2014 documenting the fact q4 decides on.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -667,12 +667,12 @@
       "kind": "requirement",
       "text": "Challenge finding (adjacent-systems lens): WorkflowVersion already carries source, source_format, normalized_ir and digest (api/openapi/openapi.yaml WorkflowVersion). The Design gallery draws its graph from normalized_ir and offers \"Open in canvas\", which loads that version's stored source verbatim into the editor \u2014 so a published version's hand-written text, not a re-serialization, is what round-trips.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h28",
           "text": "Opening a published version in the canvas shows a source pane byte-identical to the stored source; the gallery graph and the canvas graph for the same digest have identical node and edge sets.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -686,12 +686,12 @@
       "kind": "requirement",
       "text": "Challenge finding (concurrency lens), reconciled with the sweep's 0.47.19 amendment of c2: the one app-wide EventSource is opened by SharedEventsProvider at app start on any route (web/src/main.tsx, hooks/useSharedEvents.tsx) and must never reconnect (c48/h41 of the operate-through-the-ui spec), so \"the Mesh connects with ?from=latest\" cannot mean a second connection. The shared manager itself opens with ?from=latest, stores the stream.snapshot marker id and exposes it; a view that mounts later reads the stored marker as its boundary and fetches REST state after subscribing; every view buffers streamed events until its REST response lands and applies them idempotently by id. The cursor-less server default stays unchanged for other clients \u2014 only the web client uses the cross-run stream today (culture_nodes/cli/_commands/run.py uses the per-run stream).",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h29",
           "text": "A web test mounts the Mesh after the shared stream has been open for a while, commits a run.created between the Mesh's REST fetch and its subscription, and asserts the run is shown exactly once; a lint guard asserts exactly one EventSource construction site in web/src; the CLI test suite is unchanged.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -705,12 +705,12 @@
       "kind": "assumption",
       "text": "Challenge finding (overlooked-actors lens): `nodes worker` is its own process (cmd/nodes/worker.go; `nodes all` runs serve + scheduler + worker in-process) that holds the NODES_ACTOR_* tokens and reaches control-plane state through Postgres leases and signed callbacks, not through a registration HTTP call. So the \"self-report on its poll heartbeat\" (c19/c23) is a new worker-presence TABLE the worker loop writes (worker_id, hostname it reports for itself, control-plane revision, configured actor-key names, last_seen) and the API reads \u2014 a migration, which is a c19 escalation signal \u2014 and one host may run several worker processes.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h30",
           "text": "The presence table migration is additive (no existing row rewritten), `nodes worker` writes it on every poll, `nodes all` writes it from its in-process worker, a worker test asserts a row appears within one poll interval of start, rows older than three poll intervals render as stale, and two workers on one host render as two worker nodes under one machine.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -724,12 +724,12 @@
       "kind": "boundary",
       "text": "Challenge finding (reversibility lens): web assets are embedded in the control-plane binary (webassets_embed.go), so each wave ships and rolls back as one image on thor (deploy/prod/deploy.sh); the SSE tail-only mode, the mesh endpoint and the UI that needs them are one deploy unit. The canvas adds NO new write route: Publish uses the same POST /v1alpha1/workflows and the same role gate as the text authoring page, so removing the canvas route is a pure UI rollback.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h31",
           "text": "No new mutating route appears in api/openapi/openapi.yaml for the canvas; an e2e proves a viewer-role principal gets the same refusal from the canvas Publish as from the text page.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -743,12 +743,12 @@
       "kind": "requirement",
       "text": "Challenge finding (failure-mode / observability lens): GET /v1alpha1/actors is already \"the heaviest read in the API\" because it fans out (internal/api/dialinpresence.go), so the mesh endpoint must never probe bridges inside a request. A collector runs on a timer with a per-probe timeout and bounded concurrency, caches each machine fact with observed_at and the probe's error text, and the endpoint reads the cache; the mesh renders the age of every machine fact and logs each probe failure with its target.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h32",
           "text": "A test with a bridge that never answers shows GET /mesh returning within its normal latency with that machine marked unknown and its error text; every machine fact in the payload carries observed_at; a metric or log line counts probe failures per target.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
@@ -762,15 +762,27 @@
       "kind": "requirement",
       "text": "Challenge finding (lifecycle lens): every publish is an immutable version and versions accumulate (domain/workflows.ts groupWorkflowVersions exists for that reason), so the mesh draws ONE workflow node per workflow_key (its newest version, with a version count) and edges from actor uses-refs and active runs attach to that key node; per-version detail stays in the Design gallery.",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h33",
           "text": "The mesh e2e fixture holds three versions of one workflow_key and asserts one workflow node with a version count of 3 and edges attached to that node only.",
-          "status": "proposed",
+          "status": "confirmed",
           "instruction": ""
         }
       ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "decision",
+      "text": "Operator decision 2026-09-03 (q4, from the challenge pass): when a canvas edit changes only comments or formatting and the IR digest is unchanged, Publish creates no version \u2014 the canvas says \"no semantic change; version <digest> already exists; your comments live in your file\" and offers Download. Versions stay immutable and digest-keyed; the stored source of an existing version is never rewritten.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",

@@ -789,7 +789,7 @@ export function Design() {
           </p>
         </div>
         <Link
-          to="/workflows/new"
+          to="/design/new"
           id="new-workflow-link"
           className="author-workflow__button author-workflow__button--primary"
         >

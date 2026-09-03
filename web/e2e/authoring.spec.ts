@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
   await mockAuthoringApi(page);
 });
 
-test("the Node Graphs view links to the authoring surface, and back", async ({
+test("the Design view links to the authoring surface, and back", async ({
   page,
 }) => {
   await page.goto("/graphs?tab=graphs");
@@ -20,8 +20,24 @@ test("the Node Graphs view links to the authoring surface, and back", async ({
     .toBe("ready");
 
   await page.getByRole("link", { name: "New workflow" }).click();
-  await expect(page).toHaveURL(/\/workflows\/new$/);
+  await expect(page).toHaveURL(/\/design\/new$/);
   await expect(page.locator("h1")).toHaveText("New workflow");
+});
+
+/**
+ * Authoring moved under Design (task t9). The URLs the authoring slice
+ * shipped with are kept, not retired — decision c33 — so the two bookmarks
+ * that existed still open the page they always opened.
+ */
+test("the old /workflows/new and /workflows/generate URLs still open the authoring pages", async ({
+  page,
+}) => {
+  await page.goto("/workflows/new");
+  await expect(page).toHaveURL(/\/design\/new$/);
+  await expect(page.locator("h1")).toHaveText("New workflow");
+
+  await page.goto("/workflows/generate");
+  await expect(page).toHaveURL(/\/design\/generate$/);
 });
 
 test("paste invalid YAML -> diagnostics render verbatim, Publish stays disabled, and nothing is published", async ({
@@ -33,7 +49,7 @@ test("paste invalid YAML -> diagnostics render verbatim, Publish stays disabled,
     await route.continue();
   });
 
-  await page.goto("/workflows/new");
+  await page.goto("/design/new");
   await page.locator("#workflow-source-input").fill(INVALID_YAML_SOURCE);
   await page.getByRole("button", { name: "Validate" }).click();
 
@@ -63,7 +79,7 @@ test("paste invalid YAML -> diagnostics render verbatim, Publish stays disabled,
 test("paste valid YAML -> read-only preview renders before publish -> publish shows the digest", async ({
   page,
 }) => {
-  await page.goto("/workflows/new");
+  await page.goto("/design/new");
   await page.locator("#workflow-source-input").fill(VALID_YAML_SOURCE);
   await page.getByRole("button", { name: "Validate" }).click();
 
@@ -101,7 +117,7 @@ test("paste valid YAML -> read-only preview renders before publish -> publish sh
 test("upload path: a .yaml file populates the source and validates the same way as a paste", async ({
   page,
 }) => {
-  await page.goto("/workflows/new");
+  await page.goto("/design/new");
   await page.setInputFiles("#workflow-file-input", {
     name: "workflow.yaml",
     mimeType: "application/x-yaml",
@@ -122,7 +138,7 @@ test("upload path: a .json file infers the json format", async ({ page }) => {
   const jsonSource = JSON.stringify({
     spec: { entry: "a", nodes: { a: { kind: "agent" } }, edges: [] },
   });
-  await page.goto("/workflows/new");
+  await page.goto("/design/new");
   await page.setInputFiles("#workflow-file-input", {
     name: "workflow.json",
     mimeType: "application/json",
@@ -138,7 +154,7 @@ test("upload path: a .json file infers the json format", async ({ page }) => {
 test("agent-state reflects the authoring step through validate and publish", async ({
   page,
 }) => {
-  await page.goto("/workflows/new");
+  await page.goto("/design/new");
   await expect
     .poll(async () => (await readAgentState(page)).authoring?.step)
     .toBe("editing");
@@ -162,7 +178,7 @@ test("the page produces no uncaught errors while authoring", async ({
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.goto("/workflows/new");
+  await page.goto("/design/new");
   await page.locator("#workflow-source-input").fill(VALID_YAML_SOURCE);
   await page.getByRole("button", { name: "Validate" }).click();
   await expect(page.locator("#workflow-preview-canvas")).toBeVisible();

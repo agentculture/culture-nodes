@@ -6,8 +6,13 @@ test.beforeEach(async ({ page }) => {
   await mockRunsBoardApi(page);
 });
 
+/**
+ * The board is a projection of the Runs page since task t9, not a page of
+ * its own: `/runs?view=board`. `/board` still answers — the redirect test
+ * below is what proves it — so an old bookmark is not broken, only moved.
+ */
 async function openBoard(page: Page) {
-  await page.goto("/board");
+  await page.goto("/runs?view=board");
   await expect
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");
@@ -103,16 +108,33 @@ test("the skip link is still the first tab stop, unaffected by the new route", a
   await expect(skipLink).toHaveAttribute("href", "#main");
 });
 
-test("the header's Board link reaches /board from the run list, and back", async ({
+test("the Runs page's projection toggle reaches the board and returns to the list", async ({
   page,
 }) => {
   await page.goto("/runs");
   // exact: true — several of the board fixture's own run ids contain the
   // substring "BOARD" and would otherwise match a loose name lookup too.
-  await page.getByRole("link", { name: "Board", exact: true }).click();
-  await expect(page).toHaveURL(/\/board$/);
-  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await page.getByRole("button", { name: "Board", exact: true }).click();
+  await expect(page).toHaveURL(/\/runs\?view=board$/);
+  await expect(page.locator("#runs-board-columns")).toBeVisible();
+  await page.getByRole("button", { name: "List", exact: true }).click();
   await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.locator("#runs-table")).toBeVisible();
+});
+
+test("the old /board URL redirects to the board projection, range and all", async ({
+  page,
+}) => {
+  await page.goto("/board");
+  await expect(page).toHaveURL(/\/runs\?view=board$/);
+  await expect(page.locator("#runs-board-columns")).toBeVisible();
+
+  await page.goto(
+    "/board?since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-02T00%3A00%3A00.000Z",
+  );
+  await expect(page).toHaveURL(/view=board/);
+  await expect(page).toHaveURL(/since=2026-08-01T00%3A00%3A00.000Z/);
+  await expect(page).toHaveURL(/until=2026-08-02T00%3A00%3A00.000Z/);
 });
 
 test("the page produces no uncaught errors while rendering the board", async ({

@@ -30,7 +30,9 @@ const RUNS_BOARD_EVENT_TYPES = [
 const REFRESH_DEBOUNCE_MS = 4000;
 
 /**
- * The runs board (PRD §8.6 Operations): every run as a card, grouped into
+ * The runs board (PRD §8.6 Operations) — a *body* of the /runs page since
+ * task t9, mounted by Runs.tsx behind `?view=board` rather than routed at
+ * /board of its own: every run as a card, grouped into
  * one column per `Run.state` (openapi.yaml's `RunState` enum — `created,
  * running, waiting, completed, failed, cancelled`). It renders committed API
  * state only: `GET /v1alpha1/runs` sorted by `updated_at` (task t11), the
@@ -151,8 +153,7 @@ export function RunsBoard() {
   const grouped = runs ? groupRunsByState(runs) : null;
 
   return (
-    <section className="view-rail runs-board">
-      <h1>Board</h1>
+    <div className="runs-projection runs-board">
       <p className="muted">
         Every run, one column per state, newest first by last update.
       </p>
@@ -199,7 +200,7 @@ export function RunsBoard() {
           })}
         </div>
       )}
-    </section>
+    </div>
   );
 }
 

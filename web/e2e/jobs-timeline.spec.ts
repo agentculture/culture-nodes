@@ -11,8 +11,13 @@ test.beforeEach(async ({ page }) => {
   await mockJobsTimelineApi(page);
 });
 
+/**
+ * The jobs timeline is a projection of the Runs page since task t9, not a
+ * page of its own: `/runs?view=jobs`. `/jobs` still answers — the redirect
+ * test below is what proves it, range included.
+ */
 async function openJobs(page: Page) {
-  await page.goto("/jobs");
+  await page.goto("/runs?view=jobs");
   await expect
     .poll(async () => (await readAgentState(page)).status)
     .toBe("ready");
@@ -96,7 +101,7 @@ test("a bookmarked since/until URL drives the initial request directly", async (
     req.url().includes("/v1alpha1/node-runs"),
   );
   await page.goto(
-    "/jobs?since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-02T00%3A00%3A00.000Z",
+    "/runs?view=jobs&since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-02T00%3A00%3A00.000Z",
   );
   await expect
     .poll(async () => (await readAgentState(page)).status)
@@ -185,8 +190,14 @@ test("keyboard-only: tab to a preset, Enter applies it; tab into a row link, Ent
   const link = page
     .locator(`[data-node-run-id="${item.id}"]`)
     .getByRole("link", { name: item.run_id });
-  await link.focus();
-  await expect(link).toBeFocused();
+  // Applying the preset refetches, and React replaces the rows when the new
+  // page lands — focus taken before that happens is dropped with the old
+  // row. Retry the focus until it sticks rather than racing the re-render;
+  // the assertion is unchanged, only its timing is.
+  await expect(async () => {
+    await link.focus();
+    await expect(link).toBeFocused();
+  }).toPass();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(`/runs/${item.run_id}$`));
 });
@@ -201,14 +212,39 @@ test("the skip link is still the first tab stop, unaffected by the new route", a
   await expect(skipLink).toHaveAttribute("href", "#main");
 });
 
-test("the header's Jobs link reaches /jobs from the run list, and back", async ({
+test("the Runs page's projection toggle reaches the jobs timeline and returns to the list", async ({
   page,
 }) => {
   await page.goto("/runs");
-  await page.getByRole("link", { name: "Jobs", exact: true }).click();
-  await expect(page).toHaveURL(/\/jobs$/);
-  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await page.getByRole("button", { name: "Jobs", exact: true }).click();
+  await expect(page).toHaveURL(/\/runs\?view=jobs$/);
+  await expect(page.locator("#jobs-table")).toBeVisible();
+  await page.getByRole("button", { name: "List", exact: true }).click();
   await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.locator("#runs-table")).toBeVisible();
+});
+
+test("the old /jobs URL redirects to the jobs projection and keeps a bookmarked range", async ({
+  page,
+}) => {
+  await page.goto("/jobs");
+  await expect(page).toHaveURL(/\/runs\?view=jobs$/);
+  await expect(page.locator("#jobs-table")).toBeVisible();
+
+  const request = page.waitForRequest((req) =>
+    req.url().includes("/v1alpha1/node-runs"),
+  );
+  await page.goto(
+    "/jobs?since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-02T00%3A00%3A00.000Z",
+  );
+  await expect(page).toHaveURL(/view=jobs/);
+  const url = new URL((await request).url());
+  expect(url.searchParams.get("updated_since")).toBe(
+    "2026-08-01T00:00:00.000Z",
+  );
+  expect(url.searchParams.get("updated_until")).toBe(
+    "2026-08-02T00:00:00.000Z",
+  );
 });
 
 test("the page produces no uncaught errors while rendering, filtering, or paging", async ({

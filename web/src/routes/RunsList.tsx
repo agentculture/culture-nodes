@@ -35,6 +35,11 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * The run list — the entry point into the Run view (PRD §8.6 Operations, in
  * its smallest useful form: search runs comes later, listing them does not).
  *
+ * A *body*, not a page (task t9): the `/runs` heading, rail and projection
+ * toggle live in Runs.tsx, which mounts this as one of three lenses on the
+ * same dataset. Everything below the heading — the filters, the table, the
+ * refresh discipline — is unchanged.
+ *
  * The time-range filter is the Jobs view's control and state idiom verbatim
  * (issue #23): `since`/`until` ride the URL search params via useTimeRange
  * and go to the API as `updated_since`/`updated_until` — server-side
@@ -202,8 +207,7 @@ export function RunsList() {
   }, []);
 
   return (
-    <section className="view-rail runs-list">
-      <h1>Runs</h1>
+    <div className="runs-projection runs-list">
       <p className="muted">Every run, newest first by last update.</p>
 
       <TimeRangeFilter since={since} until={until} onApply={applyRange} />
@@ -305,7 +309,7 @@ export function RunsList() {
           {nextCursor ? <button type="button" className="jobs-timeline__load-more" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load more"}</button> : null}
         </>
       )}
-    </section>
+    </div>
   );
 }
 

@@ -601,11 +601,11 @@ describe("Gallery run counts survive a sweep-dominated global window (task t8)",
 });
 
 describe("Design authoring entry point", () => {
-  it("links to /workflows/new from every sub-view", async () => {
+  it("links to /design/new from every sub-view", async () => {
     renderDesign(["/design?tab=active"]);
     expect(screen.getByRole("link", { name: "New workflow" })).toHaveAttribute(
       "href",
-      "/workflows/new",
+      "/design/new",
     );
     await waitFor(() => expect(getAgentState().status).toBe("ready"));
   });

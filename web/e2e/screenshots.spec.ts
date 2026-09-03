@@ -79,7 +79,7 @@ test.describe("t27 site polish shots", () => {
   test("board", async ({ page }) => {
     await mockRunsBoardApi(page);
     await stubVersion(page);
-    await page.goto("/board");
+    await page.goto("/runs?view=board");
     await page.locator(".runs-board__columns").waitFor();
     await shoot(page, "board");
   });
@@ -87,7 +87,7 @@ test.describe("t27 site polish shots", () => {
   test("jobs", async ({ page }) => {
     await mockJobsTimelineApi(page);
     await stubVersion(page);
-    await page.goto("/jobs");
+    await page.goto("/runs?view=jobs");
     await page.getByRole("table").first().waitFor();
     await shoot(page, "jobs");
 
@@ -106,14 +106,14 @@ test.describe("t27 site polish shots", () => {
   test("new workflow, with the sample loaded", async ({ page }) => {
     await mockAuthoringApi(page);
     await stubVersion(page);
-    await page.goto("/workflows/new");
+    await page.goto("/design/new");
     await page.getByRole("button", { name: "Load a sample" }).click();
     await shoot(page, "author-workflow-sample");
   });
 
   test("generate workflow", async ({ page }) => {
     await stubVersion(page);
-    await page.goto("/workflows/generate");
+    await page.goto("/design/generate");
     await page.getByLabel(/description/i).waitFor();
     await shoot(page, "generate-workflow");
   });

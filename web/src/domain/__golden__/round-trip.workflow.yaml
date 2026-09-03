@@ -1,0 +1,34 @@
+# Round-trip golden for domain/workflow-document.ts (task t14).
+#
+# Every construct below is here because a naive parse-and-re-emit loses it:
+# this leading comment block, a whole-line comment inside spec.nodes, a
+# trailing comment on a value, blank lines between blocks, an anchor and its
+# alias, an unpadded flow sequence, and a deliberately non-alphabetical key
+# order (ownerRef before name in metadata, to before from on the edge).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  ownerRef: &owner team/platform-ai
+  name: golden-round-trip
+  version: 1.0.0
+
+spec:
+  entry: greet
+
+  nodes:
+    # the only agent node in this fixture
+    greet:
+      kind: agent # the author's trailing comment
+      ownerRef: *owner
+      outcomes: [completed, changes_required]
+
+    finish:
+      kind: end
+      ownerRef: *owner
+      output:
+        from: /nodes/greet/output
+
+  edges:
+    - to: finish
+      from: greet.completed

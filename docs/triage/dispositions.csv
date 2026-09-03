@@ -171,3 +171,5 @@ issue,bucket,disposition,evidence_pointer
 281,bug tail,"actor-placement.sh must not default NODES_API_URL to a hostname the sweep container cannot resolve; deploy must not silently rewrite an existing grant",issue #281 / #273 ledger 2026-09-02
 283,finish work,"land the post-#282 follow-ups: deploy parity, Bypass policy + Jira webhook, t18 second sitting, retire the shared decision secret, cookie cleanup",issue #283 / PR #282
 285,bug tail,"make the scheduler deadline test drive the clock or poll for the terminal state with a bounded wait instead of racing the poll interval",issue #285 / PR #284 go job 33773817472
+287,finish work,"compose a workflow on canvas and publish it — the reopened editor (web-ui-lift t15)",issue #287 / docs/decisions/2026-09-03-reopen-graphical-editor.md
+288,finish work,"Record: graphical editor reopened — close on read against the decision record",issue #288 / docs/decisions/2026-09-03-reopen-graphical-editor.md

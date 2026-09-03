@@ -57,9 +57,8 @@ past:
 
 ## Issues
 
-- Record: this file, pointed at by the Record issue opened with
-  `scripts/open-issue.sh --type Record`.
-- Feature: the user task above, opened with `scripts/open-issue.sh --type
-  Feature`; the editor PR links both.
+- Record: this file, pointed at by issue #288 (type Record).
+- Feature: the user task above, issue #287 (type Feature); the editor PR links
+  both.
 - Issue #12 is re-scoped by this record: its "editing steps on canvas" item is
   now the Feature issue; its other items closed in v0.11.x.

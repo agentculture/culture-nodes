@@ -191,6 +191,25 @@ export const MESH_EVENTS: MeshFixtureEvent[] = [
   }),
 ];
 
+/** A deliberately large committed history proving `from=latest` is tail-only. */
+export const MESH_HISTORICAL_EVENTS: MeshFixtureEvent[] = Array.from(
+  { length: 1284 },
+  (_, index) =>
+    meshEvent(
+      `01HISTORY${String(index).padStart(16, "0")}`,
+      "ledger.record-appended",
+      "run-mesh-alpha",
+      { record_type: "claim" },
+    ),
+);
+
+export const MESH_SNAPSHOT_EVENT = meshEvent(
+  "01MESH000000000000000000",
+  "stream.snapshot",
+  "",
+  {},
+);
+
 export const MESH_EVENTS_TOTAL = MESH_EVENTS.length;
 export const MESH_PULSES_TOTAL = 3;
 export const MESH_LAST_EVENT_ID = MESH_EVENTS[MESH_EVENTS.length - 1].id;

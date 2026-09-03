@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { getAgentState, resetAgentState } from "../agent-state/store";
 import type { Actor, NodeRunListItem, Run } from "../api/types";
 import Mesh from "./Mesh";
+import { SharedEventsProvider } from "../hooks/useSharedEvents";
 
 /**
  * The Mesh route against a mocked client and a fake EventSource: jsdom has
@@ -193,6 +194,43 @@ afterEach(() => {
 });
 
 describe("Mesh route", () => {
+  it("reconciles an event committed while its REST snapshot is in flight exactly once", async () => {
+    let resolveRuns!: (value: { items: Run[] }) => void;
+    vi.mocked(listRuns).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRuns = resolve;
+      }),
+    );
+
+    render(<SharedEventsProvider>{null}</SharedEventsProvider>);
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    render(
+      <MemoryRouter initialEntries={["/mesh"]}>
+        <Mesh />
+      </MemoryRouter>,
+    );
+    act(() => {
+      source.emit("dev.culture.nodes.stream.snapshot", {}, "01SNAPSHOT");
+      source.emit(
+        "dev.culture.nodes.run.created",
+        { run_id: "run-raced", workflow_key: "mesh-demo" },
+        "01RACED",
+      );
+      source.emit(
+        "dev.culture.nodes.run.created",
+        { run_id: "run-raced", workflow_key: "mesh-demo" },
+        "01RACED",
+      );
+      resolveRuns({ items: RUNS });
+    });
+
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+    await waitFor(() => expect(getAgentState().mesh?.run_count).toBe(2));
+    expect(getAgentState().mesh?.events_total).toBe(1);
+  });
+
   it("assembles the graph from actors + active runs and mirrors it in agent-state", async () => {
     await renderMesh();
     const mesh = getAgentState().mesh!;

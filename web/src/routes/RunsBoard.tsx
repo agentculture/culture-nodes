@@ -7,7 +7,8 @@ import RunCard from "../components/RunCard";
 import TimeRangeFilter from "../components/TimeRangeFilter";
 import { groupRunsByState, RUN_STATE_COLUMNS } from "../domain/run-board";
 import { useReducedMotion } from "../hooks/useReducedMotion";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -79,7 +80,10 @@ export function RunsBoard() {
     [],
   );
 
-  useSharedEvents(RUNS_BOARD_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    RUNS_BOARD_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -96,6 +100,7 @@ export function RunsBoard() {
       .then((list) => {
         if (controller.signal.aborted) return;
         setRuns(list.items);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -106,12 +111,13 @@ export function RunsBoard() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        resolveSnapshot();
         // As in RunsList: "ready" means the initial load finished, including
         // finishing it badly — the error renders alongside, not instead.
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [since, until]);
+  }, [since, until, resolveSnapshot]);
 
   // The SSE-triggered background refresh (issue #46): skips the very first
   // render (reloadKey === 0, already handled above), never nulls `runs`,

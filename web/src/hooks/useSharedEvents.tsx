@@ -1,11 +1,12 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { meshEventsUrl } from "../api/client";
+import { meshEventsUrl, openEventSource } from "../api/client";
 import type { EventEnvelope } from "../api/types";
 import { SUBSCRIBED_EVENT_TYPES } from "./useRunEvents";
 
@@ -49,6 +50,7 @@ type StatusListener = () => void;
 interface StreamSnapshot {
   status: SharedStreamStatus;
   lastEventId: string | null;
+  snapshotId: string | null;
 }
 
 const BASE_RECONNECT_DELAY_MS = 1000;
@@ -57,6 +59,7 @@ const MAX_RECONNECT_DELAY_MS = 15_000;
 const SERVER_SNAPSHOT: StreamSnapshot = {
   status: "reconnecting",
   lastEventId: null,
+  snapshotId: null,
 };
 
 /**
@@ -84,6 +87,7 @@ class SharedEventsManager {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private attempts = 0;
   private lastId: string | null = null;
+  private snapshotId: string | null = null;
   private refCount = 0;
   private readonly listenersByType = new Map<SharedEventType, Set<Listener>>();
   private readonly statusListeners = new Set<StatusListener>();
@@ -102,9 +106,23 @@ class SharedEventsManager {
       return; // a frame we cannot parse is dropped, never guessed at
     }
     const id = raw.lastEventId || envelope.id;
+    if (envelope.type === "dev.culture.nodes.stream.snapshot") {
+      this.lastId = id;
+      this.snapshotId = id;
+      this.setSnapshot({
+        status: this.snapshot.status,
+        lastEventId: this.lastId,
+        snapshotId: this.snapshotId,
+      });
+      return;
+    }
     if (raw.lastEventId && raw.lastEventId !== this.lastId) {
       this.lastId = raw.lastEventId;
-      this.setSnapshot({ status: this.snapshot.status, lastEventId: this.lastId });
+      this.setSnapshot({
+        status: this.snapshot.status,
+        lastEventId: this.lastId,
+        snapshotId: this.snapshotId,
+      });
     }
     // Routing key is the envelope's own `type` field, not the native SSE
     // frame name: the server always sets `event:` to the same value it puts
@@ -120,14 +138,26 @@ class SharedEventsManager {
 
   private connect = () => {
     if (typeof EventSource === "undefined") return;
-    this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId });
-    const source = new EventSource(meshEventsUrl(this.lastId ?? undefined));
+    this.setSnapshot({
+      status: "reconnecting",
+      lastEventId: this.lastId,
+      snapshotId: this.snapshotId,
+    });
+    const source = openEventSource(meshEventsUrl(this.lastId ?? "latest"));
     this.source = source;
     source.onopen = () => {
       if (this.source !== source) return;
       this.attempts = 0;
-      this.setSnapshot({ status: "live", lastEventId: this.lastId });
+      this.setSnapshot({
+        status: "live",
+        lastEventId: this.lastId,
+        snapshotId: this.snapshotId,
+      });
     };
+    source.addEventListener(
+      "dev.culture.nodes.stream.snapshot",
+      this.handleMessage as EventListener,
+    );
     for (const type of SHARED_EVENT_TYPES) {
       source.addEventListener(type, this.handleMessage as EventListener);
     }
@@ -138,14 +168,14 @@ class SharedEventsManager {
       // will send Last-Event-ID itself); report honestly but let it work.
       if (source.readyState === EventSource.CLOSED) {
         this.attempts += 1;
-        this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId });
+        this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId, snapshotId: this.snapshotId });
         const delay = Math.min(
           BASE_RECONNECT_DELAY_MS * 2 ** Math.min(this.attempts - 1, 4),
           MAX_RECONNECT_DELAY_MS,
         );
         this.timer = setTimeout(this.connect, delay);
       } else {
-        this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId });
+        this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId, snapshotId: this.snapshotId });
       }
     };
   };
@@ -161,7 +191,7 @@ class SharedEventsManager {
     this.timer = undefined;
     this.source?.close();
     this.source = null;
-    this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId });
+    this.setSnapshot({ status: "reconnecting", lastEventId: this.lastId, snapshotId: this.snapshotId });
   }
 
   /**
@@ -210,6 +240,7 @@ class SharedEventsManager {
     this.source = null;
     this.attempts = 0;
     this.lastId = null;
+    this.snapshotId = null;
     this.refCount = 0;
     this.listenersByType.clear();
     this.statusListeners.clear();
@@ -239,11 +270,11 @@ export function resetSharedEventsForTests(): void {
 export function useSharedEvents(
   types: readonly SharedEventType[],
   onEvent: (event: SharedEvent) => void,
-): { status: SharedStreamStatus; lastEventId: string | null } {
+): StreamSnapshot {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const forward: Listener = (event) => onEventRef.current(event);
     return manager.subscribe(types, forward);
     // `types` is documented above as a stable reference; re-subscribing on

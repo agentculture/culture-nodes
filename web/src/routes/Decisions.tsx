@@ -23,7 +23,8 @@ import RunDecisionCard, {
   type RunVerdicts,
 } from "../components/RunDecisionCard";
 import { findTicketKey } from "../domain/ticket-key";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useWhoami } from "../hooks/useWhoami";
 
 /**
@@ -299,7 +300,10 @@ function ProposedClaimsView() {
     [],
   );
 
-  useSharedEvents(DECISION_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    DECISION_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -313,6 +317,7 @@ function ProposedClaimsView() {
         if (controller.signal.aborted) return;
         setGroups(payload.items);
         setRecordCount(payload.record_count);
+        if (reloadKey === 0) resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -323,10 +328,11 @@ function ProposedClaimsView() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        if (reloadKey === 0) resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [reloadKey]);
+  }, [reloadKey, resolveSnapshot]);
 
   const actorId = whoami.status === "bound" ? whoami.actorId : null;
 

@@ -43,6 +43,11 @@ import type {
  */
 export const API_ROOT = "/v1alpha1";
 
+/** The web bundle's single audited EventSource construction boundary. */
+export function openEventSource(url: string): EventSource {
+  return new EventSource(url);
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly remediation: string;
@@ -471,7 +476,7 @@ export const getPlanImport = (id: string, signal?: AbortSignal) =>
  * filter" on both ends — the query param is omitted entirely rather than
  * sent empty, matching the server's own empty-means-absent parsing.
  */
-export function meshEventsUrl(from?: string, runs?: readonly string[]): string {
+export function meshEventsUrl(from = "latest", runs?: readonly string[]): string {
   const base = `${API_ROOT}/events`;
   const params: string[] = [];
   if (from) params.push(`from=${encodeURIComponent(from)}`);

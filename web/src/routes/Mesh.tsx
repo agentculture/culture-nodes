@@ -78,6 +78,7 @@ export function Mesh() {
           return [...fetched, ...prev.filter((run) => !known.has(run.id))];
         });
         setNodeRuns(nodeRunList.items);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -87,11 +88,14 @@ export function Mesh() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        resolveSnapshot();
         // "ready" means the initial load finished — including finishing it
         // badly; the error renders alongside (the app-wide convention).
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
+    // resolveSnapshot is stable for this mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Debounced attribution refresh: at most one node-runs refetch per
@@ -165,7 +169,7 @@ export function Mesh() {
     [applyAction, refreshAttribution],
   );
 
-  const { status, lastEventId } = useMeshEvents(onEvent);
+  const { status, lastEventId, resolveSnapshot } = useMeshEvents(onEvent);
 
   const graph = useMemo(
     () => assembleMeshGraph(actors, runs, nodeRuns),

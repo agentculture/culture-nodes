@@ -623,17 +623,17 @@ export async function mockAuthoringApi(page: Page): Promise<void> {
 import {
   MESH_ACTORS,
   MESH_EVENTS,
+  MESH_HISTORICAL_EVENTS,
   MESH_NODE_RUNS,
   MESH_RUNS,
+  MESH_SNAPSHOT_EVENT,
   meshEventsAsSse,
 } from "../../src/fixtures/mesh-fixture";
 
 export {
   MESH_ACTIVE_RUN_COUNT,
   MESH_ACTOR_NODE_COUNT,
-  MESH_EVENTS_TOTAL,
-  MESH_LAST_EVENT_ID,
-  MESH_PULSES_TOTAL,
+  MESH_EVENTS,
 } from "../../src/fixtures/mesh-fixture";
 
 /**
@@ -652,6 +652,7 @@ export {
  * yet", and the proof that no event is ever double-counted.
  */
 export async function mockMeshApi(page: Page): Promise<void> {
+  const liveEvents: typeof MESH_EVENTS = [];
   await page.route("**/v1alpha1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -674,9 +675,20 @@ export async function mockMeshApi(page: Page): Promise<void> {
       return;
     }
     if (path === "/v1alpha1/events") {
+      if (request.method() === "POST") {
+        const event = (await request.postDataJSON()) as (typeof MESH_EVENTS)[number];
+        liveEvents.push(event);
+        await route.fulfill(json({ committed: event.id }));
+        return;
+      }
       const headers = await request.allHeaders();
-      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
-      const pending = MESH_EVENTS.filter((event) => event.id > from);
+      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "latest";
+      const pending =
+        from === "latest"
+          ? [MESH_SNAPSHOT_EVENT]
+          : [...MESH_HISTORICAL_EVENTS, ...liveEvents].filter(
+              (event) => event.id > from,
+            );
       await route.fulfill({
         status: 200,
         headers: {

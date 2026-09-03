@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.18] - 2026-09-03
+
+### Added
+
+- spec: web-ui-lift — one graph language across mesh, workflows and runs; mesh drawn from real relationships as the cross-machine awareness surface (#226); graphs for idle workflows; nav on the PRD §8.6 spine; design canvas that round-trips hand-written YAML, gated by a spike and a recorded reopen of the issue-12 won't-do (docs/specs/2026-09-03-web-ui-lift.md, frame web-ui-lift)
+
 ## [0.47.17] - 2026-09-02
 
 ### Fixed

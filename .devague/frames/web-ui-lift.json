@@ -1,0 +1,708 @@
+{
+  "slug": "web-ui-lift",
+  "title": "web-ui-lift",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-09-03T15:17:16Z",
+  "updated": "2026-09-03T15:34:37Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Culture Nodes' web UI got a lift: one graph language across mesh, workflows and runs; the mesh draws the relationships the data already holds instead of a hub-and-spoke; every published workflow is readable as a graph, not only running ones; the mesh no longer replays history on arrival; and a workflow can be composed on canvas.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The announcement is only true once both waves merged: a lift that ships wave A alone is announced as 'one graph language' and not as 'compose on canvas'; the delivery summary names which of the five announced outcomes has passing evidence.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Verified when every success signal (c30\u2013c34) has a passing automated check in CI and the operator has posted the before/after screenshot review to #270; delivered as two waves on one branch, wave A = c2, c22\u2013c26, wave B = c27 \u2192 c29 \u2192 c28.",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Mesh stops replaying history on arrival: web/src/hooks/useSharedEvents.tsx connects with no cursor on every page load, and internal/api/events.go's handleStreamEvents treats an absent Last-Event-ID/from as 'from the beginning of this namespace's event log', admitting every historical run.created/run.completed lifecycle event; routes/Mesh.tsx turns each into a run-added placeholder then a 3.4s linger-and-remove, so the whole run history animates through the mesh at speed. The fix is a server-side tail-only connect (snapshot the active runs from GET /runs, then stream only new event ids) \u2014 a Go change plus a client cursor rule.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "A fresh EventSource connect admits only events with an id after the server's snapshot cursor; a server test seeds terminal runs and asserts none of their lifecycle events are streamed on a cursor-less connect, and the Mesh e2e asserts mesh.events_total == 0 after load with no new activity.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Go: add a tail-only mode to handleStreamEvents (e.g. ?from=latest, or default when no cursor: emit a snapshot marker with the current max event id and stream after it); client: Mesh loads active runs from GET /runs and connects with the snapshot cursor. Tests: internal/api/events_test.go seeds terminal runs; web e2e asserts mesh.events_total after load.",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "The mesh is a star by construction, not by data: web/src/domain/mesh.ts assembleMeshGraph emits only actor\u2192control-plane and run\u2192actor edges and layoutMesh puts actors on a ring around the center, so the picture carries no relationship between actors. The records already hold more: Actor rows carry kind, protocol, endpoint_ref (host), capabilities and metadata (web/src/api/types.ts), node-run rows carry run_id, node_id and actor_id, and published workflow IRs name which actor each node  \u2014 enough to draw actor\u2194host, actor\u2194workflow-node, run\u2194workflow and capability groupings instead of spokes.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "assumption",
+      "text": "The mesh node style the operator likes is web/src/components/MeshCanvas.tsx: Canvas-2D on the fixed TERMINAL_GROUND, pre-rendered glow sprites, quantized-alpha tables, a 64-slot particle pool, entrance choreography and idle drift. Workflow graphs use a different substrate \u2014 React Flow (@xyflow/react 12) + ELK with the DOM NodeCard (224\u00d7128, light page ground, zoom detail bands per PRD \u00a78.5). ActiveGraphCanvas.tsx already ported the mesh craft to CSS (breathing halo keyframes, one-shot pulse rings, motion gating), so a shared 'Culture node' that looks like the mesh nodes and lives on React Flow is a port, not a rewrite.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "Graphs are visible in exactly three places: the run page (routes/RunView.tsx, Graph/Timeline toggle), the Active Graphs sub-tab (ActiveGraphCanvas, only workflows pinned by a non-terminal run per domain/active-presence.ts), and the authoring preview once source parses. The 'Node Graphs' sub-tab of /graphs is misnamed: NodeGraphsPanel renders one workflow-card per workflow_key (versions table + recent runs list) and never a graph; the 'Nodes' sub-tab renders node-definition cards. That is why a published-but-idle workflow has no graph anywhere.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "assumption",
+      "text": "Authoring is text-first by design: routes/AuthorWorkflow.tsx is a textarea + Upload\u2026 + Load a sample + Validate + Publish, its React Flow preview is explicitly read-only ('nothing opens on click') and every Handle in WorkflowNode.tsx is isConnectable={false}. The canvas library is not the gap \u2014 React Flow 12 supports drag, connect and selection natively; what is missing is the reverse direction (graph \u2192 IR \u2192 canonical JSON/YAML), per-kind property editing, and on-canvas compiler diagnostics (PRD Phase 3 names 'compiler diagnostics on canvas'). Generate (routes/GenerateWorkflow.tsx) is a separate page that asks an actor to propose source and never publishes.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "docs/decisions/issue-12-remaining-web-ux-scope.md (2026-08-15) recommended option B \u2014 stop at source authoring, mark on-canvas mutation won't-do \u2014 and ruled that any later editor proposal must be a new issue with a named user task and acceptance test, and that a spike should first prove one added node+edge round-trips through POST /v1alpha1/workflows/validate. Issue #12 is still open. Choosing an editor now reopens that decision explicitly (a recorded deviation/decision), never as drift.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "The 2026-08-15 brief is cited verbatim in the superseding decision record, and issue #12 is closed or re-scoped by that record rather than left implying the won't-do still stands.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "The header (components/Header.tsx) offers 12 destinations plus a ticket box: Your work \u00b7 Inbox \u00b7 Decisions | Runs \u00b7 Board \u00b7 Jobs \u00b7 Mesh \u00b7 Statistics \u00b7 Node Graphs \u00b7 Plan \u00b7 Generate, and /workflows/new is not in the nav at all (reachable only by link). Runs, Board and Jobs are three projections of the same run/node-run rows (RunsBoard groups 'the identical GET /v1alpha1/runs rows by state'); Generate and New workflow are two halves of one Design activity. PRD \u00a78.6 names six primary views \u2014 Design, Run, Contract, Ledger, Operations, Registry \u2014 which is a cleaner spine than the current tab strip.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "assumption",
+      "text": "Issue #270 is the open home for UX findings and already records: /decisions renders its tab strip as unstyled buttons pinned top-left; /inbox is the most list-shaped page; neither shows where an item is in the flow. Issue #226 (mesh awareness: per-machine revision, checkout state, actor-token config, liveness) is exactly the information a non-star mesh could carry. The fixture screenshot pass (web/e2e/screenshots.spec.ts, NODES_SHOTS) covers 11 pages but not the mesh or active graphs, so those two have no captured evidence.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "non_goal",
+      "text": "No visual lift may break the PRD's honesty rules: everything drawn traces to a committed API row (h14 \u2014 no decorative edges, no invented attribution), reduced-motion renders one static frame, every node is keyboard-inspectable, and status is never color alone. A richer mesh draws relationships the records hold; it does not guess them.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Operator asks (2026-09-03): (1) mesh must not replay history on return; (2) graphs must be visible for any workflow, not only active/running ones; (3) workflows must be composable with the mouse (drag, drop, connect), not only as text; (4) the whole site must feel more intuitive and fluid; (5) the graph style should be the mesh node style; (6) the mesh must convey information about its nodes, which the sun-graph cannot.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Each of the six operator asks maps to at least one requirement (c2, c22\u2013c26, c28) and the delivery summary reports each ask as met, partly met, or not met with the evidence cited.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "audience",
+      "text": "Primary: the operator running the fleet from a wide display, who lives in Mesh, Runs and Design and needs to see at a glance what every machine is serving and what every workflow looks like. Secondary: a person arriving from a Jira comment to decide something (their pages \u2014 ticket, inbox, decisions \u2014 keep the treatment issue #270 gave them). Tertiary: agents reading #agent-state (webglass), which must keep asserting every fact the pixels claim.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "The operator reviews the before/after screenshots (h12-style) and #agent-state keeps asserting every mesh and graph fact; the human pages' e2e specs still pass unchanged.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "after_state",
+      "text": "Opening the mesh shows the org as it is right now \u2014 machines, the control plane, bridges/actors, published workflows and active runs, joined by the relationships the records hold \u2014 with no history replay; every published workflow opens as a graph from Design; the same mesh-styled node draws mesh, workflow and run views; the nav is the PRD's spine instead of twelve tabs; and a workflow can be composed on canvas, validated live, and published as an immutable version whose digest matches the CLI path.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Each clause of the after-state is one of the success signals c30\u2013c34 and none is announced without its check passing.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "before_state",
+      "text": "Today the mesh is a hub-and-spoke that replays every historical run on arrival and says nothing about hosts, revisions or which actor runs which workflow; a graph exists only for a running workflow or an open run; workflow graphs and the mesh use two visual substrates; twelve nav destinations include three projections of one dataset and omit the authoring page; and workflows are authored only as pasted text with a read-only preview.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "Every before-state sentence cites the file or issue it was read from in scope entries s1\u2013s9; a reviewer can reproduce each on the main branch as of 2026-09-03.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "why_it_matters",
+      "text": "The mesh is the product's face and the place where fleet divergence (#224: two workers, different token sets) should have been visible before a dispatch failed; a star hides exactly that. Graph-only-when-running means the design of a workflow is invisible until it costs money to run. Text-only authoring gates the product on YAML fluency, which the PRD's Design view was meant to remove.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The #224-style divergence (two workers, different actor-key sets on one namespace) is visible on the lifted mesh as a difference between two machine nodes, demonstrated with a fixture in the mesh e2e.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "decision",
+      "text": "Operator decision 2026-09-03 (q1): Option 2 \u2014 one graph language \u2014 then Option 3 \u2014 design canvas \u2014 in the same cycle. Wave order: replay fix + shared node + real mesh + graphs for idle workflows + nav consolidation first; the validate-round-trip spike and then the on-canvas editor second. This reopens the issue-12 won't-do on on-canvas mutation and must be recorded as a decision record before the editor wave builds.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "decision",
+      "text": "Operator decision 2026-09-03 (q3): the lifted mesh becomes the cross-machine awareness surface issue #226 asks for \u2014 machines, code revisions, checkout state, actor-token configuration and liveness drawn as nodes and edges alongside actors, workflows and runs.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "No sibling aesthetic (PRD \u00a78.1): every colour, radius, shadow and face comes from web/src/culture-design/tokens.css and palette.ts; the terminal ground stays TERMINAL_GROUND; nothing is picked by eye.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "A lint check fails on any hex colour, font name or radius literal in web/src outside culture-design/, and the screenshot review confirms no new palette entered.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "boundary",
+      "text": "Machine facts on the mesh come only from surfaces that already exist or that this cycle adds to the control plane: GET /v1alpha1/version, each bridge's /v1/capabilities deployment block (package, install_mode, revision, revision_is_dirty), actor rows, and a worker/bridge self-report of configured actor-key NAMES on its poll heartbeat \u2014 never secret values, never a shell probe of a host from the control plane. Deployment-checkout HEAD/dirty state needs host access the control plane does not have and is a follow-up unless a reporting path exists.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The mesh endpoint's response schema (api/openapi.yaml) carries no secret-bearing field; a test asserts that a worker heartbeat with a token value in it is rejected; deployment-checkout state, if absent, renders as 'not reported'.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "non_goal",
+      "text": "The human pages (/ , /tickets/:id, /inbox, /decisions) are not redesigned here beyond adopting the shared segmented-toggle control (which fixes the /decisions unstyled tab strip); their uplift stays issue #270's own lane.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "non_goal",
+      "text": "No new charting library, no mobile-first pass, no per-actor analytics (issue #28) \u2014 the lift is the graph language, the mesh's information, navigation, and the design canvas.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "A shared Culture node component (one file under web/src/culture-design/ or components/) renders on React Flow in the mesh idiom \u2014 dark terminal ground, kind-coloured glowing core, halo, label and sub-line, one-shot pulse rings \u2014 while keeping PRD \u00a78.5 zoom detail bands and the NodeCard's kind-specific content; RunView, Active Graphs, the Design gallery, the authoring preview and the Mesh all import this one component.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "One module, imported by all five views (a tests/lint guard pins it); zoom bands far/medium/close still change the content shown; prefers-reduced-motion renders exactly one static frame; the Canvas-2D MeshCanvas is deleted, not kept as a second path.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Port ActiveGraphCanvas's presence-node CSS (halo keyframes, pulse rings, motion gating) into one CultureNode component that takes {node, band, execution?, presence?}; make WorkflowNode and ActiveGraphNode thin adapters over it; then move Mesh onto React Flow. Delete MeshCanvas.tsx in the same wave.",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "The Mesh is rebuilt as a React Flow + ELK graph on the terminal ground with typed nodes \u2014 machine, control plane, bridge/actor, published workflow, active run \u2014 and edges drawn only from records: actor\u2192machine (endpoint_ref host), run\u2192actor (node-run attribution), run\u2192workflow (workflow_digest), actor\u2192workflow-node (the IR's uses refs), plus per-machine revision, install_mode, dirty flag, actor-key configuration and liveness from issue #226's surfaces; committed events still pulse one-to-one along the relevant edge; hover/keyboard inspection and the #agent-state mirror stay.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "Every node and edge traces to a row (actor, run, node-run, workflow version, probe/heartbeat record) named in the node's inspect panel; a failed or missing probe renders 'unknown' with the probe's own error text, never green or blank; particles remain one-to-one with committed events; no secret value ever reaches the API or the page \u2014 actor-key names only.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Server: add GET /v1alpha1/mesh returning actors (deduped), machines derived from endpoint_ref hosts, the control plane's /version, each bridge's cached deployment block (collected by the control plane on a timer with the actor token it already holds), and worker heartbeats carrying configured actor-key names. Web: domain/mesh.ts assembles typed nodes/edges from that payload; ELK layered or force layout on the terminal ground; keep the #agent-state mesh block and add machine_count / probe_failures.",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Every published workflow is readable as a graph without a run: a Design view lists each workflow_key with its versions and draws the selected version's graph from the published IR using the shared node; the misnamed 'Node Graphs' card sub-tab is replaced by this view and /graphs redirects to it.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "The gallery graph is derived from the published IR only (the same parse the authoring preview uses); an idle workflow with zero runs renders its full graph; the redirect from /graphs and /workflows lands on the equivalent view.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Replace NodeGraphsPanel with a two-pane Design gallery: left list of workflow keys + versions (from GET /workflows), right graph of the selected version via parseWorkflowGraph on the published IR and the shared node; keep NodesPanel as a 'Nodes' sub-view; add Navigate redirects for /graphs and /workflows.",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Navigation is consolidated onto the PRD \u00a78.6 spine without retiring any surface: Your work \u00b7 Inbox \u00b7 Decisions | Design (gallery + New workflow + Generate) \u00b7 Runs (list / board / jobs as one page with a segmented projection toggle) \u00b7 Mesh \u00b7 Ledger-and-plan (Plan) \u00b7 Statistics; every old URL redirects to the surface that now renders it.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "No surface is retired without a replacement in the same PR (decision c33 of the login-from-anywhere spec); every route in today's App.tsx still resolves, by redirect where moved; the nav count is asserted in a Header test.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Header.tsx: two groups, seven links; RunsList/RunsBoard/JobsTimeline become one /runs page with a segmented projection toggle (?view=list|board|jobs); /board and /jobs redirect; Design at /design hosts gallery, /design/new and /design/generate; update ROUTE_TITLES and the Header test.",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "Fluidity: graph nodes never paint at fallback positions and then jump \u2014 the canvas stays hidden or faded until ELK positions land; one shared segmented-toggle component replaces every ad-hoc tab strip; view changes use one transition idiom; prefers-reduced-motion renders one static frame everywhere; the fixture screenshot pass gains Mesh and Active Graphs shots and the operator reviews before/after before merge.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "A Playwright check asserts no node position changes after first paint on RunView and the gallery; the /decisions tab strip renders as the shared segmented toggle; NODES_SHOTS captures mesh.png and active-graphs.png and the operator's review comment on #270 precedes merge.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "useElkLayout: expose ready; canvases render with opacity 0 until ready then fade (skip under reduced motion); extract .view-toggle into components/SegmentedToggle.tsx and use it in RunView, NodeGraphs/Design, Decisions and Runs; extend e2e/screenshots.spec.ts with mesh and active-graphs fixtures.",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Before the editor wave, the spike from docs/decisions/issue-12-remaining-web-ux-scope.md runs against q2's round-trip rule: load one hand-written YAML with comments, an anchor and a deliberate key order onto the canvas, add one node and one edge by mouse, and prove the emitted document validates through POST /v1alpha1/workflows/validate while the untouched lines are byte-identical; elapsed design/engineering time and every round-trip loss are recorded in a decision record and the operator gives go/no-go for the editor wave on that record.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "The decision record states elapsed time, the exact losses observed (comments, key order, anchors, anything else), and the operator's go/no-go; the editor wave does not start before that record is committed.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Time-boxed worktree spike: yaml.parseDocument(source) \u2192 mutate via Document.addIn/setIn for one node + one edge \u2192 Document.toString(); diff against the input to count changed lines; POST /workflows/validate; write docs/decisions/YYYY-MM-DD-design-canvas-spike.md with elapsed time, the diff, and any loss; operator go/no-go.",
+      "revisions": [
+        {
+          "text": "Before the editor wave, the spike from docs/decisions/issue-12-remaining-web-ux-scope.md runs: load one validated IR onto the canvas, add one node and one edge by mouse, serialize, and prove the emitted document validates through POST /v1alpha1/workflows/validate; elapsed design/engineering time and every round-trip loss are recorded in a decision record and the operator gives go/no-go for the editor wave on that record.",
+          "kind": "requirement",
+          "reason": "q2 resolved: the spike must measure the round-trip, not an IR re-serialization"
+        }
+      ]
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "The Design canvas composes workflows with the mouse and round-trips hand-written YAML (q2): the canvas edits the author's YAML document as a syntax tree, so comments, blank lines, anchors and key order survive every mutation; a palette of node kinds (from domain/node-catalog), drag to add, connect via handles (isConnectable on), select/delete, a per-kind property panel with the PRD \u00a78.3 fields, a source pane showing the live document, Validate with compiler diagnostics attached to the offending node or edge, and Publish shipping the document string verbatim as an immutable version \u2014 with a keyboard-only path for add, connect and edit.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "Publish ships the emitted document string verbatim and the returned digest equals the CLI publish of that same string; diagnostics are the compiler's verbatim; every mouse action has a keyboard equivalent exercised by an e2e; nothing is published without an explicit Publish click.",
+          "status": "confirmed",
+          "instruction": ""
+        },
+        {
+          "id": "h10",
+          "text": "A hand-written fixture with comments, blank lines, an anchor and a deliberate key order round-trips byte-identical through open \u2192 no edit \u2192 Publish; adding one node and one edge changes only the lines that node and edge need (golden-file tests in web/src/domain); a document the Document API cannot mutate safely (e.g. a merge key at the mutation site) is refused with the reason shown, never silently re-serialized.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Text is the truth, the canvas is a lens: hold the source as a yaml Document (parseDocument with comment retention); every canvas action becomes a targeted mutation on that Document (setIn/addIn/deleteIn on spec.nodes / spec.edges paths, new nodes appended at the end of their map), then re-stringify with the same document options; parse the result with parseWorkflowSourceForPreview to refresh the graph. Palette from deriveNodeDefinitions; onConnect/onNodesChange/onEdgesChange from @xyflow/react; property panel per kind (agent: uses/capability; code: runner/image/operation; decision: rule/outcomes; approval: authority/deadline; wait: signal; subworkflow: pinned digest); Validate on change (debounced) mapping diagnostics' JSON paths to node/edge ids; Publish ships the Document string. JSON-format sources get the same treatment through the same Document API.",
+      "revisions": [
+        {
+          "text": "The Design canvas composes workflows with the mouse: a palette of node kinds (from domain/node-catalog), drag to add, connect via handles (isConnectable on), select/delete, a per-kind property panel with the PRD \u00a78.3 fields, a source pane showing the emitted canonical document, live Validate with compiler diagnostics attached to the offending node or edge, and Publish creating an immutable version \u2014 with a keyboard-only path for add, connect and edit.",
+          "kind": "requirement",
+          "reason": "q2 resolved: round-trip hand-written YAML"
+        }
+      ]
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The reopen of the issue-12 won't-do is recorded before editor code merges: a docs/decisions/ record superseding the 2026-08-15 brief, a Record issue pointing at it (scripts/open-issue.sh), and a Feature issue naming the user task ('compose a workflow on canvas and publish it') with its acceptance test, as that brief required.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "The decision record, the Record issue and the Feature issue exist and are linked from the editor PR before it merges; the PR body cites the issue-12 brief it supersedes.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Write docs/decisions/YYYY-MM-DD-reopen-graphical-editor.md superseding issue-12-remaining-web-ux-scope.md; scripts/open-issue.sh --type Record pointing at it and --type Feature for the canvas user task with acceptance = success signal c33; link both from the editor PR.",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "success_signal",
+      "text": "Opening /mesh in a fresh tab against a namespace with many terminal runs animates zero historical lifecycle events: #agent-state mesh.events_total stays at the count of events committed after load (e2e seeds 50 terminal runs and asserts).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "internal/api/events_test.go seeds terminal runs and asserts a cursor-less connect streams none of their lifecycle events; web e2e asserts #agent-state mesh.events_total == 0 after load.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "success_signal",
+      "text": "Every published workflow_key has a graph reachable in one click from Design with no run in the namespace (e2e on fixtures with zero runs).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "e2e/design.spec.ts renders the gallery from a fixture with published workflows and zero runs and asserts a graph with the expected node count for each key.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "success_signal",
+      "text": "One node component: a lint test pins that Mesh, RunView, Active Graphs, Design gallery and the authoring preview import the same module and that no second node card exists.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "tests/lint pins the single node module's import in all five views and fails if a second node-card component is added.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "success_signal",
+      "text": "A canvas-authored workflow's published digest equals the digest of the CLI publish path on the same emitted source, and each compiler diagnostic shown on canvas is byte-identical to the validate response.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "An e2e publishes the same source via the canvas and via the CLI path and asserts identical digests; a diagnostics fixture asserts byte equality between the validate response and what the canvas renders.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "A canvas-authored workflow's published digest equals the digest of  on the emitted source, and each compiler diagnostic shown on canvas is byte-identical to the validate response.",
+          "kind": "success_signal",
+          "reason": "shell backticks swallowed the CLI command name in the original text"
+        }
+      ]
+    },
+    {
+      "id": "c34",
+      "kind": "success_signal",
+      "text": "The mesh shows, from real rows, at least actor\u2192machine, run\u2192actor and run\u2192workflow edges plus per-machine revision and liveness, and a probe that failed renders as 'unknown', never as healthy; operator-reviewed screenshots of Mesh before/after are posted to #270.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "The mesh e2e fixture includes a failed bridge probe and asserts the machine node renders 'unknown' with the probe's error text; the #270 comment with the operator's screenshot review exists before merge.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Live production mesh/active-graph appearance is unverified this session: nodes.culture.dev is behind Cloudflare Access with no browser session, and thor/orin:8080 did not answer from spark; the findings rest on the code and the fixture screenshots.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "The code explains a history replay per page load or new tab (the shared manager keeps lastId within a session); whether the operator also sees it on an in-app tab switch needs confirming \u2014 if yes, a second cause exists.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "A fixture run-view screenshot showed a node card overlapping an edge label at default zoom; may be a pre-ELK fallback frame \u2014 check the layout/label placement on a real run before treating it as a defect.",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "internal/api/events.go + web/src/hooks/useSharedEvents.tsx + web/src/routes/Mesh.tsx",
+      "finding": "cross-run SSE with no cursor replays the namespace's full event log on each fresh page load; Mesh animates every historical lifecycle event (run-added, run-resolved with RESOLVE_LINGER_MS) \u2014 the 'reads all history fast' symptom; within one SPA session the module-level manager keeps lastId, so the replay is per page load / new tab",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "web/src/domain/mesh.ts + web/src/api/types.ts (Actor, NodeRunListItem)",
+      "finding": "star topology comes from the assembler/layout, not the data; Actor.endpoint_ref/capabilities/metadata and node-run actor_id/node_id are available but undrawn",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "web/src/components/MeshCanvas.tsx, ActiveGraphCanvas.tsx, NodeCard.tsx, WorkflowNode.tsx, hooks/useElkLayout.ts",
+      "finding": "two rendering substrates (Canvas-2D mesh vs React Flow/ELK DOM cards) share palette tokens but no node component; ActiveGraphCanvas is the existing bridge from mesh craft to DOM",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "web/src/routes/NodeGraphs.tsx (Nodes / Node Graphs / Active Graphs sub-tabs) + domain/active-presence.ts",
+      "finding": "only Active Graphs draws a graph, and only for non-terminal runs; Node Graphs draws cards; nothing shows an idle published workflow as a graph",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "web/src/routes/AuthorWorkflow.tsx + GenerateWorkflow.tsx + components/WorkflowNode.tsx handles + docs/initial-design PRD \u00a78.6/\u00a78.7/Phase 3",
+      "finding": "text-first authoring with a read-only preview; drag/connect is disabled at the handle level, not unavailable in the library; the missing piece is graph\u2192source serialization plus per-kind editing and diagnostics on canvas",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "docs/decisions/issue-12-remaining-web-ux-scope.md + issue #12 comments",
+      "finding": "graphical editor was recommended won't-do with an explicit reopen rule (new issue, named user task, acceptance test, validate-round-trip spike first)",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "web/src/components/Header.tsx + App.tsx routes + PRD \u00a78.6 primary views",
+      "finding": "12 tabs in two groups; three are projections of one dataset; authoring is split across an un-navigated route and Generate; the PRD's six views are the intended spine",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "issues #270, #226, #12; web/e2e/screenshots.spec.ts run into the scratchpad",
+      "finding": "prior UX findings and a mesh-awareness ask already exist as issues; the screenshot pass has no mesh/active-graph coverage",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "PRD \u00a78.4/\u00a78.8 + MeshCanvas/ActiveGraphCanvas honesty comments (h14)",
+      "finding": "the honesty and accessibility contract binds any redesign",
+      "seeds": [
+        "c10"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}

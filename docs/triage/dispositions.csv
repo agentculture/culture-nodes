@@ -173,3 +173,4 @@ issue,bucket,disposition,evidence_pointer
 285,bug tail,"make the scheduler deadline test drive the clock or poll for the terminal state with a bounded wait instead of racing the poll interval",issue #285 / PR #284 go job 33773817472
 287,finish work,"compose a workflow on canvas and publish it — the reopened editor (web-ui-lift t15)",issue #287 / docs/decisions/2026-09-03-reopen-graphical-editor.md
 288,finish work,"Record: graphical editor reopened — close on read against the decision record",issue #288 / docs/decisions/2026-09-03-reopen-graphical-editor.md
+286,bug tail,"scope guard: measure committed work with a merge-base diff, and refuse or clean a guarded prefix left dirty by an earlier run",issue #286 / adapters/codex/src/codex_bridge/scope_guard.py

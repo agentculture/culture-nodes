@@ -90,8 +90,18 @@ EOF
 }
 
 py() { python3 -c "$1"; }
-api_get() { curl -fsS -m 20 "$API$1"; }
-api_post() { curl -fsS -m 60 -H 'content-type: application/json' -d "$2" "$API$1"; }
+# Optional principal for the post-0.47.0 write path (issue #279): every write
+# needs a bound principal, and the operator's admin path today is the
+# Access-bound identity through the tunnel. Inject the browser cookie with
+#   grant run --inject NODES_OP_COOKIE=NODES_CULTURE_DEV_CF_AUTHORIZATION -- nodes-op.sh ...
+# (never paste it on a command line). NODES_OP_BEARER is the same hook for a
+# bearer once #279 lands one. Both are read from the environment only and are
+# never echoed; api_* add the header only when the variable is set.
+auth_args=()
+[ -n "${NODES_OP_COOKIE:-}" ] && auth_args+=(-H "Cookie: CF_Authorization=${NODES_OP_COOKIE}")
+[ -n "${NODES_OP_BEARER:-}" ] && auth_args+=(-H "Authorization: Bearer ${NODES_OP_BEARER}")
+api_get() { curl -fsS -m 20 "${auth_args[@]}" "$API$1"; }
+api_post() { curl -fsS -m 60 "${auth_args[@]}" -H 'content-type: application/json' -d "$2" "$API$1"; }
 
 need_yes() {
   if [ "${NODES_OP_YES:-0}" != "1" ] && [ "${ASSUME_YES:-0}" != "1" ]; then

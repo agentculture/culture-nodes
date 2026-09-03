@@ -2,7 +2,7 @@
   "plan_slug": "web-ui-lift",
   "schema_version": 2,
   "created": "2026-09-03T20:58:40Z",
-  "updated": "2026-09-03T20:58:43Z",
+  "updated": "2026-09-03T21:03:44Z",
   "deviations": [],
   "evidence": [
     {
@@ -20,7 +20,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 1
     },
@@ -39,7 +39,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 2
     },
@@ -58,7 +58,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 3
     },
@@ -77,7 +77,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 4
     },
@@ -96,7 +96,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 5
     },
@@ -115,7 +115,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 6
     },
@@ -134,7 +134,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 7
     },
@@ -153,7 +153,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 8
     },
@@ -172,7 +172,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 9
     },
@@ -191,7 +191,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 10
     },
@@ -210,7 +210,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 11
     },
@@ -229,7 +229,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 12
     },
@@ -248,7 +248,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 13
     },
@@ -267,7 +267,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 14
     },
@@ -286,7 +286,7 @@
         "commit": "3d67286256899babec204d563b0db1cc9383ae11"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 15
     }

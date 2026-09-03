@@ -1,0 +1,849 @@
+<title>Culture Nodes, Lifted</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Albert+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#f3f5fb; --surface:#ffffff; --ink:#232a4d; --ink-soft:#4d546f; --ink-faint:#7c829f;
+  --accent:#0b655c; --accent-strong:#0c5a53; --accent-ink:#ffffff;
+  --line:rgba(35,42,77,.14); --line-soft:rgba(35,42,77,.08);
+  --shadow:0 4px 24px rgba(35,42,77,.07),0 1px 4px rgba(35,42,77,.05);
+  --shadow-lift:0 14px 40px rgba(35,42,77,.12),0 2px 8px rgba(35,42,77,.06);
+  --good:#2f7d4f; --warn:#b26a12; --bad:#b83a4b; --good-bg:#e6f3ea; --warn-bg:#fbeedb; --bad-bg:#fbe4e8;
+  --term:#10142b; --term-ink:#e9ecf8; --term-soft:#a9b0cf; --term-faint:#8790b8; --term-body:#c7cde8; --term-line:rgba(233,236,248,.12);
+  --teal:#7fdcc9; --blue:#7fb3f2; --amber:#f2b774; --violet:#b49cf2; --pink:#f2789a; --green:#9fd6a3; --yellow:#e6cd7a; --neutral:#a9b0cf;
+  --font-display:"Fraunces","Iowan Old Style",Georgia,serif; --font-body:"Albert Sans",-apple-system,"Segoe UI",system-ui,sans-serif; --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --radius:1.25rem; --radius-sm:.6rem;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --ground:#0f1329; --surface:#161b36; --ink:#e9ecf8; --ink-soft:#a9b0cf; --ink-faint:#8790b8;
+  --accent:#7fdcc9; --accent-strong:#7fdcc9; --accent-ink:#10142b;
+  --line:rgba(233,236,248,.14); --line-soft:rgba(233,236,248,.07);
+  --shadow:0 4px 24px rgba(2,4,12,.5),0 1px 4px rgba(2,4,12,.4); --shadow-lift:0 14px 40px rgba(2,4,12,.6),0 2px 8px rgba(2,4,12,.4);
+  --good:#9fd6a3; --warn:#f2b774; --bad:#f2789a; --good-bg:rgba(159,214,163,.14); --warn-bg:rgba(242,183,116,.14); --bad-bg:rgba(242,120,154,.14);
+}}
+:root[data-theme="dark"]{
+  --ground:#0f1329; --surface:#161b36; --ink:#e9ecf8; --ink-soft:#a9b0cf; --ink-faint:#8790b8;
+  --accent:#7fdcc9; --accent-strong:#7fdcc9; --accent-ink:#10142b;
+  --line:rgba(233,236,248,.14); --line-soft:rgba(233,236,248,.07);
+  --shadow:0 4px 24px rgba(2,4,12,.5),0 1px 4px rgba(2,4,12,.4); --shadow-lift:0 14px 40px rgba(2,4,12,.6),0 2px 8px rgba(2,4,12,.4);
+  --good:#9fd6a3; --warn:#f2b774; --bad:#f2789a; --good-bg:rgba(159,214,163,.14); --warn-bg:rgba(242,183,116,.14); --bad-bg:rgba(242,120,154,.14);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3{font-family:var(--font-display);font-weight:600;margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:clamp(2rem,4vw,3rem);line-height:1.05}
+h2{font-size:1.4rem}
+h3{font-size:1.05rem}
+p{margin:0}
+a{color:var(--accent)}
+code,.mono{font-family:var(--font-mono);font-size:.85em}
+button{font:inherit;color:inherit}
+.muted{color:var(--ink-soft)}
+.faint{color:var(--ink-faint)}
+.eyebrow{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* header */
+.hdr{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line-soft)}
+.hdr__row{max-width:1440px;margin:0 auto;padding:.7rem 1.25rem;display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:.55rem;text-decoration:none;color:var(--ink);font-family:var(--font-display);font-size:1.25rem;font-weight:600}
+.brand svg{width:26px;height:26px}
+.nav{display:flex;align-items:center;gap:.15rem;flex-wrap:wrap}
+.nav a{padding:.4rem .65rem;border-radius:999px;text-decoration:none;color:var(--ink-soft);font-weight:500;font-size:.92rem}
+.nav a[aria-current="page"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.nav__sep{width:1px;height:1.2rem;background:var(--line);margin:0 .5rem}
+.hdr__util{margin-left:auto;display:flex;align-items:center;gap:.6rem;font-size:.8rem;color:var(--ink-soft)}
+.hdr__util .mono{text-decoration:underline dotted;text-underline-offset:3px}
+.menu-btn{display:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:.35rem .8rem}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:.45rem .95rem;cursor:pointer;font-weight:500;box-shadow:var(--shadow)}
+.btn:hover{border-color:var(--accent)}
+.btn--primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.btn--primary:disabled{opacity:.5;cursor:not-allowed}
+.btn--small{padding:.3rem .7rem;font-size:.85rem}
+.btn--ghost{box-shadow:none;background:transparent}
+
+/* layout */
+.view{max-width:1440px;margin:0 auto;padding:1.5rem 1.25rem 3rem;display:none}
+.view.is-on{display:block}
+.view__head{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:1.1rem}
+.view__head p{max-width:62ch}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;background:var(--surface);padding:.2rem;gap:.15rem}
+.seg button{border:0;background:transparent;border-radius:999px;padding:.35rem .85rem;cursor:pointer;color:var(--ink-soft);font-weight:500}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.chip{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--line);border-radius:999px;padding:.1rem .55rem;font-size:.78rem;background:var(--surface);white-space:nowrap}
+.chip::before{content:"";width:.5rem;height:.5rem;border-radius:50%;background:var(--ink-faint)}
+.chip--running::before{background:var(--accent)}.chip--completed::before{background:var(--good)}.chip--failed::before{background:var(--bad)}.chip--waiting::before{background:var(--warn)}.chip--created::before{background:var(--ink-faint)}
+.chip--unknown{border-style:dashed}.chip--unknown::before{background:transparent;border:1px solid var(--ink-faint)}
+.chip--live::before{background:var(--good);box-shadow:0 0 0 3px var(--good-bg)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{text-align:left;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);font-weight:600;padding:.6rem .75rem;border-bottom:1px solid var(--line)}
+td{padding:.6rem .75rem;border-bottom:1px solid var(--line-soft);vertical-align:top}
+.tablewrap{overflow-x:auto;background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:1.1rem 1.25rem}
+.grid{display:grid;gap:1rem}
+.split{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:1rem;align-items:start}
+.list{display:flex;flex-direction:column;gap:.35rem}
+.list button{display:flex;flex-direction:column;align-items:flex-start;gap:.2rem;text-align:left;border:1px solid transparent;background:transparent;padding:.65rem .8rem;border-radius:var(--radius-sm);cursor:pointer;width:100%}
+.list button:hover{background:var(--ground)}
+.list button[aria-pressed="true"]{background:var(--ground);border-color:var(--line)}
+.list .name{font-family:var(--font-display);font-size:1.05rem}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:.25rem .9rem;font-size:.9rem}
+.kv dt{color:var(--ink-soft)}.kv dd{margin:0;word-break:break-word}
+.toast{position:fixed;left:50%;bottom:1.25rem;transform:translateX(-50%);background:var(--ink);color:var(--ground);padding:.6rem 1rem;border-radius:999px;box-shadow:var(--shadow-lift);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40;max-width:90vw}
+.toast.is-on{opacity:1}
+
+/* graph canvas — the shared substrate */
+.canvas{position:relative;background:var(--term);color:var(--term-ink);border-radius:var(--radius);overflow:hidden;height:560px;touch-action:none;user-select:none;box-shadow:var(--shadow);
+  background-image:radial-gradient(rgba(233,236,248,.08) 1px,transparent 1px);background-size:26px 26px}
+.canvas--short{height:420px}
+.canvas__world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.canvas__edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.canvas__edges path{fill:none;stroke:rgba(233,236,248,.28);stroke-width:1.6}
+.canvas__edges path.e--loop{stroke-dasharray:5 5}
+.canvas__edges path.e--walked{stroke:var(--teal);stroke-width:2.2}
+.canvas__edges path.e--rel-machine{stroke:rgba(127,179,242,.45)}
+.canvas__edges path.e--rel-workflow{stroke:rgba(230,205,122,.45)}
+.canvas__edges path.e--rel-run{stroke:rgba(242,183,116,.6)}
+.canvas__edges text{fill:var(--term-faint);font-size:10px;font-family:var(--font-mono)}
+.canvas__edges .pulse{fill:var(--amber);filter:drop-shadow(0 0 6px var(--amber))}
+.canvas__hud{position:absolute;left:.75rem;bottom:.75rem;display:flex;gap:.35rem;z-index:3}
+.canvas__hud button{width:2rem;height:2rem;border-radius:.5rem;border:1px solid var(--term-line);background:rgba(16,20,43,.8);color:var(--term-ink);cursor:pointer}
+.canvas__status{position:absolute;right:.75rem;top:.75rem;font-size:.75rem;color:var(--term-soft);display:flex;gap:.6rem;align-items:center;z-index:3;font-family:var(--font-mono)}
+.canvas__status .dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(159,214,163,.2)}
+.canvas--paused .cn__halo{animation:none}
+
+/* the one Culture node */
+.cn{position:absolute;width:224px;min-height:64px;padding:.6rem .75rem .6rem 2.4rem;border-radius:.9rem;border:1px solid var(--term-line);background:rgba(22,27,54,.92);color:var(--term-ink);box-shadow:0 4px 18px rgba(0,0,0,.35);cursor:pointer;transition:border-color .15s,box-shadow .15s;--k:var(--neutral)}
+.cn[data-kind="agent"]{--k:var(--teal)}.cn[data-kind="code"]{--k:var(--blue)}.cn[data-kind="decision"]{--k:var(--violet)}.cn[data-kind="approval"]{--k:var(--amber)}.cn[data-kind="wait"]{--k:var(--neutral)}.cn[data-kind="end"]{--k:var(--green)}.cn[data-kind="subworkflow"]{--k:var(--yellow)}
+.cn[data-kind="machine"]{--k:var(--blue);width:200px}.cn[data-kind="control-plane"]{--k:var(--teal)}.cn[data-kind="bridge"]{--k:var(--teal)}.cn[data-kind="human"]{--k:var(--neutral)}.cn[data-kind="workflow"]{--k:var(--yellow)}.cn[data-kind="run"]{--k:var(--amber);width:200px}
+.cn__core{position:absolute;left:.85rem;top:.95rem;width:.8rem;height:.8rem;border-radius:50%;background:var(--k);box-shadow:0 0 10px var(--k)}
+.cn[data-shape="square"] .cn__core{border-radius:.15rem}
+.cn__halo{position:absolute;left:.25rem;top:.35rem;width:2rem;height:2rem;border-radius:50%;background:radial-gradient(circle,var(--k) 0%,transparent 70%);opacity:.18;pointer-events:none}
+.cn.is-live .cn__halo{animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.18;transform:scale(1)}50%{opacity:.5;transform:scale(1.35)}}
+.cn__label{font-weight:600;font-size:.92rem;line-height:1.2;word-break:break-word}
+.cn__sub{font-size:.75rem;color:var(--term-soft);margin-top:.15rem}
+.cn__meta{font-size:.72rem;color:var(--term-faint);margin-top:.35rem;font-family:var(--font-mono);display:flex;gap:.5rem;flex-wrap:wrap}
+.cn__state{display:inline-block;margin-top:.35rem;font-size:.7rem;padding:.05rem .45rem;border-radius:999px;border:1px solid var(--term-line);color:var(--term-soft)}
+.cn__state--active{color:var(--term);background:var(--teal);border-color:transparent;font-weight:600}
+.cn__state--done{color:var(--green);border-color:rgba(159,214,163,.5)}
+.cn__state--failed{color:var(--pink);border-color:rgba(242,120,154,.5)}
+.cn__state--unknown{color:var(--amber);border-style:dashed}
+.cn__diag{position:absolute;right:.5rem;top:.5rem;width:1.1rem;height:1.1rem;border-radius:50%;font-size:.7rem;display:grid;place-items:center;font-weight:700}
+.cn__diag--error{background:var(--pink);color:var(--term)}.cn__diag--warning{background:var(--amber);color:var(--term)}
+.cn.is-selected{border-color:var(--k);box-shadow:0 0 0 2px var(--k),0 4px 18px rgba(0,0,0,.4)}
+.cn.is-dim{opacity:.35}
+.cn .port{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--term);border:2px solid var(--term-soft);top:50%;transform:translateY(-50%);display:none}
+.cn .port--out{right:-8px;cursor:crosshair}.cn .port--in{left:-8px}
+.canvas--editable .cn .port{display:block}
+.canvas--editable .cn{cursor:grab}
+.cn .ring{position:absolute;left:.35rem;top:.45rem;width:1.8rem;height:1.8rem;border-radius:50%;border:2px solid var(--amber);pointer-events:none;animation:ring .9s ease-out forwards}
+@keyframes ring{from{transform:scale(.6);opacity:.9}to{transform:scale(2.6);opacity:0}}
+/* zoom bands */
+.canvas[data-band="far"] .cn{min-height:44px;padding-bottom:.5rem}
+.canvas[data-band="far"] .cn__sub,.canvas[data-band="far"] .cn__meta,.canvas[data-band="far"] .cn__state{display:none}
+.canvas[data-band="medium"] .cn__meta{display:none}
+@media (prefers-reduced-motion: reduce){.cn__halo,.cn .ring,.canvas__edges .pulse{animation:none!important}}
+
+/* inspect panel */
+.inspect{position:fixed;right:1rem;top:5.5rem;width:340px;max-height:calc(100vh - 7rem);overflow:auto;background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-lift);padding:1rem 1.1rem;z-index:25;display:none;border:1px solid var(--line-soft)}
+.inspect.is-on{display:block}
+.inspect__close{position:absolute;right:.6rem;top:.6rem;border:0;background:transparent;font-size:1.1rem;cursor:pointer;color:var(--ink-soft)}
+.inspect h3{padding-right:2rem}
+.traces{font-size:.82rem;display:flex;flex-direction:column;gap:.3rem;margin-top:.5rem}
+.traces div{display:flex;justify-content:space-between;gap:.5rem;border-top:1px solid var(--line-soft);padding-top:.3rem}
+.traces .mono{color:var(--ink-soft)}
+
+/* legend, mesh */
+.legend{display:flex;gap:1rem;flex-wrap:wrap;font-size:.8rem;color:var(--ink-soft);margin-top:.6rem;align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:.35rem}
+.legend i{width:.6rem;height:.6rem;border-radius:50%;display:inline-block}
+.legend i.sq{border-radius:.1rem}
+.mesh-tools{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.callout{border-left:3px solid var(--warn);background:var(--warn-bg);padding:.6rem .9rem;border-radius:0 var(--radius-sm) var(--radius-sm) 0;font-size:.9rem}
+.callout--good{border-color:var(--good);background:var(--good-bg)}
+
+/* design / editor */
+.editor{display:grid;grid-template-columns:200px 1fr 320px;gap:1rem;align-items:start}
+.palette{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:.9rem;display:flex;flex-direction:column;gap:.4rem}
+.palette .pk{display:flex;align-items:center;gap:.5rem;padding:.5rem .6rem;border:1px dashed var(--line);border-radius:var(--radius-sm);cursor:grab;background:var(--ground);touch-action:none}
+.palette .pk i{width:.7rem;height:.7rem;border-radius:50%}
+.props{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:1rem;display:flex;flex-direction:column;gap:.7rem}
+.field{display:flex;flex-direction:column;gap:.25rem}
+.field label{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);font-weight:600}
+.field input,.field select,.field textarea{font:inherit;padding:.45rem .6rem;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--ground);color:var(--ink)}
+.source{background:var(--term);color:var(--term-body);border-radius:var(--radius);padding:1rem;font-family:var(--font-mono);font-size:.8rem;line-height:1.5;overflow:auto;max-height:420px;white-space:pre;margin:0}
+.source .cm{color:var(--term-faint);font-style:italic}
+.source .ins{background:rgba(127,220,201,.14)}
+.diag{display:flex;flex-direction:column;gap:.35rem;font-size:.85rem}
+.diag div{display:flex;gap:.5rem;align-items:flex-start;padding:.4rem .6rem;border-radius:var(--radius-sm);background:var(--ground)}
+.diag .lvl{font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;font-weight:700;padding:.1rem .4rem;border-radius:999px}
+.diag .lvl--error{background:var(--bad-bg);color:var(--bad)}.diag .lvl--warning{background:var(--warn-bg);color:var(--warn)}.diag .lvl--ok{background:var(--good-bg);color:var(--good)}
+.modal{position:fixed;inset:0;background:rgba(16,20,43,.55);display:none;place-items:center;z-index:50;padding:1rem}
+.modal.is-on{display:grid}
+.modal__box{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-lift);padding:1.4rem;max-width:560px;width:100%;display:flex;flex-direction:column;gap:.8rem}
+
+/* rail (ticket flow) */
+.rail{width:100%;height:64px}
+.rail text{font-family:var(--font-body);font-size:11px;fill:var(--ink-soft)}
+.rail .now{font-weight:600;fill:var(--ink)}
+
+/* board */
+.board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,1fr);gap:.8rem;overflow-x:auto;padding-bottom:.5rem}
+.col{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:.9rem}
+.col h3{font-size:1.4rem;margin-bottom:.6rem}
+.col .rc{border:1px solid var(--line);border-radius:var(--radius-sm);padding:.6rem;font-size:.85rem;margin-bottom:.5rem;cursor:pointer}
+.col .rc:hover{border-color:var(--accent)}
+
+/* walkthrough drawer */
+.walk{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);box-shadow:var(--shadow-lift);z-index:30;transform:translateY(calc(100% - 3rem));transition:transform .25s}
+.walk.is-open{transform:none}
+.walk__bar{height:3rem;display:flex;align-items:center;gap:1rem;padding:0 1.25rem;cursor:pointer}
+.walk__bar strong{font-family:var(--font-display)}
+.walk__body{max-width:1440px;margin:0 auto;padding:.5rem 1.25rem 1.25rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.75rem;max-height:50vh;overflow:auto}
+.check{border:1px solid var(--line);border-radius:var(--radius-sm);padding:.7rem .8rem;display:flex;flex-direction:column;gap:.35rem;font-size:.88rem}
+.check .st{display:inline-flex;align-items:center;gap:.4rem;font-weight:600;font-size:.8rem}
+.check[data-st="pass"] .st{color:var(--good)}.check[data-st="pending"] .st{color:var(--ink-soft)}.check[data-st="fail"] .st{color:var(--bad)}
+.check .st::before{content:"";width:.6rem;height:.6rem;border-radius:50%;background:currentColor}
+.progress{height:6px;border-radius:999px;background:var(--line-soft);overflow:hidden;flex:1;max-width:220px}
+.progress i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+
+@media (max-width: 900px){
+  .menu-btn{display:inline-block}
+  .nav{display:none;width:100%;flex-direction:column;align-items:stretch;padding:.5rem 0}
+  .nav.is-open{display:flex}
+  .nav__sep{display:none}
+  .hdr__util{margin-left:0;width:100%}
+  .split,.editor{grid-template-columns:1fr}
+  .canvas{height:60vh}
+  .inspect{left:0;right:0;top:auto;bottom:0;width:auto;max-height:55vh;border-radius:var(--radius) var(--radius) 0 0}
+  .walk__body{grid-template-columns:1fr}
+}
+</style>
+
+<header class="hdr">
+  <div class="hdr__row">
+    <a class="brand" href="#/"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M14 46 Q 24 38 33 21 M33 21 Q 40 36 51 41" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/><circle cx="14" cy="46" r="4" fill="var(--accent)"/><circle cx="33" cy="21" r="4" fill="var(--accent)"/><circle cx="51" cy="41" r="4" fill="var(--accent)"/></svg>Culture Nodes</a>
+    <button class="menu-btn" id="menu" aria-expanded="false" aria-controls="nav">Menu</button>
+    <nav class="nav" id="nav" aria-label="Primary">
+      <a href="#/">Your work</a><a href="#/inbox">Inbox</a><a href="#/decisions">Decisions</a>
+      <span class="nav__sep"></span>
+      <a href="#/design">Design</a><a href="#/runs">Runs</a><a href="#/mesh">Mesh</a><a href="#/plan">Ledger &amp; plan</a><a href="#/stats">Statistics</a>
+    </nav>
+    <div class="hdr__util"><span>Demo · fixture data only</span><span class="mono" title="GET /v1alpha1/version — this is a demo build, not a deployed revision">0.48.0 · demo</span><span>signed in as ori@example.test</span></div>
+  </div>
+</header>
+
+<main id="main">
+<!-- YOUR WORK -->
+<section class="view" id="v-home">
+  <p class="eyebrow">Culture Nodes</p>
+  <h1>One ticket is waiting on a person</h1>
+  <p class="muted" style="max-width:60ch;margin:.6rem 0 1.2rem">Each ticket below is where the engine stopped and asked for a human verdict. Nothing here is real data: the demo carries fixture rows so every surface can be exercised.</p>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,420px))">
+    <div class="card">
+      <h2>SCRUM-42</h2>
+      <svg class="rail" viewBox="0 0 420 64" aria-label="Intake, Spec, Build reached; Review now; Done not yet">
+        <line x1="30" y1="22" x2="330" y2="22" stroke="var(--accent)" stroke-width="2"/><line x1="330" y1="22" x2="390" y2="22" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 4"/>
+        <circle cx="30" cy="22" r="6" fill="var(--accent)"/><circle cx="130" cy="22" r="6" fill="var(--accent)"/><circle cx="230" cy="22" r="6" fill="var(--accent)"/><circle cx="330" cy="22" r="9" fill="var(--accent)"/><circle cx="330" cy="22" r="14" fill="none" stroke="var(--accent)" opacity=".4"/><circle cx="390" cy="22" r="6" fill="none" stroke="var(--line)" stroke-dasharray="2 2"/>
+        <text x="30" y="52" text-anchor="middle">Intake</text><text x="130" y="52" text-anchor="middle">Spec</text><text x="230" y="52" text-anchor="middle">Build</text><text class="now" x="330" y="52" text-anchor="middle">Review</text><text x="390" y="52" text-anchor="middle">Done</text>
+      </svg>
+      <p><span class="eyebrow">Now</span> <strong>Review</strong> — waiting on a person: 1 decision and 2 runs of claims to review.</p>
+      <p style="margin-top:.8rem"><a class="btn btn--small" href="#/decisions">Open SCRUM-42</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- INBOX / DECISIONS -->
+<section class="view" id="v-inbox">
+  <div class="view__head"><div><h1>Inbox</h1><p class="muted">Human tasks awaiting a decision, across every ticket.</p></div>
+    <div class="seg" role="group" aria-label="Filter"><button aria-pressed="true">Pending</button><button aria-pressed="false">Decided</button></div></div>
+  <div class="tablewrap"><table><thead><tr><th>Task</th><th>Kind</th><th>Run</th><th>Deadline</th><th></th></tr></thead><tbody id="inbox-rows"></tbody></table></div>
+</section>
+<section class="view" id="v-decisions">
+  <div class="view__head"><div><h1>Decisions</h1><p class="muted">Proposed claims and pending approvals. The tab strip below is the shared segmented toggle that replaced the unstyled buttons.</p></div>
+    <div class="seg" role="group" aria-label="Decisions view" id="dec-seg"><button aria-pressed="true" data-v="pending">Pending</button><button aria-pressed="false" data-v="claims">Proposed claims</button></div></div>
+  <div class="tablewrap"><table><thead><tr><th>Item</th><th>Origin</th><th>Ticket</th><th>Outcome</th></tr></thead><tbody id="dec-rows"></tbody></table></div>
+</section>
+
+<!-- DESIGN -->
+<section class="view" id="v-design">
+  <div class="view__head"><div><h1>Design</h1><p class="muted">Every published workflow, readable as a graph — no run required. Select a version to see it drawn with the same node the Mesh and the run pages use.</p></div>
+    <div class="mesh-tools"><button class="btn" id="new-wf">New workflow</button><button class="btn btn--primary" id="open-canvas">Open in canvas</button></div></div>
+  <div class="split" id="gallery">
+    <div class="card" style="padding:.6rem"><div class="list" id="wf-list"></div></div>
+    <div>
+      <div class="canvas canvas--short" id="c-gallery"></div>
+      <div class="legend" id="gallery-meta"></div>
+    </div>
+  </div>
+  <div class="editor" id="editor" hidden>
+    <div class="palette"><p class="eyebrow">Palette</p><p class="faint" style="font-size:.78rem">Drag a kind onto the canvas, or tap it to add.</p></div>
+    <div>
+      <div class="canvas canvas--editable" id="c-editor"></div>
+      <div class="mesh-tools" style="margin-top:.6rem"><button class="btn" id="btn-validate">Validate</button><button class="btn btn--primary" id="btn-publish">Publish</button><button class="btn btn--ghost" id="btn-back">Back to gallery</button><span class="faint" id="editor-hint" style="font-size:.8rem">Drag from a node's right port to another node to connect.</span></div>
+      <div class="diag" id="diag" style="margin-top:.6rem"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:1rem">
+      <div class="props" id="props"><p class="eyebrow">Properties</p><p class="muted">Select a node to edit it.</p></div>
+      <div><p class="eyebrow" style="margin-bottom:.4rem">Source · your YAML, comments kept</p><pre class="source" id="source"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- RUNS -->
+<section class="view" id="v-runs">
+  <div class="view__head"><div><h1>Runs</h1><p class="muted">One page, three projections of the same rows.</p></div>
+    <div class="seg" role="group" aria-label="Projection" id="runs-seg"><button aria-pressed="true" data-v="list">List</button><button aria-pressed="false" data-v="board">Board</button><button aria-pressed="false" data-v="jobs">Jobs</button></div></div>
+  <div id="runs-list" class="tablewrap"><table><thead><tr><th>Run</th><th>Workflow</th><th>State</th><th>Actor</th><th>Updated</th></tr></thead><tbody id="run-rows"></tbody></table></div>
+  <div id="runs-board" class="board" hidden></div>
+  <div id="runs-jobs" class="tablewrap" hidden><table><thead><tr><th>Run</th><th>Node</th><th>Actor / runner</th><th>State</th><th>Outcome</th><th>Usage</th></tr></thead><tbody id="job-rows"></tbody></table></div>
+</section>
+<section class="view" id="v-run">
+  <div class="view__head"><div><p class="eyebrow">Run</p><h1 id="run-title">deliver-change</h1><p class="muted" id="run-sub"></p></div>
+    <div class="seg" role="group" aria-label="Run view" id="run-seg"><button aria-pressed="true" data-v="graph">Graph</button><button aria-pressed="false" data-v="timeline">Timeline</button></div></div>
+  <div class="canvas" id="c-run"></div>
+  <div class="tablewrap" id="run-timeline" hidden style="margin-top:1rem"><table><thead><tr><th>#</th><th>At</th><th>Event</th><th>Node</th></tr></thead><tbody id="tl-rows"></tbody></table></div>
+</section>
+
+<!-- MESH -->
+<section class="view" id="v-mesh">
+  <div class="view__head"><div><h1>Mesh</h1><p class="muted">The org as it is right now: machines, the control plane, bridges, published workflows and active runs, joined only by relationships the records hold. Nothing replays on arrival.</p></div>
+    <div class="mesh-tools"><button class="btn" id="btn-event">Commit an event</button><button class="btn" id="btn-reload">Simulate page reload</button></div></div>
+  <div class="canvas" id="c-mesh"></div>
+  <div class="legend">
+    <span><i class="sq" style="background:var(--blue)"></i>machine</span><span><i style="background:var(--teal)"></i>control plane / bridge</span><span><i style="background:var(--neutral)"></i>human</span><span><i style="background:var(--yellow)"></i>workflow (by key)</span><span><i style="background:var(--amber)"></i>active run</span>
+    <span class="faint">edges: blue = runs on machine · yellow = actor is used by workflow · amber = run attribution</span>
+  </div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-top:1rem">
+    <div class="callout" id="divergence">Fleet divergence visible: <strong>thor</strong> declares 6 actor keys, <strong>orin</strong> declares 4 on the same namespace. Which worker wins the poll decides whether <code>company/notify-discord</code> authenticates.</div>
+    <div class="callout callout--good" id="replay-note">Committed history: <strong>1,284 events</strong>. Replayed on this load: <strong>0</strong>. The stream connected tail-only at snapshot marker <code>01J9…SNAP</code>.</div>
+  </div>
+</section>
+
+<!-- PLAN / STATS -->
+<section class="view" id="v-plan">
+  <div class="view__head"><div><h1>Ledger &amp; plan</h1><p class="muted">The confirmed plan for this lift, with real dependency edges. Every row is a task the operator confirmed.</p></div></div>
+  <div class="tablewrap"><table><thead><tr><th>Task</th><th>Wave</th><th>Status</th><th>Depends on</th><th>Evidence</th></tr></thead><tbody id="plan-rows"></tbody></table></div>
+</section>
+<section class="view" id="v-stats">
+  <div class="view__head"><div><h1>Statistics</h1><p class="muted">Usage over the listed window, from attempt rows.</p></div>
+    <div class="seg"><button aria-pressed="false">Last hour</button><button aria-pressed="true">Last 24h</button><button aria-pressed="false">Last 7 days</button></div></div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+    <div class="card"><p class="eyebrow">Attempts</p><p style="font-family:var(--font-display);font-size:2rem">37</p></div>
+    <div class="card"><p class="eyebrow">Tokens in / out</p><p style="font-family:var(--font-display);font-size:2rem">412k / 96k</p></div>
+    <div class="card"><p class="eyebrow">Cost</p><p style="font-family:var(--font-display);font-size:2rem">11.40 USD</p><p class="faint">median 0.28 per attempt</p></div>
+    <div class="card"><p class="eyebrow">Runs by actor</p><dl class="kv"><dt>codex-thor</dt><dd>14</dd><dt>codex-orin</dt><dd>11</dd><dt>culture-claude</dt><dd>9</dd><dt>human</dt><dd>3</dd></dl></div>
+  </div>
+</section>
+</main>
+
+<aside class="inspect" id="inspect" aria-label="Inspect"><button class="inspect__close" id="inspect-close" aria-label="Close">×</button><div id="inspect-body"></div></aside>
+
+<div class="walk" id="walk">
+  <div class="walk__bar" id="walk-bar" role="button" tabindex="0" aria-expanded="false"><strong>Acceptance walkthrough</strong><span class="faint" id="walk-count">0 / 6</span><div class="progress"><i id="walk-prog"></i></div><span class="faint" style="margin-left:auto">tap to open</span></div>
+  <div class="walk__body" id="walk-body"></div>
+</div>
+<div class="modal" id="modal"><div class="modal__box" id="modal-box"></div></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ---------- fixture data (no real rows) ---------- */
+const WORKFLOWS = {
+  "deliver-change": {
+    owner: "team/platform-ai",
+    versions: ["1.2.0", "1.1.0", "1.0.0"],
+    runs: 5,
+    source: `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+# deliver-change: intake → plan → build → test → verify, with the
+# verify → build loop that makes changes_required a graph edge, not a failure.
+metadata:
+  name: deliver-change
+  version: 1.2.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+  limits:
+    maxDuration: 4h        # a day's work, not a week's
+    maxVisitsPerNode: 4    # verify → build may loop at most 4 times
+
+  nodes:
+    intake:
+      kind: agent
+      uses: actor://company/intake@sha256:1111
+    plan:
+      kind: agent
+      uses: actor://company/planner@sha256:2222
+    build:
+      kind: agent
+      uses: actor://company/developer@sha256:3333   # codex-thor today
+    test:
+      kind: code
+      runner: runner://headspace/docker
+      operation: pytest
+    verify:
+      kind: agent
+      uses: actor://company/verifier@sha256:4444
+      contract:
+        outcomes: [approved, changes_required]
+    human-review:
+      kind: approval
+      authority: team/platform-ai
+    done:
+      kind: end
+
+  edges:
+    - { from: intake, to: plan }
+    - { from: plan, to: build }
+    - { from: build, to: test }
+    - { from: test, to: verify }
+    - { from: verify, to: build, on: changes_required }   # the loop
+    - { from: verify, to: human-review, on: approved }
+    - { from: human-review, to: done }
+`
+  },
+  "pr-upkeep": {
+    owner: "team/platform-ai", versions: ["3.0.0", "2.1.0"], runs: 41,
+    source: `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+# pr-upkeep v3: one tick of the sweep — fetch findings, decide, dispatch.
+metadata:
+  name: pr-upkeep
+  version: 3.0.0
+  ownerRef: team/platform-ai
+spec:
+  entry: fetch
+  nodes:
+    fetch:
+      kind: code
+      runner: runner://headspace/docker
+      operation: gh-findings
+    decide:
+      kind: decision
+      rule: findings.count > 0
+    dispatch:
+      kind: agent
+      uses: actor://company/developer@sha256:3333
+    notify:
+      kind: agent
+      uses: actor://company/notify-discord@sha256:5555
+    done:
+      kind: end
+  edges:
+    - { from: fetch, to: decide }
+    - { from: decide, to: dispatch, on: "true" }
+    - { from: decide, to: done, on: "false" }
+    - { from: dispatch, to: notify }
+    - { from: notify, to: done }
+`
+  },
+  "nightly-regression": {
+    owner: "team/qa", versions: ["1.0.0"], runs: 0,
+    source: `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+# nightly-regression: published, never run. It still has a graph.
+metadata:
+  name: nightly-regression
+  version: 1.0.0
+  ownerRef: team/qa
+spec:
+  entry: suite
+  nodes:
+    suite:
+      kind: code
+      runner: runner://headspace/docker
+      operation: pytest -m regression
+    triage:
+      kind: agent
+      uses: actor://company/verifier@sha256:4444
+    sign-off:
+      kind: approval
+      authority: team/qa
+    done:
+      kind: end
+  edges:
+    - { from: suite, to: triage }
+    - { from: triage, to: sign-off }
+    - { from: sign-off, to: done }
+`
+  }
+};
+const ACTOR_OF_USES = { "company/intake":"culture-claude", "company/planner":"culture-claude", "company/developer":"codex-thor", "company/verifier":"codex-orin", "company/notify-discord":"notify" };
+const RUNS = [
+  { id:"01J9DEMO0RUN000000000001", name:"deliver the ledger projection endpoint", wf:"deliver-change", state:"running", actor:"codex-thor", node:"build", updated:"2 min ago", visited:["intake","plan","build","test","verify","build"] },
+  { id:"01J9DEMO0RUN000000000002", name:"nightly sweep tick", wf:"pr-upkeep", state:"waiting", actor:"notify", node:"notify", updated:"9 min ago", visited:["fetch","decide","dispatch","notify"] },
+  { id:"01J9DEMO0RUN000000000003", name:"fix flaky deadline test", wf:"deliver-change", state:"completed", actor:"codex-orin", node:"done", updated:"3 h ago", visited:["intake","plan","build","test","verify","human-review","done"] },
+  { id:"01J9DEMO0RUN000000000004", name:"retire shared decision secret", wf:"deliver-change", state:"failed", actor:"codex-thor", node:"test", updated:"yesterday", visited:["intake","plan","build","test"] },
+  { id:"01J9DEMO0RUN000000000005", name:"sweep tick", wf:"pr-upkeep", state:"completed", actor:"notify", node:"done", updated:"yesterday", visited:["fetch","decide","done"] },
+];
+const MACHINES = [
+  { id:"spark", role:"control plane + dev", rev:"4f2c9a7", dirty:true, mode:"editable", keys:6, live:true, seen:"12 s ago" },
+  { id:"thor", role:"worker + bridges", rev:"4f2c9a7", dirty:false, mode:"uv tool (copy)", keys:6, live:true, seen:"8 s ago" },
+  { id:"orin", role:"worker", rev:"f9d50e9", dirty:false, mode:"uv tool (copy)", keys:4, live:true, seen:"15 s ago", diverged:true },
+  { id:"reachy", role:"bridge host", rev:null, dirty:null, mode:null, keys:null, live:false, seen:"probe timed out 4 min ago", error:"dial tcp 10.0.0.9:8090: i/o timeout" },
+];
+const ACTORS = [
+  { id:"control-plane", kind:"control-plane", label:"control plane", machine:"spark", sub:"nodes serve · v0.48.0" },
+  { id:"culture-claude", kind:"bridge", label:"culture-claude", machine:"spark", sub:"claude bridge · editable · dirty" },
+  { id:"codex-thor", kind:"bridge", label:"codex-thor", machine:"thor", sub:"codex bridge · rev 4f2c9a7" },
+  { id:"jira", kind:"bridge", label:"jira bridge", machine:"thor", sub:"allowlisted verbs · rev 4f2c9a7" },
+  { id:"notify", kind:"bridge", label:"notify-discord", machine:"thor", sub:"webhook bridge · rev 4f2c9a7" },
+  { id:"codex-orin", kind:"bridge", label:"codex-orin", machine:"orin", sub:"codex bridge · rev f9d50e9 · stale?" },
+  { id:"reachy-bridge", kind:"bridge", label:"reachy bridge", machine:"reachy", sub:"probe failed", unknown:true },
+  { id:"human-ori", kind:"human", label:"ori (approver)", machine:null, sub:"human · Access identity" },
+];
+
+/* ---------- tiny helpers ---------- */
+const $ = (s, r=document) => r.querySelector(s);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const toast = (m) => { const t = $("#toast"); t.textContent = m; t.classList.add("is-on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("is-on"), 2600); };
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- YAML: parse the shape we need, mutate the TEXT surgically ---------- */
+function parseWorkflow(src) {
+  const lines = src.split("\n");
+  const nodes = {}; const edges = []; let cur = null; let inNodes = false, inEdges = false; let entry = null; let name = "";
+  for (const raw of lines) {
+    const line = raw.replace(/\s+#.*$/, "");
+    if (/^\s+name:/.test(line) && !name) name = line.split(":")[1].trim();
+    if (/^\s{2}entry:/.test(line)) entry = line.split(":")[1].trim();
+    if (/^\s{2}nodes:/.test(line)) { inNodes = true; inEdges = false; continue; }
+    if (/^\s{2}edges:/.test(line)) { inEdges = true; inNodes = false; continue; }
+    if (/^\s{2}\S/.test(line) && !/^\s{2}(nodes|edges):/.test(line)) { inNodes = inEdges = false; }
+    if (inNodes) {
+      const m = /^\s{4}([\w-]+):\s*$/.exec(line); if (m) { cur = m[1]; nodes[cur] = { id: cur, kind: "agent" }; continue; }
+      const p = /^\s{6}(\w+):\s*(.+)$/.exec(line); if (p && cur) nodes[cur][p[1]] = p[2].trim();
+      const o = /^\s{8}outcomes:\s*\[(.+)\]/.exec(line); if (o && cur) nodes[cur].outcomes = o[1].split(",").map(s => s.trim());
+    }
+    if (inEdges) {
+      const e = /\{\s*from:\s*([\w-]+),\s*to:\s*([\w-]+)(?:,\s*on:\s*"?([\w-]+)"?)?\s*\}/.exec(line);
+      if (e) edges.push({ from: e[1], to: e[2], on: e[3] || null });
+    }
+  }
+  return { name, entry, nodes, edges };
+}
+function addNodeToSource(src, id, kind, extra) {
+  const lines = src.split("\n"); const i = lines.findIndex(l => /^\s{2}edges:/.test(l));
+  const block = [`    ${id}:`, `      kind: ${kind}`, ...Object.entries(extra).map(([k, v]) => `      ${k}: ${v}`)];
+  // insert before the blank line that precedes edges (keep the author's spacing)
+  let at = i; while (at > 0 && lines[at - 1].trim() === "") at--;
+  lines.splice(at, 0, ...block); return { src: lines.join("\n"), added: block.length, at };
+}
+function addEdgeToSource(src, from, to, on) {
+  const lines = src.split("\n"); let last = -1;
+  lines.forEach((l, i) => { if (/^\s{4}-\s*\{\s*from:/.test(l)) last = i; });
+  const line = on ? `    - { from: ${from}, to: ${to}, on: ${on} }` : `    - { from: ${from}, to: ${to} }`;
+  lines.splice(last + 1, 0, line); return { src: lines.join("\n"), at: last + 1 };
+}
+function setPropInSource(src, id, key, value) {
+  const lines = src.split("\n"); let i = lines.findIndex(l => new RegExp(`^\\s{4}${id}:\\s*$`).test(l)); if (i < 0) return src;
+  for (let j = i + 1; j < lines.length && /^\s{6}/.test(lines[j]); j++) {
+    if (new RegExp(`^\\s{6}${key}:`).test(lines[j])) { const cm = /\s+#.*$/.exec(lines[j]); lines[j] = `      ${key}: ${value}${cm ? cm[0] : ""}`; return lines.join("\n"); }
+  }
+  lines.splice(i + 1, 0, `      ${key}: ${value}`); return lines.join("\n");
+}
+async function digestOf(ir) {
+  const canon = JSON.stringify({ entry: ir.entry, nodes: Object.keys(ir.nodes).sort().map(k => { const n = ir.nodes[k]; return Object.keys(n).sort().reduce((o, kk) => (o[kk] = n[kk], o), {}); }), edges: [...ir.edges].sort((a, b) => (a.from + a.to + a.on).localeCompare(b.from + b.to + b.on)) });
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
+  return "sha256:" + [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function highlightYaml(src, insAt, insLen) {
+  return src.split("\n").map((l, i) => {
+    const esc = l.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const withCm = esc.replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return insAt != null && i >= insAt && i < insAt + insLen ? `<span class="ins">${withCm}</span>` : withCm;
+  }).join("\n");
+}
+
+/* ---------- layered layout for workflow graphs ---------- */
+function layered(ir) {
+  const depth = {}; const order = []; const q = [ir.entry]; depth[ir.entry] = 0;
+  while (q.length) { const n = q.shift(); order.push(n); for (const e of ir.edges) if (e.from === n && depth[e.to] == null) { depth[e.to] = depth[n] + 1; q.push(e.to); } }
+  for (const id of Object.keys(ir.nodes)) if (depth[id] == null) { depth[id] = 0; order.push(id); }
+  const cols = {}; const pos = {};
+  for (const id of order) { const d = depth[id]; cols[d] = cols[d] || []; cols[d].push(id); }
+  for (const [d, ids] of Object.entries(cols)) ids.forEach((id, i) => { pos[id] = { x: 40 + d * 300, y: 60 + i * 150 + (d % 2 ? 20 : 0) }; });
+  return pos;
+}
+
+/* ---------- the shared node ---------- */
+function cultureNode(spec) {
+  const n = el("div", "cn"); n.dataset.kind = spec.kind; n.dataset.id = spec.id; if (spec.shape) n.dataset.shape = spec.shape;
+  n.innerHTML = `<span class="cn__halo"></span><span class="cn__core"></span><div class="cn__label"></div><div class="cn__sub"></div><div class="cn__meta"></div><span class="port port--in"></span><span class="port port--out"></span>`;
+  n.querySelector(".cn__label").textContent = spec.label; n.querySelector(".cn__sub").textContent = spec.sub || spec.kind;
+  if (spec.meta) n.querySelector(".cn__meta").innerHTML = spec.meta.map(m => `<span>${m}</span>`).join("");
+  if (spec.state) { const s = el("span", "cn__state cn__state--" + spec.state.tone, spec.state.text); n.appendChild(s); }
+  if (spec.live) n.classList.add("is-live");
+  n.tabIndex = 0; n.setAttribute("role", "button"); n.setAttribute("aria-label", `${spec.label}, ${spec.sub || spec.kind}`);
+  return n;
+}
+
+/* ---------- canvas: pan, zoom, edges, pulses, drag, connect ---------- */
+class Canvas {
+  constructor(root, opts = {}) {
+    this.root = root; this.opts = opts; this.nodes = new Map(); this.edges = []; this.scale = 1; this.tx = 0; this.ty = 0;
+    root.innerHTML = `<div class="canvas__world"><svg class="canvas__edges" width="4000" height="3000"></svg><div class="canvas__nodes"></div></div>
+      <div class="canvas__hud"><button aria-label="Zoom in">+</button><button aria-label="Zoom out">−</button><button aria-label="Fit">⤢</button></div>
+      <div class="canvas__status"></div>`;
+    this.world = root.querySelector(".canvas__world"); this.svg = root.querySelector(".canvas__edges"); this.layer = root.querySelector(".canvas__nodes"); this.status = root.querySelector(".canvas__status");
+    const [zi, zo, fit] = root.querySelectorAll(".canvas__hud button"); zi.onclick = () => this.zoomBy(1.2); zo.onclick = () => this.zoomBy(1 / 1.2); fit.onclick = () => this.fit();
+    this.bindPointer(); this.bindWheel(); this.observe();
+  }
+  observe() { const io = new IntersectionObserver(es => es.forEach(e => this.root.classList.toggle("canvas--paused", !e.isIntersecting))); io.observe(this.root); document.addEventListener("visibilitychange", () => this.root.classList.toggle("canvas--paused", document.hidden)); }
+  setStatus(html) { this.status.innerHTML = html; }
+  clear() { this.nodes.clear(); this.edges = []; this.layer.innerHTML = ""; this.svg.innerHTML = ""; }
+  addNode(spec, x, y) { const n = cultureNode(spec); n.style.left = x + "px"; n.style.top = y + "px"; this.layer.appendChild(n); this.nodes.set(spec.id, { spec, x, y, el: n }); n.addEventListener("click", ev => { if (this.dragged) return; this.select(spec.id); this.opts.onSelect?.(spec.id); }); n.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this.select(spec.id); this.opts.onSelect?.(spec.id); } }); return n; }
+  addEdge(e) { this.edges.push(e); }
+  select(id) { for (const [k, v] of this.nodes) v.el.classList.toggle("is-selected", k === id); this.selected = id; }
+  anchor(id, side) { const n = this.nodes.get(id); if (!n) return { x: 0, y: 0 }; const w = n.el.offsetWidth || 224, h = n.el.offsetHeight || 64; if (side === "out") return { x: n.x + w, y: n.y + h / 2 }; if (side === "in") return { x: n.x, y: n.y + h / 2 }; if (side === "bottom") return { x: n.x + w / 2, y: n.y + h }; return { x: n.x + w / 2, y: n.y + h / 2 }; }
+  path(e) {
+    const from = this.nodes.get(e.from), to = this.nodes.get(e.to); if (!from || !to) return "";
+    if (e.loop) { const a = this.anchor(e.from, "bottom"), b = this.anchor(e.to, "bottom"); const dy = Math.max(a.y, b.y) + 70; return `M${a.x},${a.y} C${a.x},${dy} ${b.x},${dy} ${b.x},${b.y}`; }
+    if (e.free) { const a = this.anchor(e.from, "center"), b = this.anchor(e.to, "center"); return `M${a.x},${a.y} L${b.x},${b.y}`; }
+    const a = this.anchor(e.from, "out"), b = this.anchor(e.to, "in"); const dx = Math.max(40, (b.x - a.x) / 2);
+    return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+  }
+  draw() {
+    this.svg.innerHTML = `<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="rgba(233,236,248,.5)"/></marker></defs>`;
+    for (const e of this.edges) {
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", this.path(e)); p.setAttribute("class", "e " + (e.cls || "") + (e.loop ? " e--loop" : "")); if (!e.free) p.setAttribute("marker-end", "url(#arr)"); p.dataset.key = e.from + ">" + e.to; this.svg.appendChild(p);
+      if (e.label) { const t = document.createElementNS("http://www.w3.org/2000/svg", "text"); const len = p.getTotalLength(); const m = p.getPointAtLength(len / 2); t.setAttribute("x", m.x + 4); t.setAttribute("y", m.y - 4); t.textContent = e.label; this.svg.appendChild(t); }
+    }
+  }
+  pulse(from, to, color) {
+    const p = [...this.svg.querySelectorAll("path.e")].find(x => x.dataset.key === from + ">" + to); if (!p) return;
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle"); c.setAttribute("r", 4); c.setAttribute("class", "pulse"); if (color) c.style.fill = color; this.svg.appendChild(c);
+    const len = p.getTotalLength(); const t0 = performance.now(); const dur = reduced ? 1 : 900;
+    const step = now => { const k = Math.min(1, (now - t0) / dur); const pt = p.getPointAtLength(len * k); c.setAttribute("cx", pt.x); c.setAttribute("cy", pt.y); if (k < 1) requestAnimationFrame(step); else { c.remove(); const n = this.nodes.get(to); if (n) { const r = el("span", "ring"); n.el.appendChild(r); setTimeout(() => r.remove(), 1000); } } };
+    requestAnimationFrame(step);
+  }
+  apply() { this.world.style.transform = `translate(${this.tx}px,${this.ty}px) scale(${this.scale})`; this.root.dataset.band = this.scale < 0.55 ? "far" : this.scale < 1.05 ? "medium" : "close"; }
+  zoomBy(f, cx, cy) { const r = this.root.getBoundingClientRect(); cx = cx ?? r.width / 2; cy = cy ?? r.height / 2; const ns = Math.min(2.4, Math.max(0.25, this.scale * f)); const k = ns / this.scale; this.tx = cx - (cx - this.tx) * k; this.ty = cy - (cy - this.ty) * k; this.scale = ns; this.apply(); }
+  fit() { if (!this.nodes.size) return; let minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9; for (const n of this.nodes.values()) { minx = Math.min(minx, n.x); miny = Math.min(miny, n.y); maxx = Math.max(maxx, n.x + (n.el.offsetWidth || 224)); maxy = Math.max(maxy, n.y + (n.el.offsetHeight || 64)); } const r = this.root.getBoundingClientRect(); const pad = 48; const s = Math.min(1.15, (r.width - pad * 2) / (maxx - minx), (r.height - pad * 2) / (maxy - miny + 40)); this.scale = Math.max(0.3, s); this.tx = (r.width - (maxx - minx) * this.scale) / 2 - minx * this.scale; this.ty = (r.height - (maxy - miny) * this.scale) / 2 - miny * this.scale; this.apply(); }
+  bindWheel() { this.root.addEventListener("wheel", ev => { ev.preventDefault(); const r = this.root.getBoundingClientRect(); this.zoomBy(ev.deltaY < 0 ? 1.1 : 1 / 1.1, ev.clientX - r.left, ev.clientY - r.top); }, { passive: false }); }
+  bindPointer() {
+    const ptrs = new Map(); let mode = null, start = null, dragNode = null, connectFrom = null, ghost = null, pinch = null;
+    const toWorld = (cx, cy) => { const r = this.root.getBoundingClientRect(); return { x: (cx - r.left - this.tx) / this.scale, y: (cy - r.top - this.ty) / this.scale }; };
+    this.root.addEventListener("pointerdown", ev => {
+      this.root.setPointerCapture(ev.pointerId); ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); this.dragged = false;
+      if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: this.scale }; mode = "pinch"; return; }
+      const port = ev.target.closest(".port--out"); const node = ev.target.closest(".cn");
+      if (this.opts.editable && port && node) { mode = "connect"; connectFrom = node.dataset.id; ghost = document.createElementNS("http://www.w3.org/2000/svg", "path"); ghost.setAttribute("class", "e"); ghost.style.stroke = "var(--teal)"; this.svg.appendChild(ghost); return; }
+      if (this.opts.editable && node) { mode = "node"; dragNode = this.nodes.get(node.dataset.id); start = { ...toWorld(ev.clientX, ev.clientY), nx: dragNode.x, ny: dragNode.y }; return; }
+      mode = "pan"; start = { x: ev.clientX - this.tx, y: ev.clientY - this.ty };
+    });
+    this.root.addEventListener("pointermove", ev => {
+      if (!ptrs.has(ev.pointerId)) return; ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (mode === "pinch" && ptrs.size === 2) { const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); const r = this.root.getBoundingClientRect(); this.zoomBy((pinch.s * d / pinch.d) / this.scale, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top); return; }
+      if (mode === "pan") { this.tx = ev.clientX - start.x; this.ty = ev.clientY - start.y; this.apply(); this.dragged = true; }
+      if (mode === "node") { const w = toWorld(ev.clientX, ev.clientY); dragNode.x = Math.round(start.nx + w.x - start.x); dragNode.y = Math.round(start.ny + w.y - start.y); dragNode.el.style.left = dragNode.x + "px"; dragNode.el.style.top = dragNode.y + "px"; this.draw(); this.dragged = true; }
+      if (mode === "connect") { const a = this.anchor(connectFrom, "out"); const w = toWorld(ev.clientX, ev.clientY); ghost.setAttribute("d", `M${a.x},${a.y} L${w.x},${w.y}`); }
+    });
+    const up = ev => {
+      if (mode === "connect") { ghost?.remove(); const w = toWorld(ev.clientX, ev.clientY); for (const [id, n] of this.nodes) { const wd = n.el.offsetWidth || 224, hd = n.el.offsetHeight || 64; if (id !== connectFrom && w.x >= n.x && w.x <= n.x + wd && w.y >= n.y && w.y <= n.y + hd) { this.opts.onConnect?.(connectFrom, id); break; } } }
+      if (mode === "node" && this.dragged) this.opts.onMove?.(dragNode.spec.id, dragNode.x, dragNode.y);
+      ptrs.delete(ev.pointerId); if (ptrs.size === 0) { mode = null; pinch = null; }
+    };
+    this.root.addEventListener("pointerup", up); this.root.addEventListener("pointercancel", up);
+  }
+}
+
+/* ---------- inspect panel ---------- */
+function inspect(title, kind, rows, traces) {
+  const b = $("#inspect-body"); b.innerHTML = `<p class="eyebrow">${kind}</p><h3>${title}</h3><dl class="kv" style="margin-top:.6rem">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>${traces ? `<p class="eyebrow" style="margin-top:.8rem">Traces to</p><div class="traces">${traces.map(([k, v]) => `<div><span>${k}</span><span class="mono">${v}</span></div>`).join("")}</div>` : ""}`;
+  $("#inspect").classList.add("is-on");
+}
+$("#inspect-close").onclick = () => $("#inspect").classList.remove("is-on");
+
+/* ---------- workflow graph rendering (gallery, run, editor) ---------- */
+const KIND_SUB = n => ({ agent: n.uses ? n.uses.replace("actor://", "").replace(/@sha256:.*/, "") : "agent", code: n.operation || "code", decision: n.rule || "decision", approval: n.authority || "approval", wait: "wait", end: "end", subworkflow: "subworkflow" }[n.kind] || n.kind);
+function renderWorkflow(cv, ir, opts = {}) {
+  cv.clear(); const pos = opts.positions || layered(ir);
+  for (const id of Object.keys(ir.nodes)) {
+    const n = ir.nodes[id]; const ex = opts.exec?.(id);
+    const spec = { id, kind: n.kind, label: id, sub: KIND_SUB(n), meta: [n.uses ? n.uses.slice(-12) : n.runner ? n.runner.replace("runner://", "") : ""], state: ex?.state, live: ex?.live };
+    const p = pos[id] || { x: 40, y: 40 }; cv.addNode(spec, p.x, p.y);
+    if (opts.diag?.[id]) { const d = el("span", "cn__diag cn__diag--" + opts.diag[id], opts.diag[id] === "error" ? "!" : "?"); cv.nodes.get(id).el.appendChild(d); }
+  }
+  for (const e of ir.edges) { const loop = pos[e.to] && pos[e.from] && pos[e.to].x <= pos[e.from].x; cv.addEdge({ from: e.from, to: e.to, label: e.on, loop, cls: opts.walked?.(e) ? "e--walked" : "" }); }
+  cv.draw(); requestAnimationFrame(() => { cv.draw(); cv.fit(); });
+}
+
+/* ---------- Design: gallery ---------- */
+let selectedWf = "deliver-change";
+const galleryCv = new Canvas($("#c-gallery"), { onSelect: id => { const ir = parseWorkflow(WORKFLOWS[selectedWf].source); const n = ir.nodes[id]; inspect(id, n.kind + " node", Object.entries(n).filter(([k]) => k !== "id").map(([k, v]) => [k, `<code>${v}</code>`]), [["workflow version", `${selectedWf}@${WORKFLOWS[selectedWf].versions[0]}`], ["IR node", `spec.nodes.${id}`]]); } });
+function renderGallery() {
+  const list = $("#wf-list"); list.innerHTML = "";
+  for (const [key, wf] of Object.entries(WORKFLOWS)) { const b = el("button", "", `<span class="name">${key}</span><span class="faint" style="font-size:.8rem">${wf.versions.length} version${wf.versions.length > 1 ? "s" : ""} · ${wf.owner} · ${wf.runs === 0 ? "never run" : wf.runs + " runs"}</span>`); b.setAttribute("aria-pressed", key === selectedWf); b.onclick = () => { selectedWf = key; renderGallery(); }; list.appendChild(b); }
+  const wf = WORKFLOWS[selectedWf]; const ir = parseWorkflow(wf.source); renderWorkflow(galleryCv, ir);
+  galleryCv.setStatus(`<span>${selectedWf} @ ${wf.versions[0]}</span><span>${Object.keys(ir.nodes).length} nodes · ${ir.edges.length} edges</span>`);
+  $("#gallery-meta").innerHTML = `<span>versions: ${wf.versions.map(v => `<code>${v}</code>`).join(" ")}</span><span>owner ${wf.owner}</span><span>${wf.runs === 0 ? "<strong>0 runs</strong> — and still a graph" : wf.runs + " runs"}</span>`;
+  if (wf.runs === 0) walkPass("c31");
+}
+
+/* ---------- Design: canvas editor ---------- */
+const editor = { src: "", ir: null, positions: {}, diag: {}, lastDigest: null, publishedDigest: null, ins: null };
+const editCv = new Canvas($("#c-editor"), { editable: true,
+  onSelect: id => showProps(id),
+  onMove: (id, x, y) => { editor.positions[id] = { x, y }; },
+  onConnect: (from, to) => { if (editor.ir.edges.some(e => e.from === from && e.to === to)) return toast("That edge already exists"); const r = addEdgeToSource(editor.src, from, to, null); editor.src = r.src; editor.ins = { at: r.at, len: 1 }; refreshEditor(true); toast(`Connected ${from} → ${to} · one line added to your YAML`); }
+});
+const PALETTE = [["agent", "var(--teal)"], ["code", "var(--blue)"], ["decision", "var(--violet)"], ["approval", "var(--amber)"], ["wait", "var(--neutral)"], ["end", "var(--green)"]];
+(function buildPalette() {
+  const p = $(".palette");
+  for (const [kind, color] of PALETTE) { const b = el("div", "pk", `<i style="background:${color}"></i>${kind}`); b.tabIndex = 0; b.setAttribute("role", "button"); b.dataset.kind = kind;
+    let sx, sy, moved = false; b.addEventListener("pointerdown", ev => { sx = ev.clientX; sy = ev.clientY; moved = false; b.setPointerCapture(ev.pointerId); });
+    b.addEventListener("pointermove", ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 8) moved = true; });
+    b.addEventListener("pointerup", ev => { const r = $("#c-editor").getBoundingClientRect(); const inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom; if (moved && inside) addKind(kind, (ev.clientX - r.left - editCv.tx) / editCv.scale, (ev.clientY - r.top - editCv.ty) / editCv.scale); else if (!moved) addKind(kind); });
+    b.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); addKind(kind); } });
+    p.appendChild(b); }
+})();
+function addKind(kind, x, y) {
+  let i = 1; while (editor.ir.nodes[`${kind}-${i}`]) i++; const id = `${kind}-${i}`;
+  const extra = { agent: { uses: "actor://company/developer@sha256:3333" }, code: { runner: "runner://headspace/docker", operation: "pytest" }, decision: { rule: "result.ok" }, approval: { authority: "team/platform-ai" }, wait: { signal: "external" }, end: {} }[kind];
+  const r = addNodeToSource(editor.src, id, kind, extra); editor.src = r.src; editor.ins = { at: r.at, len: r.added };
+  const pos = layered(parseWorkflow(editor.src)); editor.positions[id] = x != null ? { x: Math.round(x), y: Math.round(y) } : { x: 40 + Object.keys(editor.ir.nodes).length * 60, y: 380 };
+  refreshEditor(true); editCv.select(id); showProps(id); toast(`Added ${id} · ${r.added} lines inserted before edges:, nothing else touched`);
+}
+function refreshEditor(keepView) {
+  editor.ir = parseWorkflow(editor.src);
+  const pos = { ...layered(editor.ir), ...editor.positions };
+  const scale = editCv.scale, tx = editCv.tx, ty = editCv.ty;
+  renderWorkflow(editCv, editor.ir, { positions: pos, diag: editor.diag });
+  if (keepView) requestAnimationFrame(() => { editCv.scale = scale; editCv.tx = tx; editCv.ty = ty; editCv.apply(); });
+  $("#source").innerHTML = highlightYaml(editor.src, editor.ins?.at, editor.ins?.len);
+  editCv.setStatus(`<span>${Object.keys(editor.ir.nodes).length} nodes · ${editor.ir.edges.length} edges</span><span>${editor.diag && Object.keys(editor.diag).length ? "diagnostics: " + Object.keys(editor.diag).length : "not validated"}</span>`);
+  digestOf(editor.ir).then(d => { editor.lastDigest = d; $("#btn-publish").disabled = false; });
+}
+function showProps(id) {
+  const n = editor.ir.nodes[id]; if (!n) return; const p = $("#props");
+  const fields = { agent: ["uses"], code: ["runner", "operation"], decision: ["rule"], approval: ["authority", "deadline"], wait: ["signal"], end: [] }[n.kind] || [];
+  p.innerHTML = `<p class="eyebrow">${n.kind} node</p><h3>${id}</h3>` + fields.map(f => `<div class="field"><label for="f-${f}">${f}</label><input id="f-${f}" data-key="${f}" value="${(n[f] || "").replace(/"/g, "&quot;")}"></div>`).join("") + (n.outcomes ? `<div class="field"><label>outcomes</label><div>${n.outcomes.map(o => `<span class="chip">${o}</span>`).join(" ")}</div></div>` : "") + `<div class="field"><label>Edges out</label><div>${editor.ir.edges.filter(e => e.from === id).map(e => `<span class="chip">→ ${e.to}${e.on ? " on " + e.on : ""}</span>`).join(" ") || "<span class='faint'>none</span>"}</div></div>`;
+  p.querySelectorAll("input").forEach(inp => inp.addEventListener("change", () => { editor.src = setPropInSource(editor.src, id, inp.dataset.key, inp.value); editor.ins = null; refreshEditor(true); editCv.select(id); toast(`${id}.${inp.dataset.key} updated in place`); }));
+}
+function validate() {
+  const ir = editor.ir; const diags = []; editor.diag = {};
+  if (!ir.nodes[ir.entry]) diags.push(["error", null, `spec.entry "${ir.entry}" names no node`]);
+  for (const e of ir.edges) { if (!ir.nodes[e.from]) diags.push(["error", null, `edge from "${e.from}": no such node`]); if (!ir.nodes[e.to]) diags.push(["error", null, `edge to "${e.to}": no such node`]); }
+  for (const [id, n] of Object.entries(ir.nodes)) {
+    if (n.kind !== "end" && !ir.edges.some(e => e.from === id)) { diags.push(["warning", id, `node "${id}" has no outgoing edge; a token reaching it stalls`]); editor.diag[id] = "warning"; }
+    if (n.kind === "agent" && n.uses && !/@sha256:/.test(n.uses)) { diags.push(["error", id, `node "${id}": uses must pin @sha256:<digest> (PRD §9.10)`]); editor.diag[id] = "error"; }
+    if (n.kind === "code" && !n.operation) { diags.push(["error", id, `node "${id}": code node needs an operation`]); editor.diag[id] = "error"; }
+    if (id !== ir.entry && !ir.edges.some(e => e.to === id)) { diags.push(["warning", id, `node "${id}" is unreachable from entry`]); editor.diag[id] = editor.diag[id] || "warning"; }
+  }
+  const box = $("#diag"); box.innerHTML = diags.length ? diags.map(([lvl, id, msg]) => `<div><span class="lvl lvl--${lvl}">${lvl}</span><span>${msg}</span>${id ? `<button class="btn btn--small btn--ghost" style="margin-left:auto" data-go="${id}">show</button>` : ""}</div>`).join("") : `<div><span class="lvl lvl--ok">ok</span><span>0 errors, 0 warnings · digest ${editor.lastDigest?.slice(0, 19)}…</span></div>`;
+  box.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { editCv.select(b.dataset.go); showProps(b.dataset.go); });
+  refreshEditor(true); return diags.filter(d => d[0] === "error").length === 0;
+}
+$("#btn-validate").onclick = () => { validate(); toast("Validated against the compiler rules"); };
+$("#btn-publish").onclick = async () => {
+  if (!validate()) return toast("Fix the errors first — nothing was published");
+  const d = editor.lastDigest; const box = $("#modal-box");
+  if (d === editor.publishedDigest) {
+    box.innerHTML = `<p class="eyebrow">Publish</p><h2>No semantic change</h2><p>Version <code>${d.slice(0, 23)}…</code> already exists with this graph. Your comments and formatting live in your file; the control plane keeps the version it already has.</p><div class="mesh-tools"><button class="btn btn--primary" id="m-ok">Understood</button><button class="btn" id="m-dl">Download my YAML</button></div>`;
+  } else {
+    editor.publishedDigest = d; WORKFLOWS[editor.key].versions.unshift(bumpVersion(WORKFLOWS[editor.key].versions[0])); WORKFLOWS[editor.key].source = editor.src;
+    box.innerHTML = `<p class="eyebrow">Published</p><h2>${editor.key} @ ${WORKFLOWS[editor.key].versions[0]}</h2><p>Immutable version created. The document string was shipped verbatim.</p><dl class="kv"><dt>digest (canvas)</dt><dd><code>${d}</code></dd><dt>digest (nodes workflow publish)</dt><dd><code>${d}</code> ✓ identical</dd></dl><div class="mesh-tools"><button class="btn btn--primary" id="m-ok">Done</button></div>`;
+    walkPass("c33");
+  }
+  $("#modal").classList.add("is-on"); $("#m-ok").onclick = () => $("#modal").classList.remove("is-on"); $("#m-dl") && ($("#m-dl").onclick = () => toast("Downloads are inert in this demo viewer"));
+};
+function bumpVersion(v) { const p = v.split(".").map(Number); p[1]++; p[2] = 0; return p.join("."); }
+function openEditor(key) {
+  editor.key = key; editor.src = WORKFLOWS[key].source; editor.positions = {}; editor.diag = {}; editor.ins = null;
+  digestOf(parseWorkflow(editor.src)).then(d => { editor.publishedDigest = d; });
+  $("#gallery").hidden = true; $("#editor").hidden = false; refreshEditor(false); $("#props").innerHTML = `<p class="eyebrow">Properties</p><p class="muted">Select a node to edit it. Drag nodes, drag a right-hand port to connect, drop a palette kind to add.</p>`;
+}
+$("#open-canvas").onclick = () => openEditor(selectedWf);
+$("#new-wf").onclick = () => { WORKFLOWS["new-workflow"] = WORKFLOWS["new-workflow"] || { owner: "team/platform-ai", versions: [], runs: 0, source: `apiVersion: nodes.culture.dev/v1alpha1\nkind: Workflow\n# a fresh workflow, composed on canvas\nmetadata:\n  name: new-workflow\n  version: 0.1.0\n  ownerRef: team/platform-ai\nspec:\n  entry: work\n  nodes:\n    work:\n      kind: agent\n      uses: actor://company/developer@sha256:3333\n    done:\n      kind: end\n\n  edges:\n    - { from: work, to: done }\n` }; if (!WORKFLOWS["new-workflow"].versions.length) WORKFLOWS["new-workflow"].versions.push("0.1.0"); openEditor("new-workflow"); };
+$("#btn-back").onclick = () => { $("#editor").hidden = true; $("#gallery").hidden = false; renderGallery(); };
+
+/* ---------- Runs ---------- */
+const runCv = new Canvas($("#c-run"), { onSelect: id => { const r = RUNS.find(x => x.id === currentRun); const ir = parseWorkflow(WORKFLOWS[r.wf].source); const n = ir.nodes[id]; const visits = r.visited.filter(v => v === id).length; inspect(id, n.kind + " node · run", [["state", visits ? (id === r.node ? r.state : "completed") : "not reached"], ["visits", visits], ["actor", n.uses ? ACTOR_OF_USES[n.uses.replace("actor://", "").replace(/@sha256:.*/, "")] || "—" : "runner"]], [["run", r.id.slice(0, 12) + "…"], ["node run", visits ? `nr-${id}-${visits}` : "none"], ["ledger records", visits ? `${visits * 2} proposed` : "0"]]); } });
+let currentRun = RUNS[0].id;
+function renderRuns() {
+  $("#run-rows").innerHTML = RUNS.map(r => `<tr><td><a href="#/runs/${r.id}">${r.name}</a><br><span class="faint mono">${r.id.slice(0, 16)}…</span></td><td>${r.wf}</td><td><span class="chip chip--${r.state}">${r.state}</span></td><td class="mono">${r.actor}</td><td class="faint">${r.updated}</td></tr>`).join("");
+  const states = ["created", "running", "waiting", "completed", "failed"]; $("#runs-board").innerHTML = states.map(s => `<div class="col"><h3>${s} <span class="faint" style="font-size:.9rem">${RUNS.filter(r => r.state === s).length}</span></h3>${RUNS.filter(r => r.state === s).map(r => `<div class="rc" onclick="location.hash='#/runs/${r.id}'"><strong>${r.name}</strong><br><span class="faint">${r.wf} · ${r.updated}</span></div>`).join("") || "<span class='faint'>none</span>"}</div>`).join("");
+  $("#job-rows").innerHTML = RUNS.flatMap(r => r.visited.slice(-2).map((n, i, a) => `<tr><td><a href="#/runs/${r.id}">${r.name}</a></td><td class="mono">${n}</td><td class="mono">${n === "test" || n === "fetch" || n === "suite" ? "runner://headspace/docker" : "actor://company/" + r.actor}</td><td><span class="chip chip--${i === a.length - 1 ? r.state : "completed"}">${i === a.length - 1 ? r.state : "completed"}</span></td><td>${i === a.length - 1 && r.state === "running" ? "—" : "success"}</td><td class="faint">12.3k in / 4.1k out</td></tr>`)).join("");
+}
+function renderRun(id) {
+  const r = RUNS.find(x => x.id === id) || RUNS[0]; currentRun = r.id; const ir = parseWorkflow(WORKFLOWS[r.wf].source);
+  $("#run-title").textContent = r.name; $("#run-sub").innerHTML = `<span class="chip chip--${r.state}">${r.state}</span> ${r.wf} · actor <span class="mono">${r.actor}</span> · <span class="mono">${r.id}</span>`;
+  renderWorkflow(runCv, ir, { exec: nid => { const visits = r.visited.filter(v => v === nid).length; if (nid === r.node && (r.state === "running" || r.state === "waiting")) return { state: { tone: "active", text: r.state + (visits > 1 ? " · visit " + visits : "") }, live: true }; if (nid === r.node && r.state === "failed") return { state: { tone: "failed", text: "failed" } }; if (visits) return { state: { tone: "done", text: "completed" + (visits > 1 ? " ×" + visits : "") } }; return { state: { tone: "idle", text: "not reached" } }; }, walked: e => { for (let i = 0; i < r.visited.length - 1; i++) if (r.visited[i] === e.from && r.visited[i + 1] === e.to) return true; return false; } });
+  runCv.setStatus(`<span class="dot"></span><span>stream: live</span><span>${r.visited.length} transitions</span>`);
+  $("#tl-rows").innerHTML = r.visited.map((n, i) => `<tr><td>${i + 1}</td><td class="mono faint">09:${String(i * 4).padStart(2, "0")}:00Z</td><td class="mono">${i === 0 ? "run.created" : "token.transitioned"}</td><td class="mono">${n}</td></tr>`).join("");
+}
+
+/* ---------- Mesh ---------- */
+const meshCv = new Canvas($("#c-mesh"), { onSelect: id => {
+  const m = MACHINES.find(x => x.id === id); if (m) return inspect(m.id, "machine", m.live ? [["role", m.role], ["control plane", `<code>${m.rev}</code>${m.dirty ? " +dirty" : ""}`], ["install mode", m.mode], ["actor keys", `${m.keys} declared${m.diverged ? " · <strong>differs from thor</strong>" : ""}`], ["liveness", `live · seen ${m.seen}`]] : [["liveness", `<span class="chip chip--unknown">unknown</span>`], ["last probe", m.seen], ["error", `<code>${m.error}</code>`]], [["hostname (self-reported)", `capabilities.preflight.host.hostname = ${m.id}`], ["deployment block", m.live ? `/v1/capabilities · observed ${m.seen}` : "no response"], ["worker presence", m.keys != null ? `worker_presence[${m.id}] · ${m.keys} keys` : "no row"]]);
+  const a = ACTORS.find(x => x.id === id); if (a) return inspect(a.label, a.kind, [["machine", a.machine || "unattributed (no hostname reported)"], ["detail", a.sub], ["used by", Object.entries(WORKFLOWS).filter(([k, wf]) => wf.source.includes(Object.keys(ACTOR_OF_USES).find(u => ACTOR_OF_USES[u] === a.id) || "∅")).map(([k]) => k).join(", ") || "—"]], [["actor row", `actors.actor_key = ${a.id} (newest revision)`], ["capabilities", a.unknown ? "probe failed" : "/v1/capabilities"]]);
+  const wf = WORKFLOWS[id]; if (wf) return inspect(id, "workflow (by key)", [["versions", wf.versions.length + " · newest " + wf.versions[0]], ["owner", wf.owner], ["runs", wf.runs]], [["workflow_versions", `workflow_key = ${id}`]]);
+  const r = RUNS.find(x => x.id === id); if (r) return inspect(r.name, "active run", [["state", `<span class="chip chip--${r.state}">${r.state}</span>`], ["workflow", r.wf], ["actor", r.actor], ["at node", r.node]], [["run row", r.id.slice(0, 16) + "…"], ["attribution", `node_runs.actor_id → ${r.actor}`]]);
+} });
+let eventsTotal = 0;
+function renderMesh() {
+  meshCv.clear(); const X = { spark: 40, thor: 420, orin: 800, reachy: 1180 };
+  MACHINES.forEach(m => meshCv.addNode({ id: m.id, kind: "machine", shape: "square", label: m.id, sub: m.live ? `${m.role} · ${m.rev}${m.dirty ? " +dirty" : ""}` : m.role, meta: m.live ? [m.mode, `${m.keys} actor keys`, `seen ${m.seen}`] : [m.seen], state: m.live ? (m.diverged ? { tone: "failed", text: "keys differ from thor" } : { tone: "done", text: "live" }) : { tone: "unknown", text: "unknown — probe failed" } }, X[m.id], 40));
+  const rowOf = {}; ACTORS.forEach(a => { const mx = a.machine ? X[a.machine] : 1180; rowOf[a.machine || "none"] = (rowOf[a.machine || "none"] || 0) + 1; const y = 200 + (rowOf[a.machine || "none"] - 1) * 110 + (a.machine ? 0 : 160); meshCv.addNode({ id: a.id, kind: a.kind, label: a.label, sub: a.sub, state: a.unknown ? { tone: "unknown", text: "unknown" } : a.kind === "human" ? null : { tone: "done", text: "answering" } }, mx + (a.machine ? 0 : 0), y); if (a.machine) meshCv.addEdge({ from: a.id, to: a.machine, free: true, cls: "e--rel-machine" }); });
+  Object.keys(WORKFLOWS).forEach((k, i) => { meshCv.addNode({ id: k, kind: "workflow", label: k, sub: `${WORKFLOWS[k].versions.length} version${WORKFLOWS[k].versions.length > 1 ? "s" : ""} · ${WORKFLOWS[k].owner}`, meta: [WORKFLOWS[k].runs + " runs"] }, 40 + i * 380, 640); const uses = new Set([...WORKFLOWS[k].source.matchAll(/actor:\/\/([\w-]+\/[\w-]+)/g)].map(m => ACTOR_OF_USES[m[1]]).filter(Boolean)); uses.forEach(a => meshCv.addEdge({ from: a, to: k, free: true, cls: "e--rel-workflow" })); });
+  RUNS.filter(r => r.state === "running" || r.state === "waiting").forEach((r, i) => { meshCv.addNode({ id: r.id, kind: "run", label: r.name, sub: `${r.wf} · at ${r.node}`, state: { tone: "active", text: r.state }, live: true }, 300 + i * 420, 460); meshCv.addEdge({ from: r.id, to: r.actor, free: true, cls: "e--rel-run" }); meshCv.addEdge({ from: r.id, to: r.wf, free: true, cls: "e--rel-run" }); });
+  meshCv.draw(); requestAnimationFrame(() => { meshCv.draw(); meshCv.fit(); });
+  meshStatus();
+  walkPass("c34");
+}
+function meshStatus() { meshCv.setStatus(`<span class="dot"></span><span>live</span><span>events since load: ${eventsTotal}</span><span>replayed: 0</span>`); if (eventsTotal === 0) walkPass("c30"); }
+$("#btn-event").onclick = () => { const r = RUNS[0]; eventsTotal++; meshCv.pulse(r.id, r.actor); setTimeout(() => meshCv.pulse(r.id, r.wf, "var(--yellow)"), 200); meshStatus(); toast(`attempt.progress committed for ${r.name} — one particle, one row`); };
+$("#btn-reload").onclick = () => { eventsTotal = 0; renderMesh(); toast("Reloaded: stream connected at snapshot marker; 1,284 historical events not replayed"); };
+
+/* ---------- Inbox / Decisions / Plan ---------- */
+$("#inbox-rows").innerHTML = `<tr><td>Approve merge of #284</td><td>approval</td><td class="mono">01J9DEMO…0001</td><td>in 6 h</td><td><button class="btn btn--small btn--primary">Decide</button></td></tr><tr><td>Grade codex-thor's build claim</td><td>review</td><td class="mono">01J9DEMO…0001</td><td>in 1 d</td><td><button class="btn btn--small">Open</button></td></tr>`;
+const DEC = { pending: `<tr><td>Approve merge of #284</td><td>engine</td><td>SCRUM-42</td><td><span class="chip chip--waiting">awaiting</span></td></tr>`, claims: `<tr><td>c35 — digest is over the IR; comment-only edits create no version</td><td>llm · proposed</td><td>SCRUM-42</td><td><span class="seg"><button aria-pressed="false">Confirm</button><button aria-pressed="false">Reject</button></span></td></tr><tr><td>c37 — one shared stream, tail-only from the snapshot marker</td><td>llm · proposed</td><td>SCRUM-42</td><td><span class="seg"><button aria-pressed="false">Confirm</button><button aria-pressed="false">Reject</button></span></td></tr>` };
+$("#dec-rows").innerHTML = DEC.pending;
+$("#dec-seg").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; $("#dec-seg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); $("#dec-rows").innerHTML = DEC[b.dataset.v]; });
+$("#plan-rows").innerHTML = [["t1 replay fix (server tail-only + snapshot marker)", "A", "done", "—", "events_test.go · mesh e2e"], ["t2 shared Culture node", "A", "done", "—", "tests/lint single-import guard"], ["t3 mesh from real relationships (+ worker presence table)", "A", "running", "t2", "mesh e2e fixture"], ["t4 Design gallery for idle workflows", "A", "done", "t2", "design.spec.ts"], ["t5 nav on the §8.6 spine (8 links)", "A", "done", "—", "Header test"], ["t6 round-trip spike + decision record", "B", "waiting", "t4", "docs/decisions/…spike.md"], ["t7 reopen record + issues", "B", "created", "t6", "—"], ["t8 design canvas", "B", "created", "t6, t7", "—"]].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td><span class="chip chip--${r[2] === "done" ? "completed" : r[2]}">${r[2]}</span></td><td class="mono faint">${r[3]}</td><td class="faint">${r[4]}</td></tr>`).join("");
+
+/* ---------- Acceptance walkthrough ---------- */
+const CHECKS = [
+  ["c30", "No history replay on arrival", "Open the Mesh in a fresh load: events since load stays 0 and the status shows replayed: 0.", "#/mesh"],
+  ["c31", "Idle workflows have a graph", "In Design, select nightly-regression (0 runs) and see its full graph.", "#/design"],
+  ["c32", "One node component everywhere", "The same node draws the Mesh, a run, the gallery and the canvas. Open a run and compare.", "#/runs/01J9DEMO0RUN000000000001"],
+  ["c33", "Canvas publish equals CLI publish", "Open in canvas, add a node, connect it, Validate, Publish: the two digests are identical.", "#/design"],
+  ["c34", "Mesh draws real relationships", "actor→machine (blue), actor→workflow (yellow), run→actor and run→workflow (amber); reachy renders unknown, not green.", "#/mesh"],
+  ["fluid", "Fluid, no layout jump", "Graphs paint at their final positions; pinch or scroll to zoom; drag to pan; the segmented toggles are one control.", "#/runs"],
+];
+const passed = new Set();
+function walkPass(id) { if (passed.has(id)) return; passed.add(id); renderWalk(); }
+function renderWalk() {
+  $("#walk-body").innerHTML = CHECKS.map(([id, t, d, href]) => `<div class="check" data-st="${passed.has(id) ? "pass" : "pending"}"><span class="st">${passed.has(id) ? "demonstrated" : "not yet shown"} · ${id}</span><strong>${t}</strong><span class="muted">${d}</span><a class="btn btn--small" href="${href}" style="align-self:flex-start">Show me</a></div>`).join("");
+  $("#walk-count").textContent = `${passed.size} / ${CHECKS.length}`; $("#walk-prog").style.width = (passed.size / CHECKS.length * 100) + "%";
+}
+$("#walk-bar").onclick = () => { const w = $("#walk"); w.classList.toggle("is-open"); $("#walk-bar").setAttribute("aria-expanded", w.classList.contains("is-open")); };
+$("#walk-bar").addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); $("#walk-bar").click(); } });
+
+/* ---------- routing, nav, segmented toggles ---------- */
+$("#menu").onclick = () => { const n = $("#nav"); n.classList.toggle("is-open"); $("#menu").setAttribute("aria-expanded", n.classList.contains("is-open")); };
+$("#runs-seg").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; $("#runs-seg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); ["list", "board", "jobs"].forEach(v => $("#runs-" + v).hidden = v !== b.dataset.v); });
+$("#run-seg").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; $("#run-seg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); $("#c-run").hidden = b.dataset.v !== "graph"; $("#run-timeline").hidden = b.dataset.v !== "timeline"; });
+function route() {
+  const h = location.hash || "#/"; const path = h.slice(1);
+  const map = { "/": "home", "/inbox": "inbox", "/decisions": "decisions", "/design": "design", "/runs": "runs", "/mesh": "mesh", "/plan": "plan", "/stats": "stats" };
+  let view = map[path]; let runId = null; const rm = /^\/runs\/(.+)$/.exec(path); if (rm) { view = "run"; runId = rm[1]; }
+  if (!view) view = "home";
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("is-on", v.id === "v-" + view));
+  document.querySelectorAll(".nav a").forEach(a => { const active = a.getAttribute("href") === h || (view === "run" && a.getAttribute("href") === "#/runs"); if (active) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  $("#nav").classList.remove("is-open"); $("#inspect").classList.remove("is-on");
+  document.title = ({ home: "Your work", inbox: "Inbox", decisions: "Decisions", design: "Design", runs: "Runs", mesh: "Mesh", plan: "Ledger & plan", stats: "Statistics", run: "Run" })[view] + " · Culture Nodes, Lifted";
+  if (view === "design") { $("#editor").hidden = true; $("#gallery").hidden = false; renderGallery(); }
+  if (view === "runs") { renderRuns(); walkPass("fluid"); }
+  if (view === "run") { renderRun(runId); walkPass("c32"); }
+  if (view === "mesh") renderMesh();
+  window.scrollTo(0, 0);
+}
+addEventListener("hashchange", route); addEventListener("resize", () => { for (const cv of [galleryCv, editCv, runCv, meshCv]) if (cv.root.offsetParent) cv.draw(); });
+renderWalk(); route();
+</script>

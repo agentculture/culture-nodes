@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.47.21] - 2026-09-03
+
+### Fixed
+
+- The web-ui-lift spec's nav requirement no longer contradicts its own list. c25 enumerates eight destinations in two groups — Your work, Inbox, Decisions | Design, Runs, Mesh, Ledger-and-plan, Statistics — while its instruction said "two groups, seven links", so h5's required Header count assertion had no unambiguous expected value and an implementer had to guess which destination to drop. The enumeration is the load-bearing half: the same requirement opens with "without retiring any surface" and h5 forbids retiring one without a replacement in the same PR, so reaching seven by removing a link would break the requirement it belongs to. The count is now stated in the requirement itself ("eight destinations in two groups"), the instruction names the three work and five engine links rather than a bare number, and h5 gained an instruction pinning the Header test to exactly those eight by name (PR #284, Qodo Correctness/Medium "Navigation count contradicts links")
+
+## [0.47.20] - 2026-09-03
+
+### Fixed
+
+- The web-ui-lift spec no longer derives machine identity from `actors.endpoint_ref`. c23 drew the mesh's actor→machine edge from "endpoint_ref host", and c3 asserted the actor rows already hold enough to draw actor↔host — but that column is not a machine key. It is nullable caller-supplied text (`migrations/0001_namespaces_and_identity.sql`), actor identity is append-only so every superseded revision keeps its own stale copy (`internal/store/postgres/actorregister.go` INSERTs revision max+1, never UPDATEs), `migrations/pending/0036_retire_stored_participant_addresses.sql` drops it once the dial-in cutover completes, and a dial-in bridge has no stored address at all (`internal/actors/dialin_presence.go`; `inbound_actor_presence` keeps no peer address by design). Deriving machines from it would merge unrelated hosts behind one address, keep dead ones alive, and leave dial-in actors unattributed — breaking h3's "every node and edge traces to a row". Both claims now key the machine on the hostname each bridge reports for ITSELF under `capabilities.preflight.host.hostname` — `preflight.Surface`'s host block, which `checkHost` refuses empty and whose package doc pins as a fact only the party that can measure it may supply — refreshed by the same timed deployment probe c23 already specified. New honesty condition h26 pins it to tests: the mesh payload is byte-identical with every `endpoint_ref` NULL, two actors share a machine node only when they reported the same hostname, and an actor with no reported hostname comes back with `machine` null and renders unattributed rather than being given an invented machine (PR #284, Qodo Correctness/High "Endpoint invents machine identity")
+
+## [0.47.19] - 2026-09-03
+
+### Fixed
+
+- The web-ui-lift spec's c2 (mesh stops replaying history) now names a boundary that cannot drop a run. It said "snapshot the active runs from GET /runs, then stream only new event ids" without saying where the stream cursor comes from or which read happens first, and those two reads are not atomic: `GET /v1alpha1/runs` returns a `nodeRunCursor` over runs (`internal/api/runs.go` `handleListRuns`), never the events-table ULID `handleStreamEvents` resumes on, so no single call can hand back both a run snapshot and its event-log high-water mark. A run created — or completed — after the snapshot query but before the stream cursor was resolved would appear in neither, and the Mesh would carry stale active-run state until the next lifecycle event for that run, which for a finished run never comes. The amended claim orders the two reads stream-first: connect in an explicit tail-only mode, take the snapshot marker the server sends as its first frame, then load `GET /runs`, buffering streamed events until that response lands and applying them on top keyed by run id. That makes the boundary at-least-once instead of at-most-once — a transition committed between the reads shows up in both and reconciles to the same state — and a new honesty condition h25 pins it to a test that interleaves the two. The cursor-less default connect is deliberately left alone (PR #284, Qodo Correctness/High "Snapshot cursor race")
+
+## [0.47.18] - 2026-09-03
+
+### Added
+
+- spec: web-ui-lift — one graph language across mesh, workflows and runs; mesh drawn from real relationships as the cross-machine awareness surface (#226); graphs for idle workflows; nav on the PRD §8.6 spine; design canvas that round-trips hand-written YAML, gated by a spike and a recorded reopen of the issue-12 won't-do (docs/specs/2026-09-03-web-ui-lift.md, frame web-ui-lift)
+
 ## [0.47.17] - 2026-09-02
 
 ### Fixed

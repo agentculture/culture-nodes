@@ -1,4 +1,5 @@
 import { useSearchParams } from "react-router-dom";
+import SegmentedToggle from "../components/SegmentedToggle";
 import JobsTimeline from "./JobsTimeline";
 import RunsBoard from "./RunsBoard";
 import RunsList from "./RunsList";
@@ -64,12 +65,7 @@ export function Runs() {
     <section className="view-rail runs-page">
       <h1>Runs</h1>
 
-      <div
-        id="runs-toggle"
-        className="view-toggle"
-        role="group"
-        aria-label="Runs projection"
-      >
+      <SegmentedToggle id="runs-toggle" label="Runs projection">
         {RUNS_VIEWS.map(({ key, label }) => (
           <button
             key={key}
@@ -81,7 +77,7 @@ export function Runs() {
             {label}
           </button>
         ))}
-      </div>
+      </SegmentedToggle>
 
       {view === "list" ? <RunsList /> : null}
       {view === "board" ? <RunsBoard /> : null}

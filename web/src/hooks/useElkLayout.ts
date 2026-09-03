@@ -12,7 +12,7 @@ export type NodePositions = Record<string, { x: number; y: number }>;
 
 // elk.bundled.js is ~1.4 MB — a third of the app if it is bundled into the
 // entry chunk. It is imported dynamically instead, which costs nothing
-// visually because fallbackLayout already draws the graph while ELK loads.
+// visually because callers keep the seeded graph transparent until ELK lands.
 let elkPromise: Promise<ElkInstance> | null = null;
 
 function getElk(): Promise<ElkInstance> {
@@ -57,8 +57,8 @@ export function fallbackLayout(graph: WorkflowGraph): NodePositions {
  *
  * ELK runs on the main thread here (elk.bundled.js), which is fine for the
  * graph sizes the PRD's first slice targets and keeps the bundle free of a
- * worker-URL build step. The fallback layout renders immediately so the
- * canvas is never blank while ELK works — and stays put if ELK throws.
+ * worker-URL build step. The fallback keeps failure useful; `ready` lets a
+ * canvas avoid painting those seed positions before ELK's final positions.
  */
 export function useElkLayout(graph: WorkflowGraph | null): {
   positions: NodePositions;

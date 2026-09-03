@@ -15,6 +15,7 @@ import CategoryChip from "../components/CategoryChip";
 import ErrorNotice from "../components/ErrorNotice";
 import EventTimeline from "../components/EventTimeline";
 import NodeDetailPanel from "../components/NodeDetailPanel";
+import SegmentedToggle from "../components/SegmentedToggle";
 import StatusChip from "../components/StatusChip";
 import UsageSummary from "../components/UsageSummary";
 import WorkflowNode, {
@@ -48,7 +49,8 @@ const NODE_TYPES = { workflow: WorkflowNode };
  * without an entry here is a TypeScript error, not a silently missing tooltip.
  */
 const STREAM_STATUS_EXPLANATION: Record<StreamStatus, string> = {
-  connecting: "opening the live event stream; the graph shows the snapshot the page loaded with",
+  connecting:
+    "opening the live event stream; the graph shows the snapshot the page loaded with",
   open: "live: every committed event is being applied to this page as it happens",
   error:
     "the live event stream dropped and could not be re-established — this page is showing the last state it was told about. The run itself is unaffected; reload to try again.",
@@ -69,9 +71,10 @@ function RunViewInner() {
 
   const [selected, setSelected] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("graph");
-  const instanceRef = useRef<ReactFlowInstance<WorkflowFlowNode, BuiltInEdge> | null>(
-    null,
-  );
+  const instanceRef = useRef<ReactFlowInstance<
+    WorkflowFlowNode,
+    BuiltInEdge
+  > | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
   /**
@@ -104,7 +107,9 @@ function RunViewInner() {
     () =>
       new Set(
         ledger
-          .filter((record) => record.record_type === "evidence" && record.node_run_id)
+          .filter(
+            (record) => record.record_type === "evidence" && record.node_run_id,
+          )
           .map((record) => record.node_run_id as string),
       ),
     [ledger],
@@ -227,8 +232,9 @@ function RunViewInner() {
     if (!runId) return;
     const nodeStates: Record<string, string> = {};
     for (const node of graph?.nodes ?? []) {
-      nodeStates[node.id] = (graphState.nodes[node.id] ?? idleExecution(node.id))
-        .state;
+      nodeStates[node.id] = (
+        graphState.nodes[node.id] ?? idleExecution(node.id)
+      ).state;
     }
     const usage = view?.run.usage;
     setAgentState({
@@ -267,7 +273,11 @@ function RunViewInner() {
           ? -PAN_STEP
           : 0;
     const dy =
-      event.key === "ArrowUp" ? PAN_STEP : event.key === "ArrowDown" ? -PAN_STEP : 0;
+      event.key === "ArrowUp"
+        ? PAN_STEP
+        : event.key === "ArrowDown"
+          ? -PAN_STEP
+          : 0;
     instance.setViewport({
       x: viewport.x + dx,
       y: viewport.y + dy,
@@ -284,7 +294,9 @@ function RunViewInner() {
   const selectedNodeUsageEntries = selectedNode
     ? (graphState.nodes[selectedNode.id]?.nodeRuns ?? [])
         .map((nodeRun) => usageByNodeRunId[nodeRun.id])
-        .filter((usage): usage is NonNullable<typeof usage> => usage !== undefined)
+        .filter(
+          (usage): usage is NonNullable<typeof usage> => usage !== undefined,
+        )
     : [];
   const selectedNodeUsage =
     selectedNodeUsageEntries.length > 0
@@ -316,8 +328,7 @@ function RunViewInner() {
       <div className="run-view__head">
         <div>
           <h1 className="run-view__title">
-            {graph?.name ?? "Run"}{" "}
-            <span className="run-view__id">{runId}</span>
+            {graph?.name ?? "Run"} <span className="run-view__id">{runId}</span>
           </h1>
           {view && runDisplay && runDisplay.text !== view.run.id ? (
             <p className="run-view__run-name" id="run-view-name">
@@ -374,12 +385,7 @@ function RunViewInner() {
         </div>
       </div>
 
-      <div
-        id="view-toggle"
-        className="view-toggle"
-        role="group"
-        aria-label="Run view mode"
-      >
+      <SegmentedToggle id="view-toggle" label="Run view mode">
         <button
           type="button"
           id="view-toggle-graph"
@@ -396,14 +402,15 @@ function RunViewInner() {
         >
           Timeline
         </button>
-      </div>
+      </SegmentedToggle>
 
       <div className="run-view__body">
         <div className="run-view__primary">
           {mode === "graph" ? (
             <div
               id="run-canvas"
-              className="run-canvas canvas-surface"
+              className="run-canvas canvas-surface layout-canvas"
+              data-layout-ready={layoutReady}
               onKeyDown={onCanvasKeyDown}
               aria-label={`Workflow graph for run ${runId}. Tab moves between nodes; Enter opens a node's detail; arrow keys pan.`}
               role="application"
@@ -493,7 +500,10 @@ function RunViewInner() {
             </div>
           )}
 
-          <section className="run-view__timeline" aria-labelledby="timeline-heading">
+          <section
+            className="run-view__timeline"
+            aria-labelledby="timeline-heading"
+          >
             <h2 id="timeline-heading">Event timeline</h2>
             <EventTimeline
               events={events}
@@ -507,7 +517,8 @@ function RunViewInner() {
           <NodeDetailPanel
             node={selectedNode}
             execution={
-              graphState.nodes[selectedNode.id] ?? idleExecution(selectedNode.id)
+              graphState.nodes[selectedNode.id] ??
+              idleExecution(selectedNode.id)
             }
             ledger={ledger}
             usage={selectedNodeUsage}

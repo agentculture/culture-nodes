@@ -21,6 +21,25 @@
   --nodes-gap: 1rem;
 }
 
+/* Fixed terminal ground shared by every graph canvas, with the demo's 26px
+   dotted grid painted straight onto it
+   (docs/demos/web-ui-lift/culture-nodes-lifted.html `.canvas`). The grid sits
+   on the viewport rather than the world, exactly as the reference does, so
+   React Flow's own <Background> pattern is hidden below — one grid, at one
+   spacing, instead of two at different ones. */
+.canvas-surface.canvas-surface {
+  background-color: var(--terminal-ground);
+  background-image: radial-gradient(
+    var(--culture-canvas-grid) 1px,
+    transparent 1px
+  );
+  background-size: 26px 26px;
+}
+
+.canvas-surface .react-flow__background {
+  display: none;
+}
+
 /* ---------- header ---------- */
 
 .app-header {
@@ -417,8 +436,6 @@
 .status-chip,
 .authority-chip,
 .run-state-chip,
-.node-card__badge,
-.node-card__visits,
 .stream-status,
 .run-card__badge {
   display: inline-flex;
@@ -576,7 +593,7 @@
   gap: 0.6rem;
 }
 
-.view-toggle {
+.segmented-toggle {
   display: inline-flex;
   gap: 0;
   margin: 1.1rem 0;
@@ -586,7 +603,7 @@
   background: var(--surface);
 }
 
-.view-toggle button {
+.segmented-toggle button {
   font: inherit;
   font-size: var(--ac-type-meta);
   padding: 0.35rem 1rem;
@@ -596,9 +613,24 @@
   cursor: pointer;
 }
 
-.view-toggle button[aria-pressed="true"] {
+.segmented-toggle button[aria-pressed="true"] {
   background: var(--accent-strong);
   color: var(--on-accent);
+}
+
+.layout-canvas {
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+
+.layout-canvas[data-layout-ready="true"] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layout-canvas {
+    transition: none;
+  }
 }
 
 .run-view__body {
@@ -639,14 +671,28 @@
   fill: var(--ink);
 }
 
+/* Edge labels ride the dark canvas, not a page surface: 10px mono in the
+   faint terminal ink, and NO label box — the demo draws bare
+   `.canvas__edges text`, and a white plate behind every outcome word was the
+   single loudest thing on the graph. */
 .react-flow__edge-text {
-  font-family: var(--font-body);
+  font-family: var(--font-mono);
   font-size: 10px;
-  fill: var(--ink-soft);
+  fill: var(--culture-faint);
 }
 
 .react-flow__edge-textbg {
-  fill: var(--surface);
+  fill: transparent;
+}
+
+/* The shared arrowhead, at the demo's `rgba(233,236,248,.5)`. React Flow
+   writes the marker into <defs> with its own fill; recolouring it here keeps
+   every canvas on one arrow without threading a colour through five call
+   sites. */
+.react-flow__arrowhead polyline,
+.react-flow__arrowhead path {
+  stroke: var(--culture-edge-marker);
+  fill: var(--culture-edge-marker);
 }
 
 /* Handles are edge anchors only — this canvas is read-only, nothing connects. */
@@ -659,8 +705,12 @@
   stroke-linecap: round;
 }
 
+/* Demo `.canvas__edges path.e--loop`: a return path is dashed. An unwalked
+   loop already carries the proposed-edge dasharray inline; this is what a
+   walked one (no inline dasharray) picks up. */
 .flow-edge.is-loop .react-flow__edge-path {
   stroke-linecap: butt;
+  stroke-dasharray: 5 5;
 }
 
 /* A walked loop edge is the one edge that must not read as "just another
@@ -674,29 +724,29 @@
   font-weight: 640;
 }
 
-/* ---------- node card ---------- */
-
-.node-card {
-  position: relative;
-  box-sizing: border-box;
-  /* Matches NODE_WIDTH / NODE_HEIGHT in hooks/useElkLayout.ts. */
-  width: 224px;
-  height: 128px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  overflow: hidden;
-  padding: 0.65rem 0.8rem 0.65rem 0.95rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--nodes-card-radius);
-  box-shadow: var(--shadow);
-  color: var(--ink);
-  cursor: pointer;
-  text-align: left;
+/* Mesh relation tints — demo `.e--rel-machine` / `.e--rel-workflow` /
+   `.e--rel-run`: which machine an actor sits on reads blue, which workflow it
+   publishes reads yellow, and a live run's two attribution edges read amber. */
+.mesh-edge .react-flow__edge-path {
+  stroke: var(--culture-edge);
+  stroke-width: 1.6;
 }
 
-.node-card__rail,
+.mesh-edge--actor-machine .react-flow__edge-path {
+  stroke: var(--culture-edge-machine);
+}
+
+.mesh-edge--actor-workflow .react-flow__edge-path {
+  stroke: var(--culture-edge-workflow);
+}
+
+.mesh-edge--run-actor .react-flow__edge-path,
+.mesh-edge--run-workflow .react-flow__edge-path {
+  stroke: var(--culture-edge-run);
+}
+
+/* ---------- node card ---------- */
+
 .run-card__rail {
   position: absolute;
   inset: 0 auto 0 0;
@@ -705,14 +755,12 @@
   border-radius: var(--nodes-card-radius) 0 0 var(--nodes-card-radius);
 }
 
-.node-card__head,
 .run-card__head {
   display: flex;
   align-items: center;
   gap: 0.45rem;
 }
 
-.node-card__dot,
 .run-card__dot {
   width: 0.55rem;
   height: 0.55rem;
@@ -721,18 +769,6 @@
   flex: none;
 }
 
-.node-card__name {
-  font-family: var(--font-display);
-  font-optical-sizing: auto;
-  font-weight: 500;
-  font-size: var(--ac-type-ui);
-  letter-spacing: var(--ac-tracking-heading);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-card__meta,
 .run-card__meta {
   display: flex;
   gap: 0.5rem;
@@ -741,13 +777,6 @@
   overflow: hidden;
 }
 
-.node-card__owner {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-card__status,
 .run-card__status {
   display: flex;
   flex-wrap: wrap;
@@ -755,12 +784,6 @@
   align-items: center;
 }
 
-.node-card__badge {
-  border: 1px solid var(--nodes-warn);
-  color: color-mix(in srgb, var(--nodes-warn) 55%, var(--ink));
-}
-
-.node-card__badge--live,
 .run-card__badge--live {
   border-color: var(--accent-strong);
   color: var(--accent);
@@ -770,80 +793,6 @@
    t11 #3) — a distinct hue from the in-flight/waiting badges above so a
    reader scanning the graph does not confuse "evidence attached" with
    "something needs attention". */
-.node-card__badge--evidence {
-  border-color: var(--nodes-ok);
-  color: color-mix(in srgb, var(--nodes-ok) 55%, var(--ink));
-}
-
-.node-card__visits {
-  border: 1px solid var(--line);
-  color: var(--ink-soft);
-}
-
-.node-card__detail {
-  margin: 0.15rem 0 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0 0.5rem;
-  font-size: var(--ac-type-micro);
-  color: var(--ink-soft);
-}
-
-.node-card__detail > div {
-  display: contents;
-}
-
-.node-card__detail dt {
-  letter-spacing: var(--ac-tracking-caps);
-  text-transform: uppercase;
-}
-
-.node-card__detail dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-}
-
-/* --- execution-state overlays (PRD §8.4) --- */
-
-.node-card--idle {
-  opacity: 0.72;
-  border-style: dotted;
-}
-
-.node-card--ready {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-}
-
-.node-card--completed {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--nodes-ok) 55%, var(--line));
-}
-
-.node-card--active {
-  border-color: var(--accent-strong);
-}
-
-.node-card--waiting {
-  border-color: color-mix(in srgb, var(--nodes-warn) 60%, var(--line));
-}
-
-.node-card--failed,
-.node-card--policy_denied,
-.node-card--cancelled {
-  border-color: color-mix(in srgb, var(--nodes-danger) 65%, var(--line));
-  border-width: 2px;
-}
-
-.node-card.is-selected {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 /* ---------- run card (runs board, PRD §8.6 Operations) ---------- */
 
 /* Same frame as .node-card: surface, --line, --nodes-card-radius, --shadow —
@@ -962,7 +911,6 @@
    "updating live" badge in the pulse's place — same rule as NodeCard's
    in-flight attempt, same keyframe, reused rather than redeclared. */
 @media (prefers-reduced-motion: no-preference) {
-  .node-card.is-pulse,
   .run-card.is-pulse {
     animation: node-attempt-pulse 1.8s var(--ease-gentle) infinite alternate;
   }
@@ -1379,7 +1327,7 @@ button.timeline__node {
   margin: 1.1rem 0 1.5rem;
 }
 
-/* Same segmented-button frame as .view-toggle (RunView's graph/timeline
+/* Same segmented-button frame as .segmented-toggle (RunView's graph/timeline
    switch) — a preset picker is the same shape of control, not a new one. */
 .time-range-filter__presets {
   display: inline-flex;
@@ -1533,12 +1481,155 @@ button.timeline__node {
   font-size: var(--ac-type-meta);
 }
 
-.node-graphs-view__head {
+.design-view__head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+/* ---------- Design gallery (task t8) ----------
+
+   Two panes: a workflow index on the left, the selected version's graph and
+   its meta on the right — the demo page's Design view
+   (docs/demos/web-ui-lift/culture-nodes-lifted.html) in the app's own
+   vocabulary. One column below the same 68rem breakpoint .run-view__body
+   uses, so a phone reads index-then-graph rather than two squeezed columns.
+
+   Every colour, radius and font here is a token reference: the design layer
+   owns those decisions (tests/lint/webtokens_test.go). */
+
+.design-gallery {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--nodes-gap);
+  align-items: start;
+}
+
+@media (min-width: 68rem) {
+  .design-gallery {
+    grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr);
+  }
+}
+
+.design-gallery__index {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+}
+
+.design-gallery__key {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.design-gallery__key:hover {
+  border-color: var(--line);
+}
+
+.design-gallery__key[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.design-gallery__name {
+  font-weight: 600;
+}
+
+.design-gallery__sub {
+  font-size: var(--ac-type-meta);
+}
+
+.design-gallery__main {
+  min-width: 0;
+}
+
+.design-gallery__versions {
+  margin-top: 0;
+}
+
+/* Same box as .active-graph__canvas: one graph surface, one set of rules. */
+.design-gallery__canvas {
+  height: min(52vh, 28rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.design-gallery__inspect,
+.design-gallery__meta {
+  margin: 0.5rem 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+}
+
+.design-gallery__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+}
+
+.design-gallery__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* The stored bytes, shown as bytes: pre-wrap keeps every space and newline
+   the operator wrote, and the box scrolls rather than reflowing them. */
+.design-gallery__source {
+  margin: 0.6rem 0 0;
+  padding: 0.75rem 0.9rem;
+  max-height: 28rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.design-gallery__runs {
+  margin-top: 1.1rem;
+}
+
+.design-gallery__runs h2 {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 0 0 0.4rem;
+}
+
+.design-gallery__run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
 }
 
 /* Honest empty states for the Nodes/Active Graphs sub-tabs (task t28) —
@@ -1850,94 +1941,6 @@ button.timeline__node {
   min-height: 1.2em;
 }
 
-/* The compact presence card each graph node renders as. Identity color
-   arrives as --node-accent (NODE_KIND_PALETTE via accentFor), same
-   mechanism as .node-card. */
-.active-node {
-  position: relative;
-  box-sizing: border-box;
-  width: 224px; /* NODE_WIDTH — the ELK box (hooks/useElkLayout.ts) */
-  min-height: 72px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.5rem 0.7rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--nodes-card-radius);
-  box-shadow: var(--shadow);
-}
-
-.active-node__head {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
-.active-node__dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999px;
-  background: var(--node-accent, var(--ink-soft));
-  flex: none;
-}
-
-.active-node__name {
-  font-family: var(--font-mono);
-  font-size: var(--ac-type-ui);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.active-node__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--ac-type-micro);
-  color: var(--ink-soft);
-}
-
-/* The live badge: the halo's meaning in words (§8.8 — never color or
-   motion alone). */
-.active-node__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--node-accent, var(--accent)) 55%, var(--line));
-  padding: 0.02rem 0.45rem;
-  color: var(--ink);
-  white-space: nowrap;
-}
-
-/* Static live presence, all motion modes: the node's own halo at rest. */
-.active-node.is-live {
-  border-color: var(--node-accent, var(--accent-strong));
-  box-shadow:
-    var(--shadow),
-    0 0 0 3px color-mix(in srgb, var(--node-accent, var(--accent)) 16%, transparent);
-}
-
-.active-node.is-inspected {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* One committed event = one ring. Remounted per event (keyed by the pulse
-   counter), it plays a single stepped fade — steps() being the quantized-
-   alpha idiom: a handful of discrete opacity levels, not a continuous
-   tween the compositor has to shade. */
-.active-node__pulse {
-  position: absolute;
-  inset: -5px;
-  border-radius: calc(var(--nodes-card-radius) + 5px);
-  border: 2px solid var(--node-accent, var(--accent));
-  opacity: 0;
-  pointer-events: none;
-}
-
 /* Animations run only in the animated state, and only for viewers who did
    not ask for reduced motion — the media query AND the data-motion gate
    both have to agree. */
@@ -1945,15 +1948,6 @@ button.timeline__node {
   .active-graph[data-motion="animated"].is-alive {
     animation: active-graph-breathe 3.2s var(--ease-gentle) infinite
       alternate;
-  }
-
-  .active-graph[data-motion="animated"] .active-node.is-live {
-    animation: active-node-breathe 2.6s var(--ease-gentle) infinite
-      alternate;
-  }
-
-  .active-graph[data-motion="animated"] .active-node__pulse {
-    animation: active-node-ring 0.9s steps(8, end) 1;
   }
 
   .active-graph[data-motion="animated"] .active-graph__live-dot {
@@ -1974,34 +1968,6 @@ button.timeline__node {
 
   to {
     box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 20%, transparent);
-  }
-}
-
-@keyframes active-node-breathe {
-  from {
-    box-shadow:
-      var(--shadow),
-      0 0 0 2px
-        color-mix(in srgb, var(--node-accent, var(--accent)) 12%, transparent);
-  }
-
-  to {
-    box-shadow:
-      var(--shadow),
-      0 0 0 6px
-        color-mix(in srgb, var(--node-accent, var(--accent)) 24%, transparent);
-  }
-}
-
-@keyframes active-node-ring {
-  from {
-    opacity: 0.85;
-    transform: scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: scale(1.16);
   }
 }
 
@@ -3084,3 +3050,21 @@ button.timeline__node {
 .app-header__group--engine a {
   font-size: var(--ac-type-meta);
 }
+
+/* Design canvas (fixes cycle): the source pane marks the lines the last
+   canvas action inserted — tokens only (the token guard pins this file). */
+.culture-source { margin: 0; white-space: pre; overflow: auto; }
+.culture-source__ins { background: color-mix(in srgb, var(--accent) 14%, transparent); display: inline; }
+.design-canvas__status { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); margin: 0.5rem 0 0; }
+
+/* Design canvas page: palette | canvas | inspector on wide screens, stacked
+   below the layout breakpoint (tokens only). */
+.design-canvas-view > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.design-canvas-view > header > div { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.design-canvas-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr) 340px; gap: 1rem; align-items: start; }
+.design-canvas-layout > aside { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.design-canvas-layout > aside h2 { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.25rem; }
+.design-canvas-layout > aside > button { text-align: left; }
+.design-canvas__canvas { border-radius: var(--radius); overflow: hidden; }
+.culture-source { font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5; max-height: 420px; }
+@media (max-width: 900px) { .design-canvas-layout { grid-template-columns: 1fr; } }

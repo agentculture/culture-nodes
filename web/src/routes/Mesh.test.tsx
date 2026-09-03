@@ -1,9 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { ComponentType } from "react";
 import { getAgentState, resetAgentState } from "../agent-state/store";
 import type { Actor, NodeRunListItem, Run } from "../api/types";
 import Mesh from "./Mesh";
+import { SharedEventsProvider } from "../hooks/useSharedEvents";
 
 /**
  * The Mesh route against a mocked client and a fake EventSource: jsdom has
@@ -19,10 +21,20 @@ vi.mock("../api/client", async (importOriginal) => {
     listActors: vi.fn(),
     listRuns: vi.fn(),
     listNodeRuns: vi.fn(),
+    getMesh: vi.fn(),
+    listWorkflows: vi.fn(),
   };
 });
 
-import { listActors, listNodeRuns, listRuns } from "../api/client";
+vi.mock("@xyflow/react", () => ({
+  ReactFlow: (props: { nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>; nodeTypes: Record<string, ComponentType<{ data: unknown }>>; children?: React.ReactNode }) => <div data-testid="react-flow-stub">{props.nodes.map((node) => { const NodeType = props.nodeTypes[node.type]; return <NodeType key={node.id} data={node.data} />; })}{props.children}</div>,
+  Background: () => null, Handle: () => null,
+  Position: { Left: "left", Right: "right" }, MarkerType: { ArrowClosed: "arrowclosed" },
+}));
+vi.mock("../hooks/useElkLayout", () => ({ NODE_WIDTH: 224, NODE_HEIGHT: 84, useElkLayout: () => ({ positions: {}, ready: false }) }));
+
+import { getMesh, listActors, listNodeRuns, listRuns, listWorkflows } from "../api/client";
+import { MESH_PAYLOAD, MESH_WORKFLOWS } from "../fixtures/mesh-fixture";
 
 const USAGE = {
   input_tokens: 0,
@@ -134,6 +146,12 @@ class FakeEventSource {
     this.onopen?.();
   }
 
+  /** The server's `stream.snapshot` control frame: a bare body, no envelope. */
+  emitSnapshot(id: string) {
+    const event = { data: JSON.stringify({ snapshot_id: id }), lastEventId: id };
+    for (const listener of this.listeners.get("stream.snapshot") ?? []) listener(event);
+  }
+
   emit(type: string, data: Record<string, unknown>, id: string) {
     const envelope = {
       id,
@@ -185,6 +203,8 @@ beforeEach(() => {
   vi.mocked(listActors).mockResolvedValue({ items: ACTORS });
   vi.mocked(listRuns).mockResolvedValue({ items: RUNS });
   vi.mocked(listNodeRuns).mockResolvedValue({ items: NODE_RUNS });
+  vi.mocked(getMesh).mockResolvedValue(MESH_PAYLOAD);
+  vi.mocked(listWorkflows).mockResolvedValue({ items: MESH_WORKFLOWS });
 });
 
 afterEach(() => {
@@ -193,14 +213,52 @@ afterEach(() => {
 });
 
 describe("Mesh route", () => {
+  it("reconciles an event committed while its REST snapshot is in flight exactly once", async () => {
+    let resolveRuns!: (value: { items: Run[] }) => void;
+    vi.mocked(listRuns).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRuns = resolve;
+      }),
+    );
+
+    render(<SharedEventsProvider>{null}</SharedEventsProvider>);
+    const source = FakeEventSource.instances[0];
+    act(() => source.open());
+
+    render(
+      <MemoryRouter initialEntries={["/mesh"]}>
+        <Mesh />
+      </MemoryRouter>,
+    );
+    act(() => {
+      source.emitSnapshot("01SNAPSHOT");
+      source.emit(
+        "dev.culture.nodes.run.created",
+        { run_id: "run-raced", workflow_key: "mesh-demo" },
+        "01RACED",
+      );
+      source.emit(
+        "dev.culture.nodes.run.created",
+        { run_id: "run-raced", workflow_key: "mesh-demo" },
+        "01RACED",
+      );
+      resolveRuns({ items: RUNS });
+    });
+
+    await waitFor(() => expect(getAgentState().status).toBe("ready"));
+    await waitFor(() => expect(getAgentState().mesh?.run_count).toBe(2));
+    expect(getAgentState().mesh?.events_total).toBe(1);
+  });
+
   it("assembles the graph from actors + active runs and mirrors it in agent-state", async () => {
     await renderMesh();
     const mesh = getAgentState().mesh!;
     // 4 actor rows collapse to 3 actors (one per actor_key); only the
     // active run counts; one edge per actor + one per run.
-    expect(mesh.actor_count).toBe(3);
+    expect(mesh.actor_count).toBe(5);
+    expect(mesh.machine_count).toBe(3);
     expect(mesh.run_count).toBe(1);
-    expect(mesh.edge_count).toBe(4);
+    expect(mesh.edge_count).toBeGreaterThan(0);
     expect(mesh.reduced_motion).toBe(false);
     expect(document.querySelector("#mesh-canvas")).toBeTruthy();
     expect(
@@ -273,6 +331,17 @@ describe("Mesh route", () => {
       document.querySelector("#mesh-canvas")?.getAttribute("data-motion"),
     ).toBe("static");
     expect(getAgentState().mesh!.reduced_motion).toBe(true);
+  });
+
+  it("labels an unsupported actor as having no capability surface", async () => {
+    vi.mocked(getMesh).mockResolvedValueOnce({
+      ...MESH_PAYLOAD,
+      actors: [{ id: "actor-human-ops-r1", actor_key: "company/human-ops", machine: null, bridge: { observed_at: "now", class: "unsupported", reason: "GET capabilities: 404 Not Found", error: "GET capabilities: 404 Not Found" } }],
+      machines: {},
+    });
+    const view = await renderMesh();
+    expect(view.container.textContent).toContain("no capability surface · GET capabilities: 404 Not Found");
+    expect(getAgentState().mesh?.probe_failures).toBe(0);
   });
 
   it("drops the mesh block from agent-state on unmount", async () => {

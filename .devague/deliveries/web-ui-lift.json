@@ -1,0 +1,472 @@
+{
+  "plan_slug": "web-ui-lift",
+  "schema_version": 2,
+  "created": "2026-09-03T20:58:40Z",
+  "updated": "2026-09-03T21:24:56Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Non-goal c20 (the human pages / , /inbox, /decisions stay #270's lane, untouched beyond the shared toggle) is relaxed for one bounded fixes-cycle package: the three work-group pages take the acceptance reference's treatment \u2014 Decisions' toggle under the heading with per-run cards and compact record rows, Inbox as a table with the decision in the row, Your work as a card grid \u2014 with no change to data contracts, write paths or the identity model.",
+      "task_ref": "t20",
+      "reason": "The operator reviewed the after screenshots on 2026-09-03 and judged the work-group pages 'very messy still'; the demo the operator chose as the acceptance reference already renders these three pages, so the spec's non-goal now contradicts the reference the delivery is judged against.",
+      "affects": [
+        "t20",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 16
+    },
+    {
+      "id": "d2",
+      "what": "The human-pages package under d1 is withdrawn before any work merged: the operator decided the work-group pages (Your work, Inbox, Decisions) and every other tab this cycle did not change are handed to a Feature issue with alignment guidance instead of being built in this fixes cycle; non-goal c20 stands as written.",
+      "task_ref": "t20",
+      "reason": "Operator instruction 2026-09-03, on seeing the deviation ask: no build now; open a Feature issue explaining how to handle them so later work stays aligned with today's changes.",
+      "affects": [
+        "t20",
+        "t16"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 17
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "web/e2e/walkthrough.spec.ts \u203a c30 no history replay",
+      "behavior_text": "mesh.events_total and pulses_total are 0 after load and across the reconnect while the graph is fully drawn",
+      "contract_text": "Opening /mesh in a fresh tab against a namespace with many terminal runs animates zero historical lifecycle events (c30)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright run on 3d67286256899babec204d563b0db1cc9383ae11, 7/7 walkthrough steps green; server half asserted by internal/api/events_test.go (go test ./... 51 packages ok, ephemeral Postgres)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 1
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "web/e2e/walkthrough.spec.ts \u203a c31 idle workflows have a graph; web/e2e/design.spec.ts",
+      "behavior_text": "each key renders its DESIGN_GRAPH_SIZES node/edge counts with mockDesignApi runs:none and design.run_count 0",
+      "contract_text": "Every published workflow_key has a graph reachable in one click from Design with no run in the namespace (c31)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright run on 3d67286256899babec204d563b0db1cc9383ae11",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 2
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "web/e2e/walkthrough.spec.ts \u203a c32 one node component everywhere; tests/lint/culturenode_test.go",
+      "behavior_text": "DOM .culture-node/__core/__halo on all four views and an import walk proving CultureNode.tsx is the only emitter",
+      "contract_text": "One node component: a lint test pins that the five views import the same module and no second node card exists (c32)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright + go test tests/lint on 3d67286256899babec204d563b0db1cc9383ae11",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 3
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "web/e2e/walkthrough.spec.ts \u203a c33 canvas publish equals CLI publish; web/e2e/canvas.spec.ts",
+      "behavior_text": "POSTed bytes byte-identical to the pane (comment preserved), server digest shown, same bytes via the CLI path give the same digest, mutated source differs",
+      "contract_text": "A canvas-authored workflow's published digest equals the CLI publish path's on the same emitted source; each diagnostic shown is byte-identical to the validate response (c33)",
+      "evidence_type": "automated",
+      "strength": "fidelity",
+      "strength_basis": "fixture API's deterministic digest stands in for nodes workflow publish; the real CLI path was not executed against the canvas bytes",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "web/e2e/walkthrough.spec.ts \u203a c34 mesh draws real relationships; web/e2e/mesh.spec.ts",
+      "behavior_text": "actor-machine 4, actor-workflow 1, run-actor 1, run-workflow 2 = edge_count 8; reachy renders unknown with the probe error, never answering",
+      "contract_text": "The mesh shows, from real rows, actor\u2192machine, run\u2192actor and run\u2192workflow edges plus per-machine revision and liveness; a failed probe renders unknown, never healthy (c34)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright run on 3d67286256899babec204d563b0db1cc9383ae11 (fixture rows)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o5",
+      "test_ref": "live: GET http://192.168.1.146:18080/v1alpha1/mesh on the pair at 4ef97d1, 2026-09-03T20:18Z (docs/audits/2026-09-03-web-ui-lift-live-a.md re-check)",
+      "behavior_text": "machines thor/orin/spark-f8a9 with attributed bridges and observed_at; human-ops 404 and jira-comment no-hostname reported as errors, never healthy",
+      "contract_text": "same as above, on production rows",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "read from the deployed control plane, recorded in the audit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o6",
+      "test_ref": "web/e2e/walkthrough.spec.ts \u203a c26 fluid; web/e2e/no-jump.spec.ts",
+      "behavior_text": "node ids and styles identical 250 ms after data-layout-ready on RunView and Design; both toggles carry segmented-toggle",
+      "contract_text": "Fluidity: graph nodes never paint at fallback positions and then jump; one shared segmented toggle (c26)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright run on 3d67286256899babec204d563b0db1cc9383ae11",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o7",
+      "test_ref": "internal/api/events_test.go (three tests added by t1)",
+      "behavior_text": "snapshot first with the current max id, 50 terminal runs excluded, interleaved run.created delivered once",
+      "contract_text": "Mesh stops replaying history on arrival (c2, h1, h25)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./internal/api/ with ephemeral Postgres on 3d67286256899babec204d563b0db1cc9383ae11",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o8",
+      "test_ref": "internal/mesh/collector_test.go; internal/api/mesh_test.go; cmd/nodes/serve_mesh_test.go",
+      "behavior_text": "success + timeout fakes: hostname keying, unknown with error text, observed_at set; actor without a token \u2192 no bearer configured",
+      "contract_text": "The Mesh is rebuilt from real relationships; machine identity self-reported; probes cached with observed_at (c23, h3, h26, c40, h32)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test on 3d67286256899babec204d563b0db1cc9383ae11; live confirmation in the audit re-check",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o9",
+      "test_ref": "internal/store/postgres/workerpresence_test.go; internal/worker/presence_test.go",
+      "behavior_text": "rejects entries containing ':' or longer than 64 chars; NODES_HOSTNAME precedence; container-id flag",
+      "contract_text": "Machine facts never carry secret values; worker presence names only (c19, h19, c38)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test on 3d67286256899babec204d563b0db1cc9383ae11; live: thor-worker-1/orin-worker-1 report thor/orin with six key names",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o10",
+      "test_ref": "web/src/domain/workflow-document.test.ts (27 cases, golden files under __golden__/)",
+      "behavior_text": "byte-identical no-edit round-trip; golden diffs with zero '-' lines; merge-key refusal; JSON parity; stringify options pinned to the spike",
+      "contract_text": "The canvas round-trips hand-written YAML (c28, h10)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest run on 3d67286256899babec204d563b0db1cc9383ae11, 764 tests",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o11",
+      "test_ref": "web/src/culture-design/node.test.ts (19 assertions); tests/lint/culturenode_test.go",
+      "behavior_text": "card geometry, core/halo, breathe keyframes, pill tones, edge constants, grid; MeshCanvas.tsx absent",
+      "contract_text": "A shared Culture node in the mesh idiom; MeshCanvas deleted (c22, h2)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest + go test on 3d67286256899babec204d563b0db1cc9383ae11; operator eyeballed /tmp/fix1-shots",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o12",
+      "test_ref": "web/src/components/Header.test.tsx; web/src/App.test.tsx route walk (20 paths)",
+      "behavior_text": "eight links by name; /board, /jobs, /graphs, /workflows/* redirect keeping query params",
+      "contract_text": "Navigation on the PRD \u00a78.6 spine without retiring any surface (c25, h5)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "vitest run on 3d67286256899babec204d563b0db1cc9383ae11",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o13",
+      "test_ref": "tests/lint/webtokens_test.go (25-case fixture, exemption count pin)",
+      "behavior_text": "fires on hex/rgba/font/rem outside the design layer; app.css exempt for exactly 22 pinned findings",
+      "contract_text": "No sibling aesthetic (c18, h18)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test tests/lint on 3d67286256899babec204d563b0db1cc9383ae11",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "docs/decisions/2026-09-03-design-canvas-spike.md + go run ./cmd/nodes validate on the mutated document",
+      "behavior_text": "byte-identical with flowCollectionPadding:false; 0 errors; verdict go recorded",
+      "contract_text": "Before the editor wave, the spike runs and the operator gives go/no-go on that record (c27, h7)",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "the operator replayed validate offline at the gate and recorded go",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T20:55:24Z",
+        "commit": "3d67286256899babec204d563b0db1cc9383ae11"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o4",
+      "test_ref": "web/e2e/canvas.spec.ts \u203a a palette drop lands at the drop point, a dragged node keeps its place, and the pane marks inserted lines",
+      "behavior_text": "nodes lay out with ELK; a palette drop lands within 160\u00d7120 px of the pointer; a placed or dragged node keeps its position through the next add; the source pane marks inserted lines; a status line reports validity, counts and digest",
+      "contract_text": "The Design canvas composes workflows with the mouse (c28) \u2014 fixes cycle t20, demo parity on placement, drop point and inserted-line highlight (delta b6)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright on 91cac26, 3/3 canvas tests, 117 e2e",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T21:24:55Z",
+        "commit": "91cac26"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o5",
+      "test_ref": "web/e2e/mesh.spec.ts:58 \u203a failed probes, grouped versions, divergent machines, and unattributed actors stay explicit; internal/mesh/collector_test.go (three classes)",
+      "behavior_text": "a failed probe reads unknown with its error, a bridge without a capability surface reads 'no capability surface', an unprobed actor reads 'not probeable'; only failed probes count in probe_failures",
+      "contract_text": "A failed probe renders unknown, never healthy (c34/h24); probe classification (delta b7)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test + Playwright on 91cac26",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T21:24:55Z",
+        "commit": "91cac26"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "added",
+      "behavior_text": "GET /v1alpha1/mesh's collector now takes its targets from the newest revision of every registered actor (endpoint used only to reach the bridge; machine keyed on the reported hostname; no endpoint or no bearer \u2192 explicit unobserved reason); the first deploy shipped a collector with no targets and an empty machines map",
+      "caused_by": [
+        "c23"
+      ],
+      "evidence_refs": [
+        "e6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "worker presence reports NODES_HOSTNAME (compose defaults thor/orin) and flags a container-id hostname with a reason; the first deploy reported the worker container id as the machine",
+      "caused_by": [
+        "c38"
+      ],
+      "evidence_refs": [
+        "e10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "the shared node, its edges and canvases were restyled to the acceptance reference after the operator judged the first cut 'boxes': compact card, glowing core, breathing halo, bezier edges, mono labels, 26px grid; NODE_HEIGHT 128\u219284",
+      "caused_by": [
+        "c22"
+      ],
+      "evidence_refs": [
+        "e12"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "e2e fixtures keep a per-page stream cursor for tail-only connects because Playwright's route-intercepted reconnects carry no Last-Event-ID; the real server contract is unchanged",
+      "caused_by": [
+        "c37"
+      ],
+      "evidence_refs": [
+        "e1"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "amended",
+      "behavior_text": "the mesh e2e expects 8 edges, not 9: the second fixture run has no node-run attribution, so it links to its workflow only \u2014 the assembler never invents an actor",
+      "caused_by": [
+        "c34"
+      ],
+      "evidence_refs": [
+        "e5"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "amended",
+      "behavior_text": "the Design canvas as delivered places nodes on a 3-column grid, ignores drop position and does not highlight inserted lines in the source pane; the demo's placement and highlight are not yet reproduced (fixes cycle)",
+      "caused_by": [
+        "c28"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b7",
+      "kind": "amended",
+      "behavior_text": "live probe classification: a bridge with no capability surface (human-inbox, 404) is counted as a probe failure every tick, and the jira bridge reports no preflight.host.hostname so it stays unattributed; both should be classified 'not probeable' / fixed in the adapter",
+      "caused_by": [
+        "c40"
+      ],
+      "evidence_refs": [
+        "e6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b8",
+      "kind": "amended",
+      "behavior_text": "the spike t12 ran on codex-thor (idle lane) instead of the developer lane; t17 ran on the developer lane (which can execute Playwright) instead of codex-thor (Node 18); both are routing changes to the split plan, not behavior changes",
+      "caused_by": [
+        "c27"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

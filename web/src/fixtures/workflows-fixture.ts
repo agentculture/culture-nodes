@@ -1,5 +1,5 @@
 /**
- * Fixture data for the Workflows view (`/workflows`, task t8): two published
+ * Fixture data for the Design view (`/design`, task t8): two published
  * workflow_keys — `deliver-change` (two versions, reusing run-fixture.ts's
  * `WORKFLOW_IR`/`WORKFLOW_DIGEST` for its v1 so the existing Run-view
  * fixtures still resolve when a workflow card's recent run is followed) and
@@ -44,6 +44,178 @@ const HELLO_WORLD_IR: WorkflowIR = {
   },
 };
 
+/**
+ * The stored source of each published version — the operator's own document
+ * bytes, exactly as `POST /v1alpha1/workflows` received them and exactly as
+ * `GET /v1alpha1/workflows` hands them back (openapi.yaml's
+ * `WorkflowVersion.source`).
+ *
+ * These are deliberately hand-written YAML rather than a re-serialization of
+ * `normalized_ir`: task t8's honesty condition h28 is that opening a
+ * published version shows the STORED source byte-identical, and a fixture
+ * whose source was generated from the IR could not tell a verbatim readout
+ * apart from a re-serialization. So each one carries what only a human
+ * writes — a leading comment, blank lines between blocks, an inline note on
+ * the loop edge — none of which survives a round trip through the IR.
+ *
+ * Their *topology* does match the IR one-for-one (same node ids, same kinds,
+ * same `from`/`to` edges), which is what
+ * `domain/workflows.ts`'s `graphFromStoredSource` and its test compare: the
+ * gallery graph is drawn from `normalized_ir`, the canvas would draw the
+ * same version from `source`, and c36/h28 says those two must be the same
+ * graph.
+ */
+export const DELIVER_CHANGE_V1_SOURCE = `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+# deliver-change: intake -> plan -> build -> test -> verify, with the
+# verify -> build loop that makes changes_required a graph edge, not a failure.
+metadata:
+  name: deliver-change
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+
+  nodes:
+    intake:
+      kind: agent
+      uses: actor://company/intake@sha256:111111
+    plan:
+      kind: agent
+      uses: actor://company/planner@sha256:222222
+    build:
+      kind: agent
+      uses: actor://company/developer@sha256:333333
+    test:
+      kind: code
+      uses: runner://headspace/docker@sha256:555555
+    verify:
+      kind: agent
+      uses: actor://company/verifier@sha256:444444
+    human-review:
+      kind: approval
+      approverRef: group/platform-ai-approvers
+    finish:
+      kind: end
+
+  edges:
+    - { from: intake.completed, to: plan }
+    - { from: plan.completed, to: build }
+    - { from: build.completed, to: test }
+    - { from: test.passed, to: verify }
+    - { from: test.failed, to: build }
+    - { from: verify.passed, to: finish }
+    - { from: verify.changes_required, to: build }   # the loop
+    - { from: verify.blocked, to: human-review }
+    - { from: human-review.approved, to: build }
+    - { from: human-review.rejected, to: finish }
+`;
+
+/**
+ * v2 of the same graph: a metadata bump and a deadline on the approval, the
+ * same node ids and edges. Written out in full rather than derived from v1,
+ * because these bytes are the thing under test — a fixture that computes one
+ * version's source from another's proves nothing about a verbatim readout.
+ */
+export const DELIVER_CHANGE_V2_SOURCE = `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+# deliver-change: intake -> plan -> build -> test -> verify, with the
+# verify -> build loop that makes changes_required a graph edge, not a failure.
+metadata:
+  name: deliver-change
+  version: 1.1.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: intake
+
+  nodes:
+    intake:
+      kind: agent
+      uses: actor://company/intake@sha256:111111
+    plan:
+      kind: agent
+      uses: actor://company/planner@sha256:222222
+    build:
+      kind: agent
+      uses: actor://company/developer@sha256:333333
+    test:
+      kind: code
+      uses: runner://headspace/docker@sha256:555555
+    verify:
+      kind: agent
+      uses: actor://company/verifier@sha256:444444
+
+    # v2: the review a person owes now carries a deadline.
+    human-review:
+      kind: approval
+      approverRef: group/platform-ai-approvers
+      deadline: 24h
+
+    finish:
+      kind: end
+
+  edges:
+    - { from: intake.completed, to: plan }
+    - { from: plan.completed, to: build }
+    - { from: build.completed, to: test }
+    - { from: test.passed, to: verify }
+    - { from: test.failed, to: build }
+    - { from: verify.passed, to: finish }
+    - { from: verify.changes_required, to: build }   # the loop
+    - { from: verify.blocked, to: human-review }
+    - { from: human-review.approved, to: build }
+    - { from: human-review.rejected, to: finish }
+`;
+
+export const HELLO_WORLD_SOURCE = `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+# a minimal single-node workflow — the smallest thing that is still a graph.
+metadata:
+  name: hello-world
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: greet
+
+  nodes:
+    greet:
+      kind: agent
+    finish:
+      kind: end
+
+  edges:
+    - { from: greet.completed, to: finish }
+`;
+
+export const NOTIFY_TEAM_SOURCE = `apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+# notify-team: one node, sharing deliver-change's intake actor on purpose.
+metadata:
+  name: notify-team
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: notify
+
+  nodes:
+    notify:
+      kind: agent
+      uses: actor://company/intake@sha256:111111
+    finish:
+      kind: end
+
+  edges:
+    - { from: notify.completed, to: finish }
+`;
+
 const t = (minute: number, second = 0) =>
   `2026-08-09T09:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`;
 
@@ -54,7 +226,7 @@ export const WORKFLOW_VERSIONS: WorkflowVersion[] = [
     workflow_key: "deliver-change",
     version: 1,
     source_format: "yaml",
-    source: "# see schemas/examples/deliver-change.workflow.json\n",
+    source: DELIVER_CHANGE_V1_SOURCE,
     normalized_ir: WORKFLOW_IR,
     digest: WORKFLOW_DIGEST,
     created_at: t(0),
@@ -64,7 +236,7 @@ export const WORKFLOW_VERSIONS: WorkflowVersion[] = [
     workflow_key: "deliver-change",
     version: 2,
     source_format: "yaml",
-    source: "# v2: adds the human-review deadline\n",
+    source: DELIVER_CHANGE_V2_SOURCE,
     normalized_ir: {
       ...WORKFLOW_IR,
       metadata: { ...WORKFLOW_IR.metadata, version: "1.1.0" },
@@ -77,7 +249,7 @@ export const WORKFLOW_VERSIONS: WorkflowVersion[] = [
     workflow_key: "hello-world",
     version: 1,
     source_format: "yaml",
-    source: "# a minimal single-node workflow\n",
+    source: HELLO_WORLD_SOURCE,
     normalized_ir: HELLO_WORLD_IR,
     digest: HELLO_WORLD_DIGEST,
     created_at: t(5),
@@ -134,7 +306,7 @@ export const NOTIFY_TEAM_VERSION: WorkflowVersion = {
   workflow_key: "notify-team",
   version: 1,
   source_format: "yaml",
-  source: "# a single-node workflow sharing deliver-change's intake actor\n",
+  source: NOTIFY_TEAM_SOURCE,
   normalized_ir: NOTIFY_TEAM_IR,
   digest: NOTIFY_TEAM_DIGEST,
   created_at: "2026-08-09T09:07:00Z",
@@ -268,3 +440,28 @@ export const NODE_CATALOG_GRAPH_COUNT = 3;
  * `notify` node both use `actor://company/intake@sha256:111111`.
  */
 export const NODE_CATALOG_LINK_COUNT = 1;
+
+/**
+ * How many nodes and edges the Design gallery draws for the LATEST version
+ * of each published workflow_key (task t8, c31/h21) — counted by hand off
+ * each version's `normalized_ir` and asserted by name in
+ * `e2e/design.spec.ts` and `routes/Design.test.tsx`, the same
+ * `MESH_ACTOR_NODE_COUNT` convention `e2e/mesh.spec.ts` follows.
+ *
+ * deliver-change: intake, plan, build, test, verify, human-review, finish
+ * (7 nodes / 10 edges — run-fixture.ts's `WORKFLOW_IR`, shared by v1 and
+ * v2). hello-world and notify-team are two nodes and one edge each.
+ *
+ * The point of the counts existing at all is c31: NONE of these numbers
+ * depends on a run. The gallery draws all three graphs against a namespace
+ * with zero runs, which is exactly what `mockDesignApi(page, { runs:
+ * "none" })` serves.
+ */
+export const DESIGN_GRAPH_SIZES: Record<
+  string,
+  { nodes: number; edges: number }
+> = {
+  "deliver-change": { nodes: 7, edges: 10 },
+  "hello-world": { nodes: 2, edges: 1 },
+  "notify-team": { nodes: 2, edges: 1 },
+};

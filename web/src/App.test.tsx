@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import App, { titleForPath } from "./App";
 import { ApiError, getWhoami } from "./api/client";
 import { resetAgentState } from "./agent-state/store";
@@ -32,6 +32,8 @@ vi.mock("./api/client", async (importOriginal) => {
     getRun: vi.fn(pending),
     getLedger: vi.fn(pending),
     getWorkflow: vi.fn(pending),
+    getPlanImport: vi.fn(pending),
+    getProjection: vi.fn(pending),
   };
 });
 
@@ -55,17 +57,32 @@ afterEach(() => {
 describe("titleForPath", () => {
   it.each([
     ["/runs", "Runs · Culture Nodes"],
-    ["/board", "Board · Culture Nodes"],
-    ["/jobs", "Jobs · Culture Nodes"],
     ["/inbox", "Inbox · Culture Nodes"],
     ["/decisions", "Decisions · Culture Nodes"],
     ["/mesh", "Mesh · Culture Nodes"],
     ["/stats", "Statistics · Culture Nodes"],
-    ["/graphs", "Node Graphs · Culture Nodes"],
-    ["/plan", "Plan · Culture Nodes"],
+    ["/design", "Design · Culture Nodes"],
+    ["/plan", "Ledger-and-plan · Culture Nodes"],
+    ["/design/new", "New workflow · Culture Nodes"],
+    ["/design/generate", "Generate workflow · Culture Nodes"],
+  ])("names %s as %s", (path, expected) => {
+    expect(titleForPath(path)).toBe(expected);
+  });
+
+  /**
+   * A redirect source is titled as the view it lands on (task t9). The tab
+   * would otherwise read "Board" for the fraction of a second before the
+   * Navigate resolves, and "Not found" if the entry were simply dropped —
+   * both of which name a page that is not what the reader gets.
+   */
+  it.each([
+    ["/board", "Runs · Culture Nodes"],
+    ["/jobs", "Runs · Culture Nodes"],
+    ["/graphs", "Design · Culture Nodes"],
+    ["/workflows", "Design · Culture Nodes"],
     ["/workflows/new", "New workflow · Culture Nodes"],
     ["/workflows/generate", "Generate workflow · Culture Nodes"],
-  ])("names %s as %s", (path, expected) => {
+  ])("titles the moved URL %s as its destination, %s", (path, expected) => {
     expect(titleForPath(path)).toBe(expected);
   });
 
@@ -87,13 +104,95 @@ describe("titleForPath", () => {
   });
 
   it("prefers the longest matching prefix, so a sub-route is not titled as its parent", () => {
-    expect(titleForPath("/workflows/new")).toBe("New workflow · Culture Nodes");
-    expect(titleForPath("/graphs?tab=active")).not.toBe("Culture Nodes");
+    expect(titleForPath("/design/new")).toBe("New workflow · Culture Nodes");
+    expect(titleForPath("/design/generate")).toBe(
+      "Generate workflow · Culture Nodes",
+    );
   });
 
   it("names the app alone at the root and says Not found off the map", () => {
     expect(titleForPath("/")).toBe("Culture Nodes");
     expect(titleForPath("/nowhere")).toBe("Not found · Culture Nodes");
+  });
+});
+
+
+/**
+ * The route walk (task t9). Consolidating twelve nav destinations onto the
+ * PRD §8.6 spine only keeps decision c33 — no surface retired without a
+ * replacement in the same PR — if every URL the app answered before still
+ * answers. So this walks every path App.tsx resolves and asserts each one
+ * lands on a rendered view, directly or by redirect, rather than on the
+ * not-found page. The expected landing pathname is written out per entry:
+ * a redirect that quietly lost its destination would otherwise still pass a
+ * "did not 404" check.
+ */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <span data-testid="location">{`${location.pathname}${location.search}`}</span>
+  );
+}
+
+function walkTo(entry: string) {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <App />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
+  return () => screen.getByTestId("location").textContent ?? "";
+}
+
+const ROUTE_WALK: ReadonlyArray<readonly [string, string]> = [
+  ["/", "/"],
+  ["/runs", "/runs"],
+  ["/runs/01M0RUN", "/runs/01M0RUN"],
+  ["/runs/01M0RUN/ledger", "/runs/01M0RUN/ledger"],
+  ["/inbox", "/inbox"],
+  ["/decisions", "/decisions"],
+  ["/mesh", "/mesh"],
+  ["/stats", "/stats"],
+  ["/design", "/design"],
+  ["/design/new", "/design/new"],
+  ["/design/generate", "/design/generate"],
+  ["/plan", "/plan"],
+  ["/plan/economy-discord-graphs", "/plan/economy-discord-graphs"],
+  ["/tickets/SCRUM-6", "/tickets/SCRUM-6"],
+  // Moved, and therefore redirected — the second column is where each old
+  // bookmark now lands.
+  ["/board", "/runs?view=board"],
+  ["/jobs", "/runs?view=jobs"],
+  ["/graphs", "/design"],
+  ["/workflows", "/design"],
+  ["/workflows/new", "/design/new"],
+  ["/workflows/generate", "/design/generate"],
+];
+
+describe("every path App.tsx resolves still resolves (task t9)", () => {
+  it.each(ROUTE_WALK)("%s lands on %s", async (entry, landing) => {
+    const location = walkTo(entry);
+    await waitFor(() => expect(location()).toBe(landing));
+    expect(screen.queryByRole("heading", { name: "Not found" })).toBeNull();
+  });
+
+  it("still says Not found for a path that never resolved", async () => {
+    const location = walkTo("/nowhere");
+    await waitFor(() => expect(location()).toBe("/nowhere"));
+    expect(
+      screen.getByRole("heading", { name: "Not found" }),
+    ).toBeInTheDocument();
+  });
+
+  it("carries a bookmarked /jobs range through the redirect instead of dropping it", async () => {
+    const location = walkTo(
+      "/jobs?since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-02T00%3A00%3A00.000Z",
+    );
+    await waitFor(() =>
+      expect(location()).toBe(
+        "/runs?since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-02T00%3A00%3A00.000Z&view=jobs",
+      ),
+    );
   });
 });
 

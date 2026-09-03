@@ -10,7 +10,8 @@ import RunStateChip from "../components/RunStateChip";
 import TimeRangeFilter from "../components/TimeRangeFilter";
 import { formatRelativeTime } from "../domain/run-board";
 import { runDisplayName } from "../domain/usage";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -33,6 +34,11 @@ const REFRESH_DEBOUNCE_MS = 4000;
 /**
  * The run list — the entry point into the Run view (PRD §8.6 Operations, in
  * its smallest useful form: search runs comes later, listing them does not).
+ *
+ * A *body*, not a page (task t9): the `/runs` heading, rail and projection
+ * toggle live in Runs.tsx, which mounts this as one of three lenses on the
+ * same dataset. Everything below the heading — the filters, the table, the
+ * refresh discipline — is unchanged.
  *
  * The time-range filter is the Jobs view's control and state idiom verbatim
  * (issue #23): `since`/`until` ride the URL search params via useTimeRange
@@ -89,7 +95,10 @@ export function RunsList() {
     [],
   );
 
-  useSharedEvents(RUNS_LIST_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    RUNS_LIST_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,6 +119,7 @@ export function RunsList() {
         if (controller.signal.aborted) return;
         setRuns(list.items);
         setNextCursor(list.next_cursor);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
@@ -120,13 +130,14 @@ export function RunsList() {
             ? cause
             : new ApiError(0, String(cause), "check the browser console"),
         );
+        resolveSnapshot();
         // "ready" means the view finished its initial load — including
         // finishing it badly. An agent reading agent-state needs to know the
         // page has settled; the error is reported alongside, not instead.
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [since, until, stateFilter]);
+  }, [since, until, stateFilter, resolveSnapshot]);
 
   // The SSE-triggered background refresh (issue #46): fires only after the
   // initial load (reloadKey === 0 is that first render, already handled
@@ -196,8 +207,7 @@ export function RunsList() {
   }, []);
 
   return (
-    <section className="view-rail runs-list">
-      <h1>Runs</h1>
+    <div className="runs-projection runs-list">
       <p className="muted">Every run, newest first by last update.</p>
 
       <TimeRangeFilter since={since} until={until} onApply={applyRange} />
@@ -299,7 +309,7 @@ export function RunsList() {
           {nextCursor ? <button type="button" className="jobs-timeline__load-more" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load more"}</button> : null}
         </>
       )}
-    </section>
+    </div>
   );
 }
 

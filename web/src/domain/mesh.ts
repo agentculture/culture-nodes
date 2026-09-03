@@ -1,390 +1,168 @@
-import type { Actor, EventEnvelope, NodeRunListItem, Run, RunState } from "../api/types";
-import { TERMINAL_PALETTE } from "../culture-design/palette";
+import type { EventEnvelope, NodeRunListItem, Run, RunState, WorkflowVersion } from "../api/types";
+import type { MeshPayload } from "../api/client";
 
-/**
- * The live-mesh overview's pure half (task t18): graph assembly from the
- * actors + runs + node-runs read surfaces, event->pulse mapping for the
- * cross-run SSE stream, and the deterministic orbital layout. Everything
- * here is side-effect-free so vitest can pin it without a canvas.
- *
- * Honesty (h14): every node and edge below traces to a committed API row —
- * actors from `GET /v1alpha1/actors`, runs from `GET /v1alpha1/runs`,
- * actor<->run attribution from `GET /v1alpha1/node-runs` (each row's
- * `actor_id` is its most recent attempt's actors-table reference). Nothing
- * is invented; a run nobody has dispatched yet honestly links to the
- * control plane instead of guessing an actor.
- *
- * Why attribution comes from node-runs rather than the events stream: the
- * engine's committed events today (internal/engine/events.go) carry
- * `run_id` / `node_run_id` / `worker_id` but no actors-table reference —
- * `attempt.started` / `actor.accepted` are declared in internal/events but
- * never emitted. The node-runs listing's `actor_id` is the same fact from
- * the same database, read from the surface that actually has it (see task
- * t18's deviation note in the run report).
- */
-
-/** The synthetic center node's id — the control plane itself. */
 export const CONTROL_PLANE_ID = "control-plane";
+export const ACTIVE_MESH_RUN_STATES: ReadonlySet<RunState> = new Set(["created", "running", "waiting"]);
 
-/** Run states that count as "on the mesh right now" (openapi RunState). */
-export const ACTIVE_MESH_RUN_STATES: ReadonlySet<RunState> = new Set([
-  "created",
-  "running",
-  "waiting",
-]);
+export type MeshNodeKind = "machine" | "control-plane" | "bridge" | "human" | "workflow" | "run";
+export type MeshTrace = { surface: "mesh" | "runs" | "node-runs" | "workflows"; row: string };
 
-/** How an actor row is drawn: the kind-differentiated glyph families. */
-export type ActorGlyph = "agent" | "human" | "runner" | "other";
-
-/**
- * actors.kind is free text in the schema (migrations/0001, `kind TEXT NOT
- * NULL`); today's register-actor.sh writes 'agent'. Map the values the
- * system vocabulary names onto glyph families and keep anything else
- * visible as "other" rather than dropping it.
- */
-export function actorGlyph(kind: string): ActorGlyph {
-  switch (kind) {
-    case "agent":
-      return "agent";
-    case "human":
-    case "team":
-      return "human";
-    case "runner":
-      return "runner";
-    default:
-      return "other";
-  }
-}
-
-/** Glyph family -> terminal palette hex + relative prominence + shape. */
-export const ACTOR_GLYPH_STYLE: Record<
-  ActorGlyph,
-  { color: string; dim: number; shape: "circle" | "square" }
-> = {
-  agent: { color: TERMINAL_PALETTE.teal, dim: 1, shape: "circle" },
-  human: { color: TERMINAL_PALETTE.neutral, dim: 0.7, shape: "circle" },
-  runner: { color: TERMINAL_PALETTE.blue, dim: 0.85, shape: "square" },
-  other: { color: TERMINAL_PALETTE.violet, dim: 0.8, shape: "circle" },
-};
-
-/** Run satellites: ember-warm while live; resolution recolors them. */
-export const RUN_COLOR = TERMINAL_PALETTE.amber;
-export const RUN_SETTLE_COLOR = TERMINAL_PALETTE.green;
-export const RUN_FLARE_COLOR = TERMINAL_PALETTE.pink;
-
-export interface MeshActorNode {
+export interface MeshNode {
   id: string;
-  actorKey: string;
-  kind: string;
-  glyph: ActorGlyph;
-  revision: number;
-}
-
-export interface MeshRunNode {
-  id: string;
-  /** name > display_hint > id — the same precedence the run views use. */
+  kind: MeshNodeKind;
   label: string;
-  labelKind: "name" | "hint" | "id";
-  category: string | null;
-  state: string;
-  /** The mesh node id this run's edge attaches to (actor or control plane). */
-  attachedTo: string;
+  sub: string;
+  trace: MeshTrace;
+  status?: "answering" | "unobserved" | "unsupported" | "failed";
+  error?: string;
+  versionCount?: number;
+  actorKey?: string;
+  workflowDigest?: string;
 }
 
-export interface MeshEdge {
-  from: string;
-  to: string;
-}
-
+export type MeshEdgeRelation = "actor-machine" | "run-actor" | "run-workflow" | "actor-workflow";
+export interface MeshEdge { id: string; source: string; target: string; relation: MeshEdgeRelation }
 export interface MeshGraph {
-  actors: MeshActorNode[];
-  runs: MeshRunNode[];
+  name: string;
+  entry: string;
+  nodes: MeshNode[];
   edges: MeshEdge[];
+  machineCount: number;
+  actorCount: number;
+  runCount: number;
+  probeFailures: number;
+  unattributedActors: number;
 }
 
-/**
- * Actor rows are append-only: a capability/endpoint change is a new row
- * with the same actor_key and a higher revision (openapi Actor schema).
- * One mesh node per actor_key — the newest revision — with an alias map so
- * an attempt that referenced an older revision's id still attributes to
- * the surviving node.
- */
-export function dedupeActors(actors: Actor[]): {
-  actors: Actor[];
-  aliases: Map<string, string>;
-} {
-  const newestByKey = new Map<string, Actor>();
-  for (const actor of actors) {
-    const seen = newestByKey.get(actor.actor_key);
-    if (!seen || actor.revision > seen.revision) {
-      newestByKey.set(actor.actor_key, actor);
-    }
-  }
-  const aliases = new Map<string, string>();
-  for (const actor of actors) {
-    const kept = newestByKey.get(actor.actor_key);
-    if (kept) aliases.set(actor.id, kept.id);
-  }
-  return { actors: [...newestByKey.values()], aliases };
+function refKey(ref: string | undefined): string | null {
+  if (!ref) return null;
+  return ref.replace(/^actor:\/\//, "").replace(/@sha256:.*$/, "");
 }
 
-/**
- * run_id -> actor_id from the node-runs listing: each row's `actor_id` is
- * its most recent attempt's actor reference (openapi NodeRunListItem), so
- * per run the row with the latest `updated_at` that names an actor wins.
- */
-export function runActorAttribution(
-  items: NodeRunListItem[],
-): Map<string, string> {
+function runActorAttribution(items: NodeRunListItem[]): Map<string, string> {
   const latest = new Map<string, NodeRunListItem>();
   for (const item of items) {
     if (!item.actor_id) continue;
-    const seen = latest.get(item.run_id);
-    if (!seen || item.updated_at > seen.updated_at) {
-      latest.set(item.run_id, item);
-    }
+    const prior = latest.get(item.run_id);
+    if (!prior || item.updated_at > prior.updated_at) latest.set(item.run_id, item);
   }
-  const out = new Map<string, string>();
-  for (const [runId, item] of latest) {
-    if (item.actor_id) out.set(runId, item.actor_id);
-  }
-  return out;
+  return new Map([...latest].map(([runId, row]) => [runId, row.actor_id!]));
 }
 
-/** name > display_hint > id, and which of the three it actually was. */
-export function runLabel(run: {
-  id: string;
-  name?: string;
-  display_hint?: string;
-}): { label: string; labelKind: "name" | "hint" | "id" } {
-  if (run.name) return { label: run.name, labelKind: "name" };
-  if (run.display_hint) return { label: run.display_hint, labelKind: "hint" };
-  return { label: run.id, labelKind: "id" };
-}
-
-/**
- * Assemble the whole graph: deduped actors orbiting the control plane,
- * active runs as satellites of the actor executing them (or of the control
- * plane when no attempt has named one yet), one edge per node.
- */
+/** Assemble typed nodes and only relationships explicitly held by API rows. */
 export function assembleMeshGraph(
-  actors: Actor[],
+  mesh: MeshPayload,
   runs: Run[],
   nodeRuns: NodeRunListItem[],
+  workflows: WorkflowVersion[],
 ): MeshGraph {
-  const { actors: deduped, aliases } = dedupeActors(actors);
-  const attribution = runActorAttribution(nodeRuns);
-  const actorNodes: MeshActorNode[] = deduped.map((actor) => ({
-    id: actor.id,
-    actorKey: actor.actor_key,
-    kind: actor.kind,
-    glyph: actorGlyph(actor.kind),
-    revision: actor.revision,
-  }));
-  const actorIds = new Set(actorNodes.map((a) => a.id));
+  const nodes: MeshNode[] = [{
+    id: CONTROL_PLANE_ID, kind: "control-plane", label: "control plane",
+    sub: mesh.version, trace: { surface: "mesh", row: "version" },
+  }];
+  const edges: MeshEdge[] = [];
 
-  const runNodes: MeshRunNode[] = runs
-    .filter((run) => ACTIVE_MESH_RUN_STATES.has(run.state))
-    .map((run) => {
-      const attributed = attribution.get(run.id);
-      const resolved = attributed ? (aliases.get(attributed) ?? attributed) : undefined;
-      return {
-        id: run.id,
-        ...runLabel(run),
-        category: run.category ?? null,
-        state: run.state,
-        attachedTo:
-          resolved && actorIds.has(resolved) ? resolved : CONTROL_PLANE_ID,
-      };
+  const workersByHost = new Map(mesh.workers.map((row) => [row.hostname, row]));
+  for (const [hostname, machine] of Object.entries(mesh.machines).sort()) {
+    const worker = workersByHost.get(hostname);
+    nodes.push({
+      id: `machine:${hostname}`, kind: "machine", label: hostname,
+      sub: worker ? `${worker.actor_keys.length} actor keys · ${worker.revision}` : `${machine.actors.length} actors`,
+      trace: { surface: "mesh", row: `machines.${hostname}${worker ? `; workers.${worker.worker_id}` : ""}` },
     });
+  }
 
-  const edges: MeshEdge[] = [
-    ...actorNodes.map((actor) => ({ from: actor.id, to: CONTROL_PLANE_ID })),
-    ...runNodes.map((run) => ({ from: run.id, to: run.attachedTo })),
-  ];
-  return { actors: actorNodes, runs: runNodes, edges };
+  const approvers = new Set<string>();
+  for (const workflow of workflows) {
+    for (const node of Object.values(workflow.normalized_ir.spec.nodes)) {
+      const approver = refKey(node.approverRef);
+      if (approver) approvers.add(approver);
+    }
+  }
+  // Indexed by every identity a node run's actor reference can arrive as:
+  // the actors-table row id (what attempts.actor_id, and therefore
+  // GET /v1alpha1/node-runs, actually reports) and the actor key (what a
+  // workflow's `uses:` reference names, bare or in `actor://key@sha256:…`
+  // form, which refKey normalizes). Keying on actor_key alone silently drops
+  // every run-to-actor edge in production (PR #292 review).
+  const actorIds = new Map<string, string>();
+  /** Every accepted identity, mapped back to the actor key the edge id names. */
+  const actorKeysByRef = new Map<string, string>();
+  let probeFailures = 0;
+  let unattributedActors = 0;
+  for (const actor of mesh.actors) {
+    const id = `actor:${actor.actor_key}`;
+    actorIds.set(actor.actor_key, id);
+    actorKeysByRef.set(actor.actor_key, actor.actor_key);
+    if (actor.id) {
+      actorIds.set(actor.id, id);
+      actorKeysByRef.set(actor.id, actor.actor_key);
+    }
+    const isHuman = approvers.has(actor.actor_key) || actor.actor_key.startsWith("human/") || actor.actor_key.startsWith("human-");
+    if (actor.bridge.class === "failed" || (!actor.bridge.class && actor.bridge.error)) probeFailures++;
+    if (actor.machine === null) unattributedActors++;
+    nodes.push({
+      id, kind: isHuman ? "human" : "bridge", label: actor.actor_key,
+      sub: actor.machine ?? "unattributed",
+      trace: { surface: "mesh", row: `actors[actor_key=${actor.actor_key}]` },
+      status: actor.bridge.class ?? (actor.bridge.error ? "failed" : isHuman ? undefined : "answering"),
+      error: actor.bridge.error,
+      actorKey: actor.actor_key,
+    });
+    if (actor.machine !== null && mesh.machines[actor.machine]) {
+      edges.push({ id: `actor-machine:${actor.actor_key}:${actor.machine}`, source: id, target: `machine:${actor.machine}`, relation: "actor-machine" });
+    }
+  }
+
+  const workflowByDigest = new Map<string, string>();
+  const versionsByKey = new Map<string, WorkflowVersion[]>();
+  for (const workflow of workflows) {
+    const list = versionsByKey.get(workflow.workflow_key) ?? [];
+    list.push(workflow); versionsByKey.set(workflow.workflow_key, list);
+    workflowByDigest.set(workflow.digest, workflow.workflow_key);
+  }
+  for (const [key, versions] of versionsByKey) {
+    const id = `workflow:${key}`;
+    const newest = [...versions].sort((a, b) => b.version - a.version)[0];
+    nodes.push({ id, kind: "workflow", label: key, sub: `${versions.length} version${versions.length === 1 ? "" : "s"}`, versionCount: versions.length, workflowDigest: newest.digest, trace: { surface: "workflows", row: `workflow_key=${key}` } });
+    const refs = new Set<string>();
+    for (const version of versions) for (const node of Object.values(version.normalized_ir.spec.nodes)) {
+      const keyRef = refKey(node.uses); if (keyRef) refs.add(keyRef);
+    }
+    for (const keyRef of refs) {
+      const actorId = actorIds.get(keyRef); if (!actorId) continue;
+      edges.push({ id: `actor-workflow:${keyRef}:${key}`, source: actorId, target: id, relation: "actor-workflow" });
+    }
+  }
+
+  const attribution = runActorAttribution(nodeRuns);
+  const activeRuns = runs.filter((run) => ACTIVE_MESH_RUN_STATES.has(run.state));
+  for (const run of activeRuns) {
+    const id = `run:${run.id}`;
+    nodes.push({ id, kind: "run", label: run.name ?? run.display_hint ?? run.id, sub: run.state, trace: { surface: "runs", row: `runs/${run.id}` }, workflowDigest: run.workflow_digest });
+    const actorRef = attribution.get(run.id);
+    if (actorRef) {
+      const ref = actorIds.has(actorRef) ? actorRef : (refKey(actorRef) ?? actorRef);
+      const target = actorIds.get(ref);
+      if (target) edges.push({ id: `run-actor:${run.id}:${actorKeysByRef.get(ref)}`, source: id, target, relation: "run-actor" });
+    }
+    const workflowKey = workflowByDigest.get(run.workflow_digest);
+    if (workflowKey) edges.push({ id: `run-workflow:${run.id}:${workflowKey}`, source: id, target: `workflow:${workflowKey}`, relation: "run-workflow" });
+  }
+  return { name: "mesh", entry: CONTROL_PLANE_ID, nodes, edges, machineCount: Object.keys(mesh.machines).length, actorCount: mesh.actors.length, runCount: activeRuns.length, probeFailures, unattributedActors };
 }
-
-// ---------------------------------------------------------------------
-// Event -> pulse mapping (the SSE stream's visible half)
-// ---------------------------------------------------------------------
 
 const TYPE_PREFIX = "dev.culture.nodes.";
-
-/**
- * Committed events whose payloads flow *back* toward the control plane
- * (results, evidence, decisions); everything else flows outward (work
- * being dispatched into the mesh).
- */
-const INBOUND_TYPES = new Set([
-  "attempt.completed",
-  "ledger.record-appended",
-  "ledger.review-committed",
-  "runner.operation-completed",
-  "contract.rejected",
-  "human-task.decided",
-  "node-run.failed",
-]);
-
-export type MeshEventAction =
-  | { kind: "run-added"; runId: string; label: string }
-  | {
-      kind: "run-resolved";
-      runId: string;
-      outcome: "completed" | "failed" | "cancelled";
-    }
-  | { kind: "pulse"; runId: string; direction: "outbound" | "inbound" }
-  | { kind: "none" };
-
-function eventRunId(envelope: EventEnvelope): string | null {
-  const fromData = envelope.data?.run_id;
-  if (typeof fromData === "string" && fromData !== "") return fromData;
-  if (typeof envelope.subject === "string" && envelope.subject !== "") {
-    return envelope.subject;
-  }
-  return null;
-}
-
-/**
- * One committed event -> one visible action. Every event that names a run
- * produces exactly one pulse-family action (particles correspond one-to-one
- * to committed events, h14); an event naming no run is honestly a no-op
- * rather than a decorative guess.
- */
+const INBOUND_TYPES = new Set(["attempt.completed", "ledger.record-appended", "ledger.review-committed", "runner.operation-completed", "contract.rejected", "human-task.decided", "node-run.failed"]);
+export type MeshEventAction = { kind: "run-added"; runId: string; label: string } | { kind: "run-resolved"; runId: string; outcome: "completed" | "failed" | "cancelled" } | { kind: "pulse"; runId: string; direction: "outbound" | "inbound" } | { kind: "none" };
+function eventRunId(envelope: EventEnvelope): string | null { const id = envelope.data?.run_id; return typeof id === "string" && id ? id : typeof envelope.subject === "string" && envelope.subject ? envelope.subject : null; }
 export function meshEventAction(envelope: EventEnvelope): MeshEventAction {
-  const runId = eventRunId(envelope);
-  if (!runId) return { kind: "none" };
-  const type = envelope.type.startsWith(TYPE_PREFIX)
-    ? envelope.type.slice(TYPE_PREFIX.length)
-    : envelope.type;
-  switch (type) {
-    case "run.created": {
-      const key = envelope.data?.workflow_key;
-      return {
-        kind: "run-added",
-        runId,
-        label: typeof key === "string" && key !== "" ? key : runId,
-      };
-    }
-    case "run.completed":
-      return { kind: "run-resolved", runId, outcome: "completed" };
-    case "run.failed":
-    case "run.bounded":
-      return { kind: "run-resolved", runId, outcome: "failed" };
-    case "run.cancelled":
-      return { kind: "run-resolved", runId, outcome: "cancelled" };
-    default:
-      return {
-        kind: "pulse",
-        runId,
-        direction: INBOUND_TYPES.has(type) ? "inbound" : "outbound",
-      };
-  }
+  const runId = eventRunId(envelope); if (!runId) return { kind: "none" };
+  const type = envelope.type.startsWith(TYPE_PREFIX) ? envelope.type.slice(TYPE_PREFIX.length) : envelope.type;
+  if (type === "run.created") { const key = envelope.data?.workflow_key; return { kind: "run-added", runId, label: typeof key === "string" && key ? key : runId }; }
+  if (type === "run.completed") return { kind: "run-resolved", runId, outcome: "completed" };
+  if (type === "run.failed" || type === "run.bounded") return { kind: "run-resolved", runId, outcome: "failed" };
+  if (type === "run.cancelled") return { kind: "run-resolved", runId, outcome: "cancelled" };
+  return { kind: "pulse", runId, direction: INBOUND_TYPES.has(type) ? "inbound" : "outbound" };
 }
-
-/**
- * Events that can change which actor a run attributes to — a node run
- * became claimable or an attempt finished — and therefore justify a
- * (debounced) refetch of the node-runs listing.
- */
-export function needsAttributionRefresh(eventType: string): boolean {
-  return (
-    eventType === `${TYPE_PREFIX}node-run.ready` ||
-    eventType === `${TYPE_PREFIX}attempt.completed`
-  );
-}
-
-// ---------------------------------------------------------------------
-// Deterministic layout
-// ---------------------------------------------------------------------
-
-export interface MeshPosition {
-  x: number;
-  y: number;
-  /** Depth cue in [0.82, 1.18]: scales drift amplitude, glow, parallax. */
-  z: number;
-}
-
-/** FNV-1a — a stable per-id hash so layout jitter is deterministic. */
-export function hashId(id: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/** hash -> [0, 1), stable for a given id. */
-export function hash01(id: string, salt = 0): number {
-  return ((hashId(id) ^ Math.imul(salt + 1, 0x9e3779b9)) >>> 0) / 0x100000000;
-}
-
-/**
- * Lay the graph out: control plane centered, actors evenly on an ellipse
- * ring (deterministically jittered per id so the ring never reads as a
- * clock face), attributed runs orbiting their actor on the side facing
- * away from the center, unattributed runs on an inner ring. Pure function
- * of (graph, W, H) — the same inputs always produce the same layout, so a
- * resize recomputes rather than re-randomizes (the MeshIsland lesson).
- */
-export function layoutMesh(
-  graph: MeshGraph,
-  width: number,
-  height: number,
-): Map<string, MeshPosition> {
-  const out = new Map<string, MeshPosition>();
-  const cx = width / 2;
-  const cy = height / 2;
-  out.set(CONTROL_PLANE_ID, { x: cx, y: cy, z: 1 });
-
-  // A contained ring: capped so an ultra-wide canvas doesn't stretch the
-  // constellation into disconnected corners (the operator's display is
-  // wide; the mesh should read as one organism at its center).
-  const rx = Math.max(120, Math.min(width * 0.3, 620, width / 2 - 90));
-  const ry = Math.max(90, Math.min(height * 0.36, height / 2 - 70));
-
-  const n = graph.actors.length;
-  graph.actors.forEach((actor, i) => {
-    const jitter = (hash01(actor.id) - 0.5) * ((Math.PI * 2) / Math.max(n, 4)) * 0.4;
-    const angle = -Math.PI / 2 + (i * Math.PI * 2) / Math.max(n, 1) + jitter;
-    const wobble = 0.92 + hash01(actor.id, 1) * 0.14;
-    out.set(actor.id, {
-      x: cx + Math.cos(angle) * rx * wobble,
-      y: cy + Math.sin(angle) * ry * wobble,
-      z: 0.82 + hash01(actor.id, 2) * 0.36,
-    });
-  });
-
-  // Attributed runs orbit their actor; siblings fan out around it.
-  const siblings = new Map<string, MeshRunNode[]>();
-  for (const run of graph.runs) {
-    const list = siblings.get(run.attachedTo) ?? [];
-    list.push(run);
-    siblings.set(run.attachedTo, list);
-  }
-  for (const [anchorId, runs] of siblings) {
-    const anchor = out.get(anchorId) ?? out.get(CONTROL_PLANE_ID)!;
-    const isCenter = anchorId === CONTROL_PLANE_ID;
-    // Away-from-center direction for actor anchors; a full inner ring for
-    // control-plane orphans.
-    const baseAngle = isCenter
-      ? -Math.PI / 2
-      : Math.atan2(anchor.y - cy, anchor.x - cx);
-    const orbit = isCenter ? Math.min(rx, ry) * 0.48 : 58;
-    runs.forEach((run, i) => {
-      const spread = isCenter
-        ? (i * Math.PI * 2) / Math.max(runs.length, 3) +
-          hash01(run.id) * 0.5
-        : (i - (runs.length - 1) / 2) * 0.7 + (hash01(run.id) - 0.5) * 0.3;
-      const angle = baseAngle + spread;
-      const wobble = 0.9 + hash01(run.id, 1) * 0.2;
-      out.set(run.id, {
-        x: anchor.x + Math.cos(angle) * orbit * wobble,
-        y: anchor.y + Math.sin(angle) * orbit * wobble,
-        z: 0.82 + hash01(run.id, 2) * 0.36,
-      });
-    });
-  }
-  return out;
-}
+export function needsAttributionRefresh(type: string): boolean { return type === `${TYPE_PREFIX}node-run.ready` || type === `${TYPE_PREFIX}attempt.completed`; }

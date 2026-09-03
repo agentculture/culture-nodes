@@ -400,3 +400,14 @@ Keys each merge-created task to its source fact and admits the `in-review`
 Jira outbox phase. The source-event unique index makes one merge fact one
 `Ticket done?` task even under redelivery; the task belongs to the ticket's
 newest run so existing ticket and inbox readers surface it without a new API.
+
+## `0056_worker_presence_namespace.sql`
+
+Scopes `worker_presence` to a namespace. `0055` keyed the table on
+`worker_id` alone and the mesh read model returned every row, so a
+namespace-scoped `GET /v1alpha1/mesh` answered with the worker topology of
+every other namespace sharing the database, and two workers carrying the same
+`NODES_WORKER_ID` in different namespaces overwrote each other. Presence is a
+liveness cache every worker re-upserts each poll tick, so pre-existing rows —
+which cannot be attributed to a namespace after the fact — are deleted and
+rewritten within one tick by whichever workers are actually running.

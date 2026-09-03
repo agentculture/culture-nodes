@@ -8,7 +8,8 @@ import TimeRangeFilter from "../components/TimeRangeFilter";
 import UsageSummary from "../components/UsageSummary";
 import { computeCategoryStats, computeRunStats, groupUsageByRun } from "../domain/stats";
 import { formatCacheRatio, formatCost, formatTokenCount } from "../domain/usage";
-import { useSharedEvents, type SharedEventType } from "../hooks/useSharedEvents";
+import type { SharedEventType } from "../hooks/useSharedEvents";
+import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useTimeRange } from "../hooks/useTimeRange";
 
 /**
@@ -76,7 +77,10 @@ export function Statistics() {
     [],
   );
 
-  useSharedEvents(STATISTICS_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    STATISTICS_EVENT_TYPES,
+    scheduleReload,
+  );
 
   // Walks every page for the window (see the class doc above) — pulled out
   // to a stable callback so both the initial load and the SSE-triggered
@@ -118,16 +122,18 @@ export function Statistics() {
       .then((items) => {
         if (controller.signal.aborted) return;
         setNodeRuns(items);
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
         setNodeRuns([]);
         setError(toApiError(cause));
+        resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       });
     return () => controller.abort();
-  }, [fetchAllNodeRuns]);
+  }, [fetchAllNodeRuns, resolveSnapshot]);
 
   // The category join (task t5 pattern, same as JobsTimeline): a separate,
   // non-blocking fetch of GET /v1alpha1/runs for the same window. Its

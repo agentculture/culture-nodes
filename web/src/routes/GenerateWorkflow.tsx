@@ -143,7 +143,7 @@ export default function GenerateWorkflow() {
           ) : <p className="muted">The agent is still working.</p>}
           {proposal.diff ? <><h3>Diff against {proposal.base_digest}</h3><pre>{proposal.diff}</pre></> : null}
           {proposal.status === "confirmed" && proposal.valid ? (
-            <p><Link to="/workflows/new">Open the validate and publish door</Link> after copying the exact source above.</p>
+            <p><Link to="/design/new">Open the validate and publish door</Link> after copying the exact source above.</p>
           ) : null}
         </section>
       ) : null}

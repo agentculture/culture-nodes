@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -200,9 +201,16 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 	if cliErr != nil {
 		return 0, cliErr
 	}
+	hostname, err := worker.PresenceHostname()
+	if err != nil {
+		return 0, &clifmt.CliError{Code: clifmt.ExitEnvError, Message: fmt.Sprintf("reading worker hostname: %v", err)}
+	}
 
 	wk, err := worker.New(db, eng, worker.Options{
 		WorkerID:              os.Getenv(envWorkerIdentifier),
+		Hostname:              hostname,
+		Revision:              revision,
+		ActorKeys:             configuredActorKeyNames(),
 		Handover:              handoverObs,
 		Pacing:                pacingOpts,
 		Concurrency:           concurrencyOpts,
@@ -514,9 +522,16 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 	if cliErr != nil {
 		return nil, nil, cliErr
 	}
+	hostname, err := worker.PresenceHostname()
+	if err != nil {
+		return nil, nil, &clifmt.CliError{Code: clifmt.ExitEnvError, Message: fmt.Sprintf("reading worker hostname: %v", err)}
+	}
 
 	wk, err := worker.New(db, eng, worker.Options{
 		NamespaceID:        namespace,
+		Hostname:           hostname,
+		Revision:           revision,
+		ActorKeys:          configuredActorKeyNames(),
 		Handover:           handoverObs,
 		Pacing:             pacingOpts,
 		Concurrency:        concurrencyOpts,
@@ -540,4 +555,18 @@ func buildWorker(db *postgres.Store, namespace string, telemetryProvider *teleme
 		}
 	}
 	return wk, runnerReloader, nil
+}
+
+// configuredActorKeyNames reports only configuration names. Values are never
+// copied into worker presence, even transiently through this return value.
+func configuredActorKeyNames() []string {
+	var names []string
+	for _, entry := range os.Environ() {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && value != "" && strings.HasPrefix(name, "NODES_ACTOR_") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

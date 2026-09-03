@@ -1,0 +1,38 @@
+# Refusal golden for domain/workflow-document.ts (task t14).
+#
+# Deliberately NOT schema-valid: `templates` is not a workflow key. It exists
+# only to anchor maps that are then merged (`<<`) into two mutation sites --
+# `spec.nodes` (where addNode inserts) and the `greet` node map (where
+# setNodeProp edits). A merged map's effective keys are not the text the
+# author is reading, so a text-surgical edit there cannot honestly show what
+# it changed; the module refuses instead of guessing.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: golden-merge-key-nodes
+
+templates:
+  nodeSet: &node-set
+    audit:
+      kind: agent
+      ownerRef: team/platform-ai
+  agentDefaults: &agent-defaults
+    kind: agent
+    ownerRef: team/platform-ai
+
+spec:
+  entry: greet
+
+  nodes:
+    <<: *node-set
+    greet:
+      <<: *agent-defaults
+      outcomes: [completed]
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+
+  edges:
+    - from: greet.completed
+      to: finish

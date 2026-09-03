@@ -1,4 +1,4 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { TICKET_ID } from "../src/fixtures/ticket-fixture";
 import {
   RUN_ID,
@@ -8,6 +8,8 @@ import {
   mockHomeApi,
   mockInboxApi,
   mockJobsTimelineApi,
+  mockDesignApi,
+  mockMeshApi,
   mockPlanApi,
   mockRunsBoardApi,
   mockTicketApi,
@@ -19,6 +21,9 @@ import {
  * an output directory:
  *
  *   NODES_SHOTS=/tmp/shots npx playwright test e2e/screenshots.spec.ts
+ *
+ * The directory receives the fixture-backed baseline set, including
+ * mesh.png, mesh-dark.png and active-graphs.png.
  *
  * It runs off the same request-interception fixtures the real e2e specs use,
  * so it needs no Go server, no Postgres and no network — the shots show the
@@ -58,6 +63,19 @@ test.describe("t27 site polish shots", () => {
   }
 
   async function shoot(page: Page, name: string) {
+    // ELK lays a graph canvas out asynchronously, and the canvas fades in over
+    // 180ms once its positions land (`.layout-canvas` in styles/app.css). A
+    // view's own readiness signal — a state chip, a first node — fires well
+    // before that, and a late layout pass restarts the fade, so a shot taken
+    // on that signal catches the canvas half-transparent over the page behind
+    // it: a washed-out light box rather than the terminal ground. Waiting on
+    // the fade's END STATE rather than a fixed beat is what makes the capture
+    // deterministic — `toHaveCSS` retries until it holds.
+    const canvases = page.locator(".layout-canvas");
+    for (let i = 0; i < (await canvases.count()); i += 1) {
+      await expect(canvases.nth(i)).toHaveCSS("opacity", "1");
+    }
+    await page.waitForTimeout(200);
     await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
   }
 
@@ -79,7 +97,7 @@ test.describe("t27 site polish shots", () => {
   test("board", async ({ page }) => {
     await mockRunsBoardApi(page);
     await stubVersion(page);
-    await page.goto("/board");
+    await page.goto("/runs?view=board");
     await page.locator(".runs-board__columns").waitFor();
     await shoot(page, "board");
   });
@@ -87,7 +105,7 @@ test.describe("t27 site polish shots", () => {
   test("jobs", async ({ page }) => {
     await mockJobsTimelineApi(page);
     await stubVersion(page);
-    await page.goto("/jobs");
+    await page.goto("/runs?view=jobs");
     await page.getByRole("table").first().waitFor();
     await shoot(page, "jobs");
 
@@ -103,17 +121,36 @@ test.describe("t27 site polish shots", () => {
     await shoot(page, "run-view");
   });
 
+  test("mesh, light and dark", async ({ page }) => {
+    await mockMeshApi(page);
+    await stubVersion(page);
+    await page.goto("/mesh");
+    await page.locator("#mesh-canvas .react-flow__node").first().waitFor();
+    await page.locator('#mesh-canvas[data-layout-ready="true"]').waitFor();
+    await shoot(page, "mesh");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await shoot(page, "mesh-dark");
+  });
+
+  test("active graphs", async ({ page }) => {
+    await mockDesignApi(page);
+    await stubVersion(page);
+    await page.goto("/design?tab=active");
+    await page.locator("[id^=active-graph-][id$=-canvas]").first().waitFor();
+    await shoot(page, "active-graphs");
+  });
+
   test("new workflow, with the sample loaded", async ({ page }) => {
     await mockAuthoringApi(page);
     await stubVersion(page);
-    await page.goto("/workflows/new");
+    await page.goto("/design/new");
     await page.getByRole("button", { name: "Load a sample" }).click();
     await shoot(page, "author-workflow-sample");
   });
 
   test("generate workflow", async ({ page }) => {
     await stubVersion(page);
-    await page.goto("/workflows/generate");
+    await page.goto("/design/generate");
     await page.getByLabel(/description/i).waitFor();
     await shoot(page, "generate-workflow");
   });

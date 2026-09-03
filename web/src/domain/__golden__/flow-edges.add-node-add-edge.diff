@@ -1,0 +1,10 @@
+@@ -14,7 +14,9 @@
+   nodes:
+     greet: {kind: agent, ownerRef: team/platform-ai, outcomes: [completed]}
+     finish: {kind: end, ownerRef: team/platform-ai}
++    review: {kind: agent, ownerRef: team/platform-ai, outcomes: [completed]}
+ 
+   edges:
+     - {from: greet.completed, to: finish}
++    - {from: greet.completed, to: review}
+ 

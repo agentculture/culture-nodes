@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	artifacts3 "github.com/agentculture/culture-nodes/internal/artifacts/s3"
 	"github.com/agentculture/culture-nodes/internal/auth"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/mesh"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -34,6 +36,43 @@ const defaultListenAddr = ":8080"
 // namespace as a deployment boundary every row carries, so this is a
 // startup convenience, not a multi-tenancy story this binary tells yet.
 const defaultNamespaceSlug = "default"
+
+func meshTargets(ctx context.Context, db *postgres.Store, namespaceID string, lookupEnv func(string) (string, bool)) ([]mesh.Target, error) {
+	rows, err := db.Pool().Query(ctx, `
+		SELECT DISTINCT ON (actor_key) actor_key, protocol, COALESCE(endpoint_ref, ''), metadata
+		FROM actors
+		WHERE namespace_id = $1
+		ORDER BY actor_key, revision DESC`, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []mesh.Target
+	for rows.Next() {
+		var key, protocol, endpoint string
+		var metadata []byte
+		if err := rows.Scan(&key, &protocol, &endpoint, &metadata); err != nil {
+			return nil, err
+		}
+		if protocol != "http" && protocol != "https" {
+			continue
+		}
+		target := mesh.Target{Key: key}
+		if endpoint == "" {
+			target.Error = "unobserved: no endpoint configured"
+		} else {
+			target.URL = strings.TrimRight(endpoint, "/") + actors.CapabilitiesPath
+			envName := worker.AuthTokenEnvOf(metadata)
+			if token, ok := lookupEnv(envName); envName == "" || !ok || token == "" {
+				target.Error = "unobserved: no bearer configured"
+			} else {
+				target.Bearer = token
+			}
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
 
 // envDecisionAuthSecret is the bearer secret POST
 // /v1alpha1/human-tasks/{id}/decision requires (api.WithDecisionAuthSecret).
@@ -303,6 +342,16 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	// What this binary was built as, so a live test can assert which code it
 	// is testing rather than assume it (task t32, issue #104).
 	opts = append(opts, api.WithBuildInfo(version, revision))
+	// Bridge observations are collected on their own timer. The API receives
+	// only the cache reader, so a slow or unreachable bridge can never extend
+	// GET /v1alpha1/mesh latency. Targets are supplied by deployment wiring as
+	// they become known; an empty set honestly renders bridges as unknown.
+	meshCollector := mesh.New(mesh.Config{TargetSource: func(refreshCtx context.Context) ([]mesh.Target, error) {
+		return meshTargets(refreshCtx, db, namespaceID, os.LookupEnv)
+	}})
+
+	go meshCollector.Run(ctx)
+	opts = append(opts, api.WithMeshCollector(meshCollector))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {

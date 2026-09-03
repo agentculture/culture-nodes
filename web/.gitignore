@@ -1,4 +1,5 @@
 # Node / Vite build artifacts. package.json and package-lock.json ARE tracked.
+node_modules
 node_modules/
 dist/
 coverage/

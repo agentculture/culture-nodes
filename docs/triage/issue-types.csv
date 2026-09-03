@@ -45,3 +45,4 @@ issue,type,evidence_pointer
 147,Feature,"origin/main:adapters/claude-code/src/claude_code_bridge/dialin.py:18-20 confirms dial-in identity is environment-only under a backend-wide prefix, with no per-bridge configuration surface."
 155,Task,Issue body asks for a design of the full cycle; origin/main:CLAUDE.md:62 still presents scope→think→challenge as a vendored operator skill chain rather than Culture Nodes flows.
 157,Task,"The prompt confirms the four issue types now exist; the remaining scoped work is assigning/migrating issues, while the issue body describes that backlog-classification task."
+293,Feature,"Wanted and does not exist: the Mesh shows a probe class but never install_mode or revision. Raised in review of PR #292; closes when the surface exists."

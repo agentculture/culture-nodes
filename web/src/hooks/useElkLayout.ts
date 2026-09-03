@@ -2,17 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import type { ELK as ElkInstance } from "elkjs/lib/elk-api";
 import type { WorkflowGraph } from "../domain/graph";
 
-// Kept in step with `.node-card`'s width/height in styles/app.css: React Flow
-// needs the box size before the DOM exists, so the two cannot be derived from
-// each other.
+// Kept in step with `.culture-node`'s box in culture-design/node.css: React
+// Flow needs the box size before the DOM exists, so the two cannot be derived
+// from each other.
+//
+// The card's height is CONTENT-driven now (`min-height: 64px`, no fixed
+// height) — the demo's `.cn`, not a 128px slab with empty space under the
+// text. 84 is the nominal a medium-band card measures: the 64px floor plus
+// the state-chip row. ELK spaces rows off this number, so a node that grows
+// past it (a close-zoom card with its fact list) overlaps nothing — the
+// nodeNode spacing below is 48px of slack.
 export const NODE_WIDTH = 224;
-export const NODE_HEIGHT = 128;
+export const NODE_HEIGHT = 84;
 
 export type NodePositions = Record<string, { x: number; y: number }>;
 
 // elk.bundled.js is ~1.4 MB — a third of the app if it is bundled into the
 // entry chunk. It is imported dynamically instead, which costs nothing
-// visually because fallbackLayout already draws the graph while ELK loads.
+// visually because callers keep the seeded graph transparent until ELK lands.
 let elkPromise: Promise<ElkInstance> | null = null;
 
 function getElk(): Promise<ElkInstance> {
@@ -57,8 +64,8 @@ export function fallbackLayout(graph: WorkflowGraph): NodePositions {
  *
  * ELK runs on the main thread here (elk.bundled.js), which is fine for the
  * graph sizes the PRD's first slice targets and keeps the bundle free of a
- * worker-URL build step. The fallback layout renders immediately so the
- * canvas is never blank while ELK works — and stays put if ELK throws.
+ * worker-URL build step. The fallback keeps failure useful; `ready` lets a
+ * canvas avoid painting those seed positions before ELK's final positions.
  */
 export function useElkLayout(graph: WorkflowGraph | null): {
   positions: NodePositions;

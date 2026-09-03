@@ -343,16 +343,30 @@ func runsFilterParam(r *http.Request) (map[string]bool, bool) {
 // Last-Event-ID header (what a reconnecting browser EventSource sends
 // automatically, carrying the last `id:` field it received) if present,
 // otherwise the `from` query parameter for a client's very first
-// connection. Either absent means "from the beginning of this namespace's
-// event log". Unlike resumeSequence above, the cursor here is the events
-// table's own primary key (a ULID string), not a per-run sequence — see
+// connection. `from=latest` requests a fresh snapshot cursor; any other
+// absent value means "from the beginning of this namespace's event log".
+// Unlike resumeSequence above, the cursor here is the events table's own
+// primary key (a ULID string), not a per-run sequence — see
 // handleStreamEvents' ordering doc for why no per-run sequence can serve a
 // cross-run resume point.
-func resumeEventID(r *http.Request) string {
+func resumeEventID(r *http.Request) (after string, latest bool) {
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
-		return raw
+		return raw, false
 	}
-	return r.URL.Query().Get("from")
+	raw := r.URL.Query().Get("from")
+	return raw, raw == "latest"
+}
+
+// latestEventID captures the namespace-wide events-table high-water mark.
+// A tail-only stream starts polling strictly after this committed id.
+func (s *Server) latestEventID(ctx context.Context) (string, error) {
+	var id string
+	if err := s.Store.Pool().QueryRow(ctx,
+		`SELECT COALESCE(max(id), '') FROM events WHERE namespace_id = $1`,
+		s.NamespaceID).Scan(&id); err != nil {
+		return "", fmt.Errorf("api: latest cross-run event id: %w", err)
+	}
+	return id, nil
 }
 
 // crossRunEventInScope applies handleStreamEvents' scoping rule to one raw
@@ -453,13 +467,24 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope, explicit := runsFilterParam(r)
-	after := resumeEventID(r)
+	after, latest := resumeEventID(r)
+	if latest {
+		var err error
+		after, err = s.latestEventID(ctx)
+		if err != nil {
+			s.writeAPIError(w, r, internalError(err))
+			return
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx's response buffering, if fronted by one
 	w.WriteHeader(http.StatusOK)
+	if latest && !writeSnapshotSSEEvent(w, after) {
+		return
+	}
 	flusher.Flush()
 
 	ticker := time.NewTicker(s.pollInterval * 2)
@@ -505,6 +530,19 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// writeSnapshotSSEEvent announces the committed high-water mark captured by
+// from=latest. The next real event is necessarily polled strictly after id.
+func writeSnapshotSSEEvent(w http.ResponseWriter, snapshotID string) bool {
+	body, err := json.Marshal(struct {
+		SnapshotID string `json:"snapshot_id"`
+	}{SnapshotID: snapshotID})
+	if err != nil {
+		return false
+	}
+	_, writeErr := fmt.Fprintf(w, "id: %s\nevent: stream.snapshot\ndata: %s\n\n", snapshotID, body)
+	return writeErr == nil
 }
 
 // writeCrossRunSSEEvent renders one committed event as

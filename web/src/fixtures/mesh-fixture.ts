@@ -3,7 +3,39 @@ import type {
   EventEnvelope,
   NodeRunListItem,
   Run,
+  WorkflowVersion,
 } from "../api/types";
+import type { MeshPayload } from "../api/client";
+
+export const MESH_PAYLOAD: MeshPayload = {
+  version: "v0.48.0",
+  machines: {
+    thor: { actors: ["codex-thor", "headspace-runner"] },
+    orin: { actors: ["codex-orin"] },
+    reachy: { actors: ["reachy-bridge"] },
+  },
+  actors: [
+    { id: "actor-thor-r1", actor_key: "codex-thor", machine: "thor", bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+    { id: "actor-headspace-r1", actor_key: "headspace-runner", machine: "thor", bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+    { id: "actor-orin-r1", actor_key: "codex-orin", machine: "orin", bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+    { id: "actor-reachy-r1", actor_key: "reachy-bridge", machine: "reachy", bridge: { observed_at: "2026-08-12T09:00:00Z", error: "dial tcp 10.0.0.9:8090: i/o timeout" } },
+    { id: "actor-ori-r1", actor_key: "human/ori", machine: null, bridge: { deployment: {}, observed_at: "2026-08-12T09:00:00Z" } },
+  ],
+  workers: [
+    { worker_id: "worker-thor", hostname: "thor", revision: "4f2c9a7", actor_keys: ["codex-thor", "headspace-runner"], last_seen: "2026-08-12T09:00:00Z" },
+    { worker_id: "worker-orin", hostname: "orin", revision: "f9d50e9", actor_keys: ["codex-orin"], last_seen: "2026-08-12T09:00:00Z" },
+  ],
+};
+
+const meshWorkflow = (digest: string, version: number): WorkflowVersion => ({
+  id: `mesh-workflow-${version}`, workflow_key: "mesh-demo", version,
+  source_format: "yaml", source: "", digest, created_at: `2026-08-0${version}T00:00:00Z`,
+  normalized_ir: { spec: { entry: "work", nodes: {
+    work: { kind: "agent", uses: "actor://codex-thor" },
+    approve: { kind: "approval", approverRef: "actor://human/ori" },
+  }, edges: [] } },
+});
+export const MESH_WORKFLOWS = [meshWorkflow("sha256:mesh-old-1", 1), meshWorkflow("sha256:mesh-old-2", 2), meshWorkflow("sha256:mesh-wf", 3)];
 
 /**
  * The Mesh view's fixture slice (task t18): actors across the kind
@@ -63,7 +95,8 @@ export const MESH_ACTORS: Actor[] = [
 ];
 
 /** 5 rows -> 4 mesh nodes (codex-thor's two revisions collapse). */
-export const MESH_ACTOR_NODE_COUNT = 4;
+export const MESH_ACTOR_NODE_COUNT = 5;
+export const MESH_MACHINE_NODE_COUNT = 3;
 
 export const MESH_RUNS: Run[] = [
   {
@@ -116,6 +149,8 @@ export const MESH_NODE_RUNS: NodeRunListItem[] = [
     id: "nr-mesh-alpha-build",
     run_id: "run-mesh-alpha",
     node_id: "build",
+    // The actors-table row id, which is what attempts.actor_id — and so
+    // GET /v1alpha1/node-runs — actually reports; never the bare actor key.
     actor_id: "actor-thor-r1",
     state: "running",
     created_at: "2026-08-12T09:05:00Z",
@@ -190,6 +225,28 @@ export const MESH_EVENTS: MeshFixtureEvent[] = [
     transitions: 3,
   }),
 ];
+
+/** A deliberately large committed history proving `from=latest` is tail-only. */
+export const MESH_HISTORICAL_EVENTS: MeshFixtureEvent[] = Array.from(
+  { length: 1284 },
+  (_, index) =>
+    meshEvent(
+      `01HISTORY${String(index).padStart(16, "0")}`,
+      "ledger.record-appended",
+      "run-mesh-alpha",
+      { record_type: "claim" },
+    ),
+);
+
+/**
+ * The `?from=latest` boundary marker, framed the way the server frames it
+ * (internal/api/events.go, writeSnapshotSSEEvent): a native `stream.snapshot`
+ * event whose body is `{"snapshot_id"}` alone, with no envelope around it.
+ */
+export const MESH_SNAPSHOT_ID = "01MESH000000000000000000";
+export function meshSnapshotMarkerSse(id = MESH_SNAPSHOT_ID): string {
+  return `id: ${id}\nevent: stream.snapshot\ndata: ${JSON.stringify({ snapshot_id: id })}\n\n`;
+}
 
 export const MESH_EVENTS_TOTAL = MESH_EVENTS.length;
 export const MESH_PULSES_TOTAL = 3;

@@ -2010,6 +2010,152 @@
         ],
         "type": "object"
       },
+      "Mesh": {
+        "properties": {
+          "actors": {
+            "items": {
+              "$ref": "#/components/schemas/MeshActor"
+            },
+            "type": "array"
+          },
+          "machines": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MeshMachine"
+            },
+            "description": "Machines keyed by their actors' self-reported hostname.",
+            "type": "object"
+          },
+          "version": {
+            "type": "string"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/MeshWorker"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actors",
+          "machines",
+          "version",
+          "workers"
+        ],
+        "type": "object"
+      },
+      "MeshActor": {
+        "properties": {
+          "actor_key": {
+            "type": "string"
+          },
+          "bridge": {
+            "$ref": "#/components/schemas/MeshBridgeObservation"
+          },
+          "id": {
+            "description": "The `actors` row id of this actor's current (highest) revision -- the identity `attempts.actor_id` records, and therefore the value `GET /v1alpha1/node-runs` reports as a node run's `actor_id`. Join run attribution on this, not on `actor_key`.",
+            "type": "string"
+          },
+          "machine": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor_key",
+          "machine",
+          "bridge"
+        ],
+        "type": "object"
+      },
+      "MeshBridgeObservation": {
+        "properties": {
+          "class": {
+            "description": "Classification when the bridge did not yield an attributable capability surface.",
+            "enum": [
+              "unobserved",
+              "unsupported",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "deployment": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "failure_count": {
+            "description": "Per-target count of timeout, 5xx, and connection failures; present only for failed observations.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hostname": {
+            "description": "Hostname reported by capabilities.preflight.host.hostname.",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why an answering bridge has no supported capability surface; present for unsupported observations.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MeshMachine": {
+        "properties": {
+          "actors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actors"
+        ],
+        "type": "object"
+      },
+      "MeshWorker": {
+        "properties": {
+          "actor_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "last_seen": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Present when the hostname looks like a container id rather than a host identity.",
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "hostname",
+          "revision",
+          "actor_keys",
+          "last_seen"
+        ],
+        "type": "object"
+      },
       "Namespace": {
         "properties": {
           "created_at": {
@@ -4568,7 +4714,7 @@
     },
     "/v1alpha1/events": {
       "get": {
-        "description": "The cross-run companion to GET /v1alpha1/runs/{id}/events (task t17): one SSE connection carrying committed events for every run in the namespace, instead of one connection per run — the data source for a live-mesh/board view that must not open one stream per displayed run.\nScope: by default, only events belonging to an ACTIVE (non-terminal) run, plus run-lifecycle events (run.created, run.completed, run.failed, run.cancelled, run.bounded) for any run — so a consumer sees runs appear and finish without being handed a completed run's full internal history it never asked to watch. Pass `runs` to override this default entirely and receive only events for the listed run ids, active or not.\nContainment (risk r1): this handler polls at twice the per-run stream's interval, and each poll reads a bounded window of raw rows (ordered by the events table's own id) before applying the active-run/lifecycle filter — so one poll's cost never grows with how much of the namespace's history is currently terminal. See internal/api/events.go's handleStreamEvents for the full design note, including the documented catch-up behavior under a filtered backlog.\nResume by the events table's own id (a ULID, NOT the per-run `sequence` a single run's stream resumes on — there is no one sequence spanning multiple runs): send `Last-Event-ID` (a previously received `id:` field) to resume after a disconnect, or the `from` query parameter for a client that cannot set headers before its first connection. Each frame is `id: \u003culid\u003e\\nevent: \u003ctype\u003e\\ndata: \u003cenvelope JSON\u003e\\n\\n`. Ordering promise: events are delivered in the order this control-plane process committed them (ULID generation order within one process, internal/store/ulid.go) — not a claim of a causally-ordered, cross-process global sequence.",
+        "description": "The cross-run companion to GET /v1alpha1/runs/{id}/events (task t17): one SSE connection carrying committed events for every run in the namespace, instead of one connection per run — the data source for a live-mesh/board view that must not open one stream per displayed run.\nScope: by default, only events belonging to an ACTIVE (non-terminal) run, plus run-lifecycle events (run.created, run.completed, run.failed, run.cancelled, run.bounded) for any run — so a consumer sees runs appear and finish without being handed a completed run's full internal history it never asked to watch. Pass `runs` to override this default entirely and receive only events for the listed run ids, active or not.\nContainment (risk r1): this handler polls at twice the per-run stream's interval, and each poll reads a bounded window of raw rows (ordered by the events table's own id) before applying the active-run/lifecycle filter — so one poll's cost never grows with how much of the namespace's history is currently terminal. See internal/api/events.go's handleStreamEvents for the full design note, including the documented catch-up behavior under a filtered backlog.\nResume by the events table's own id (a ULID, NOT the per-run `sequence` a single run's stream resumes on — there is no one sequence spanning multiple runs): send `Last-Event-ID` (a previously received `id:` field) to resume after a disconnect, or the `from` query parameter for a client that cannot set headers before its first connection. Pass `from=latest` for tail-only mode: the first frame is `id: \u003ccurrent-max-id\u003e\\nevent: stream.snapshot\\ndata: {\"snapshot_id\":\"\u003ccurrent-max-id\u003e\"}\\n\\n`, followed only by events committed strictly after that snapshot id. Without `from=latest`, the cursor-less default remains the full available history. Each committed-event frame is `id: \u003culid\u003e\\nevent: \u003ctype\u003e\\ndata: \u003cenvelope JSON\u003e\\n\\n`. Ordering promise: events are delivered in the order this control-plane process committed them (ULID generation order within one process, internal/store/ulid.go) — not a claim of a causally-ordered, cross-process global sequence.",
         "operationId": "streamEvents",
         "parameters": [
           {
@@ -4588,7 +4734,7 @@
             }
           },
           {
-            "description": "Resume after this event id (a ULID), when a Last-Event-ID header cannot be set.",
+            "description": "Resume after this event id (a ULID), when a Last-Event-ID header cannot be set. Use `latest` to receive a `stream.snapshot` marker carrying the namespace's current maximum event id, then only events committed strictly after that id.",
             "in": "query",
             "name": "from",
             "schema": {
@@ -5127,6 +5273,28 @@
         "summary": "Return one claimed envelope's response to the control plane.",
         "tags": [
           "dial-in"
+        ]
+      }
+    },
+    "/v1alpha1/mesh": {
+      "get": {
+        "description": "Returns deduplicated actor identities, machines keyed only by the hostname each actor self-reported in `capabilities.preflight.host.hostname`, cached bridge deployment probes, and worker presence. This request never contacts a bridge; unobserved, unsupported, and failed probes (with observation times) are returned from the independently timed collector cache; only timeout, 5xx, and connection failures carry a failure count.",
+        "operationId": "getMesh",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mesh"
+                }
+              }
+            },
+            "description": "The current committed topology and cached observations."
+          }
+        },
+        "summary": "Read the control plane's cached mesh topology.",
+        "tags": [
+          "actors"
         ]
       }
     },

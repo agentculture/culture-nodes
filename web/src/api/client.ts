@@ -43,6 +43,11 @@ import type {
  */
 export const API_ROOT = "/v1alpha1";
 
+/** The web bundle's single audited EventSource construction boundary. */
+export function openEventSource(url: string): EventSource {
+  return new EventSource(url);
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly remediation: string;
@@ -435,6 +440,43 @@ export const decideHumanTask = (
 export const listActors = (signal?: AbortSignal) =>
   getJson<ActorList>("/actors", signal);
 
+export interface MeshBridgeObservation {
+  deployment?: Record<string, unknown>;
+  observed_at?: string;
+  class?: "unobserved" | "unsupported" | "failed";
+  reason?: string;
+  error?: string;
+  failure_count?: number;
+}
+
+export interface MeshPayload {
+  actors: Array<{
+    /**
+     * The `actors` row id of this actor's current revision — the identity
+     * `attempts.actor_id` records, and so the value `GET /v1alpha1/node-runs`
+     * reports as a node run's `actor_id`. Run attribution joins on this;
+     * `actor_key` cannot answer that join.
+     */
+    id: string;
+    actor_key: string;
+    machine: string | null;
+    bridge: MeshBridgeObservation;
+  }>;
+  machines: Record<string, { actors: string[] }>;
+  version: string;
+  workers: Array<{
+    worker_id: string;
+    hostname: string;
+    revision: string;
+    actor_keys: string[];
+    last_seen: string;
+  }>;
+}
+
+/** The committed topology snapshot; the request itself never probes a bridge. */
+export const getMesh = (signal?: AbortSignal) =>
+  getJson<MeshPayload>("/mesh", signal);
+
 /**
  * `GET /v1alpha1/plan-imports?slug=` (task t23): every import snapshot of
  * one plan, most recent first — `items[0]` is "the current one". `slug` is
@@ -471,7 +513,7 @@ export const getPlanImport = (id: string, signal?: AbortSignal) =>
  * filter" on both ends — the query param is omitted entirely rather than
  * sent empty, matching the server's own empty-means-absent parsing.
  */
-export function meshEventsUrl(from?: string, runs?: readonly string[]): string {
+export function meshEventsUrl(from = "latest", runs?: readonly string[]): string {
   const base = `${API_ROOT}/events`;
   const params: string[] = [];
   if (from) params.push(`from=${encodeURIComponent(from)}`);

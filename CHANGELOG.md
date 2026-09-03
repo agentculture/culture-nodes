@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.48.1] - 2026-09-04
+
+### Added
+
+- `MeshActor.id` on `GET /v1alpha1/mesh`: the `actors` row id of an actor's
+  current revision — the identity `attempts.actor_id` records, and so the only
+  value a reader can join `GET /v1alpha1/node-runs` attribution on
+- migrations/0056: `worker_presence.namespace_id`, with the primary key moved
+  to `(namespace_id, worker_id)`
+- `tests/lint/eventsource_test.go` pins the `stream.snapshot` marker name
+  across server and client so the two cannot drift apart again
+
+### Fixed
+
+- the web client never received the tail-only `stream.snapshot` marker: it
+  listened for `dev.culture.nodes.stream.snapshot` and an event envelope,
+  while the server writes `event: stream.snapshot` with a bare
+  `{"snapshot_id"}` body. The marker id went unrecorded, so the shared
+  EventSource's own reconnect asked for `latest` again instead of resuming
+  from the boundary, skipping whatever committed while it was down (PR #292
+  review)
+- the Mesh drew no run→actor edge: attribution was matched against
+  `actor_key`, but `GET /v1alpha1/node-runs` reports the actors-table row id.
+  Attribution now resolves a row id, a bare key, and a digest-pinned
+  `actor://` reference alike (PR #292 review)
+- `GET /v1alpha1/mesh` returned every namespace's worker presence, and two
+  workers sharing a `NODES_WORKER_ID` across namespaces overwrote each
+  other's row (PR #292 review)
+
+## [0.48.0] - 2026-09-04
+
+### Added
+
+- web-ui-lift: one Culture node across Mesh, Design, Run and canvas views (glowing core, breathing halo, bezier edges); Mesh rebuilt on React Flow from real relationships — machines keyed on the bridge's self-reported hostname, worker presence rows (names only), a timed probe collector with three probe classes; GET /v1alpha1/mesh; tail-only cross-run stream (?from=latest with a stream.snapshot marker) so the Mesh never replays history; Design gallery drawing every published version from its IR; Design canvas that edits the author's YAML as a syntax tree (workflow-document) and publishes the document verbatim; walkthrough e2e mirroring the committed demo (docs/demos/web-ui-lift)
+- worker presence table (migrations/0055) and NODES_HOSTNAME for workers
+- design-token lint guard (tests/lint/webtokens_test.go), single-node import guard, single-EventSource guard
+
+### Changed
+
+- navigation on the PRD §8.6 spine: eight links in two groups; /runs hosts list, board and jobs behind a segmented toggle; /design hosts the gallery, New workflow, Generate and the canvas; old URLs redirect
+- SegmentedToggle replaces every ad-hoc tab strip (the /decisions strip now sits under its heading)
+- canvases fade in when ELK positions land; the fixture screenshot pass covers Mesh and Active graphs
+
+### Fixed
+
+- cursor-less cross-run stream connects replayed the whole namespace history through the Mesh
+- the graphical editor won't-do from the 2026-08-15 brief is reopened by a recorded decision after the round-trip spike (docs/decisions/2026-09-03-*)
+
 ## [0.47.21] - 2026-09-03
 
 ### Fixed

@@ -2,9 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   MESH_ACTIVE_RUN_COUNT,
   MESH_ACTOR_NODE_COUNT,
-  MESH_EVENTS_TOTAL,
-  MESH_LAST_EVENT_ID,
-  MESH_PULSES_TOTAL,
+  MESH_EVENTS,
   mockMeshApi,
   readAgentState,
 } from "./fixtures/api";
@@ -39,38 +37,66 @@ test("assembles the graph from fixture actors and active runs", async ({
     "animated",
   );
 
-  // The stream replays its whole committed history on connect; wait for it
-  // so the counts below are the settled post-replay graph. 5 actor rows
+  // The tail-only stream does not replay its 1,284 committed rows. 5 actor rows
   // collapse to 4 nodes (codex-thor's two revisions are one actor); the
-  // terminal fixture run stays off the mesh; run-mesh-gamma appears from
-  // its run.created event; one edge per actor + one per run.
+  // terminal fixture run stays off the mesh; one edge per actor + one per run.
   await expect
     .poll(async () => (await readAgentState(page)).mesh?.events_total)
-    .toBe(MESH_EVENTS_TOTAL);
+    .toBe(0);
   const mesh = (await readAgentState(page)).mesh!;
   expect(mesh.actor_count).toBe(MESH_ACTOR_NODE_COUNT);
-  expect(mesh.run_count).toBe(MESH_ACTIVE_RUN_COUNT + 1);
-  expect(mesh.edge_count).toBe(MESH_ACTOR_NODE_COUNT + MESH_ACTIVE_RUN_COUNT + 1);
+  expect(mesh.machine_count).toBe(3);
+  expect(mesh.run_count).toBe(MESH_ACTIVE_RUN_COUNT);
+  expect(mesh.probe_failures).toBe(1);
+  expect(mesh.unattributed_actors).toBe(1);
+  // 8, not 9: four actor→machine, one actor→workflow, two run→workflow, and
+  // ONE run→actor — run-mesh-beta has no node-run attribution in the fixture,
+  // so it links to its workflow only; the mesh never invents an actor.
+  expect(mesh.edge_count).toBe(8);
 });
 
-test("fixture events become counted pulses with an honest resume cursor", async ({
+test("failed probes, grouped versions, divergent machines, and unattributed actors stay explicit", async ({ page }) => {
+  await openMesh(page);
+  const failed = page.locator('[data-node-id="reachy-bridge"]');
+  await expect(failed).toBeVisible();
+  await failed.hover();
+  await expect(page.locator("#mesh-tooltip")).toContainText("unknown");
+  await expect(page.locator("#mesh-tooltip")).toContainText("dial tcp 10.0.0.9:8090: i/o timeout");
+  await expect(failed).not.toHaveText(/answering/i);
+  await expect(page.locator('[data-node-id="mesh-demo"]')).toContainText("3 versions");
+  await expect(page.locator('[data-node-id="human/ori"]')).toContainText("unattributed");
+  await expect(page.locator('[data-node-id="thor"]')).toContainText("2 actor keys");
+  await expect(page.locator('[data-node-id="orin"]')).toContainText("1 actor keys");
+});
+
+test("1,284 historical events stay skipped and each later commit increments once", async ({
   page,
 }) => {
   await openMesh(page);
 
   await expect
     .poll(async () => (await readAgentState(page)).mesh?.events_total)
-    .toBe(MESH_EVENTS_TOTAL);
+    .toBe(0);
+  await page.evaluate(async (event) => {
+    await fetch("/v1alpha1/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(event),
+    });
+  }, MESH_EVENTS[0]);
+  await expect
+    .poll(async () => (await readAgentState(page)).mesh?.events_total)
+    .toBe(1);
   const mesh = (await readAgentState(page)).mesh!;
-  expect(mesh.pulses_total).toBe(MESH_PULSES_TOTAL);
-  expect(mesh.last_event_id).toBe(MESH_LAST_EVENT_ID);
+  expect(mesh.pulses_total).toBe(1);
+  expect(mesh.last_event_id).toBe(MESH_EVENTS[0].id);
 
   // The browser reconnects with Last-Event-ID after the fixture body ends
   // and receives an empty stream — no event is ever replayed or counted
   // twice. Give a reconnect cycle time to happen before re-reading.
   await page.waitForTimeout(500);
   expect((await readAgentState(page)).mesh!.events_total).toBe(
-    MESH_EVENTS_TOTAL,
+    1,
   );
 });
 
@@ -81,7 +107,15 @@ test("a resolved run settles off the mesh after its lifecycle event", async ({
 
   await expect
     .poll(async () => (await readAgentState(page)).mesh?.events_total)
-    .toBe(MESH_EVENTS_TOTAL);
+    .toBe(0);
+
+  await page.evaluate(async (event) => {
+    await fetch("/v1alpha1/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(event),
+    });
+  }, MESH_EVENTS[3]);
 
   // run-mesh-beta completed while we watched: it lingers for the settle
   // animation, then leaves the graph (run-mesh-gamma stays, so the count
@@ -136,6 +170,7 @@ test("keyboard focus inspects nodes without a pointer", async ({ page }) => {
   const tooltip = page.locator("#mesh-tooltip");
   await expect(tooltip).toBeVisible();
   await expect(tooltip).toContainText("control plane");
+  await expect(tooltip).toContainText("traces to mesh: version");
   await page.keyboard.press("ArrowRight");
   await expect(tooltip).not.toContainText("control plane");
   await page.keyboard.press("Escape");

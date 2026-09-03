@@ -12,8 +12,9 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { DASHED } from "../culture-design/edges";
+import CultureNode from "../culture-design/CultureNode";
 import type { ActiveGraphPresence } from "../domain/active-presence";
-import { accentFor, type GraphNode } from "../domain/graph";
+import type { GraphNode } from "../domain/graph";
 import { NODE_HEIGHT, NODE_WIDTH, useElkLayout } from "../hooks/useElkLayout";
 import { useAnimationGate } from "../hooks/useAnimationGate";
 
@@ -55,6 +56,7 @@ interface ActiveNodeData extends Record<string, unknown> {
   /** Committed events pulsed at this node so far — keys the one-shot ring. */
   pulseCount: number;
   inspected: boolean;
+  motion: "animated" | "paused" | "static";
 }
 
 type ActiveFlowNode = Node<ActiveNodeData, "presence">;
@@ -66,46 +68,10 @@ type ActiveFlowNode = Node<ActiveNodeData, "presence">;
  * renders and asserts without a live canvas.
  */
 function ActiveGraphNode({ data }: NodeProps<ActiveFlowNode>) {
-  const accent = accentFor(data.node.kind);
-  const classes = [
-    "active-node",
-    data.live ? "is-live" : "",
-    data.inspected ? "is-inspected" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
   return (
     <>
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div
-        className={classes}
-        data-node-id={data.node.id}
-        data-node-live={data.live ? "true" : "false"}
-        style={{ ["--node-accent" as string]: accent }}
-      >
-        <div className="active-node__head">
-          <span className="active-node__dot" aria-hidden="true" />
-          <span className="active-node__name">{data.node.id}</span>
-        </div>
-        <div className="active-node__meta">
-          <span className="active-node__kind">{data.node.kind}</span>
-          {data.live ? (
-            <span className="active-node__badge">
-              <span aria-hidden="true">●</span> active
-            </span>
-          ) : null}
-        </div>
-        {data.pulseCount > 0 ? (
-          // Keyed by the counter: each committed event remounts the ring,
-          // restarting its one-shot animation — one visible pulse per event.
-          <span
-            key={data.pulseCount}
-            className="active-node__pulse"
-            data-pulse-count={data.pulseCount}
-            aria-hidden="true"
-          />
-        ) : null}
-      </div>
+      <CultureNode node={data.node} live={data.live} pulseCount={data.pulseCount} selected={data.inspected} motion={data.motion} />
       <Handle type="source" position={Position.Right} isConnectable={false} />
       <Handle
         type="source"
@@ -154,6 +120,7 @@ export function ActiveGraphCanvas({
   const alive = runIds.length > 0;
   const activeSet = useMemo(() => new Set(activeNodeIds), [activeNodeIds]);
   const domId = activeGraphDomId(presence);
+  const motion = reducedMotion ? "static" : animate ? "animated" : "paused";
 
   const { positions, ready: layoutReady } = useElkLayout(graph);
 
@@ -183,12 +150,13 @@ export function ActiveGraphCanvas({
           live: activeSet.has(node.id),
           pulseCount: pulses[node.id] ?? 0,
           inspected: inspectedId === node.id,
+          motion,
         },
       })),
     // Motion mode deliberately absent: a node card carries no motion state
     // of its own — the section's `data-motion` attribute gates every
     // animation from above, so flipping it re-creates no node objects.
-    [graph, positions, activeSet, pulses, inspectedId],
+    [graph, positions, activeSet, pulses, inspectedId, motion],
   );
 
   const flowEdges: BuiltInEdge[] = useMemo(
@@ -199,8 +167,8 @@ export function ActiveGraphCanvas({
         target: edge.target,
         sourceHandle: edge.loop ? LOOP_SOURCE_HANDLE : undefined,
         targetHandle: edge.loop ? LOOP_TARGET_HANDLE : undefined,
-        type: "smoothstep" as const,
-        pathOptions: { borderRadius: 14, offset: edge.loop ? 28 : 12 },
+        // React Flow's default edge — the demo's canvas draws curves, and a
+        // right-angled smoothstep run was most of what read as "boxes".
         label: edge.outcome,
         className: ["flow-edge", "is-unwalked", edge.loop ? "is-loop" : ""]
           .filter(Boolean)
@@ -245,8 +213,6 @@ export function ActiveGraphCanvas({
     ? graph.nodes.find((node) => node.id === inspectedId)
     : undefined;
 
-  const motion = reducedMotion ? "static" : animate ? "animated" : "paused";
-
   return (
     <section
       ref={wrapRef}
@@ -289,7 +255,7 @@ export function ActiveGraphCanvas({
         // agent or e2e assertion needs an unambiguous handle on *this*
         // element rather than a role lookup that matches both.
         id={`${domId}-canvas`}
-        className="active-graph__canvas"
+        className="active-graph__canvas canvas-surface"
         tabIndex={0}
         role="application"
         aria-label={`Workflow graph for ${presence.workflowKey}. Left and right arrow keys inspect each node; Escape clears the inspection.`}

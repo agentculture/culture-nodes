@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
@@ -52,6 +53,12 @@ type Options struct {
 	// completion's fencing tuple. Defaults to a fresh ULID prefixed
 	// "worker-".
 	WorkerID string
+	// Hostname, Revision, and ActorKeys identify the running worker build and
+	// the actor credential names configured for it. ActorKeys must contain
+	// names only; the store rejects token-shaped values.
+	Hostname  string
+	Revision  string
+	ActorKeys []string
 	// NamespaceID scopes the callback store and the actor registry.
 	// Required.
 	NamespaceID string
@@ -256,6 +263,13 @@ func New(db *postgres.Store, eng *engine.Engine, opts Options) (*Worker, error) 
 	if opts.WorkerID == "" {
 		opts.WorkerID = "worker-" + idstore.NewULID()
 	}
+	if opts.Hostname == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return nil, fmt.Errorf("worker: read hostname: %w", err)
+		}
+		opts.Hostname = hostname
+	}
 	if opts.ClaimBatch <= 0 {
 		opts.ClaimBatch = DefaultClaimBatch
 	}
@@ -354,6 +368,9 @@ func (w *Worker) Run(ctx context.Context) error {
 // per-item dispatch failure is — every parked operation has a deadline timer
 // behind it, so a pass that could not sample is a delay, not a loss.
 func (w *Worker) Tick(ctx context.Context) (int, error) {
+	if err := w.recordPresence(ctx); err != nil {
+		return 0, err
+	}
 	// Re-mints are admitted at the trigger seam before ordinary claiming.
 	// Their entry nodes are enqueued by the engine's normal dispatchNode ->
 	// EnqueueWork path, so everything below (claiming, pacing, concurrency and

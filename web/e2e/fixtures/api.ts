@@ -18,6 +18,7 @@ import {
   JOB_RUNS_PAGE_2,
 } from "../../src/fixtures/node-runs-fixture";
 import {
+  NODE_CATALOG_WORKFLOW_VERSIONS,
   WORKFLOW_VERSIONS,
   WORKFLOWS_RUNS,
   workflowsRunsFor,
@@ -66,6 +67,14 @@ export { BOARD_RUNS };
 export { JOB_RUNS_CURSOR, JOB_RUNS_NAMED_RUNS, JOB_RUNS_PAGE_1, JOB_RUNS_PAGE_2 };
 export { WORKFLOW_VERSIONS, WORKFLOWS_RUNS };
 export {
+  DELIVER_CHANGE_V1_SOURCE,
+  DELIVER_CHANGE_V2_DIGEST,
+  DESIGN_GRAPH_SIZES,
+  HELLO_WORLD_DIGEST,
+  NODE_CATALOG_WORKFLOW_VERSIONS,
+  ORPHAN_DIGEST,
+} from "../../src/fixtures/workflows-fixture";
+export {
   ACTIVE_EVENTS_TOTAL,
   ACTIVE_LAST_EVENT_ID,
   ACTIVE_NODE_ID,
@@ -100,6 +109,20 @@ export { WHOAMI_ACTOR_ID, WHOAMI_BOUND, WHOAMI_UNBOUND } from "../../src/fixture
  * answer AFTER the wide mock (Playwright runs the last-registered route
  * first).
  */
+/**
+ * The first frame a tail-only (`?from=latest`) connect receives from the real
+ * server (task t1, internal/api/events.go): a `stream.snapshot` marker whose
+ * id is the boundary the stream advances from. Fixtures that serve a fixed
+ * event list use "0" as that boundary so the browser's automatic reconnect
+ * (Last-Event-ID: 0) is answered with every fixture event, exactly as the
+ * cursor-less first connect used to be.
+ */
+export function snapshotMarkerSse(id = "0"): string {
+  // Framed exactly as writeSnapshotSSEEvent does: a stream control frame
+  // with a bare `{"snapshot_id"}` body, NOT a CloudEvents envelope.
+  return `id: ${id}\nevent: stream.snapshot\ndata: ${JSON.stringify({ snapshot_id: id })}\n\n`;
+}
+
 export async function mockWhoami(
   page: Page,
   answer: Whoami | { status: 401 } = WHOAMI_BOUND,
@@ -438,25 +461,35 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
 }
 
 /**
- * Serve the Node Graphs tab's "Node Graphs" sub-tab (task t8, re-homed under
- * task t28's tab shell): `GET /v1alpha1/workflows` returns WORKFLOW_VERSIONS
- * (two workflow_keys, three versions total) and `GET /v1alpha1/runs`
- * answers WORKFLOWS_RUNS, honoring the `workflow_key` filter exactly as the
- * server does (join to the run's workflow version, internal/api/
- * queries.go) — the workflow-cards panel asks once per published key
- * (task t8), the Active Graphs sub-tab asks unfiltered. Every fixture run's
- * own `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal RunView)
- * too, so following a card's recent-run link doesn't 404.
+ * Serve the Design view (task t8): `GET /v1alpha1/workflows` returns
+ * NODE_CATALOG_WORKFLOW_VERSIONS (three workflow_keys, four versions total)
+ * and `GET /v1alpha1/runs` answers WORKFLOWS_RUNS, honoring the
+ * `workflow_key` filter exactly as the server does (join to the run's
+ * workflow version, internal/api/queries.go) — the gallery asks once per
+ * published key, the Active graphs sub-view asks unfiltered. Every fixture
+ * run's own `run_id` resolves through `/v1alpha1/runs/{id}` (a minimal
+ * RunView) too, so following a recent-run link doesn't 404.
  *
- * The Nodes sub-tab (task t29's catalog, rendered by t31) derives from the
- * same workflows listing. The Active Graphs sub-tab (task t31) additionally
- * reads `GET /v1alpha1/node-runs` (ACTIVE_NODE_RUNS: one running row on the
- * one non-terminal run) and the cross-run SSE stream `GET /v1alpha1/events`
+ * `runs: "none"` serves a namespace with ZERO runs while keeping every
+ * published workflow — the fixture claim c31/h21 asks for, since the whole
+ * point of the gallery is that a graph does not depend on a run. It is a
+ * separate answer rather than a separate fixture file because the workflows
+ * half must be identical for the comparison to mean anything.
+ *
+ * The Nodes sub-view (task t29's catalog) derives from the same workflows
+ * listing. The Active graphs sub-view (task t31) additionally reads
+ * `GET /v1alpha1/node-runs` (ACTIVE_NODE_RUNS: one running row on the one
+ * non-terminal run) and the cross-run SSE stream `GET /v1alpha1/events`
  * (ACTIVE_EVENTS: one committed event on the known run — a visible pulse —
  * and one naming a run the view never loaded, which must be a no-op, h14).
  * The events route honours both resume spellings exactly like mockMeshApi.
  */
-export async function mockNodeGraphsApi(page: Page): Promise<void> {
+export async function mockDesignApi(
+  page: Page,
+  options: { runs?: "all" | "none" } = {},
+): Promise<void> {
+  const noRuns = options.runs === "none";
+  const activeTail: { cursor: string | null } = { cursor: null };
   const runViewById = new Map<string, RunView>(
     WORKFLOWS_RUNS.map((run) => [run.id, { run, tokens: [], node_runs: [] }]),
   );
@@ -471,35 +504,44 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
     }
 
     if (path === "/v1alpha1/workflows") {
-      await route.fulfill(json({ items: WORKFLOW_VERSIONS }));
+      await route.fulfill(json({ items: NODE_CATALOG_WORKFLOW_VERSIONS }));
       return;
     }
     if (path === "/v1alpha1/runs") {
       const workflowKey = url.searchParams.get("workflow_key");
       await route.fulfill(
         json({
-          items: workflowKey
-            ? workflowsRunsFor(workflowKey)
-            : WORKFLOWS_RUNS,
+          items: noRuns
+            ? []
+            : workflowKey
+              ? workflowsRunsFor(workflowKey)
+              : WORKFLOWS_RUNS,
         }),
       );
       return;
     }
     if (path === "/v1alpha1/node-runs") {
-      await route.fulfill(json({ items: ACTIVE_NODE_RUNS }));
+      await route.fulfill(json({ items: noRuns ? [] : ACTIVE_NODE_RUNS }));
       return;
     }
     if (path === "/v1alpha1/events") {
       const headers = await request.allHeaders();
-      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
-      const pending = ACTIVE_EVENTS.filter((event) => event.id > from);
+      const requested = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
+      // A tail-only first connect gets the snapshot marker (boundary "0"); the
+      // browser's reconnect under route interception carries no Last-Event-ID,
+      // so the fixture keeps the cursor itself and serves every event above it
+      // — the same events the cursor-less connect used to serve at once.
+      const latest = requested === "latest" && activeTail.cursor === null;
+      const from = requested === "latest" ? (activeTail.cursor ?? "0") : requested;
+      const pending = latest ? [] : ACTIVE_EVENTS.filter((event) => event.id > from);
+      activeTail.cursor = pending.length > 0 ? pending[pending.length - 1].id : from;
       await route.fulfill({
         status: 200,
         headers: {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
         },
-        body: activeEventsAsSse(pending),
+        body: (latest ? snapshotMarkerSse("0") : "") + activeEventsAsSse(pending),
       });
       return;
     }
@@ -526,7 +568,9 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
       return;
     }
     const digest = path.replace("/v1alpha1/workflows/", "");
-    const version = WORKFLOW_VERSIONS.find((v) => v.digest === digest);
+    const version = NODE_CATALOG_WORKFLOW_VERSIONS.find(
+      (v) => v.digest === digest,
+    );
     if (version && path === `/v1alpha1/workflows/${digest}`) {
       await route.fulfill(json(version));
       return;
@@ -621,19 +665,21 @@ export async function mockAuthoringApi(page: Page): Promise<void> {
 }
 
 import {
-  MESH_ACTORS,
   MESH_EVENTS,
+  MESH_HISTORICAL_EVENTS,
   MESH_NODE_RUNS,
   MESH_RUNS,
+  MESH_PAYLOAD,
+  MESH_WORKFLOWS,
+  MESH_SNAPSHOT_ID,
   meshEventsAsSse,
+  meshSnapshotMarkerSse,
 } from "../../src/fixtures/mesh-fixture";
 
 export {
   MESH_ACTIVE_RUN_COUNT,
   MESH_ACTOR_NODE_COUNT,
-  MESH_EVENTS_TOTAL,
-  MESH_LAST_EVENT_ID,
-  MESH_PULSES_TOTAL,
+  MESH_EVENTS,
 } from "../../src/fixtures/mesh-fixture";
 
 /**
@@ -652,6 +698,8 @@ export {
  * yet", and the proof that no event is ever double-counted.
  */
 export async function mockMeshApi(page: Page): Promise<void> {
+  const liveEvents: typeof MESH_EVENTS = [];
+  const tail: { cursor: string | null } = { cursor: null };
   await page.route("**/v1alpha1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -661,8 +709,12 @@ export async function mockMeshApi(page: Page): Promise<void> {
       return;
     }
 
-    if (path === "/v1alpha1/actors") {
-      await route.fulfill(json({ items: MESH_ACTORS }));
+    if (path === "/v1alpha1/mesh") {
+      await route.fulfill(json(MESH_PAYLOAD));
+      return;
+    }
+    if (path === "/v1alpha1/workflows") {
+      await route.fulfill(json({ items: MESH_WORKFLOWS }));
       return;
     }
     if (path === "/v1alpha1/runs") {
@@ -674,9 +726,37 @@ export async function mockMeshApi(page: Page): Promise<void> {
       return;
     }
     if (path === "/v1alpha1/events") {
+      if (request.method() === "POST") {
+        const event = (await request.postDataJSON()) as (typeof MESH_EVENTS)[number];
+        liveEvents.push(event);
+        await route.fulfill(json({ committed: event.id }));
+        return;
+      }
       const headers = await request.allHeaders();
-      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
-      const pending = MESH_EVENTS.filter((event) => event.id > from);
+      // Under route interception the browser's automatic reconnect does not
+      // carry Last-Event-ID, so the fixture keeps the cursor the real server
+      // would have been handed: the marker is served once per page, and every
+      // later connect gets only what was committed after the last id served.
+      const requested = headers["last-event-id"] ?? url.searchParams.get("from") ?? "latest";
+      const from = requested === "latest" ? tail.cursor : requested;
+      if (from === null) {
+        // The tail-only first connect: the server answers with the boundary
+        // marker alone, never with history.
+        tail.cursor = MESH_SNAPSHOT_ID;
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+          },
+          body: meshSnapshotMarkerSse(),
+        });
+        return;
+      }
+      const pending = [...MESH_HISTORICAL_EVENTS, ...liveEvents].filter(
+        (event) => event.id > from,
+      );
+      tail.cursor = pending.length > 0 ? pending[pending.length - 1].id : from;
       await route.fulfill({
         status: 200,
         headers: {
@@ -811,9 +891,12 @@ export async function readAgentState(page: Page): Promise<{
     category_count: number;
   } | null;
   mesh?: {
+    machine_count: number;
     actor_count: number;
     run_count: number;
     edge_count: number;
+    probe_failures: number;
+    unattributed_actors: number;
     connection: string;
     last_event_id: string | null;
     events_total: number;
@@ -829,6 +912,17 @@ export async function readAgentState(page: Page): Promise<{
     events_total: number;
     pulses_total: number;
     reduced_motion: boolean;
+  } | null;
+  design?: {
+    workflow_count: number;
+    workflow_key: string | null;
+    version: number | null;
+    digest: string | null;
+    node_count: number;
+    edge_count: number;
+    source_bytes: number;
+    source_open: boolean;
+    run_count: number;
   } | null;
 }> {
   const text = await page.locator("#agent-state").textContent();

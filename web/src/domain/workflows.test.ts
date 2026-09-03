@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { Run, WorkflowIR, WorkflowVersion } from "../api/types";
 import {
+  graphFromPublishedIR,
+  graphFromStoredSource,
+  graphTopology,
   groupWorkflowVersions,
   RECENT_RUNS_LIMIT,
+  selectGalleryVersion,
+  storedSource,
   withRunsByWorkflowKey,
 } from "./workflows";
+import {
+  DELIVER_CHANGE_V1_SOURCE,
+  DESIGN_GRAPH_SIZES,
+  NODE_CATALOG_WORKFLOW_VERSIONS,
+  WORKFLOW_VERSIONS,
+} from "../fixtures/workflows-fixture";
+import { WORKFLOW_DIGEST } from "../fixtures/run-fixture";
 
 function ir(ownerRef?: string): WorkflowIR {
   return {
@@ -190,5 +202,108 @@ describe("withRunsByWorkflowKey", () => {
       new Map([["deliver-change", [run("run-v1", "sha256:v1", "2026-08-09T09:01:00Z")]]]),
     );
     expect(groups[0].recentRuns).toEqual([]);
+  });
+});
+
+/**
+ * The Design gallery's source accessors (task t8, claim c36 / honesty
+ * condition h28). A published version carries BOTH a `normalized_ir` and the
+ * operator's own `source` bytes. The gallery draws the IR; "Open source"
+ * shows the bytes. Those two must be the same graph, and the bytes must be
+ * the stored ones — not a re-serialization of the IR.
+ */
+describe("stored source accessors", () => {
+  it("hands back the stored bytes verbatim, with the format the row declares", () => {
+    const published = WORKFLOW_VERSIONS.find(
+      (v) => v.digest === WORKFLOW_DIGEST,
+    )!;
+    const stored = storedSource(published);
+    expect(stored.source).toBe(DELIVER_CHANGE_V1_SOURCE);
+    expect(stored.format).toBe("yaml");
+    // Byte-identical: not trimmed, not re-indented, not re-serialized.
+    expect(stored.source).toHaveLength(DELIVER_CHANGE_V1_SOURCE.length);
+    expect(stored.source.endsWith("\n")).toBe(true);
+    expect(stored.source).toContain("# the loop");
+  });
+
+  it("keeps a comment the IR cannot carry — proof the readout is the source, not the IR", () => {
+    const published = WORKFLOW_VERSIONS.find(
+      (v) => v.digest === WORKFLOW_DIGEST,
+    )!;
+    // Nothing in normalized_ir holds a YAML comment, so a re-serialized
+    // document could not produce this line.
+    expect(JSON.stringify(published.normalized_ir)).not.toContain(
+      "the loop",
+    );
+    expect(storedSource(published).source).toContain(
+      "verify -> build loop",
+    );
+  });
+
+  it("draws the same node and edge sets from the published IR and from the stored source", () => {
+    for (const version of NODE_CATALOG_WORKFLOW_VERSIONS) {
+      const fromIR = graphFromPublishedIR(version);
+      const fromSource = graphFromStoredSource(version);
+      expect(fromSource, `${version.workflow_key} v${version.version}`).not.toBeNull();
+      expect(graphTopology(fromSource!)).toEqual(graphTopology(fromIR));
+    }
+  });
+
+  it("draws the graph the fixture declares for each published key (c31 — no run involved)", () => {
+    for (const [key, size] of Object.entries(DESIGN_GRAPH_SIZES)) {
+      const latest = groupWorkflowVersions(NODE_CATALOG_WORKFLOW_VERSIONS).find(
+        (group) => group.workflowKey === key,
+      )!.versions[0];
+      const graph = graphFromPublishedIR(latest);
+      expect(graph.nodes, key).toHaveLength(size.nodes);
+      expect(graph.edges, key).toHaveLength(size.edges);
+    }
+  });
+
+  it("returns null for a source that does not parse into a workflow shape, never a half graph", () => {
+    const broken: WorkflowVersion = {
+      ...WORKFLOW_VERSIONS[0],
+      source: "not: [a workflow",
+    };
+    expect(graphFromStoredSource(broken)).toBeNull();
+  });
+
+  it("compares topology by node identity and edge identity, not by object shape", () => {
+    const graph = graphFromPublishedIR(WORKFLOW_VERSIONS[0]);
+    const topology = graphTopology(graph);
+    expect(topology.nodes).toContain("intake:agent");
+    expect(topology.edges).toContain("verify.changes_required->build");
+    // Sorted, so two graphs built in different orders still compare equal.
+    expect([...topology.nodes].sort()).toEqual(topology.nodes);
+    expect([...topology.edges].sort()).toEqual(topology.edges);
+  });
+});
+
+describe("selectGalleryVersion", () => {
+  const groups = groupWorkflowVersions(NODE_CATALOG_WORKFLOW_VERSIONS);
+
+  it("defaults to the first workflow's latest version when the URL names neither", () => {
+    const selection = selectGalleryVersion(groups, null, null)!;
+    expect(selection.group.workflowKey).toBe("deliver-change");
+    expect(selection.version.version).toBe(2);
+  });
+
+  it("selects the version the URL names", () => {
+    const selection = selectGalleryVersion(groups, "deliver-change", 1)!;
+    expect(selection.version.digest).toBe(WORKFLOW_DIGEST);
+  });
+
+  it("falls back to the latest version when the URL names one that is not published", () => {
+    const selection = selectGalleryVersion(groups, "deliver-change", 99)!;
+    expect(selection.version.version).toBe(2);
+  });
+
+  it("falls back to the first workflow when the URL names an unpublished key", () => {
+    const selection = selectGalleryVersion(groups, "no-such-workflow", null)!;
+    expect(selection.group.workflowKey).toBe("deliver-change");
+  });
+
+  it("selects nothing at all when nothing is published (h14: an empty gallery says so)", () => {
+    expect(selectGalleryVersion([], "deliver-change", 1)).toBeNull();
   });
 });

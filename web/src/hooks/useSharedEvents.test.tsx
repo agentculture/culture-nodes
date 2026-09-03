@@ -68,6 +68,20 @@ class FakeEventSource {
     this.onerror?.();
   }
 
+  /**
+   * The `?from=latest` boundary marker exactly as internal/api/events.go
+   * frames it: native event name `stream.snapshot`, body `{"snapshot_id"}`,
+   * and no CloudEvents envelope at all.
+   */
+  emitSnapshot(id: string) {
+    const event = {
+      data: JSON.stringify({ snapshot_id: id }),
+      lastEventId: id,
+      type: "stream.snapshot",
+    };
+    for (const listener of this.listeners.get("stream.snapshot") ?? []) listener(event);
+  }
+
   emit(type: string, data: Record<string, unknown>, id: string) {
     const envelope = {
       id,
@@ -99,13 +113,20 @@ afterEach(() => {
 function Subscriber(props: {
   types: readonly SharedEventType[];
   onEvent?: (event: SharedEvent) => void;
-  report: (status: SharedStreamStatus, lastEventId: string | null) => void;
+  report: (
+    status: SharedStreamStatus,
+    lastEventId: string | null,
+    snapshotId: string | null,
+  ) => void;
 }) {
-  const { status, lastEventId } = useSharedEvents(props.types, props.onEvent ?? NOOP);
+  const { status, lastEventId, snapshotId } = useSharedEvents(
+    props.types,
+    props.onEvent ?? NOOP,
+  );
   useEffect(() => {
-    props.report(status, lastEventId);
+    props.report(status, lastEventId, snapshotId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, lastEventId]);
+  }, [status, lastEventId, snapshotId]);
   return null;
 }
 
@@ -121,6 +142,41 @@ describe("useSharedEvents (task t27, c48/h41)", () => {
       </>,
     );
     expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0].url).toBe("/v1alpha1/events?from=latest");
+  });
+
+  it("stores the stream.snapshot id in the manager snapshot without delivering it", () => {
+    const snapshots: Array<string | null> = [];
+    const events: SharedEvent[] = [];
+    render(
+      <Subscriber
+        types={[RUN_CREATED]}
+        onEvent={(event) => events.push(event)}
+        report={(_status, _lastEventId, snapshotId) => snapshots.push(snapshotId)}
+      />,
+    );
+
+    act(() => FakeEventSource.instances[0].emitSnapshot("01SNAPSHOT"));
+
+    expect(snapshots.at(-1)).toBe("01SNAPSHOT");
+    expect(events).toHaveLength(0);
+  });
+
+  it("resumes from the snapshot boundary after the connection closes, never from latest again", () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<Subscriber types={[RUN_CREATED]} report={NOOP} />);
+      act(() => FakeEventSource.instances[0].open());
+      act(() => FakeEventSource.instances[0].emitSnapshot("01SNAPSHOT"));
+      act(() => FakeEventSource.instances[0].fail());
+      act(() => vi.advanceTimersByTime(1000)); // the base reconnect delay
+
+      expect(FakeEventSource.instances).toHaveLength(2);
+      expect(FakeEventSource.instances[1].url).toBe("/v1alpha1/events?from=01SNAPSHOT");
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports the stream honestly: reconnecting until open, live after", () => {
@@ -308,7 +364,7 @@ describe("useSharedEvents keepalive tolerance and forced drop (task t3)", () => 
       const first = FakeEventSource.instances[0];
       act(() => first.open());
       act(() => first.emit(RUN_CREATED, { run_id: "run-1" }, "01EVENT5"));
-      expect(first.url).not.toContain("from=");
+      expect(first.url).toContain("from=latest");
 
       act(() => first.fail());
       expect(statuses[statuses.length - 1]).toBe("reconnecting");

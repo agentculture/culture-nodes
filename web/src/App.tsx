@@ -12,17 +12,16 @@ import IdentityGate from "./components/IdentityGate";
 import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
+import Design from "./routes/Design";
+import DesignCanvas from "./routes/DesignCanvas";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
 import Home from "./routes/Home";
 import Inbox from "./routes/Inbox";
-import JobsTimeline from "./routes/JobsTimeline";
 import LedgerView from "./routes/LedgerView";
 import Mesh from "./routes/Mesh";
-import NodeGraphs from "./routes/NodeGraphs";
 import PlanView from "./routes/PlanView";
 import RunView from "./routes/RunView";
-import RunsBoard from "./routes/RunsBoard";
-import RunsList from "./routes/RunsList";
+import Runs, { type RunsView } from "./routes/Runs";
 import Statistics from "./routes/Statistics";
 import TicketView from "./routes/TicketView";
 
@@ -32,17 +31,27 @@ import TicketView from "./routes/TicketView";
  * `/runs`. Every entry is the same word the header nav uses for that view —
  * a tab strip and a browser tab that name the same page differently is the
  * defect this fixes, not two vocabularies to maintain.
+ *
+ * A moved URL is titled as the view it *lands on*, not as the view it used
+ * to be (task t9): `/board` reads "Runs" because a redirect is what happens
+ * there, and dropping the entry instead would flash "Not found" in the tab
+ * on the way through.
  */
 const ROUTE_TITLES: ReadonlyArray<readonly [string, string]> = [
   ["/runs", "Runs"],
-  ["/board", "Board"],
-  ["/jobs", "Jobs"],
+  ["/board", "Runs"],
+  ["/jobs", "Runs"],
   ["/inbox", "Inbox"],
   ["/decisions", "Decisions"],
   ["/mesh", "Mesh"],
   ["/stats", "Statistics"],
-  ["/graphs", "Node Graphs"],
-  ["/plan", "Plan"],
+  ["/design", "Design"],
+  ["/design/canvas", "Design canvas"],
+  ["/design/new", "New workflow"],
+  ["/design/generate", "Generate workflow"],
+  ["/graphs", "Design"],
+  ["/plan", "Ledger-and-plan"],
+  ["/workflows", "Design"],
   ["/workflows/new", "New workflow"],
   ["/workflows/generate", "Generate workflow"],
   ["/tickets", "Ticket"],
@@ -89,6 +98,24 @@ function RouteWatcher() {
 }
 
 /**
+ * `/board` and `/jobs` after task t9: the same runs dataset, now a
+ * projection of one `/runs` page.
+ *
+ * A plain `<Navigate to="/runs?view=board">` would answer the path and drop
+ * the query, which is exactly the case that matters — the time-range filter
+ * writes `since`/`until` into the URL (issue #23), so those are the links
+ * people bookmarked and pasted. Carrying the existing params through and
+ * only setting `view` keeps a bookmarked range pointing at the same window
+ * it did before the URL moved.
+ */
+function RedirectToRunsProjection({ view }: { view: RunsView }) {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  params.set("view", view);
+  return <Navigate to={{ pathname: "/runs", search: `?${params}` }} replace />;
+}
+
+/**
  * What `/` is (task t17, spec c25).
  *
  * It used to be a redirect to `/runs` — a table of engine rows, which is
@@ -128,25 +155,48 @@ export function App() {
         <IdentityGate>
         <Routes>
           <Route path="/" element={<Landing />} />
-          <Route path="/runs" element={<RunsList />} />
-          <Route path="/board" element={<RunsBoard />} />
-          <Route path="/jobs" element={<JobsTimeline />} />
+          {/* One page, three projections (task t9). The two URLs that used
+              to be separate destinations still answer, carrying whatever
+              range the reader had bookmarked with them. */}
+          <Route path="/runs" element={<Runs />} />
+          <Route
+            path="/board"
+            element={<RedirectToRunsProjection view="board" />}
+          />
+          <Route
+            path="/jobs"
+            element={<RedirectToRunsProjection view="jobs" />}
+          />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/decisions" element={<Decisions />} />
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
-          <Route path="/graphs" element={<NodeGraphs />} />
+          <Route path="/design" element={<Design />} />
+          <Route path="/design/canvas" element={<DesignCanvas />} />
+          {/* The retired view's URL (task t8). /graphs named a view that
+              drew cards, not graphs; /workflows named the tab that became
+              its sub-tab. Both land on Design, so old links and bookmarks
+              reach the view that renders what they were looking for. */}
+          <Route path="/graphs" element={<Navigate to="/design" replace />} />
           <Route path="/plan" element={<PlanView />} />
           <Route path="/plan/:slug" element={<PlanView />} />
-          {/* The old Workflows tab's URL — old links/bookmarks survive by
-              landing on the sub-tab that renders the same content the
-              route used to (task t28, issue #56). */}
+          {/* Authoring lives under the view that composes workflows (task
+              t9, PRD §8.6 Design). The /workflows/* URLs the authoring
+              slice shipped with are kept as redirects, not retired. */}
+          <Route path="/design/new" element={<AuthorWorkflow />} />
+          <Route path="/design/generate" element={<GenerateWorkflow />} />
           <Route
             path="/workflows"
-            element={<Navigate to="/graphs?tab=graphs" replace />}
+            element={<Navigate to="/design" replace />}
           />
-          <Route path="/workflows/new" element={<AuthorWorkflow />} />
-          <Route path="/workflows/generate" element={<GenerateWorkflow />} />
+          <Route
+            path="/workflows/new"
+            element={<Navigate to="/design/new" replace />}
+          />
+          <Route
+            path="/workflows/generate"
+            element={<Navigate to="/design/generate" replace />}
+          />
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route path="/tickets/:id" element={<TicketView />} />

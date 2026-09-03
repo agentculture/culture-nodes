@@ -892,6 +892,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ActorList'
+
     post:
       operationId: registerActor
       tags: [actors]
@@ -941,6 +942,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /v1alpha1/mesh:
+    get:
+      operationId: getMesh
+      tags: [actors]
+      summary: Read the control plane's cached mesh topology.
+      description: >-
+        Returns deduplicated actor identities, machines keyed only by the
+        hostname each actor self-reported in
+        `capabilities.preflight.host.hostname`, cached bridge deployment
+        probes, and worker presence. This request never contacts a bridge;
+        unobserved, unsupported, and failed probes (with observation times)
+        are returned from the independently timed collector cache; only
+        timeout, 5xx, and connection failures carry a failure count.
+      responses:
+        '200':
+          description: The current committed topology and cached observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mesh'
 
   /v1alpha1/actors/{id}:
     get:
@@ -2362,7 +2384,12 @@ paths:
         sequence spanning multiple runs): send `Last-Event-ID` (a
         previously received `id:` field) to resume after a disconnect, or
         the `from` query parameter for a client that cannot set headers
-        before its first connection. Each frame is
+        before its first connection. Pass `from=latest` for tail-only mode:
+        the first frame is
+        `id: <current-max-id>\nevent: stream.snapshot\ndata: {"snapshot_id":"<current-max-id>"}\n\n`,
+        followed only by events committed strictly after that snapshot id.
+        Without `from=latest`, the cursor-less default remains the full
+        available history. Each committed-event frame is
         `id: <ulid>\nevent: <type>\ndata: <envelope JSON>\n\n`. Ordering
         promise: events are delivered in the order this control-plane
         process committed them (ULID generation order within one process,
@@ -2384,7 +2411,11 @@ paths:
             type: string
         - name: from
           in: query
-          description: Resume after this event id (a ULID), when a Last-Event-ID header cannot be set.
+          description: >-
+            Resume after this event id (a ULID), when a Last-Event-ID header
+            cannot be set. Use `latest` to receive a `stream.snapshot` marker
+            carrying the namespace's current maximum event id, then only
+            events committed strictly after that id.
           schema:
             type: string
       responses:
@@ -5142,6 +5173,61 @@ components:
           type: string
         run_output:
           description: Set only when the routed edge ended the run.
+
+    Mesh:
+      type: object
+      required: [actors, machines, version, workers]
+      properties:
+        actors:
+          type: array
+          items: {$ref: '#/components/schemas/MeshActor'}
+        machines:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/MeshMachine'}
+          description: Machines keyed by their actors' self-reported hostname.
+        version: {type: string}
+        workers:
+          type: array
+          items: {$ref: '#/components/schemas/MeshWorker'}
+    MeshActor:
+      type: object
+      required: [id, actor_key, machine, bridge]
+      properties:
+        id:
+          type: string
+          description: >-
+            The `actors` row id of this actor's current (highest) revision --
+            the identity `attempts.actor_id` records, and therefore the value
+            `GET /v1alpha1/node-runs` reports as a node run's `actor_id`.
+            Join run attribution on this, not on `actor_key`.
+        actor_key: {type: string}
+        machine: {type: string, nullable: true}
+        bridge: {$ref: '#/components/schemas/MeshBridgeObservation'}
+    MeshMachine:
+      type: object
+      required: [actors]
+      properties:
+        actors: {type: array, items: {type: string}}
+    MeshBridgeObservation:
+      type: object
+      properties:
+        hostname: {type: string, description: Hostname reported by capabilities.preflight.host.hostname.}
+        deployment: {type: object, additionalProperties: true}
+        observed_at: {type: string, format: date-time}
+        class: {type: string, enum: [unobserved, unsupported, failed], description: Classification when the bridge did not yield an attributable capability surface.}
+        reason: {type: string, description: Why an answering bridge has no supported capability surface; present for unsupported observations.}
+        error: {type: string}
+        failure_count: {type: integer, format: uint64, minimum: 0, description: "Per-target count of timeout, 5xx, and connection failures; present only for failed observations."}
+    MeshWorker:
+      type: object
+      required: [worker_id, hostname, revision, actor_keys, last_seen]
+      properties:
+        worker_id: {type: string}
+        hostname: {type: string}
+        revision: {type: string}
+        actor_keys: {type: array, items: {type: string}}
+        last_seen: {type: string, format: date-time}
+        reason: {type: string, description: Present when the hostname looks like a container id rather than a host identity.}
 
     Actor:
       type: object

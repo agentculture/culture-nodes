@@ -377,3 +377,12 @@ the cycle's issue, when it is applied:
 
 Adding a person later is a further hand-turn on the Access policy (one of
 c46's three places) and is counted the same way.
+
+## Worker host identity
+
+Set `NODES_HOSTNAME` on every worker and scheduler container to the physical
+host name (the shipped production Compose files use `thor` and `orin`). Workers
+prefer this value over `os.Hostname()`, because the latter is normally a
+container ID inside Compose. The mesh response keeps a likely 12-hex-character
+container ID visible but adds a reason directing the operator to configure
+`NODES_HOSTNAME`.

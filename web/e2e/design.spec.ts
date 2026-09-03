@@ -342,16 +342,25 @@ test("the skip link is still the first tab stop on the new route", async ({
   await expect(skipLink).toHaveAttribute("href", "#main");
 });
 
-test("the header's graphs link reaches Design from the run list, and back", async ({
+test("the header's Design link reaches Design from the run list, and back", async ({
   page,
 }) => {
   await page.goto("/runs");
-  await page.getByRole("link", { name: "Node Graphs", exact: true }).click();
-  // The header still points at /graphs (task t9 renames the nav); the
-  // redirect is what makes the link land on the view that draws graphs.
+  // Task t9 renamed the nav entry and pointed it straight at /design; the
+  // old "Node Graphs" link is gone and its /graphs URL redirects here
+  // instead (the redirect is asserted below).
+  await page.getByRole("link", { name: "Design", exact: true }).click();
   await expect(page).toHaveURL(/\/design$/);
   await page.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page).toHaveURL(/\/runs$/);
+});
+
+test("the old /graphs URL still lands on the view that draws graphs", async ({
+  page,
+}) => {
+  await page.goto("/graphs");
+  await expect(page).toHaveURL(/\/design$/);
+  await expect(page.locator("#design-toggle")).toBeVisible();
 });
 
 test("the page produces no uncaught errors while rendering any sub-view", async ({

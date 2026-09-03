@@ -97,7 +97,17 @@ export function Header() {
             engine. Nothing was retired — Inbox and Decisions still list every
             pending item across every ticket, which no single ticket page can
             — but they stopped competing for first place with the one link a
-            person arriving from a Jira comment actually wants. */}
+            person arriving from a Jira comment actually wants.
+
+            Eight links, and the count is the decision (task t9, PRD §8.6).
+            Twelve destinations included three projections of one dataset
+            (Runs, Board, Jobs) and omitted the page that authors a workflow.
+            Board and Jobs are now the /runs page's own projection toggle,
+            Node Graphs and Generate are Design's, and every URL either of
+            them had still answers — App.tsx redirects each one, so this is a
+            consolidation, not a retirement (decision c33). Adding a ninth
+            link means changing the assertion in Header.test.tsx, which is
+            the point of asserting it. */}
         <span className="app-header__group app-header__group--work">
           <NavLink to="/" end className={navLinkClass} onClick={closeNav}>
             Your work
@@ -110,29 +120,23 @@ export function Header() {
           </NavLink>
         </span>
         <span className="app-header__group app-header__group--engine">
+          <NavLink to="/design" className={navLinkClass} onClick={closeNav}>
+            Design
+          </NavLink>
           <NavLink to="/runs" className={navLinkClass} onClick={closeNav}>
             Runs
-          </NavLink>
-          <NavLink to="/board" className={navLinkClass} onClick={closeNav}>
-            Board
-          </NavLink>
-          <NavLink to="/jobs" className={navLinkClass} onClick={closeNav}>
-            Jobs
           </NavLink>
           <NavLink to="/mesh" className={navLinkClass} onClick={closeNav}>
             Mesh
           </NavLink>
+          {/* Named for both halves of what it holds: the plan a run came
+              from, and — per spec entry s21 — the ledger, which has no page
+              of its own because it is read per run at /runs/:id/ledger. */}
+          <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
+            Ledger-and-plan
+          </NavLink>
           <NavLink to="/stats" className={navLinkClass} onClick={closeNav}>
             Statistics
-          </NavLink>
-          <NavLink to="/graphs" className={navLinkClass} onClick={closeNav}>
-            Node Graphs
-          </NavLink>
-          <NavLink to="/plan" className={navLinkClass} onClick={closeNav}>
-            Plan
-          </NavLink>
-          <NavLink to="/workflows/generate" className={navLinkClass} onClick={closeNav}>
-            Generate
           </NavLink>
         </span>
         <form className="app-header__ticket" onSubmit={openTicket}>

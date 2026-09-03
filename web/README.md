@@ -10,15 +10,20 @@ timeline, its ledger, and enough node detail to check what actually happened.
 
 ## What it renders
 
-- **`/runs`** — the run list.
-- **`/board`** — the runs board: every run as a card, grouped into columns by
-  its own `Run.state` (`created`, `running`, `waiting`, `completed`,
-  `failed`, `cancelled` — openapi.yaml's `RunState` enum, not a paraphrase of
-  it). `GET /v1alpha1/runs?sort=updated_at` (task t11), newest-updated first
-  within each column. A run paused at an approval node reports
-  `state: "waiting"` like any other external wait and lands in that same
-  column — the list endpoint carries no node-run detail to tell the two
-  apart, so the board does not invent one.
+- **`/runs`** — one page, three projections of the same dataset, chosen with
+  `?view=list|board|jobs` (task t9; `/board` and `/jobs` redirect here,
+  carrying any bookmarked `since`/`until` with them):
+  - **`?view=list`** (the default) — the run list.
+  - **`?view=board`** — the runs board: every run as a card, grouped into
+    columns by its own `Run.state` (`created`, `running`, `waiting`,
+    `completed`, `failed`, `cancelled` — openapi.yaml's `RunState` enum, not
+    a paraphrase of it). `GET /v1alpha1/runs?sort=updated_at` (task t11),
+    newest-updated first within each column. A run paused at an approval node
+    reports `state: "waiting"` like any other external wait and lands in that
+    same column — the list endpoint carries no node-run detail to tell the
+    two apart, so the board does not invent one.
+  - **`?view=jobs`** — the cross-run jobs timeline: every node run, newest
+    first, from `GET /v1alpha1/node-runs`.
 - **`/runs/:id`** — the Run view. A React Flow canvas laid out by ELK
   (`elkjs`, layered) from the workflow IR the run is *pinned* to (fetched by
   digest, never "latest"), overlaid with live execution state from

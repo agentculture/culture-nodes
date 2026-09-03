@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import Header from "./Header";
@@ -93,7 +93,7 @@ describe("Header collapsible nav", () => {
     const user = userEvent.setup();
     renderHeader();
     await user.click(screen.getByRole("button", { name: "Menu" }));
-    await user.click(screen.getByRole("link", { name: "Board" }));
+    await user.click(screen.getByRole("link", { name: "Runs" }));
     expect(
       screen.getByRole("navigation", { name: "Primary" }),
     ).not.toHaveClass("is-open");
@@ -109,33 +109,92 @@ describe("Header mesh link (task t18)", () => {
   });
 });
 
-describe("Header node graphs link (task t28)", () => {
-  it("routes to /graphs and marks it active there", () => {
-    renderHeader(["/graphs"]);
-    const graphs = screen.getByRole("link", { name: "Node Graphs" });
-    expect(graphs).toHaveAttribute("href", "/graphs");
-    expect(graphs).toHaveClass("is-active");
+/**
+ * The PRD §8.6 spine (task t9). The nav is eight destinations in two groups —
+ * the work a person came for, then the engine — and the count is asserted
+ * rather than counted by eye, so adding a ninth tab is a decision someone has
+ * to make in this file. The three projections of the runs dataset (list,
+ * board, jobs) became one Runs page with a projection toggle, and the
+ * authoring doors moved under Design; nothing was retired, every old URL
+ * redirects (App.test.tsx walks them).
+ */
+const PRIMARY_NAV: ReadonlyArray<readonly [string, string]> = [
+  ["Your work", "/"],
+  ["Inbox", "/inbox"],
+  ["Decisions", "/decisions"],
+  ["Design", "/design"],
+  ["Runs", "/runs"],
+  ["Mesh", "/mesh"],
+  ["Ledger-and-plan", "/plan"],
+  ["Statistics", "/stats"],
+];
+
+function primaryLinks() {
+  return within(
+    screen.getByRole("navigation", { name: "Primary" }),
+  ).getAllByRole("link");
+}
+
+describe("Header primary nav on the PRD §8.6 spine (task t9)", () => {
+  it("renders exactly eight primary links, named in spine order", () => {
+    renderHeader();
+    const links = primaryLinks();
+    expect(links).toHaveLength(8);
+    expect(links.map((link) => link.textContent)).toEqual(
+      PRIMARY_NAV.map(([name]) => name),
+    );
   });
 
-  it("stays marked active on a Node Graphs sub-tab URL", () => {
-    renderHeader(["/graphs?tab=active"]);
-    expect(screen.getByRole("link", { name: "Node Graphs" })).toHaveClass(
+  it("points each link at the surface that renders it", () => {
+    renderHeader();
+    for (const [name, href] of PRIMARY_NAV) {
+      expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
+    }
+  });
+
+  it("offers no separate Board, Jobs, Node Graphs or Generate destination — they are projections and sub-routes now", () => {
+    renderHeader();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    for (const gone of ["Board", "Jobs", "Node Graphs", "Generate", "Plan"]) {
+      expect(within(nav).queryByRole("link", { name: gone })).toBeNull();
+    }
+  });
+});
+
+describe("Header design link (task t9, replacing t28's Node Graphs)", () => {
+  it("routes to /design and marks it active there", () => {
+    renderHeader(["/design"]);
+    const design = screen.getByRole("link", { name: "Design" });
+    expect(design).toHaveAttribute("href", "/design");
+    expect(design).toHaveClass("is-active");
+  });
+
+  it("stays marked active on a Design sub-tab URL", () => {
+    renderHeader(["/design?tab=active"]);
+    expect(screen.getByRole("link", { name: "Design" })).toHaveClass(
+      "is-active",
+    );
+  });
+
+  it("stays marked active on the authoring sub-routes it now hosts", () => {
+    renderHeader(["/design/new"]);
+    expect(screen.getByRole("link", { name: "Design" })).toHaveClass(
       "is-active",
     );
   });
 });
 
-describe("Header plan link (task t23)", () => {
+describe("Header ledger-and-plan link (task t23, renamed by t9)", () => {
   it("routes to /plan and marks it active there", () => {
     renderHeader(["/plan"]);
-    const plan = screen.getByRole("link", { name: "Plan" });
+    const plan = screen.getByRole("link", { name: "Ledger-and-plan" });
     expect(plan).toHaveAttribute("href", "/plan");
     expect(plan).toHaveClass("is-active");
   });
 
   it("stays marked active on a specific plan slug URL", () => {
     renderHeader(["/plan/economy-discord-graphs"]);
-    expect(screen.getByRole("link", { name: "Plan" })).toHaveClass(
+    expect(screen.getByRole("link", { name: "Ledger-and-plan" })).toHaveClass(
       "is-active",
     );
   });
@@ -143,14 +202,17 @@ describe("Header plan link (task t23)", () => {
 
 describe("Header active view marking", () => {
   it("marks the current view's link with is-active and no other", () => {
-    renderHeader(["/board"]);
-    expect(screen.getByRole("link", { name: "Board" })).toHaveClass(
-      "is-active",
-    );
-    expect(screen.getByRole("link", { name: "Runs" })).not.toHaveClass(
-      "is-active",
-    );
-    expect(screen.getByRole("link", { name: "Jobs" })).not.toHaveClass(
+    renderHeader(["/mesh"]);
+    expect(screen.getByRole("link", { name: "Mesh" })).toHaveClass("is-active");
+    for (const [name] of PRIMARY_NAV.filter(([name]) => name !== "Mesh")) {
+      expect(screen.getByRole("link", { name })).not.toHaveClass("is-active");
+    }
+  });
+
+  it("keeps Runs marked active on a projection of the runs page, since it is one page", () => {
+    renderHeader(["/runs?view=board"]);
+    expect(screen.getByRole("link", { name: "Runs" })).toHaveClass("is-active");
+    expect(screen.getByRole("link", { name: "Design" })).not.toHaveClass(
       "is-active",
     );
   });

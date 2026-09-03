@@ -81,6 +81,7 @@ func buildMesh(actorRows []meshActorRow, workers []meshWorker, version string, o
 	for _, row := range actorRows {
 		observation, observed := observations[row.key]
 		if !observed {
+			observation.Class = "unobserved"
 			observation.Error = "not observed by the bridge collector"
 		}
 		actor := meshActor{ActorKey: row.key, Bridge: observation}

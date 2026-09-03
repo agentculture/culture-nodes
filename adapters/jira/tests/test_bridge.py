@@ -1,8 +1,10 @@
 import json
+import socket
 from pathlib import Path
 
 from jira_bridge import client, mapping
 from jira_bridge.config import Config, ConfigError
+from jira_bridge import capabilities, preflight
 
 
 class Response:
@@ -66,3 +68,8 @@ def test_credentials_cannot_be_loaded_from_config(tmp_path):
         assert "unknown bridge config key" in str(exc)
     else:
         raise AssertionError("credential-bearing config was accepted")
+
+
+def test_capabilities_report_this_hosts_preflight_hostname():
+    block = preflight.capability_block(capabilities.host_facts(Config()))
+    assert block["preflight"]["host"]["hostname"] == socket.gethostname()

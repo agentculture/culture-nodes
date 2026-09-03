@@ -8,11 +8,10 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import client, create_issue, mapping, read_issue, transition_issue
+from . import capabilities, client, create_issue, mapping, preflight, read_issue, transition_issue
 from .config import Config
 
 INVOCATIONS_PATH = "/v1/invocations"
-CAPABILITIES_PATH = "/v1/capabilities"
 MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -50,7 +49,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/healthz":
             self._json(200, {"status": "ok"})
-        elif self.path == CAPABILITIES_PATH:
+        elif self.path == preflight.CAPABILITIES_PATH:
             # The advertisement names the verb surface AND the custody
             # configuration behind it (all non-secret): a reader learns not
             # just that create_issue exists but exactly which project keys
@@ -65,6 +64,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(
                 200,
                 {
+                    **preflight.capability_block(capabilities.host_facts(self.cfg)),
                     "verbs": [
                         mapping.VERB,
                         transition_issue.VERB,

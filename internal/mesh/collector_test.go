@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -83,6 +84,61 @@ func TestCollectorTimeoutConcurrencyAndFailureCount(t *testing.T) {
 	}
 	if logs.Len() == 0 {
 		t.Fatal("probe failures were not logged")
+	}
+}
+
+func TestCollectorClassifiesUnobservedUnsupportedAndFailed(t *testing.T) {
+	var unobservedCalls atomic.Int32
+	unobservedBridge := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		unobservedCalls.Add(1)
+	}))
+	defer unobservedBridge.Close()
+	unsupportedBridge := httptest.NewServer(http.NotFoundHandler())
+	defer unsupportedBridge.Close()
+	failedBridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	defer failedBridge.Close()
+
+	var logs bytes.Buffer
+	c := New(Config{ProbeTimeout: time.Second, MaxConcurrency: 3, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	c.SetTargets([]Target{
+		{Key: "unobserved", URL: unobservedBridge.URL, Error: "unobserved: no bearer configured"},
+		{Key: "unsupported", URL: unsupportedBridge.URL},
+		{Key: "failed", URL: failedBridge.URL},
+	})
+	c.Collect(context.Background())
+	c.Collect(context.Background())
+
+	got := c.Snapshot()
+	if unobservedCalls.Load() != 0 || got["unobserved"].Class != "unobserved" || got["unobserved"].ObservedAt.IsZero() {
+		t.Fatalf("unobserved = %#v, calls = %d", got["unobserved"], unobservedCalls.Load())
+	}
+	if got["unsupported"].Class != "unsupported" || got["unsupported"].Reason != "GET capabilities: 404 Not Found" || got["unsupported"].Error != got["unsupported"].Reason {
+		t.Fatalf("unsupported = %#v", got["unsupported"])
+	}
+	if got["failed"].Class != "failed" || got["failed"].FailureCount != 2 || c.FailureCount("failed") != 2 {
+		t.Fatalf("failed = %#v, count = %d", got["failed"], c.FailureCount("failed"))
+	}
+	if c.FailureCount("unobserved") != 0 || c.FailureCount("unsupported") != 0 {
+		t.Fatalf("non-failure counts = %d/%d", c.FailureCount("unobserved"), c.FailureCount("unsupported"))
+	}
+	if strings.Count(logs.String(), "class=unsupported") != 1 || strings.Count(logs.String(), "class=failed") != 2 {
+		t.Fatalf("logs did not report unsupported once and failed per tick:\n%s", logs.String())
+	}
+}
+
+func TestCollectorClassifiesCapabilitiesWithoutHostAsUnsupported(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"verbs":["post_comment"]}`))
+	}))
+	defer bridge.Close()
+	c := New(Config{ProbeTimeout: time.Second, MaxConcurrency: 1})
+	c.SetTargets([]Target{{Key: "jira", URL: bridge.URL}})
+	c.Collect(context.Background())
+	got := c.Snapshot()["jira"]
+	if got.Class != "unsupported" || got.Reason != "capabilities has no preflight.host.hostname" || c.FailureCount("jira") != 0 {
+		t.Fatalf("observation = %#v, failure count = %d", got, c.FailureCount("jira"))
 	}
 }
 

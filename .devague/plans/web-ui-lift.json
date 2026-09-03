@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-03T17:10:55Z",
-  "updated": "2026-09-03T17:20:42Z",
+  "updated": "2026-09-03T17:21:02Z",
   "targets": [
     {
       "id": "c1",
@@ -440,7 +440,7 @@
         "c30",
         "h20"
       ],
-      "instruction": "internal/api/events.go: parse from=latest in the cross-run resume reader; on that mode SELECT max(id) FROM events WHERE namespace_id=$1, write one SSE frame (id: <max>, event: stream.snapshot, data: {\"snapshot_id\": ...}), then poll from that id. Add the frame to api/openapi/openapi.yaml streamEvents. Tests in internal/api/events_test.go only. No web files."
+      "instruction": "internal/api/events.go: parse from=latest in the cross-run resume reader; on that mode SELECT max(id) FROM events WHERE namespace_id=$1, write one SSE frame (id: that max id, event: stream.snapshot, data: {\"snapshot_id\": ...}), then poll from that id. Add the frame to api/openapi/openapi.yaml streamEvents. Tests in internal/api/events_test.go only. No web files."
     },
     {
       "id": "t2",

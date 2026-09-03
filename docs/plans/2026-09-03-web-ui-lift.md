@@ -8,7 +8,7 @@ slug: `web-ui-lift` · status: `exported` · from frame: `web-ui-lift`
 
 ### t1 — Server: tail-only stream mode with a snapshot marker
 
-- instruction: internal/api/events.go: parse from=latest in the cross-run resume reader; on that mode SELECT max(id) FROM events WHERE `namespace_id`=$1, write one SSE frame (id: <max>, event: stream.snapshot, data: {"`snapshot_id`": ...}), then poll from that id. Add the frame to api/openapi/openapi.yaml streamEvents. Tests in internal/api/`events_test.go` only. No web files.
+- instruction: internal/api/events.go: parse from=latest in the cross-run resume reader; on that mode SELECT max(id) FROM events WHERE `namespace_id`=$1, write one SSE frame (id: that max id, event: stream.snapshot, data: {"`snapshot_id`": ...}), then poll from that id. Add the frame to api/openapi/openapi.yaml streamEvents. Tests in internal/api/`events_test.go` only. No web files.
 - covers: c2, h1, h25, c30, h20
 - acceptance:
   - GET /v1alpha1/events?from=latest sends event: stream.snapshot as its first frame carrying the namespace's current max events-table id, then streams strictly after that id; the cursor-less default is unchanged (`events_test.go`)

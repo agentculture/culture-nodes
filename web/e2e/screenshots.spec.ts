@@ -8,6 +8,8 @@ import {
   mockHomeApi,
   mockInboxApi,
   mockJobsTimelineApi,
+  mockDesignApi,
+  mockMeshApi,
   mockPlanApi,
   mockRunsBoardApi,
   mockTicketApi,
@@ -19,6 +21,9 @@ import {
  * an output directory:
  *
  *   NODES_SHOTS=/tmp/shots npx playwright test e2e/screenshots.spec.ts
+ *
+ * The directory receives the fixture-backed baseline set, including
+ * mesh.png, mesh-dark.png and active-graphs.png.
  *
  * It runs off the same request-interception fixtures the real e2e specs use,
  * so it needs no Go server, no Postgres and no network — the shots show the
@@ -101,6 +106,24 @@ test.describe("t27 site polish shots", () => {
     await page.goto(`/runs/${RUN_ID}`);
     await page.locator("#run-state-chip").waitFor();
     await shoot(page, "run-view");
+  });
+
+  test("mesh, light and dark", async ({ page }) => {
+    await mockMeshApi(page);
+    await stubVersion(page);
+    await page.goto("/mesh");
+    await page.locator("#mesh-canvas .react-flow__node").first().waitFor();
+    await shoot(page, "mesh");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await shoot(page, "mesh-dark");
+  });
+
+  test("active graphs", async ({ page }) => {
+    await mockDesignApi(page);
+    await stubVersion(page);
+    await page.goto("/design?tab=active");
+    await page.locator("[id^=active-graph-][id$=-canvas]").first().waitFor();
+    await shoot(page, "active-graphs");
   });
 
   test("new workflow, with the sample loaded", async ({ page }) => {

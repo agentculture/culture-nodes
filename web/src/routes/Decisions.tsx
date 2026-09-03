@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { Link } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import {
@@ -11,7 +17,11 @@ import {
   listHumanTasks,
   listPendingDecisions,
 } from "../api/client";
-import type { HumanTask, PendingDecisionRun, ReviewCommitResult } from "../api/types";
+import type {
+  HumanTask,
+  PendingDecisionRun,
+  ReviewCommitResult,
+} from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
 import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
@@ -22,6 +32,7 @@ import RunDecisionCard, {
   type RecordVerdict,
   type RunVerdicts,
 } from "../components/RunDecisionCard";
+import SegmentedToggle from "../components/SegmentedToggle";
 import { findTicketKey } from "../domain/ticket-key";
 import type { SharedEventType } from "../hooks/useSharedEvents";
 import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
@@ -75,14 +86,22 @@ export function Decisions() {
   const [view, setView] = useState<"claims" | "pending">("claims");
   return (
     <>
-      <nav aria-label="Decision views" className="decisions-tabs">
-        <button type="button" onClick={() => setView("pending")} aria-pressed={view === "pending"}>
+      <SegmentedToggle label="Decision views">
+        <button
+          type="button"
+          onClick={() => setView("pending")}
+          aria-pressed={view === "pending"}
+        >
           Pending
         </button>
-        <button type="button" onClick={() => setView("claims")} aria-pressed={view === "claims"}>
+        <button
+          type="button"
+          onClick={() => setView("claims")}
+          aria-pressed={view === "claims"}
+        >
           Proposed claims
         </button>
-      </nav>
+      </SegmentedToggle>
       {view === "pending" ? <PendingDecisionsView /> : <ProposedClaimsView />}
     </>
   );
@@ -106,7 +125,11 @@ function PendingDecisionsView() {
       const items: HumanTask[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < 40; page++) {
-        const result = await listHumanTasks(controller.signal, { status: "pending", limit: 500, cursor });
+        const result = await listHumanTasks(controller.signal, {
+          status: "pending",
+          limit: 500,
+          cursor,
+        });
         items.push(...result.items);
         if (!result.next_cursor) break;
         cursor = result.next_cursor;
@@ -117,49 +140,68 @@ function PendingDecisionsView() {
       const items: PendingDecisionRun[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < 40; page++) {
-        const result = await listPendingDecisions(controller.signal, { limit: 500, cursor });
+        const result = await listPendingDecisions(controller.signal, {
+          limit: 500,
+          cursor,
+        });
         items.push(...result.items);
         if (!result.next_cursor) break;
         cursor = result.next_cursor;
       }
       return items;
     };
-    Promise.all([allTasks(), allClaims()]).then(([taskItems, claimItems]) => {
-      if (controller.signal.aborted) return;
-      setTasks(taskItems);
-      setClaims(claimItems);
-      for (const group of claimItems) {
-        setVersions((current) => ({ ...current, [group.run_id]: group.ledger_version }));
-      }
-      // A human task's guard version has to be READ; a claim group already
-      // carries the version it was served at, so only the task runs are
-      // fetched.
-      for (const runID of new Set(taskItems.map((task) => task.run_id))) {
-        getLedger(runID, controller.signal).then((ledger) => {
-          if (!controller.signal.aborted)
-            setVersions((current) => ({ ...current, [runID]: ledger.ledger_version }));
-        }).catch(() => undefined);
-      }
-      // The ticket key, for BOTH halves: a task's card names the ticket it
-      // belongs to, and since task t12 a claim group links to the ticket page
-      // that decides it — so a claim-only run needs the lookup too.
-      const runIDs = new Set([
-        ...taskItems.map((task) => task.run_id),
-        ...claimItems.map((group) => group.run_id),
-      ]);
-      for (const runID of runIDs) {
-        getRun(runID, controller.signal).then((run) => {
-          const ticket = findTicketKey(run.run.input);
-          if (!controller.signal.aborted && ticket)
-            setTickets((current) => ({ ...current, [runID]: ticket }));
-        }).catch(() => undefined);
-      }
-    }).catch((cause: unknown) => {
-      if (!controller.signal.aborted) {
-        setTasks([]);
-        setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
-      }
-    });
+    Promise.all([allTasks(), allClaims()])
+      .then(([taskItems, claimItems]) => {
+        if (controller.signal.aborted) return;
+        setTasks(taskItems);
+        setClaims(claimItems);
+        for (const group of claimItems) {
+          setVersions((current) => ({
+            ...current,
+            [group.run_id]: group.ledger_version,
+          }));
+        }
+        // A human task's guard version has to be READ; a claim group already
+        // carries the version it was served at, so only the task runs are
+        // fetched.
+        for (const runID of new Set(taskItems.map((task) => task.run_id))) {
+          getLedger(runID, controller.signal)
+            .then((ledger) => {
+              if (!controller.signal.aborted)
+                setVersions((current) => ({
+                  ...current,
+                  [runID]: ledger.ledger_version,
+                }));
+            })
+            .catch(() => undefined);
+        }
+        // The ticket key, for BOTH halves: a task's card names the ticket it
+        // belongs to, and since task t12 a claim group links to the ticket page
+        // that decides it — so a claim-only run needs the lookup too.
+        const runIDs = new Set([
+          ...taskItems.map((task) => task.run_id),
+          ...claimItems.map((group) => group.run_id),
+        ]);
+        for (const runID of runIDs) {
+          getRun(runID, controller.signal)
+            .then((run) => {
+              const ticket = findTicketKey(run.run.input);
+              if (!controller.signal.aborted && ticket)
+                setTickets((current) => ({ ...current, [runID]: ticket }));
+            })
+            .catch(() => undefined);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setTasks([]);
+          setError(
+            cause instanceof ApiError
+              ? cause
+              : new ApiError(0, String(cause), "check the browser console"),
+          );
+        }
+      });
     return () => controller.abort();
   }, []);
 
@@ -176,7 +218,10 @@ function PendingDecisionsView() {
     ...(tasks ?? []).map((task) => ({ type: "task" as const, task })),
     ...claimItems.map((claim) => ({ type: "claim" as const, ...claim })),
   ];
-  const visible = combined.slice(visiblePage * PAGE_SIZE, (visiblePage + 1) * PAGE_SIZE);
+  const visible = combined.slice(
+    visiblePage * PAGE_SIZE,
+    (visiblePage + 1) * PAGE_SIZE,
+  );
   const grouped = new Map<string, typeof visible>();
   for (const item of visible) {
     const runID = item.type === "task" ? item.task.run_id : item.group.run_id;
@@ -196,9 +241,15 @@ function PendingDecisionsView() {
         response: task.request.decision_schema_ref ? { outcome } : undefined,
         expected_ledger_version: ledgerVersion,
       });
-      setTasks((current) => current?.filter((item) => item.id !== task.id) ?? []);
+      setTasks(
+        (current) => current?.filter((item) => item.id !== task.id) ?? [],
+      );
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause : new ApiError(0, String(cause), "check the browser console"));
+      setError(
+        cause instanceof ApiError
+          ? cause
+          : new ApiError(0, String(cause), "check the browser console"),
+      );
     } finally {
       setSubmitting(null);
     }
@@ -209,12 +260,21 @@ function PendingDecisionsView() {
       <h1>Pending decisions</h1>
       <SignedInAs verb="Deciding" whoami={whoami} />
       {error ? <ErrorNotice error={error} /> : null}
-      {tasks === null ? <p className="muted">Loading pending decisions…</p> : total === 0 ? <p className="muted">Nothing is awaiting a decision.</p> : (
+      {tasks === null ? (
+        <p className="muted">Loading pending decisions…</p>
+      ) : total === 0 ? (
+        <p className="muted">Nothing is awaiting a decision.</p>
+      ) : (
         <>
-          <p className="muted">Page {visiblePage + 1} of {pageCount}</p>
+          <p className="muted">
+            Page {visiblePage + 1} of {pageCount}
+          </p>
           {Array.from(grouped, ([runID, items]) => (
             <section key={runID} data-run-id={runID}>
-              <h2>{tickets[runID] ? <>Ticket {tickets[runID]} · </> : null}Run <Link to={`/runs/${runID}`}>{runID}</Link></h2>
+              <h2>
+                {tickets[runID] ? <>Ticket {tickets[runID]} · </> : null}Run{" "}
+                <Link to={`/runs/${runID}`}>{runID}</Link>
+              </h2>
               {/* Claims are decided on the ticket page (task t12, spec c11).
                   This tab used to render a checkbox beside each one that
                   selected it into a verdict no form on this tab could submit —
@@ -236,29 +296,55 @@ function PendingDecisionsView() {
                 )
               ) : null}
               <ul className="decisions-list">
-                {items.map((item) => item.type === "task" ? (
-                  <li className="inbox-card" key={item.task.id} data-human-task-id={item.task.id} data-testid={`pending-task-${item.task.id}`}>
-                    <code>{item.task.id}</code> · {item.task.kind}
-                    <OutcomeButtons
-                      taskId={item.task.id}
-                      outcomes={item.task.request.allowed_outcomes ?? []}
-                      disabled={actorId === null || versions[item.task.run_id] === undefined}
-                      busy={submitting === item.task.id}
-                      onChoose={(outcome) => void choose(item.task, outcome)}
-                    />
-                  </li>
-                ) : (
-                  <li className="inbox-card" key={item.record.id} data-record-id={item.record.id}>
-                    <code>{item.record.id}</code> · {item.record.record_type}
-                    <RecordPayload data={item.record.data} />
-                  </li>
-                ))}
+                {items.map((item) =>
+                  item.type === "task" ? (
+                    <li
+                      className="inbox-card"
+                      key={item.task.id}
+                      data-human-task-id={item.task.id}
+                      data-testid={`pending-task-${item.task.id}`}
+                    >
+                      <code>{item.task.id}</code> · {item.task.kind}
+                      <OutcomeButtons
+                        taskId={item.task.id}
+                        outcomes={item.task.request.allowed_outcomes ?? []}
+                        disabled={
+                          actorId === null ||
+                          versions[item.task.run_id] === undefined
+                        }
+                        busy={submitting === item.task.id}
+                        onChoose={(outcome) => void choose(item.task, outcome)}
+                      />
+                    </li>
+                  ) : (
+                    <li
+                      className="inbox-card"
+                      key={item.record.id}
+                      data-record-id={item.record.id}
+                    >
+                      <code>{item.record.id}</code> · {item.record.record_type}
+                      <RecordPayload data={item.record.data} />
+                    </li>
+                  ),
+                )}
               </ul>
             </section>
           ))}
           <div>
-            <button type="button" disabled={visiblePage === 0} onClick={() => setPage((value) => value - 1)}>Previous page</button>{" "}
-            <button type="button" disabled={visiblePage + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>Next page</button>
+            <button
+              type="button"
+              disabled={visiblePage === 0}
+              onClick={() => setPage((value) => value - 1)}
+            >
+              Previous page
+            </button>{" "}
+            <button
+              type="button"
+              disabled={visiblePage + 1 >= pageCount}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              Next page
+            </button>
           </div>
         </>
       )}
@@ -279,7 +365,9 @@ function ProposedClaimsView() {
   const [error, setError] = useState<ApiError | null>(null);
   const whoami = useWhoami();
   const [reloadKey, setReloadKey] = useState(0);
-  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const lastReload = useRef(0);
 
   const scheduleReload = useCallback(() => {
@@ -350,15 +438,18 @@ function ProposedClaimsView() {
       {error ? <ErrorNotice error={error} /> : null}
 
       {recorded.length > 0 ? (
-        <ul className="decisions-recorded" id="decisions-recorded" role="status">
+        <ul
+          className="decisions-recorded"
+          id="decisions-recorded"
+          role="status"
+        >
           {recorded.map((entry) => (
             <li key={entry.reviewId}>
               Recorded a <strong>{entry.verdict}</strong> decision on{" "}
               {entry.recordCount} record(s) of run <code>{entry.runId}</code> —
-              review{" "}
-              <code>{entry.reviewId}</code>, ledger now at version{" "}
-              {entry.ledgerVersion}. The records decided are unchanged: a
-              review names them, it never rewrites them.
+              review <code>{entry.reviewId}</code>, ledger now at version{" "}
+              {entry.ledgerVersion}. The records decided are unchanged: a review
+              names them, it never rewrites them.
             </li>
           ))}
         </ul>
@@ -482,7 +573,12 @@ function ProposedRunDecision({
       onDecided({
         reviewId: committed.review_id,
         runId: group.run_id,
-        verdict: rejected.length === 0 ? "confirm" : confirmed.length === 0 ? "reject" : "mixed",
+        verdict:
+          rejected.length === 0
+            ? "confirm"
+            : confirmed.length === 0
+              ? "reject"
+              : "mixed",
         recordCount: committed.records.length,
         ledgerVersion: committed.ledger_version,
       });

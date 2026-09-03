@@ -579,7 +579,7 @@
   gap: 0.6rem;
 }
 
-.view-toggle {
+.segmented-toggle {
   display: inline-flex;
   gap: 0;
   margin: 1.1rem 0;
@@ -589,7 +589,7 @@
   background: var(--surface);
 }
 
-.view-toggle button {
+.segmented-toggle button {
   font: inherit;
   font-size: var(--ac-type-meta);
   padding: 0.35rem 1rem;
@@ -599,9 +599,24 @@
   cursor: pointer;
 }
 
-.view-toggle button[aria-pressed="true"] {
+.segmented-toggle button[aria-pressed="true"] {
   background: var(--accent-strong);
   color: var(--on-accent);
+}
+
+.layout-canvas {
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+
+.layout-canvas[data-layout-ready="true"] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layout-canvas {
+    transition: none;
+  }
 }
 
 .run-view__body {
@@ -1259,7 +1274,7 @@ button.timeline__node {
   margin: 1.1rem 0 1.5rem;
 }
 
-/* Same segmented-button frame as .view-toggle (RunView's graph/timeline
+/* Same segmented-button frame as .segmented-toggle (RunView's graph/timeline
    switch) — a preset picker is the same shape of control, not a new one. */
 .time-range-filter__presets {
   display: inline-flex;

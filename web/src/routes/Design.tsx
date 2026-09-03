@@ -15,6 +15,7 @@ import { setAgentState } from "../agent-state/store";
 import { ApiError, listRuns, listWorkflows } from "../api/client";
 import type { WorkflowVersion } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
+import SegmentedToggle from "../components/SegmentedToggle";
 import CultureNode from "../culture-design/CultureNode";
 import { DASHED } from "../culture-design/edges";
 import { accentFor, type GraphNode, type WorkflowGraph } from "../domain/graph";
@@ -32,9 +33,7 @@ import {
 import { NODE_HEIGHT, NODE_WIDTH, useElkLayout } from "../hooks/useElkLayout";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 import ActiveGraphsPanel from "./ActiveGraphs";
-import {
-  type SharedEventType,
-} from "../hooks/useSharedEvents";
+import { type SharedEventType } from "../hooks/useSharedEvents";
 import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 
 /**
@@ -298,7 +297,8 @@ function GalleryCanvas({
     <>
       <div
         id="design-graph"
-        className="design-gallery__canvas canvas-surface"
+        className="design-gallery__canvas canvas-surface layout-canvas"
+        data-layout-ready={layoutReady}
         data-workflow-key={workflowKey}
         data-workflow-digest={digest}
         data-node-count={graph.nodes.length}
@@ -330,7 +330,11 @@ function GalleryCanvas({
           <Background gap={28} size={1} />
         </ReactFlow>
       </div>
-      <p className="design-gallery__inspect" id="design-graph-inspect" role="status">
+      <p
+        className="design-gallery__inspect"
+        id="design-graph-inspect"
+        role="status"
+      >
         {inspected
           ? `${inspected.id} · ${inspected.kind}${
               inspected.uses ? ` · ${inspected.uses}` : ""
@@ -375,7 +379,9 @@ function GalleryPanel() {
   const [error, setError] = useState<ApiError | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const lastReload = useRef(0);
 
   const scheduleReload = useCallback(() => {
@@ -396,7 +402,10 @@ function GalleryPanel() {
     [],
   );
 
-  const { resolveSnapshot } = useSnapshotReconcile(GALLERY_EVENT_TYPES, scheduleReload);
+  const { resolveSnapshot } = useSnapshotReconcile(
+    GALLERY_EVENT_TYPES,
+    scheduleReload,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -565,11 +574,10 @@ function GalleryPanel() {
 
       {selection && graph ? (
         <div className="design-gallery__main">
-          <div
-            className="design-gallery__versions view-toggle"
+          <SegmentedToggle
+            className="design-gallery__versions"
             id="design-version-list"
-            role="group"
-            aria-label={`Versions of ${selection.group.workflowKey}`}
+            label={`Versions of ${selection.group.workflowKey}`}
           >
             {selection.group.versions.map((version) => (
               <button
@@ -585,7 +593,7 @@ function GalleryPanel() {
                 v{version.version}
               </button>
             ))}
-          </div>
+          </SegmentedToggle>
 
           <GalleryCanvas
             graph={graph}
@@ -595,9 +603,8 @@ function GalleryPanel() {
 
           <div className="design-gallery__meta" id="design-meta">
             <span>
-              {graph.nodes.length}{" "}
-              {graph.nodes.length === 1 ? "node" : "nodes"} ·{" "}
-              {graph.edges.length}{" "}
+              {graph.nodes.length} {graph.nodes.length === 1 ? "node" : "nodes"}{" "}
+              · {graph.edges.length}{" "}
               {graph.edges.length === 1 ? "edge" : "edges"}
             </span>
             <span>owner {selection.group.owner ?? "unowned"}</span>
@@ -784,8 +791,8 @@ export function Design() {
           <h1>Design</h1>
           <p className="muted">
             Every published workflow, readable as a graph — no run required.
-            Select a version to see it drawn with the same node the Mesh and
-            the run pages use, and to read the source it was published from.
+            Select a version to see it drawn with the same node the Mesh and the
+            run pages use, and to read the source it was published from.
           </p>
         </div>
         <Link
@@ -797,12 +804,7 @@ export function Design() {
         </Link>
       </div>
 
-      <div
-        id="design-toggle"
-        className="view-toggle"
-        role="group"
-        aria-label="Design sub-view"
-      >
+      <SegmentedToggle id="design-toggle" label="Design sub-view">
         <button
           type="button"
           id="design-toggle-gallery"
@@ -827,7 +829,7 @@ export function Design() {
         >
           Active graphs
         </button>
-      </div>
+      </SegmentedToggle>
 
       {tab === "gallery" ? <GalleryPanel /> : null}
       {tab === "nodes" ? <NodesPanel /> : null}

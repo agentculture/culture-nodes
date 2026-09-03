@@ -453,7 +453,7 @@ function AuthorWorkflowInner() {
             Read-only. No node here has run yet — this is the graph the
             document describes, not a live execution.
           </p>
-          <div id="workflow-preview-canvas" className="run-canvas">
+          <div id="workflow-preview-canvas" className="run-canvas canvas-surface">
             <ReactFlow
               nodes={positionedNodes}
               edges={flowEdges}

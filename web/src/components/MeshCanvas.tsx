@@ -850,7 +850,7 @@ export function MeshCanvas({ graph, reducedMotion, bus }: MeshCanvasProps) {
     <div
       ref={wrapRef}
       id="mesh-canvas"
-      className="mesh-canvas"
+      className="mesh-canvas canvas-surface"
       data-motion={reducedMotion ? "static" : "animated"}
       tabIndex={0}
       role="img"

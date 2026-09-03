@@ -403,7 +403,7 @@ function RunViewInner() {
           {mode === "graph" ? (
             <div
               id="run-canvas"
-              className="run-canvas"
+              className="run-canvas canvas-surface"
               onKeyDown={onCanvasKeyDown}
               aria-label={`Workflow graph for run ${runId}. Tab moves between nodes; Enter opens a node's detail; arrow keys pan.`}
               role="application"

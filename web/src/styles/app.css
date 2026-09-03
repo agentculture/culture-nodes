@@ -21,6 +21,11 @@
   --nodes-gap: 1rem;
 }
 
+/* Fixed terminal ground shared by every graph canvas. */
+.canvas-surface.canvas-surface {
+  background: var(--terminal-ground);
+}
+
 /* ---------- header ---------- */
 
 .app-header {
@@ -417,8 +422,6 @@
 .status-chip,
 .authority-chip,
 .run-state-chip,
-.node-card__badge,
-.node-card__visits,
 .stream-status,
 .run-card__badge {
   display: inline-flex;
@@ -676,27 +679,6 @@
 
 /* ---------- node card ---------- */
 
-.node-card {
-  position: relative;
-  box-sizing: border-box;
-  /* Matches NODE_WIDTH / NODE_HEIGHT in hooks/useElkLayout.ts. */
-  width: 224px;
-  height: 128px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  overflow: hidden;
-  padding: 0.65rem 0.8rem 0.65rem 0.95rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--nodes-card-radius);
-  box-shadow: var(--shadow);
-  color: var(--ink);
-  cursor: pointer;
-  text-align: left;
-}
-
-.node-card__rail,
 .run-card__rail {
   position: absolute;
   inset: 0 auto 0 0;
@@ -705,14 +687,12 @@
   border-radius: var(--nodes-card-radius) 0 0 var(--nodes-card-radius);
 }
 
-.node-card__head,
 .run-card__head {
   display: flex;
   align-items: center;
   gap: 0.45rem;
 }
 
-.node-card__dot,
 .run-card__dot {
   width: 0.55rem;
   height: 0.55rem;
@@ -721,18 +701,6 @@
   flex: none;
 }
 
-.node-card__name {
-  font-family: var(--font-display);
-  font-optical-sizing: auto;
-  font-weight: 500;
-  font-size: var(--ac-type-ui);
-  letter-spacing: var(--ac-tracking-heading);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-card__meta,
 .run-card__meta {
   display: flex;
   gap: 0.5rem;
@@ -741,13 +709,6 @@
   overflow: hidden;
 }
 
-.node-card__owner {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-card__status,
 .run-card__status {
   display: flex;
   flex-wrap: wrap;
@@ -755,12 +716,6 @@
   align-items: center;
 }
 
-.node-card__badge {
-  border: 1px solid var(--nodes-warn);
-  color: color-mix(in srgb, var(--nodes-warn) 55%, var(--ink));
-}
-
-.node-card__badge--live,
 .run-card__badge--live {
   border-color: var(--accent-strong);
   color: var(--accent);
@@ -770,80 +725,6 @@
    t11 #3) — a distinct hue from the in-flight/waiting badges above so a
    reader scanning the graph does not confuse "evidence attached" with
    "something needs attention". */
-.node-card__badge--evidence {
-  border-color: var(--nodes-ok);
-  color: color-mix(in srgb, var(--nodes-ok) 55%, var(--ink));
-}
-
-.node-card__visits {
-  border: 1px solid var(--line);
-  color: var(--ink-soft);
-}
-
-.node-card__detail {
-  margin: 0.15rem 0 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0 0.5rem;
-  font-size: var(--ac-type-micro);
-  color: var(--ink-soft);
-}
-
-.node-card__detail > div {
-  display: contents;
-}
-
-.node-card__detail dt {
-  letter-spacing: var(--ac-tracking-caps);
-  text-transform: uppercase;
-}
-
-.node-card__detail dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-}
-
-/* --- execution-state overlays (PRD §8.4) --- */
-
-.node-card--idle {
-  opacity: 0.72;
-  border-style: dotted;
-}
-
-.node-card--ready {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-}
-
-.node-card--completed {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--nodes-ok) 55%, var(--line));
-}
-
-.node-card--active {
-  border-color: var(--accent-strong);
-}
-
-.node-card--waiting {
-  border-color: color-mix(in srgb, var(--nodes-warn) 60%, var(--line));
-}
-
-.node-card--failed,
-.node-card--policy_denied,
-.node-card--cancelled {
-  border-color: color-mix(in srgb, var(--nodes-danger) 65%, var(--line));
-  border-width: 2px;
-}
-
-.node-card.is-selected {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 /* ---------- run card (runs board, PRD §8.6 Operations) ---------- */
 
 /* Same frame as .node-card: surface, --line, --nodes-card-radius, --shadow —
@@ -962,7 +843,6 @@
    "updating live" badge in the pulse's place — same rule as NodeCard's
    in-flight attempt, same keyframe, reused rather than redeclared. */
 @media (prefers-reduced-motion: no-preference) {
-  .node-card.is-pulse,
   .run-card.is-pulse {
     animation: node-attempt-pulse 1.8s var(--ease-gentle) infinite alternate;
   }
@@ -1850,94 +1730,6 @@ button.timeline__node {
   min-height: 1.2em;
 }
 
-/* The compact presence card each graph node renders as. Identity color
-   arrives as --node-accent (NODE_KIND_PALETTE via accentFor), same
-   mechanism as .node-card. */
-.active-node {
-  position: relative;
-  box-sizing: border-box;
-  width: 224px; /* NODE_WIDTH — the ELK box (hooks/useElkLayout.ts) */
-  min-height: 72px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.5rem 0.7rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--nodes-card-radius);
-  box-shadow: var(--shadow);
-}
-
-.active-node__head {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
-.active-node__dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999px;
-  background: var(--node-accent, var(--ink-soft));
-  flex: none;
-}
-
-.active-node__name {
-  font-family: var(--font-mono);
-  font-size: var(--ac-type-ui);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.active-node__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--ac-type-micro);
-  color: var(--ink-soft);
-}
-
-/* The live badge: the halo's meaning in words (§8.8 — never color or
-   motion alone). */
-.active-node__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--node-accent, var(--accent)) 55%, var(--line));
-  padding: 0.02rem 0.45rem;
-  color: var(--ink);
-  white-space: nowrap;
-}
-
-/* Static live presence, all motion modes: the node's own halo at rest. */
-.active-node.is-live {
-  border-color: var(--node-accent, var(--accent-strong));
-  box-shadow:
-    var(--shadow),
-    0 0 0 3px color-mix(in srgb, var(--node-accent, var(--accent)) 16%, transparent);
-}
-
-.active-node.is-inspected {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* One committed event = one ring. Remounted per event (keyed by the pulse
-   counter), it plays a single stepped fade — steps() being the quantized-
-   alpha idiom: a handful of discrete opacity levels, not a continuous
-   tween the compositor has to shade. */
-.active-node__pulse {
-  position: absolute;
-  inset: -5px;
-  border-radius: calc(var(--nodes-card-radius) + 5px);
-  border: 2px solid var(--node-accent, var(--accent));
-  opacity: 0;
-  pointer-events: none;
-}
-
 /* Animations run only in the animated state, and only for viewers who did
    not ask for reduced motion — the media query AND the data-motion gate
    both have to agree. */
@@ -1945,15 +1737,6 @@ button.timeline__node {
   .active-graph[data-motion="animated"].is-alive {
     animation: active-graph-breathe 3.2s var(--ease-gentle) infinite
       alternate;
-  }
-
-  .active-graph[data-motion="animated"] .active-node.is-live {
-    animation: active-node-breathe 2.6s var(--ease-gentle) infinite
-      alternate;
-  }
-
-  .active-graph[data-motion="animated"] .active-node__pulse {
-    animation: active-node-ring 0.9s steps(8, end) 1;
   }
 
   .active-graph[data-motion="animated"] .active-graph__live-dot {
@@ -1974,34 +1757,6 @@ button.timeline__node {
 
   to {
     box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 20%, transparent);
-  }
-}
-
-@keyframes active-node-breathe {
-  from {
-    box-shadow:
-      var(--shadow),
-      0 0 0 2px
-        color-mix(in srgb, var(--node-accent, var(--accent)) 12%, transparent);
-  }
-
-  to {
-    box-shadow:
-      var(--shadow),
-      0 0 0 6px
-        color-mix(in srgb, var(--node-accent, var(--accent)) 24%, transparent);
-  }
-}
-
-@keyframes active-node-ring {
-  from {
-    opacity: 0.85;
-    transform: scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: scale(1.16);
   }
 }
 

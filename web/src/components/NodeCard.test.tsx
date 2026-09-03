@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import NodeCard, { bandForZoom, type DetailBand } from "./NodeCard";
+import NodeCard, { bandForZoom, type DetailBand } from "../culture-design/CultureNode";
 import { parseWorkflowGraph } from "../domain/graph";
 import {
   executionFromRunView,
@@ -154,19 +154,19 @@ describe("NodeCard evidence marker (task t11)", () => {
 describe("NodeCard reduced motion", () => {
   it("pulses an active attempt when motion is allowed", () => {
     const { container } = renderCard("build", { reducedMotion: false });
-    expect(container.querySelector(".node-card.is-pulse")).toBeInTheDocument();
+    expect(container.querySelector(".culture-node__pulse")).toBeInTheDocument();
     expect(screen.queryByText("attempt in flight")).not.toBeInTheDocument();
   });
 
   it("replaces the pulse with a badge when motion is reduced", () => {
     const { container } = renderCard("build", { reducedMotion: true });
-    expect(container.querySelector(".node-card.is-pulse")).not.toBeInTheDocument();
+    expect(container.querySelector(".culture-node__pulse")).not.toBeInTheDocument();
     expect(screen.getByText("attempt in flight")).toBeInTheDocument();
   });
 
   it("never pulses a node that is not running", () => {
     const { container } = renderCard("intake", { reducedMotion: false });
-    expect(container.querySelector(".is-pulse")).not.toBeInTheDocument();
+    expect(container.querySelector(".culture-node__pulse")).not.toBeInTheDocument();
   });
 });
 

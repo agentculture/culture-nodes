@@ -1,7 +1,7 @@
 import { Handle, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
 import type { GraphNode } from "../domain/graph";
 import type { NodeExecution } from "../domain/run-state";
-import NodeCard, { bandForZoom } from "./NodeCard";
+import CultureNode, { bandForZoom } from "../culture-design/CultureNode";
 
 export interface WorkflowNodeData extends Record<string, unknown> {
   node: GraphNode;
@@ -39,12 +39,12 @@ export function WorkflowNode({ data }: NodeProps<WorkflowFlowNode>) {
   return (
     <>
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <NodeCard
+      <CultureNode
         node={data.node}
         execution={data.execution}
         band={band}
         selected={data.isSelected}
-        reducedMotion={data.reducedMotion}
+        motion={data.reducedMotion ? "static" : "animated"}
         onOpen={data.onOpen}
         hasEvidence={data.hasEvidence}
       />

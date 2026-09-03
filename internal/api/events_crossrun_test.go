@@ -114,7 +114,12 @@ func publishAndCreateRuns(t *testing.T, f *fixture, n int) []apipkg.RunOut {
 	var published apipkg.WorkflowVersionOut
 	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/workflows"),
 		workflowSourceReq{Format: "yaml", Source: string(source)}, &published)
-	requireStatus(t, resp, body, http.StatusCreated)
+	// A publish is idempotent by digest (internal/api/workflows.go): the first
+	// publish in a process is a 201, a repeat of the same fixture is a 200.
+	// Both mean the version is durable, which is all a caller here needs.
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("publish status = %d, want 201 or 200; body = %s", resp.StatusCode, body)
+	}
 
 	runs := make([]apipkg.RunOut, n)
 	for i := range runs {

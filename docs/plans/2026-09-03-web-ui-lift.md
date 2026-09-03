@@ -159,6 +159,33 @@ slug: `web-ui-lift` · status: `exported` · from frame: `web-ui-lift`
   - web/e2e/walkthrough.spec.ts performs, in order, the six checks the demo's acceptance walkthrough lists — mesh `events_total` 0 after load with 1,284 historical events; nightly-regression (0 runs) draws its graph from Design; the same CultureNode module renders Mesh, a run, the gallery and the canvas (DOM class + import guard); canvas add+connect+validate+publish yields the CLI digest; mesh shows actor→machine, run→actor, run→workflow edges and an unknown probe; no node position changes after first paint — each mapped to its spec id in the test name
   - The delivery summary names, per announced outcome, the walkthrough step that proves it; an outcome without a passing step is reported as not delivered
 
+### t18 — Live test: the wave-A build on the deployed control plane, against real rows
+
+- instruction: Operator lane (needs the Access cookie and a deploy). Do not stop or restart any bridge to provoke an unknown probe — use a bridge that is already down or the reachy host; if none, record 'not observable live'. Count the deploy as a hand-turn on #283 or its successor.
+- depends on: t10, t11
+- covers: c30, h20, c34, h24, c12, h14
+- acceptance:
+  - After deploy/prod/deploy.sh ships wave A to thor, the six walkthrough checks are run by hand on nodes.culture.dev (Access session) against the real namespace and recorded in docs/audits/YYYY-MM-DD-web-ui-lift-live-a.md with a screenshot per check: mesh `events_total` is 0 after a fresh load and 1 after one real committed event; spark, thor and orin appear as machines with their real revision and install mode; the #224-style key-count difference is visible or its absence is stated; a bridge that does not answer renders unknown with its error text
+  - Every divergence between the live page and docs/demos/web-ui-lift/culture-nodes-lifted.html is listed in the audit with the spec id it touches; the audit ends with the operator's verdict line
+
+### t19 — Validate-delivery pass: the agent runs the plan's behavioral tests and files evidence and deltas
+
+- instruction: Agent task (Claude, operator lane). Use the vendored validate-delivery skill; input = docs/plans/2026-09-03-web-ui-lift.md + docs/demos/web-ui-lift/README.md map + the live audit.
+- depends on: t17, t18
+- covers: c1, h11, c13, h15, c11, h13
+- acceptance:
+  - /validate-delivery is run by the agent on the merged waves: every task's acceptance criteria are executed (vitest, Go tests, Playwright walkthrough, the live audit) and each result is filed on the plan as evidence or as a behavioral delta (added, amended, removed) through the devague CLI, never inside it; a failing or partial outcome is filed as such
+  - The pass produces the list of divergences from the demo reference that the fixes cycle (next task) must close, each with the walkthrough check and spec id it affects
+
+### t20 — Fixes cycle: close every divergence from the demo reference, then re-run the walkthrough and the live checks
+
+- instruction: Bounded: at most two fix rounds; anything left after the second round is filed as a follow-up issue with its walkthrough check named, and reported as not delivered in the summary.
+- depends on: t19
+- covers: c26, h6, c22, h2, c28, h8
+- acceptance:
+  - Each divergence the validate-delivery pass listed is either fixed on the branch (with a test that would have caught it) or recorded as an approved deviation via /deviate — none is silently dropped; the walkthrough e2e (t17) and the live audit (t18, re-run as docs/audits/YYYY-MM-DD-web-ui-lift-live-b.md including wave B's canvas) are green afterwards
+  - The operator reviews the fixed pages against the demo side by side and posts the verdict on #270; the delivery summary cites that comment
+
 ## Risks
 
 - [unknown_nonblocking] Mesh layout algorithm: ELK layered (bundled, needs cycle breaking on a non-DAG mesh) versus a force layout (d3-force is a new web dependency). t7 decides and records; parked v4 on the frame. (task t7)
@@ -166,3 +193,4 @@ slug: `web-ui-lift` · status: `exported` · from frame: `web-ui-lift`
 - [unknown_nonblocking] yaml Document stringify options may not reach byte-identical on every fixture; if a residual class remains, q4 already covers comment-only republish but the spike must say so before the workflow-document task starts. (task t12)
 - [unknown_nonblocking] The bridge write path is unproven (#18); web tasks routed to codex actors may need the operator to land the patch by hand — counted as hand-turns.
 - [unknown_nonblocking] Wave A: t8 (design gallery) and t9 (nav) both edit App.tsx; t8 keeps its edit to the two Navigate lines so t9's merge stays trivial. (task t9)
+- [unknown_nonblocking] t18 and t20's live checks depend on an operator Access session, a deploy to thor, and real fleet state; if a bridge is never down the unknown-probe check is recorded as not observable live rather than faked. (task t18)

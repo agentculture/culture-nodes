@@ -175,3 +175,4 @@ issue,bucket,disposition,evidence_pointer
 288,finish work,"Record: graphical editor reopened — close on read against the decision record",issue #288 / docs/decisions/2026-09-03-reopen-graphical-editor.md
 286,bug tail,"scope guard: measure committed work with a merge-base diff, and refuse or clean a guarded prefix left dirty by an earlier run",issue #286 / adapters/codex/src/codex_bridge/scope_guard.py
 289,bug tail,"deploy.sh must fail loudly when the account provision lane refuses; a refused provision skips migrate/cutover silently",issue #289 / deploy/prod/lanes/unix-user.sh
+290,bug tail,"developer bridge wedges with its unit active: add a liveness signal the unit acts on and keep one stuck request from starving the server",issue #290 / adapters/claude-code/src/claude_code_bridge/server.py

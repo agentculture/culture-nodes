@@ -36,6 +36,15 @@
 .culture-node[data-kind="end"] { --k: var(--culture-green); }
 .culture-node[data-kind="action.http"] { --k: var(--culture-pink); }
 .culture-node[data-kind="subworkflow"] { --k: var(--culture-yellow); }
+/* Mesh kinds (task t7): the same palette the actor glyphs used — agents and
+   bridges teal, runners/machines blue, humans neutral, workflows yellow, active
+   runs amber — so a machine reads as a machine before its label is read. */
+.culture-node[data-kind="machine"] { --k: var(--culture-blue); }
+.culture-node[data-kind="control-plane"] { --k: var(--culture-teal); }
+.culture-node[data-kind="bridge"] { --k: var(--culture-teal); }
+.culture-node[data-kind="human"] { --k: var(--culture-neutral); }
+.culture-node[data-kind="workflow"] { --k: var(--culture-yellow); }
+.culture-node[data-kind="run"] { --k: var(--culture-amber); }
 .culture-node__core { position:absolute; left:.85rem; top:.95rem; width:.8rem; height:.8rem; border-radius:50%; background:var(--k); box-shadow:0 0 10px var(--k); }
 .culture-node__halo { position:absolute; left:.25rem; top:.35rem; width:2rem; height:2rem; border-radius:50%; background:radial-gradient(circle,var(--k) 0%,transparent 70%); opacity:.18; pointer-events:none; }
 .culture-node__label { font-weight:600; font-size:var(--ac-type-ui); line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

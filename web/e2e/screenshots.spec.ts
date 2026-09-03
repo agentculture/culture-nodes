@@ -113,6 +113,7 @@ test.describe("t27 site polish shots", () => {
     await stubVersion(page);
     await page.goto("/mesh");
     await page.locator("#mesh-canvas .react-flow__node").first().waitFor();
+    await page.locator('#mesh-canvas[data-layout-ready="true"]').waitFor();
     await shoot(page, "mesh");
     await page.emulateMedia({ colorScheme: "dark" });
     await shoot(page, "mesh-dark");

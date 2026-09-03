@@ -1,4 +1,4 @@
-package lint_test
+package testslint_test
 
 import (
 	"os"

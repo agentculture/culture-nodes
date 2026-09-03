@@ -100,6 +100,26 @@ export { WHOAMI_ACTOR_ID, WHOAMI_BOUND, WHOAMI_UNBOUND } from "../../src/fixture
  * answer AFTER the wide mock (Playwright runs the last-registered route
  * first).
  */
+/**
+ * The first frame a tail-only (`?from=latest`) connect receives from the real
+ * server (task t1, internal/api/events.go): a `stream.snapshot` marker whose
+ * id is the boundary the stream advances from. Fixtures that serve a fixed
+ * event list use "0" as that boundary so the browser's automatic reconnect
+ * (Last-Event-ID: 0) is answered with every fixture event, exactly as the
+ * cursor-less first connect used to be.
+ */
+export function snapshotMarkerSse(id = "0"): string {
+  const envelope = {
+    specversion: "1.0",
+    id,
+    type: "dev.culture.nodes.stream.snapshot",
+    source: "fixture",
+    time: "2026-08-09T09:00:00Z",
+    data: { snapshot_id: id },
+  };
+  return `id: ${id}\nevent: ${envelope.type}\ndata: ${JSON.stringify(envelope)}\n\n`;
+}
+
 export async function mockWhoami(
   page: Page,
   answer: Whoami | { status: 401 } = WHOAMI_BOUND,
@@ -457,6 +477,7 @@ export async function mockStatisticsApi(page: Page): Promise<void> {
  * The events route honours both resume spellings exactly like mockMeshApi.
  */
 export async function mockNodeGraphsApi(page: Page): Promise<void> {
+  const activeTail: { cursor: string | null } = { cursor: null };
   const runViewById = new Map<string, RunView>(
     WORKFLOWS_RUNS.map((run) => [run.id, { run, tokens: [], node_runs: [] }]),
   );
@@ -491,15 +512,22 @@ export async function mockNodeGraphsApi(page: Page): Promise<void> {
     }
     if (path === "/v1alpha1/events") {
       const headers = await request.allHeaders();
-      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
-      const pending = ACTIVE_EVENTS.filter((event) => event.id > from);
+      const requested = headers["last-event-id"] ?? url.searchParams.get("from") ?? "";
+      // A tail-only first connect gets the snapshot marker (boundary "0"); the
+      // browser's reconnect under route interception carries no Last-Event-ID,
+      // so the fixture keeps the cursor itself and serves every event above it
+      // — the same events the cursor-less connect used to serve at once.
+      const latest = requested === "latest" && activeTail.cursor === null;
+      const from = requested === "latest" ? (activeTail.cursor ?? "0") : requested;
+      const pending = latest ? [] : ACTIVE_EVENTS.filter((event) => event.id > from);
+      activeTail.cursor = pending.length > 0 ? pending[pending.length - 1].id : from;
       await route.fulfill({
         status: 200,
         headers: {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
         },
-        body: activeEventsAsSse(pending),
+        body: (latest ? snapshotMarkerSse("0") : "") + activeEventsAsSse(pending),
       });
       return;
     }
@@ -653,6 +681,7 @@ export {
  */
 export async function mockMeshApi(page: Page): Promise<void> {
   const liveEvents: typeof MESH_EVENTS = [];
+  const tail: { cursor: string | null } = { cursor: null };
   await page.route("**/v1alpha1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -682,13 +711,19 @@ export async function mockMeshApi(page: Page): Promise<void> {
         return;
       }
       const headers = await request.allHeaders();
-      const from = headers["last-event-id"] ?? url.searchParams.get("from") ?? "latest";
+      // Under route interception the browser's automatic reconnect does not
+      // carry Last-Event-ID, so the fixture keeps the cursor the real server
+      // would have been handed: the marker is served once per page, and every
+      // later connect gets only what was committed after the last id served.
+      const requested = headers["last-event-id"] ?? url.searchParams.get("from") ?? "latest";
+      const from = requested === "latest" ? tail.cursor : requested;
       const pending =
-        from === "latest"
+        from === null
           ? [MESH_SNAPSHOT_EVENT]
           : [...MESH_HISTORICAL_EVENTS, ...liveEvents].filter(
               (event) => event.id > from,
             );
+      tail.cursor = pending.length > 0 ? pending[pending.length - 1].id : (from ?? MESH_SNAPSHOT_EVENT.id);
       await route.fulfill({
         status: 200,
         headers: {

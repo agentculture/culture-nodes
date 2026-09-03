@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { meshEventsUrl } from "./client";
+import { getMesh, meshEventsUrl } from "./client";
+import { vi } from "vitest";
 
 /**
  * The cross-run SSE URL builder (task t27, spec requirement c48's sibling
@@ -37,4 +38,11 @@ describe("meshEventsUrl", () => {
       "/v1alpha1/events?from=id%20with%20space&runs=run%2Fwith%2Fslash,id%26amp",
     );
   });
+});
+
+it("getMesh reads the committed mesh endpoint", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ actors: [], machines: {}, version: "v1", workers: [] }), { status: 200 }));
+  await expect(getMesh()).resolves.toMatchObject({ version: "v1" });
+  expect(fetchMock).toHaveBeenCalledWith("/v1alpha1/mesh", expect.objectContaining({ headers: { accept: "application/json" } }));
+  fetchMock.mockRestore();
 });

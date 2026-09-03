@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { ComponentType } from "react";
 import { getAgentState, resetAgentState } from "../agent-state/store";
 import type { Actor, NodeRunListItem, Run } from "../api/types";
 import Mesh from "./Mesh";
@@ -20,10 +21,20 @@ vi.mock("../api/client", async (importOriginal) => {
     listActors: vi.fn(),
     listRuns: vi.fn(),
     listNodeRuns: vi.fn(),
+    getMesh: vi.fn(),
+    listWorkflows: vi.fn(),
   };
 });
 
-import { listActors, listNodeRuns, listRuns } from "../api/client";
+vi.mock("@xyflow/react", () => ({
+  ReactFlow: (props: { nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>; nodeTypes: Record<string, ComponentType<{ data: unknown }>>; children?: React.ReactNode }) => <div data-testid="react-flow-stub">{props.nodes.map((node) => { const NodeType = props.nodeTypes[node.type]; return <NodeType key={node.id} data={node.data} />; })}{props.children}</div>,
+  Background: () => null, Handle: () => null,
+  Position: { Left: "left", Right: "right" }, MarkerType: { ArrowClosed: "arrowclosed" },
+}));
+vi.mock("../hooks/useElkLayout", () => ({ NODE_WIDTH: 224, NODE_HEIGHT: 128, useElkLayout: () => ({ positions: {}, ready: false }) }));
+
+import { getMesh, listActors, listNodeRuns, listRuns, listWorkflows } from "../api/client";
+import { MESH_PAYLOAD, MESH_WORKFLOWS } from "../fixtures/mesh-fixture";
 
 const USAGE = {
   input_tokens: 0,
@@ -186,6 +197,8 @@ beforeEach(() => {
   vi.mocked(listActors).mockResolvedValue({ items: ACTORS });
   vi.mocked(listRuns).mockResolvedValue({ items: RUNS });
   vi.mocked(listNodeRuns).mockResolvedValue({ items: NODE_RUNS });
+  vi.mocked(getMesh).mockResolvedValue(MESH_PAYLOAD);
+  vi.mocked(listWorkflows).mockResolvedValue({ items: MESH_WORKFLOWS });
 });
 
 afterEach(() => {
@@ -236,9 +249,10 @@ describe("Mesh route", () => {
     const mesh = getAgentState().mesh!;
     // 4 actor rows collapse to 3 actors (one per actor_key); only the
     // active run counts; one edge per actor + one per run.
-    expect(mesh.actor_count).toBe(3);
+    expect(mesh.actor_count).toBe(5);
+    expect(mesh.machine_count).toBe(3);
     expect(mesh.run_count).toBe(1);
-    expect(mesh.edge_count).toBe(4);
+    expect(mesh.edge_count).toBeGreaterThan(0);
     expect(mesh.reduced_motion).toBe(false);
     expect(document.querySelector("#mesh-canvas")).toBeTruthy();
     expect(

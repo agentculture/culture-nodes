@@ -649,11 +649,12 @@ export async function mockAuthoringApi(page: Page): Promise<void> {
 }
 
 import {
-  MESH_ACTORS,
   MESH_EVENTS,
   MESH_HISTORICAL_EVENTS,
   MESH_NODE_RUNS,
   MESH_RUNS,
+  MESH_PAYLOAD,
+  MESH_WORKFLOWS,
   MESH_SNAPSHOT_EVENT,
   meshEventsAsSse,
 } from "../../src/fixtures/mesh-fixture";
@@ -691,8 +692,12 @@ export async function mockMeshApi(page: Page): Promise<void> {
       return;
     }
 
-    if (path === "/v1alpha1/actors") {
-      await route.fulfill(json({ items: MESH_ACTORS }));
+    if (path === "/v1alpha1/mesh") {
+      await route.fulfill(json(MESH_PAYLOAD));
+      return;
+    }
+    if (path === "/v1alpha1/workflows") {
+      await route.fulfill(json({ items: MESH_WORKFLOWS }));
       return;
     }
     if (path === "/v1alpha1/runs") {
@@ -858,9 +863,12 @@ export async function readAgentState(page: Page): Promise<{
     category_count: number;
   } | null;
   mesh?: {
+    machine_count: number;
     actor_count: number;
     run_count: number;
     edge_count: number;
+    probe_failures: number;
+    unattributed_actors: number;
     connection: string;
     last_event_id: string | null;
     events_total: number;

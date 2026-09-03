@@ -327,6 +327,17 @@ describe("Mesh route", () => {
     expect(getAgentState().mesh!.reduced_motion).toBe(true);
   });
 
+  it("labels an unsupported actor as having no capability surface", async () => {
+    vi.mocked(getMesh).mockResolvedValueOnce({
+      ...MESH_PAYLOAD,
+      actors: [{ actor_key: "company/human-ops", machine: null, bridge: { observed_at: "now", class: "unsupported", reason: "GET capabilities: 404 Not Found", error: "GET capabilities: 404 Not Found" } }],
+      machines: {},
+    });
+    const view = await renderMesh();
+    expect(view.container.textContent).toContain("no capability surface · GET capabilities: 404 Not Found");
+    expect(getAgentState().mesh?.probe_failures).toBe(0);
+  });
+
   it("drops the mesh block from agent-state on unmount", async () => {
     const view = await renderMesh();
     view.unmount();

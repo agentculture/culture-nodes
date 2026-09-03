@@ -35,10 +35,13 @@ type Target struct {
 }
 
 type Observation struct {
-	Hostname   string          `json:"hostname,omitempty"`
-	Deployment json.RawMessage `json:"deployment,omitempty"`
-	ObservedAt time.Time       `json:"observed_at"`
-	Error      string          `json:"error,omitempty"`
+	Hostname     string          `json:"hostname,omitempty"`
+	Deployment   json.RawMessage `json:"deployment,omitempty"`
+	ObservedAt   time.Time       `json:"observed_at"`
+	Class        string          `json:"class,omitempty"`
+	Reason       string          `json:"reason,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	FailureCount uint64          `json:"failure_count,omitempty"`
 }
 
 type Collector struct {
@@ -47,6 +50,7 @@ type Collector struct {
 	targets  []Target
 	cache    map[string]Observation
 	failures map[string]uint64
+	reported map[string]string
 }
 
 func New(config Config) *Collector {
@@ -65,7 +69,7 @@ func New(config Config) *Collector {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
-	return &Collector{config: config, cache: make(map[string]Observation), failures: make(map[string]uint64)}
+	return &Collector{config: config, cache: make(map[string]Observation), failures: make(map[string]uint64), reported: make(map[string]string)}
 }
 
 func (c *Collector) SetTargets(targets []Target) {
@@ -78,6 +82,8 @@ func (c *Collector) SetTargets(targets []Target) {
 	for key := range c.cache {
 		if _, ok := current[key]; !ok {
 			delete(c.cache, key)
+			delete(c.failures, key)
+			delete(c.reported, key)
 		}
 	}
 	c.mu.Unlock()
@@ -131,7 +137,7 @@ func (c *Collector) Collect(ctx context.Context) {
 	for _, target := range targets {
 		target := target
 		if target.Error != "" {
-			c.store(target.Key, Observation{Error: target.Error})
+			c.storeNonFailure(target.Key, "unobserved", target.Error)
 			continue
 		}
 		wg.Add(1)
@@ -166,14 +172,18 @@ func (c *Collector) probe(parent context.Context, target Target) {
 		response, err = c.config.HTTPClient.Do(req)
 		if err == nil {
 			defer response.Body.Close()
-			if response.StatusCode != http.StatusOK {
+			if response.StatusCode >= http.StatusBadRequest && response.StatusCode < http.StatusInternalServerError {
+				c.storeNonFailure(target.Key, "unsupported", fmt.Sprintf("GET capabilities: %s", response.Status))
+				return
+			} else if response.StatusCode != http.StatusOK {
 				err = fmt.Errorf("GET capabilities: %s", response.Status)
 			} else {
 				body, readErr := io.ReadAll(io.LimitReader(response.Body, maxProbeResponseBytes+1))
 				if readErr != nil {
 					err = readErr
 				} else if len(body) > maxProbeResponseBytes {
-					err = fmt.Errorf("capabilities response exceeds %d bytes", maxProbeResponseBytes)
+					c.storeNonFailure(target.Key, "unsupported", fmt.Sprintf("capabilities response exceeds %d bytes", maxProbeResponseBytes))
+					return
 				} else {
 					var payload struct {
 						Preflight struct {
@@ -184,11 +194,14 @@ func (c *Collector) probe(parent context.Context, target Target) {
 						} `json:"preflight"`
 					}
 					if decodeErr := json.Unmarshal(body, &payload); decodeErr != nil {
-						err = fmt.Errorf("decode capabilities: %w", decodeErr)
+						c.storeNonFailure(target.Key, "unsupported", fmt.Sprintf("decode capabilities: %v", decodeErr))
+						return
 					} else if payload.Preflight.Host.Hostname == "" {
-						err = fmt.Errorf("capabilities has no preflight.host.hostname")
+						c.storeNonFailure(target.Key, "unsupported", "capabilities has no preflight.host.hostname")
+						return
 					} else if len(payload.Preflight.Host.Deployment) == 0 {
-						err = fmt.Errorf("capabilities has no preflight.host.deployment block")
+						c.storeNonFailure(target.Key, "unsupported", "capabilities has no preflight.host.deployment block")
+						return
 					} else {
 						c.store(target.Key, Observation{Hostname: payload.Preflight.Host.Hostname, Deployment: payload.Preflight.Host.Deployment, ObservedAt: observedAt})
 						return
@@ -200,13 +213,31 @@ func (c *Collector) probe(parent context.Context, target Target) {
 	c.mu.Lock()
 	c.failures[target.Key]++
 	count := c.failures[target.Key]
-	c.cache[target.Key] = Observation{ObservedAt: observedAt, Error: err.Error()}
+	c.cache[target.Key] = Observation{ObservedAt: observedAt, Class: "failed", Error: err.Error(), FailureCount: count}
+	delete(c.reported, target.Key)
 	c.mu.Unlock()
-	c.config.Logger.Warn("mesh bridge probe failed", "target", target.Key, "failure_count", count, "error", err)
+	c.config.Logger.Warn("mesh bridge probe", "target", target.Key, "class", "failed", "failure_count", count, "error", err)
+}
+
+func (c *Collector) storeNonFailure(key, class, errText string) {
+	observedAt := time.Now().UTC()
+	c.mu.Lock()
+	observation := Observation{ObservedAt: observedAt, Class: class, Error: errText}
+	if class == "unsupported" {
+		observation.Reason = errText
+	}
+	c.cache[key] = observation
+	alreadyReported := c.reported[key] == class+"\x00"+errText
+	c.reported[key] = class + "\x00" + errText
+	c.mu.Unlock()
+	if !alreadyReported {
+		c.config.Logger.Info("mesh bridge probe", "target", key, "class", class, "error", errText)
+	}
 }
 
 func (c *Collector) store(key string, observation Observation) {
 	c.mu.Lock()
 	c.cache[key] = observation
+	delete(c.reported, key)
 	c.mu.Unlock()
 }

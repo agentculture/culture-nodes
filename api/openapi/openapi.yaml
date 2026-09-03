@@ -953,8 +953,9 @@ paths:
         hostname each actor self-reported in
         `capabilities.preflight.host.hostname`, cached bridge deployment
         probes, and worker presence. This request never contacts a bridge;
-        probe failures and their observation times are returned from the
-        independently timed collector cache.
+        unobserved, unsupported, and failed probes (with observation times)
+        are returned from the independently timed collector cache; only
+        timeout, 5xx, and connection failures carry a failure count.
       responses:
         '200':
           description: The current committed topology and cached observations.
@@ -5206,7 +5207,10 @@ components:
         hostname: {type: string, description: Hostname reported by capabilities.preflight.host.hostname.}
         deployment: {type: object, additionalProperties: true}
         observed_at: {type: string, format: date-time}
+        class: {type: string, enum: [unobserved, unsupported, failed], description: Classification when the bridge did not yield an attributable capability surface.}
+        reason: {type: string, description: Why an answering bridge has no supported capability surface; present for unsupported observations.}
         error: {type: string}
+        failure_count: {type: integer, format: uint64, minimum: 0, description: "Per-target count of timeout, 5xx, and connection failures; present only for failed observations."}
     MeshWorker:
       type: object
       required: [worker_id, hostname, revision, actor_keys, last_seen]

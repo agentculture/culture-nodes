@@ -443,7 +443,10 @@ export const listActors = (signal?: AbortSignal) =>
 export interface MeshBridgeObservation {
   deployment?: Record<string, unknown>;
   observed_at?: string;
+  class?: "unobserved" | "unsupported" | "failed";
+  reason?: string;
   error?: string;
+  failure_count?: number;
 }
 
 export interface MeshPayload {

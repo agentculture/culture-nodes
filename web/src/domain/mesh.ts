@@ -13,7 +13,7 @@ export interface MeshNode {
   label: string;
   sub: string;
   trace: MeshTrace;
-  status?: "answering" | "unknown";
+  status?: "answering" | "unobserved" | "unsupported" | "failed";
   error?: string;
   versionCount?: number;
   actorKey?: string;
@@ -86,13 +86,13 @@ export function assembleMeshGraph(
     const id = `actor:${actor.actor_key}`;
     actorIds.set(actor.actor_key, id);
     const isHuman = approvers.has(actor.actor_key) || actor.actor_key.startsWith("human/") || actor.actor_key.startsWith("human-");
-    if (actor.bridge.error) probeFailures++;
+    if (actor.bridge.class === "failed" || (!actor.bridge.class && actor.bridge.error)) probeFailures++;
     if (actor.machine === null) unattributedActors++;
     nodes.push({
       id, kind: isHuman ? "human" : "bridge", label: actor.actor_key,
       sub: actor.machine ?? "unattributed",
       trace: { surface: "mesh", row: `actors[actor_key=${actor.actor_key}]` },
-      status: actor.bridge.error ? "unknown" : isHuman ? undefined : "answering",
+      status: actor.bridge.class ?? (actor.bridge.error ? "failed" : isHuman ? undefined : "answering"),
       error: actor.bridge.error,
       actorKey: actor.actor_key,
     });

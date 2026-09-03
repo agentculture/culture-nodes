@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-03T15:17:16Z",
-  "updated": "2026-09-03T15:34:37Z",
+  "updated": "2026-09-03T15:44:31Z",
   "claims": [
     {
       "id": "c1",
@@ -28,7 +28,7 @@
     {
       "id": "c2",
       "kind": "requirement",
-      "text": "Mesh stops replaying history on arrival: web/src/hooks/useSharedEvents.tsx connects with no cursor on every page load, and internal/api/events.go's handleStreamEvents treats an absent Last-Event-ID/from as 'from the beginning of this namespace's event log', admitting every historical run.created/run.completed lifecycle event; routes/Mesh.tsx turns each into a run-added placeholder then a 3.4s linger-and-remove, so the whole run history animates through the mesh at speed. The fix is a server-side tail-only connect (snapshot the active runs from GET /runs, then stream only new event ids) \u2014 a Go change plus a client cursor rule.",
+      "text": "Mesh stops replaying history on arrival: web/src/hooks/useSharedEvents.tsx connects with no cursor on every page load, and internal/api/events.go's handleStreamEvents treats an absent Last-Event-ID/from as 'from the beginning of this namespace's event log', admitting every historical run.created/run.completed lifecycle event; routes/Mesh.tsx turns each into a run-added placeholder then a 3.4s linger-and-remove, so the whole run history animates through the mesh at speed. The fix is a server-side tail-only connect, ordered stream-first so the two reads have a defined boundary: the Mesh opens the stream in an explicit tail-only mode, the server's first frame is a snapshot marker naming the event-log high-water mark it will stream after, and only then does the Mesh load active runs from GET /runs, buffering every streamed event until that response lands and applying it on top keyed by run id. Reading the marker before the snapshot query makes that boundary at-least-once rather than at-most-once, which is what the data allows: GET /runs returns a pagination cursor over runs and can never carry the event log's ULID high-water mark, so no single call can hand back both atomically, and a transition committed between the two reads must therefore appear in both and reconcile, never fall between them. A Go change plus a client cursor-and-reconcile rule.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -37,12 +37,24 @@
           "text": "A fresh EventSource connect admits only events with an id after the server's snapshot cursor; a server test seeds terminal runs and asserts none of their lifecycle events are streamed on a cursor-less connect, and the Mesh e2e asserts mesh.events_total == 0 after load with no new activity.",
           "status": "confirmed",
           "instruction": ""
+        },
+        {
+          "id": "h25",
+          "text": "No run transition falls between the two reads: a run.created committed after the stream's snapshot marker but before GET /runs returns is present in the reconciled Mesh state exactly once, asserted by a test that interleaves the two, and the marker's id is read from the same events table the stream then advances through, so the boundary is one cursor and not two clocks.",
+          "status": "confirmed",
+          "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Go: add a tail-only mode to handleStreamEvents (e.g. ?from=latest, or default when no cursor: emit a snapshot marker with the current max event id and stream after it); client: Mesh loads active runs from GET /runs and connects with the snapshot cursor. Tests: internal/api/events_test.go seeds terminal runs; web e2e asserts mesh.events_total after load.",
-      "revisions": []
+      "instruction": "Go: add an explicit tail-only mode to handleStreamEvents (?from=latest) whose first frame is a snapshot marker (event: stream.snapshot) carrying the events table's current max id for the namespace, then stream strictly after that id; the cursor-less default is left as it is. Client: Mesh connects with ?from=latest, waits for the marker, then loads GET /runs; every event that arrives before that response resolves is buffered and applied after the snapshot, idempotently by run id, so a run present in both is added once. Tests: internal/api/events_test.go seeds terminal runs and asserts the marker id and that no event at or before it is streamed; one test commits a run.created between the marker and the snapshot read and asserts the reconciled state holds that run exactly once; web e2e asserts mesh.events_total after load.",
+      "revisions": [
+        {
+          "text": "Mesh stops replaying history on arrival: web/src/hooks/useSharedEvents.tsx connects with no cursor on every page load, and internal/api/events.go's handleStreamEvents treats an absent Last-Event-ID/from as 'from the beginning of this namespace's event log', admitting every historical run.created/run.completed lifecycle event; routes/Mesh.tsx turns each into a run-added placeholder then a 3.4s linger-and-remove, so the whole run history animates through the mesh at speed. The fix is a server-side tail-only connect (snapshot the active runs from GET /runs, then stream only new event ids) \u2014 a Go change plus a client cursor rule.",
+          "kind": "requirement",
+          "reason": "Qodo review on PR #284 (finding 1, High/Correctness): 'snapshot the active runs from GET /runs, then stream only new event ids' named no source for the snapshot cursor and no ordering between the two reads, so a run transition committed between them could be skipped. GET /runs' next_cursor is a nodeRunCursor over runs (internal/api/runs.go handleListRuns), not the events-table ULID handleStreamEvents resumes on, so an atomic single-call boundary is not available; the amended text specifies the stream-first, buffer-and-reconcile order that makes the boundary at-least-once instead."
+        }
+      ]
     },
     {
       "id": "c3",

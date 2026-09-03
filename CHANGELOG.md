@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.19] - 2026-09-03
+
+### Fixed
+
+- The web-ui-lift spec's c2 (mesh stops replaying history) now names a boundary that cannot drop a run. It said "snapshot the active runs from GET /runs, then stream only new event ids" without saying where the stream cursor comes from or which read happens first, and those two reads are not atomic: `GET /v1alpha1/runs` returns a `nodeRunCursor` over runs (`internal/api/runs.go` `handleListRuns`), never the events-table ULID `handleStreamEvents` resumes on, so no single call can hand back both a run snapshot and its event-log high-water mark. A run created — or completed — after the snapshot query but before the stream cursor was resolved would appear in neither, and the Mesh would carry stale active-run state until the next lifecycle event for that run, which for a finished run never comes. The amended claim orders the two reads stream-first: connect in an explicit tail-only mode, take the snapshot marker the server sends as its first frame, then load `GET /runs`, buffering streamed events until that response lands and applying them on top keyed by run id. That makes the boundary at-least-once instead of at-most-once — a transition committed between the reads shows up in both and reconciles to the same state — and a new honesty condition h25 pins it to a test that interleaves the two. The cursor-less default connect is deliberately left alone (PR #284, Qodo Correctness/High "Snapshot cursor race")
+
 ## [0.47.18] - 2026-09-03
 
 ### Added

@@ -2,7 +2,7 @@
   "plan_slug": "web-ui-lift",
   "schema_version": 2,
   "created": "2026-09-03T20:58:40Z",
-  "updated": "2026-09-03T21:08:23Z",
+  "updated": "2026-09-03T21:24:56Z",
   "deviations": [
     {
       "id": "d1",
@@ -318,6 +318,44 @@
       "status": "approved",
       "superseded": false,
       "seq": 15
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o4",
+      "test_ref": "web/e2e/canvas.spec.ts \u203a a palette drop lands at the drop point, a dragged node keeps its place, and the pane marks inserted lines",
+      "behavior_text": "nodes lay out with ELK; a palette drop lands within 160\u00d7120 px of the pointer; a placed or dragged node keeps its position through the next add; the source pane marks inserted lines; a status line reports validity, counts and digest",
+      "contract_text": "The Design canvas composes workflows with the mouse (c28) \u2014 fixes cycle t20, demo parity on placement, drop point and inserted-line highlight (delta b6)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "Playwright on 91cac26, 3/3 canvas tests, 117 e2e",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T21:24:55Z",
+        "commit": "91cac26"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o5",
+      "test_ref": "web/e2e/mesh.spec.ts:58 \u203a failed probes, grouped versions, divergent machines, and unattributed actors stay explicit; internal/mesh/collector_test.go (three classes)",
+      "behavior_text": "a failed probe reads unknown with its error, a bridge without a capability surface reads 'no capability surface', an unprobed actor reads 'not probeable'; only failed probes count in probe_failures",
+      "contract_text": "A failed probe renders unknown, never healthy (c34/h24); probe classification (delta b7)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test + Playwright on 91cac26",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-03T21:24:55Z",
+        "commit": "91cac26"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
     }
   ],
   "deltas": [

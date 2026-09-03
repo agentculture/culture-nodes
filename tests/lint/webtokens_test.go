@@ -13,6 +13,14 @@ package testslint
 // referenced, never written. Four literal shapes carry those decisions and
 // this guard refuses all four.
 //
+// The colour-function shape is spelled wider than the criterion's `rgba(`
+// deliberately. The criterion is a floor, and a guard that refuses `rgba(` but
+// waves `hsl(200 40% 60%)` through does not enforce the rule -- it enforces a
+// spelling of it. `color-mix()` is NOT on the list: every one in this tree
+// derives from a token (`color-mix(in srgb, var(--accent) 12%, transparent)`),
+// which is the composition the rule is asking for, and a color-mix over a raw
+// hex is already caught by the hex pattern inside it.
+//
 // The guard scans prose-free lines only. Comments in this tree quote GitHub
 // issue numbers constantly, and `#270` is three hex digits -- a scanner that
 // could not tell a comment from a declaration would fire on the sentences
@@ -116,8 +124,8 @@ var webTokenPatterns = []scanPattern{
 		allow:   hexIsNotAColour,
 	},
 	{
-		name:    "rgb()/rgba() colour",
-		pattern: regexp.MustCompile(`\brgba?\(`),
+		name:    "colour function",
+		pattern: regexp.MustCompile(`(?i)\b(?:rgba?|hsla?|hwb|(?:ok)?(?:lab|lch))\(`),
 	},
 	{
 		name:    "font-family literal",
@@ -339,12 +347,22 @@ var webScannerFixtures = []struct {
 	{
 		name: "rgba call",
 		rel:  "web/src/styles/x.css", body: ".a { border: 1px solid rgba(233, 236, 248, 0.12); }",
-		patterns: []string{"rgb()/rgba() colour"},
+		patterns: []string{"colour function"},
 	},
 	{
 		name: "rgb call in a template literal",
 		rel:  "web/src/components/X.tsx", body: "const g = `rgb(${r})`;",
-		patterns: []string{"rgb()/rgba() colour"},
+		patterns: []string{"colour function"},
+	},
+	{
+		name: "hsl call, the spelling the criterion does not name",
+		rel:  "web/src/styles/x.css", body: ".a { color: hsl(174 55% 68%); }",
+		patterns: []string{"colour function"},
+	},
+	{
+		name: "oklch call",
+		rel:  "web/src/styles/x.css", body: ".a { color: oklch(0.7 0.1 180); }",
+		patterns: []string{"colour function"},
 	},
 	{
 		name: "font stack written out",
@@ -375,7 +393,7 @@ var webScannerFixtures = []struct {
 		name:     "several shapes on consecutive lines",
 		rel:      "web/src/styles/x.css",
 		body:     ".a {\n  color: #10142b;\n  background: rgba(16, 20, 43, 0.92);\n  border-radius: 0.5rem;\n}",
-		patterns: []string{"hex colour", "rgb()/rgba() colour", "rem radius literal"},
+		patterns: []string{"hex colour", "colour function", "rem radius literal"},
 	},
 
 	// --- and the shapes that must NOT fire ---
@@ -387,6 +405,15 @@ var webScannerFixtures = []struct {
 	{
 		name: "calc over a radius token",
 		rel:  "web/src/styles/x.css", body: ".a { border-radius: calc(var(--radius) / 2); }",
+	},
+	{
+		name: "color-mix composing tokens",
+		rel:  "web/src/styles/x.css",
+		body: ".a { background: color-mix(in srgb, var(--accent) 12%, transparent); }",
+	},
+	{
+		name: "a word merely ending in lab or lch",
+		rel:  "web/src/routes/X.tsx", body: "const t = collab(state), u = welch(state);",
 	},
 	{
 		name: "pill and hairline pixel radii",

@@ -892,6 +892,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ActorList'
+
     post:
       operationId: registerActor
       tags: [actors]
@@ -941,6 +942,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /v1alpha1/mesh:
+    get:
+      operationId: getMesh
+      tags: [actors]
+      summary: Read the control plane's cached mesh topology.
+      description: >-
+        Returns deduplicated actor identities, machines keyed only by the
+        hostname each actor self-reported in
+        `capabilities.preflight.host.hostname`, cached bridge deployment
+        probes, and worker presence. This request never contacts a bridge;
+        probe failures and their observation times are returned from the
+        independently timed collector cache.
+      responses:
+        '200':
+          description: The current committed topology and cached observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Mesh'
 
   /v1alpha1/actors/{id}:
     get:
@@ -5151,6 +5172,49 @@ components:
           type: string
         run_output:
           description: Set only when the routed edge ended the run.
+
+    Mesh:
+      type: object
+      required: [actors, machines, version, workers]
+      properties:
+        actors:
+          type: array
+          items: {$ref: '#/components/schemas/MeshActor'}
+        machines:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/MeshMachine'}
+          description: Machines keyed by their actors' self-reported hostname.
+        version: {type: string}
+        workers:
+          type: array
+          items: {$ref: '#/components/schemas/MeshWorker'}
+    MeshActor:
+      type: object
+      required: [actor_key, machine, bridge]
+      properties:
+        actor_key: {type: string}
+        machine: {type: string, nullable: true}
+        bridge: {$ref: '#/components/schemas/MeshBridgeObservation'}
+    MeshMachine:
+      type: object
+      required: [actors]
+      properties:
+        actors: {type: array, items: {type: string}}
+    MeshBridgeObservation:
+      type: object
+      properties:
+        deployment: {type: object, additionalProperties: true}
+        observed_at: {type: string, format: date-time}
+        error: {type: string}
+    MeshWorker:
+      type: object
+      required: [worker_id, hostname, revision, actor_keys, last_seen]
+      properties:
+        worker_id: {type: string}
+        hostname: {type: string}
+        revision: {type: string}
+        actor_keys: {type: array, items: {type: string}}
+        last_seen: {type: string, format: date-time}
 
     Actor:
       type: object

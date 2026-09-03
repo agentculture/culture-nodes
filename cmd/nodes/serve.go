@@ -19,6 +19,7 @@ import (
 	artifacts3 "github.com/agentculture/culture-nodes/internal/artifacts/s3"
 	"github.com/agentculture/culture-nodes/internal/auth"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/mesh"
 	"github.com/agentculture/culture-nodes/internal/scheduler"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -303,6 +304,13 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	// What this binary was built as, so a live test can assert which code it
 	// is testing rather than assume it (task t32, issue #104).
 	opts = append(opts, api.WithBuildInfo(version, revision))
+	// Bridge observations are collected on their own timer. The API receives
+	// only the cache reader, so a slow or unreachable bridge can never extend
+	// GET /v1alpha1/mesh latency. Targets are supplied by deployment wiring as
+	// they become known; an empty set honestly renders bridges as unknown.
+	meshCollector := mesh.New(mesh.Config{})
+	go meshCollector.Run(ctx)
+	opts = append(opts, api.WithMeshCollector(meshCollector))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {

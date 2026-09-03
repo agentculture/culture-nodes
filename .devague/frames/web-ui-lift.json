@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-03T15:17:16Z",
-  "updated": "2026-09-03T15:50:37Z",
+  "updated": "2026-09-03T15:58:59Z",
   "claims": [
     {
       "id": "c1",
@@ -418,7 +418,7 @@
     {
       "id": "c25",
       "kind": "requirement",
-      "text": "Navigation is consolidated onto the PRD \u00a78.6 spine without retiring any surface: Your work \u00b7 Inbox \u00b7 Decisions | Design (gallery + New workflow + Generate) \u00b7 Runs (list / board / jobs as one page with a segmented projection toggle) \u00b7 Mesh \u00b7 Ledger-and-plan (Plan) \u00b7 Statistics; every old URL redirects to the surface that now renders it.",
+      "text": "Navigation is consolidated onto the PRD \u00a78.6 spine without retiring any surface: eight destinations in two groups \u2014 Your work \u00b7 Inbox \u00b7 Decisions | Design (gallery + New workflow + Generate) \u00b7 Runs (list / board / jobs as one page with a segmented projection toggle) \u00b7 Mesh \u00b7 Ledger-and-plan (Plan) \u00b7 Statistics; every old URL redirects to the surface that now renders it.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -426,13 +426,19 @@
           "id": "h5",
           "text": "No surface is retired without a replacement in the same PR (decision c33 of the login-from-anywhere spec); every route in today's App.tsx still resolves, by redirect where moved; the nav count is asserted in a Header test.",
           "status": "confirmed",
-          "instruction": ""
+          "instruction": "The Header test asserts the primary nav renders exactly eight links and names them \u2014 Your work, Inbox, Decisions, Design, Runs, Mesh, Ledger-and-plan, Statistics \u2014 so the count has one expected value rather than a number to be guessed; a route test walks every path App.tsx resolves today and asserts each still resolves, directly or by redirect."
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "Header.tsx: two groups, seven links; RunsList/RunsBoard/JobsTimeline become one /runs page with a segmented projection toggle (?view=list|board|jobs); /board and /jobs redirect; Design at /design hosts gallery, /design/new and /design/generate; update ROUTE_TITLES and the Header test.",
-      "revisions": []
+      "instruction": "Header.tsx: two groups, eight links \u2014 the work group is Your work, Inbox, Decisions and the engine group is Design, Runs, Mesh, Ledger-and-plan, Statistics; RunsList/RunsBoard/JobsTimeline become one /runs page with a segmented projection toggle (?view=list|board|jobs); /board and /jobs redirect; Design at /design hosts gallery, /design/new and /design/generate; update ROUTE_TITLES and update the Header test to assert exactly those eight links.",
+      "revisions": [
+        {
+          "text": "Navigation is consolidated onto the PRD \u00a78.6 spine without retiring any surface: Your work \u00b7 Inbox \u00b7 Decisions | Design (gallery + New workflow + Generate) \u00b7 Runs (list / board / jobs as one page with a segmented projection toggle) \u00b7 Mesh \u00b7 Ledger-and-plan (Plan) \u00b7 Statistics; every old URL redirects to the surface that now renders it.",
+          "kind": "requirement",
+          "reason": "PR #284, Qodo Correctness/Medium 'Navigation count contradicts links': the enumeration lists eight destinations (three work, five engine) while c25's instruction said seven links, so the Header count assertion h5 requires had no unambiguous expected value. The enumeration is the load-bearing half \u2014 dropping one to reach seven would retire a surface, which the same requirement and h5 forbid \u2014 so the count is stated as eight in the requirement itself and the instruction is corrected to match."
+        }
+      ]
     },
     {
       "id": "c26",

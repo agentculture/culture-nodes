@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.47.21] - 2026-09-03
+
+### Fixed
+
+- The web-ui-lift spec's nav requirement no longer contradicts its own list. c25 enumerates eight destinations in two groups — Your work, Inbox, Decisions | Design, Runs, Mesh, Ledger-and-plan, Statistics — while its instruction said "two groups, seven links", so h5's required Header count assertion had no unambiguous expected value and an implementer had to guess which destination to drop. The enumeration is the load-bearing half: the same requirement opens with "without retiring any surface" and h5 forbids retiring one without a replacement in the same PR, so reaching seven by removing a link would break the requirement it belongs to. The count is now stated in the requirement itself ("eight destinations in two groups"), the instruction names the three work and five engine links rather than a bare number, and h5 gained an instruction pinning the Header test to exactly those eight by name (PR #284, Qodo Correctness/Medium "Navigation count contradicts links")
+
 ## [0.47.20] - 2026-09-03
 
 ### Fixed

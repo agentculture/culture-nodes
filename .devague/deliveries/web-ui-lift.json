@@ -2,8 +2,23 @@
   "plan_slug": "web-ui-lift",
   "schema_version": 2,
   "created": "2026-09-03T20:58:40Z",
-  "updated": "2026-09-03T21:04:33Z",
-  "deviations": [],
+  "updated": "2026-09-03T21:07:40Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Non-goal c20 (the human pages / , /inbox, /decisions stay #270's lane, untouched beyond the shared toggle) is relaxed for one bounded fixes-cycle package: the three work-group pages take the acceptance reference's treatment \u2014 Decisions' toggle under the heading with per-run cards and compact record rows, Inbox as a table with the decision in the row, Your work as a card grid \u2014 with no change to data contracts, write paths or the identity model.",
+      "task_ref": "t20",
+      "reason": "The operator reviewed the after screenshots on 2026-09-03 and judged the work-group pages 'very messy still'; the demo the operator chose as the acceptance reference already renders these three pages, so the spec's non-goal now contradicts the reference the delivery is judged against.",
+      "affects": [
+        "t20",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 16
+    }
+  ],
   "evidence": [
     {
       "id": "e1",

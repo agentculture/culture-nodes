@@ -1,7 +1,7 @@
 # Design canvas YAML round-trip spike
 
 Date: 2026-09-03  
-Status: spike evidence; operator decision pending
+Status: spike evidence; operator verdict: go (2026-09-03)
 
 ## Time box and isolation
 
@@ -138,7 +138,7 @@ sandbox lacked (issue #279).
 
 ## Go / no-go
 
-Operator decision: pending. The record above is what the editor wave (t14,
-t15) is gated on; the operator fills in the verdict line here.
+Operator decision recorded 2026-09-03 on the evidence above; the editor wave
+(t14, t15) proceeds.
 
-- Verdict: _(operator)_
+- Verdict: **go** (operator, 2026-09-03)

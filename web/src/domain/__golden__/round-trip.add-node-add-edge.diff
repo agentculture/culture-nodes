@@ -1,0 +1,15 @@
+@@ -28,8 +28,14 @@
+       ownerRef: *owner
+       output:
+         from: /nodes/greet/output
++    review:
++      kind: agent
++      ownerRef: team/platform-ai
++      outcomes: [completed]
+ 
+   edges:
+     - to: finish
+       from: greet.completed
++    - from: greet.changes_required
++      to: review
+ 

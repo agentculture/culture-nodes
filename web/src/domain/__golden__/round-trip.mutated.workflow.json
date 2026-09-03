@@ -1,0 +1,39 @@
+{
+  "apiVersion": "nodes.culture.dev/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "ownerRef": "team/platform-ai",
+    "name": "golden-round-trip",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "entry": "greet",
+    "nodes": {
+      "greet": {
+        "kind": "code",
+        "ownerRef": "team/platform-ai",
+        "outcomes": [
+          "completed",
+          "changes_required"
+        ]
+      },
+      "review": {
+        "kind": "agent",
+        "ownerRef": "team/platform-ai",
+        "outcomes": [
+          "completed"
+        ]
+      }
+    },
+    "edges": [
+      {
+        "to": "finish",
+        "from": "greet.completed"
+      },
+      {
+        "from": "greet.changes_required",
+        "to": "review"
+      }
+    ]
+  }
+}

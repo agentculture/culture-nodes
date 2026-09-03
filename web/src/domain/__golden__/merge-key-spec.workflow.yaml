@@ -1,0 +1,31 @@
+# Refusal golden for domain/workflow-document.ts (task t14), path-chain case.
+#
+# Deliberately NOT schema-valid, same as merge-key-nodes.workflow.yaml. Here
+# the merge key sits on `spec` itself, so `spec.edges` is not even present as
+# text: it is inherited from the anchored map. An addEdge that appended to a
+# seq the author cannot see in the file would be a silent surprise, so every
+# map on the path from the document root to the mutation site is checked, not
+# just the site's own map.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: golden-merge-key-spec
+
+templates:
+  specDefaults: &spec-defaults
+    entry: greet
+    edges:
+      - from: greet.completed
+        to: finish
+
+spec:
+  <<: *spec-defaults
+
+  nodes:
+    greet:
+      kind: agent
+      ownerRef: team/platform-ai
+    finish:
+      kind: end
+      ownerRef: team/platform-ai

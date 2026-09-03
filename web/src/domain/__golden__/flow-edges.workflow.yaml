@@ -1,0 +1,19 @@
+# Style-matching golden for domain/workflow-document.ts (task t14): this
+# author writes node maps and edge items as flow collections, so an inserted
+# node or edge has to be written the same way instead of switching the file
+# to block style halfway down.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: golden-flow-edges
+
+spec:
+  entry: greet
+
+  nodes:
+    greet: {kind: agent, ownerRef: team/platform-ai, outcomes: [completed]}
+    finish: {kind: end, ownerRef: team/platform-ai}
+
+  edges:
+    - {from: greet.completed, to: finish}

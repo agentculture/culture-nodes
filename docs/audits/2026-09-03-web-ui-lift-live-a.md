@@ -43,3 +43,18 @@ Namespace `01KZJTJZS8Q03AQQPVFR7QNW90`. Evidence below is from the LAN API
 ## Verdict
 
 The operator fills this in after the browser rows: does wave A on the pair read as the demo promised, and what goes back to the fixes cycle.
+
+## Re-check after the collector fix (pair at 4ef97d1, 2026-09-03 ~20:18Z)
+
+Both hosts redeployed from one pinned commit; parity holds and the sweep
+schedule resumed. `GET /v1alpha1/mesh` now reports:
+
+| Check | Spec | Result |
+| --- | --- | --- |
+| Machines keyed on self-reported hostname | c23, h26 | **pass** — `thor` (codex-thor, notify-discord), `orin` (codex-orin), `spark-f8a9` (developer, intake, planner, qwen-developer, verifier); every attributed actor carries `observed_at` |
+| Worker presence hostname | c38 | **pass** — `thor-worker-1` → `thor`, `orin-worker-1` → `orin` via `NODES_HOSTNAME` |
+| Failed probe renders unknown with its error, never healthy | c34, h24, c40, h32 | **pass** — `company/human-ops`: `GET capabilities: 404 Not Found`; `company/jira-comment`: `capabilities has no preflight.host.hostname`; `company/operator-claude`: `unobserved: no endpoint configured`; each logged per target with a failure count |
+
+Findings for the fixes cycle: the jira bridge reports no hostname (adapter
+follow-up), and a bridge with no capability surface (human-inbox) is counted as
+a failing probe on every tick rather than classified as "not probeable".

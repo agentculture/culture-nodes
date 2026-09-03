@@ -1413,12 +1413,155 @@ button.timeline__node {
   font-size: var(--ac-type-meta);
 }
 
-.node-graphs-view__head {
+.design-view__head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+/* ---------- Design gallery (task t8) ----------
+
+   Two panes: a workflow index on the left, the selected version's graph and
+   its meta on the right — the demo page's Design view
+   (docs/demos/web-ui-lift/culture-nodes-lifted.html) in the app's own
+   vocabulary. One column below the same 68rem breakpoint .run-view__body
+   uses, so a phone reads index-then-graph rather than two squeezed columns.
+
+   Every colour, radius and font here is a token reference: the design layer
+   owns those decisions (tests/lint/webtokens_test.go). */
+
+.design-gallery {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--nodes-gap);
+  align-items: start;
+}
+
+@media (min-width: 68rem) {
+  .design-gallery {
+    grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr);
+  }
+}
+
+.design-gallery__index {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+}
+
+.design-gallery__key {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.design-gallery__key:hover {
+  border-color: var(--line);
+}
+
+.design-gallery__key[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.design-gallery__name {
+  font-weight: 600;
+}
+
+.design-gallery__sub {
+  font-size: var(--ac-type-meta);
+}
+
+.design-gallery__main {
+  min-width: 0;
+}
+
+.design-gallery__versions {
+  margin-top: 0;
+}
+
+/* Same box as .active-graph__canvas: one graph surface, one set of rules. */
+.design-gallery__canvas {
+  height: min(52vh, 28rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.design-gallery__inspect,
+.design-gallery__meta {
+  margin: 0.5rem 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  color: var(--ink-soft);
+}
+
+.design-gallery__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+}
+
+.design-gallery__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* The stored bytes, shown as bytes: pre-wrap keeps every space and newline
+   the operator wrote, and the box scrolls rather than reflowing them. */
+.design-gallery__source {
+  margin: 0.6rem 0 0;
+  padding: 0.75rem 0.9rem;
+  max-height: 28rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.design-gallery__runs {
+  margin-top: 1.1rem;
+}
+
+.design-gallery__runs h2 {
+  font-size: var(--ac-type-meta);
+  letter-spacing: var(--ac-tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 0 0 0.4rem;
+}
+
+.design-gallery__run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: var(--ac-type-meta);
 }
 
 /* Honest empty states for the Nodes/Active Graphs sub-tabs (task t28) —

@@ -33,7 +33,7 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 	insert("beta", 1, "shared-host")
 	insert("nameless", 1, "")
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"preflight":{"host":{"deployment":{"version":"bridge-rev"}}}}`))
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"shared-host","deployment":{"version":"bridge-rev"}}}}`))
 	}))
 	defer bridge.Close()
 	collector := mesh.New(mesh.Config{Interval: time.Hour, ProbeTimeout: time.Second, MaxConcurrency: 2})
@@ -88,15 +88,15 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 	if got.Version != "9.8.7" || len(got.Workers) != 1 {
 		t.Fatalf("version/workers = %q/%d", got.Version, len(got.Workers))
 	}
-	if machine := got.Machines["shared-host"].Actors; strings.Join(machine, ",") != "alpha,beta" {
+	if machine := got.Machines["shared-host"].Actors; strings.Join(machine, ",") != "alpha,beta,nameless" {
 		t.Fatalf("shared machine actors = %v", machine)
 	}
 	for _, actor := range got.Actors {
 		if actor.Bridge.Deployment.Version != "bridge-rev" || actor.Bridge.ObservedAt.IsZero() {
 			t.Fatalf("actor %s bridge observation = %+v", actor.ActorKey, actor.Bridge)
 		}
-		if actor.ActorKey == "nameless" && actor.Machine != nil {
-			t.Fatalf("nameless actor machine = %q, want null", *actor.Machine)
+		if actor.Machine == nil || *actor.Machine != "shared-host" {
+			t.Fatalf("actor %s machine = %v, want bridge-reported shared-host", actor.ActorKey, actor.Machine)
 		}
 	}
 }

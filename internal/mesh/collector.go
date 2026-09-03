@@ -24,14 +24,18 @@ type Config struct {
 	MaxConcurrency int
 	HTTPClient     *http.Client
 	Logger         *slog.Logger
+	TargetSource   func(context.Context) ([]Target, error)
 }
 
 type Target struct {
-	Key string
-	URL string
+	Key    string
+	URL    string
+	Bearer string
+	Error  string
 }
 
 type Observation struct {
+	Hostname   string          `json:"hostname,omitempty"`
 	Deployment json.RawMessage `json:"deployment,omitempty"`
 	ObservedAt time.Time       `json:"observed_at"`
 	Error      string          `json:"error,omitempty"`
@@ -67,6 +71,15 @@ func New(config Config) *Collector {
 func (c *Collector) SetTargets(targets []Target) {
 	c.mu.Lock()
 	c.targets = append([]Target(nil), targets...)
+	current := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		current[target.Key] = struct{}{}
+	}
+	for key := range c.cache {
+		if _, ok := current[key]; !ok {
+			delete(c.cache, key)
+		}
+	}
 	c.mu.Unlock()
 }
 
@@ -102,6 +115,14 @@ func (c *Collector) Run(ctx context.Context) {
 }
 
 func (c *Collector) Collect(ctx context.Context) {
+	if c.config.TargetSource != nil {
+		targets, err := c.config.TargetSource(ctx)
+		if err != nil {
+			c.config.Logger.Warn("mesh target refresh failed", "error", err)
+		} else {
+			c.SetTargets(targets)
+		}
+	}
 	c.mu.RLock()
 	targets := append([]Target(nil), c.targets...)
 	c.mu.RUnlock()
@@ -109,6 +130,10 @@ func (c *Collector) Collect(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, target := range targets {
 		target := target
+		if target.Error != "" {
+			c.store(target.Key, Observation{Error: target.Error})
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -128,8 +153,14 @@ func (c *Collector) probe(parent context.Context, target Target) {
 	observedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(parent, c.config.ProbeTimeout)
 	defer cancel()
-	url := strings.TrimRight(target.URL, "/") + actors.CapabilitiesPath
+	url := target.URL
+	if !strings.HasSuffix(strings.TrimRight(url, "/"), actors.CapabilitiesPath) {
+		url = strings.TrimRight(url, "/") + actors.CapabilitiesPath
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err == nil && target.Bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+target.Bearer)
+	}
 	if err == nil {
 		var response *http.Response
 		response, err = c.config.HTTPClient.Do(req)
@@ -147,16 +178,19 @@ func (c *Collector) probe(parent context.Context, target Target) {
 					var payload struct {
 						Preflight struct {
 							Host struct {
+								Hostname   string          `json:"hostname"`
 								Deployment json.RawMessage `json:"deployment"`
 							} `json:"host"`
 						} `json:"preflight"`
 					}
 					if decodeErr := json.Unmarshal(body, &payload); decodeErr != nil {
 						err = fmt.Errorf("decode capabilities: %w", decodeErr)
+					} else if payload.Preflight.Host.Hostname == "" {
+						err = fmt.Errorf("capabilities has no preflight.host.hostname")
 					} else if len(payload.Preflight.Host.Deployment) == 0 {
 						err = fmt.Errorf("capabilities has no preflight.host.deployment block")
 					} else {
-						c.store(target.Key, Observation{Deployment: payload.Preflight.Host.Deployment, ObservedAt: observedAt})
+						c.store(target.Key, Observation{Hostname: payload.Preflight.Host.Hostname, Deployment: payload.Preflight.Host.Deployment, ObservedAt: observedAt})
 						return
 					}
 				}

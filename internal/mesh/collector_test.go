@@ -14,7 +14,7 @@ import (
 func TestCollectorCachesDeploymentAndObservedAt(t *testing.T) {
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"preflight":{"host":{"deployment":{"version":"1.2.3"}}}}`))
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"thor","deployment":{"version":"1.2.3"}}}}`))
 	}))
 	defer bridge.Close()
 
@@ -22,8 +22,30 @@ func TestCollectorCachesDeploymentAndObservedAt(t *testing.T) {
 	c.SetTargets([]Target{{Key: "bridge-a", URL: bridge.URL}})
 	c.Collect(context.Background())
 	got, ok := c.Snapshot()["bridge-a"]
-	if !ok || got.ObservedAt.IsZero() || got.Error != "" || string(got.Deployment) != `{"version":"1.2.3"}` {
+	if !ok || got.Hostname != "thor" || got.ObservedAt.IsZero() || got.Error != "" || string(got.Deployment) != `{"version":"1.2.3"}` {
 		t.Fatalf("snapshot = %#v, want cached deployment with observed_at", got)
+	}
+}
+
+func TestCollectorKeysSuccessfulBridgeByReportedHostnameAndKeepsTimeoutUnknown(t *testing.T) {
+	answering := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"reported-host","deployment":{}}}}`))
+	}))
+	defer answering.Close()
+	timingOut := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer timingOut.Close()
+
+	c := New(Config{ProbeTimeout: 20 * time.Millisecond, MaxConcurrency: 2})
+	c.SetTargets([]Target{{Key: "answering", URL: answering.URL}, {Key: "timing-out", URL: timingOut.URL}})
+	c.Collect(context.Background())
+	got := c.Snapshot()
+	if got["answering"].Hostname != "reported-host" || got["answering"].ObservedAt.IsZero() {
+		t.Fatalf("answering observation = %#v", got["answering"])
+	}
+	if got["timing-out"].Hostname != "" || got["timing-out"].Error == "" || got["timing-out"].ObservedAt.IsZero() {
+		t.Fatalf("timed-out observation = %#v, want unknown hostname, error, and observed_at", got["timing-out"])
 	}
 }
 
@@ -68,7 +90,7 @@ func TestRunCollectsOnTimer(t *testing.T) {
 	var calls atomic.Int32
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
-		_, _ = w.Write([]byte(`{"preflight":{"host":{"deployment":{}}}}`))
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"thor","deployment":{}}}}`))
 	}))
 	defer bridge.Close()
 	c := New(Config{Interval: 10 * time.Millisecond, ProbeTimeout: time.Second, MaxConcurrency: 1})

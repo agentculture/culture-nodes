@@ -11,6 +11,13 @@ import (
 )
 
 type meshActor struct {
+	// ID is the actors-table row id of the actor's current revision — the
+	// identity attempts.actor_id records, and therefore the value
+	// GET /v1alpha1/node-runs reports as a node run's actor reference. It is
+	// published here so a reader can join run attribution to a mesh actor
+	// without a second listing; actor_key alone cannot do that join (PR #292
+	// review).
+	ID       string           `json:"id"`
 	ActorKey string           `json:"actor_key"`
 	Machine  *string          `json:"machine"`
 	Bridge   mesh.Observation `json:"bridge"`
@@ -35,13 +42,14 @@ type meshOut struct {
 }
 
 type meshActorRow struct {
+	id       string
 	key      string
 	hostname string
 }
 
 func meshActors(ctx context.Context, s *Server) ([]meshActorRow, error) {
 	rows, err := s.Store.Pool().Query(ctx, `
-SELECT DISTINCT ON (actor_key) actor_key, COALESCE(capabilities #>> '{preflight,host,hostname}', '')
+SELECT DISTINCT ON (actor_key) id, actor_key, COALESCE(capabilities #>> '{preflight,host,hostname}', '')
 FROM actors WHERE namespace_id = $1 ORDER BY actor_key, revision DESC`, s.NamespaceID)
 	if err != nil {
 		return nil, err
@@ -50,7 +58,7 @@ FROM actors WHERE namespace_id = $1 ORDER BY actor_key, revision DESC`, s.Namesp
 	var out []meshActorRow
 	for rows.Next() {
 		var row meshActorRow
-		if err := rows.Scan(&row.key, &row.hostname); err != nil {
+		if err := rows.Scan(&row.id, &row.key, &row.hostname); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
@@ -59,7 +67,8 @@ FROM actors WHERE namespace_id = $1 ORDER BY actor_key, revision DESC`, s.Namesp
 }
 
 func meshWorkers(ctx context.Context, s *Server) ([]meshWorker, error) {
-	rows, err := s.Store.Pool().Query(ctx, `SELECT worker_id, hostname, revision, actor_keys, last_seen FROM worker_presence ORDER BY worker_id`)
+	rows, err := s.Store.Pool().Query(ctx, `SELECT worker_id, hostname, revision, actor_keys, last_seen
+FROM worker_presence WHERE namespace_id = $1 ORDER BY worker_id`, s.NamespaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +93,7 @@ func buildMesh(actorRows []meshActorRow, workers []meshWorker, version string, o
 			observation.Class = "unobserved"
 			observation.Error = "not observed by the bridge collector"
 		}
-		actor := meshActor{ActorKey: row.key, Bridge: observation}
+		actor := meshActor{ID: row.id, ActorKey: row.key, Bridge: observation}
 		if observation.Hostname != "" {
 			hostname := observation.Hostname
 			actor.Machine = &hostname

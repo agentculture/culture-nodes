@@ -79,12 +79,25 @@ export function assembleMeshGraph(
       if (approver) approvers.add(approver);
     }
   }
+  // Indexed by every identity a node run's actor reference can arrive as:
+  // the actors-table row id (what attempts.actor_id, and therefore
+  // GET /v1alpha1/node-runs, actually reports) and the actor key (what a
+  // workflow's `uses:` reference names, bare or in `actor://key@sha256:…`
+  // form, which refKey normalizes). Keying on actor_key alone silently drops
+  // every run-to-actor edge in production (PR #292 review).
   const actorIds = new Map<string, string>();
+  /** Every accepted identity, mapped back to the actor key the edge id names. */
+  const actorKeysByRef = new Map<string, string>();
   let probeFailures = 0;
   let unattributedActors = 0;
   for (const actor of mesh.actors) {
     const id = `actor:${actor.actor_key}`;
     actorIds.set(actor.actor_key, id);
+    actorKeysByRef.set(actor.actor_key, actor.actor_key);
+    if (actor.id) {
+      actorIds.set(actor.id, id);
+      actorKeysByRef.set(actor.id, actor.actor_key);
+    }
     const isHuman = approvers.has(actor.actor_key) || actor.actor_key.startsWith("human/") || actor.actor_key.startsWith("human-");
     if (actor.bridge.class === "failed" || (!actor.bridge.class && actor.bridge.error)) probeFailures++;
     if (actor.machine === null) unattributedActors++;
@@ -127,11 +140,11 @@ export function assembleMeshGraph(
   for (const run of activeRuns) {
     const id = `run:${run.id}`;
     nodes.push({ id, kind: "run", label: run.name ?? run.display_hint ?? run.id, sub: run.state, trace: { surface: "runs", row: `runs/${run.id}` }, workflowDigest: run.workflow_digest });
-    const actorId = attribution.get(run.id);
-    if (actorId) {
-      const actorKey = mesh.actors.find((a) => a.actor_key === actorId)?.actor_key ?? actorId;
-      const target = actorIds.get(actorKey);
-      if (target) edges.push({ id: `run-actor:${run.id}:${actorKey}`, source: id, target, relation: "run-actor" });
+    const actorRef = attribution.get(run.id);
+    if (actorRef) {
+      const ref = actorIds.has(actorRef) ? actorRef : (refKey(actorRef) ?? actorRef);
+      const target = actorIds.get(ref);
+      if (target) edges.push({ id: `run-actor:${run.id}:${actorKeysByRef.get(ref)}`, source: id, target, relation: "run-actor" });
     }
     const workflowKey = workflowByDigest.get(run.workflow_digest);
     if (workflowKey) edges.push({ id: `run-workflow:${run.id}:${workflowKey}`, source: id, target: `workflow:${workflowKey}`, relation: "run-workflow" });

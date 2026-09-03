@@ -33,11 +33,12 @@ func HostnameReason(hostname string) string {
 
 func (w *Worker) recordPresence(ctx context.Context) error {
 	if err := w.db.UpsertWorkerPresence(ctx, postgres.WorkerPresence{
-		WorkerID:  w.opts.WorkerID,
-		Hostname:  w.opts.Hostname,
-		Revision:  w.opts.Revision,
-		ActorKeys: w.opts.ActorKeys,
-		LastSeen:  w.opts.Now(),
+		NamespaceID: w.opts.NamespaceID,
+		WorkerID:    w.opts.WorkerID,
+		Hostname:    w.opts.Hostname,
+		Revision:    w.opts.Revision,
+		ActorKeys:   w.opts.ActorKeys,
+		LastSeen:    w.opts.Now(),
 	}); err != nil {
 		return fmt.Errorf("worker: record presence: %w", err)
 	}

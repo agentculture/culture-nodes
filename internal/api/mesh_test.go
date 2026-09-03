@@ -13,6 +13,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/mesh"
 	"github.com/agentculture/culture-nodes/internal/store"
+	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
 func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *testing.T) {
@@ -44,7 +45,14 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 	})
 	collector.Collect(ctx)
 	workerID := "worker-" + store.NewULID()
-	if _, err := f.store.Pool().Exec(ctx, `INSERT INTO worker_presence (worker_id, hostname, revision, actor_keys, last_seen) VALUES ($1,'shared-host','rev-a',ARRAY['alpha'],NOW())`, workerID); err != nil {
+	if _, err := f.store.Pool().Exec(ctx, `INSERT INTO worker_presence (namespace_id, worker_id, hostname, revision, actor_keys, last_seen) VALUES ($1,$2,'shared-host','rev-a',ARRAY['alpha'],NOW())`, f.nsID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	// A worker of ANOTHER namespace, carrying the same worker id: presence is
+	// namespace-scoped state, so this row must be invisible here and must not
+	// have overwritten the row above (PR #292 review).
+	otherNS := pgtest.MustNamespace(t, f.store, "mesh-other").ID
+	if _, err := f.store.Pool().Exec(ctx, `INSERT INTO worker_presence (namespace_id, worker_id, hostname, revision, actor_keys, last_seen) VALUES ($1,$2,'other-host','rev-b',ARRAY['omega'],NOW())`, otherNS, workerID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -64,6 +72,7 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 	defer resp.Body.Close()
 	var got struct {
 		Actors []struct {
+			ID       string  `json:"id"`
 			ActorKey string  `json:"actor_key"`
 			Machine  *string `json:"machine"`
 			Bridge   struct {
@@ -76,8 +85,12 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 		Machines map[string]struct {
 			Actors []string `json:"actors"`
 		} `json:"machines"`
-		Version string            `json:"version"`
-		Workers []json.RawMessage `json:"workers"`
+		Version string `json:"version"`
+		Workers []struct {
+			WorkerID string `json:"worker_id"`
+			Hostname string `json:"hostname"`
+			Revision string `json:"revision"`
+		} `json:"workers"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
@@ -88,6 +101,9 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 	if got.Version != "9.8.7" || len(got.Workers) != 1 {
 		t.Fatalf("version/workers = %q/%d", got.Version, len(got.Workers))
 	}
+	if got.Workers[0].Hostname != "shared-host" || got.Workers[0].Revision != "rev-a" {
+		t.Fatalf("worker row = %+v, want this namespace's own presence, not another namespace's", got.Workers[0])
+	}
 	if machine := got.Machines["shared-host"].Actors; strings.Join(machine, ",") != "alpha,beta,nameless" {
 		t.Fatalf("shared machine actors = %v", machine)
 	}
@@ -97,6 +113,12 @@ func TestMeshDedupesActorsKeysMachinesFromReportedHostnameAndIncludesWorkers(t *
 		}
 		if actor.Machine == nil || *actor.Machine != "shared-host" {
 			t.Fatalf("actor %s machine = %v, want bridge-reported shared-host", actor.ActorKey, actor.Machine)
+		}
+		// The actors-table row id of the CURRENT revision: the identity
+		// attempts.actor_id records, and so the only value a reader can join
+		// GET /v1alpha1/node-runs attribution on (PR #292 review).
+		if actor.ID == "" {
+			t.Fatalf("actor %s has no row id; run attribution cannot be joined to it", actor.ActorKey)
 		}
 	}
 }

@@ -118,15 +118,9 @@ export { WHOAMI_ACTOR_ID, WHOAMI_BOUND, WHOAMI_UNBOUND } from "../../src/fixture
  * cursor-less first connect used to be.
  */
 export function snapshotMarkerSse(id = "0"): string {
-  const envelope = {
-    specversion: "1.0",
-    id,
-    type: "dev.culture.nodes.stream.snapshot",
-    source: "fixture",
-    time: "2026-08-09T09:00:00Z",
-    data: { snapshot_id: id },
-  };
-  return `id: ${id}\nevent: ${envelope.type}\ndata: ${JSON.stringify(envelope)}\n\n`;
+  // Framed exactly as writeSnapshotSSEEvent does: a stream control frame
+  // with a bare `{"snapshot_id"}` body, NOT a CloudEvents envelope.
+  return `id: ${id}\nevent: stream.snapshot\ndata: ${JSON.stringify({ snapshot_id: id })}\n\n`;
 }
 
 export async function mockWhoami(
@@ -677,8 +671,9 @@ import {
   MESH_RUNS,
   MESH_PAYLOAD,
   MESH_WORKFLOWS,
-  MESH_SNAPSHOT_EVENT,
+  MESH_SNAPSHOT_ID,
   meshEventsAsSse,
+  meshSnapshotMarkerSse,
 } from "../../src/fixtures/mesh-fixture";
 
 export {
@@ -744,13 +739,24 @@ export async function mockMeshApi(page: Page): Promise<void> {
       // later connect gets only what was committed after the last id served.
       const requested = headers["last-event-id"] ?? url.searchParams.get("from") ?? "latest";
       const from = requested === "latest" ? tail.cursor : requested;
-      const pending =
-        from === null
-          ? [MESH_SNAPSHOT_EVENT]
-          : [...MESH_HISTORICAL_EVENTS, ...liveEvents].filter(
-              (event) => event.id > from,
-            );
-      tail.cursor = pending.length > 0 ? pending[pending.length - 1].id : (from ?? MESH_SNAPSHOT_EVENT.id);
+      if (from === null) {
+        // The tail-only first connect: the server answers with the boundary
+        // marker alone, never with history.
+        tail.cursor = MESH_SNAPSHOT_ID;
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+          },
+          body: meshSnapshotMarkerSse(),
+        });
+        return;
+      }
+      const pending = [...MESH_HISTORICAL_EVENTS, ...liveEvents].filter(
+        (event) => event.id > from,
+      );
+      tail.cursor = pending.length > 0 ? pending[pending.length - 1].id : from;
       await route.fulfill({
         status: 200,
         headers: {

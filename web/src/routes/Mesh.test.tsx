@@ -146,6 +146,12 @@ class FakeEventSource {
     this.onopen?.();
   }
 
+  /** The server's `stream.snapshot` control frame: a bare body, no envelope. */
+  emitSnapshot(id: string) {
+    const event = { data: JSON.stringify({ snapshot_id: id }), lastEventId: id };
+    for (const listener of this.listeners.get("stream.snapshot") ?? []) listener(event);
+  }
+
   emit(type: string, data: Record<string, unknown>, id: string) {
     const envelope = {
       id,
@@ -225,7 +231,7 @@ describe("Mesh route", () => {
       </MemoryRouter>,
     );
     act(() => {
-      source.emit("dev.culture.nodes.stream.snapshot", {}, "01SNAPSHOT");
+      source.emitSnapshot("01SNAPSHOT");
       source.emit(
         "dev.culture.nodes.run.created",
         { run_id: "run-raced", workflow_key: "mesh-demo" },
@@ -330,7 +336,7 @@ describe("Mesh route", () => {
   it("labels an unsupported actor as having no capability surface", async () => {
     vi.mocked(getMesh).mockResolvedValueOnce({
       ...MESH_PAYLOAD,
-      actors: [{ actor_key: "company/human-ops", machine: null, bridge: { observed_at: "now", class: "unsupported", reason: "GET capabilities: 404 Not Found", error: "GET capabilities: 404 Not Found" } }],
+      actors: [{ id: "actor-human-ops-r1", actor_key: "company/human-ops", machine: null, bridge: { observed_at: "now", class: "unsupported", reason: "GET capabilities: 404 Not Found", error: "GET capabilities: 404 Not Found" } }],
       machines: {},
     });
     const view = await renderMesh();

@@ -38,6 +38,14 @@ export type SharedEventType = (typeof SHARED_EVENT_TYPES)[number];
  */
 export type SharedStreamStatus = "live" | "reconnecting";
 
+/**
+ * The native SSE event name of the `?from=latest` boundary marker. It is
+ * deliberately NOT a `dev.culture.nodes.*` envelope type: it is a stream
+ * control frame, not a committed event, and tests/lint/eventsource_test.go
+ * pins this literal against the server's own writeSnapshotSSEEvent.
+ */
+export const SNAPSHOT_EVENT_NAME = "stream.snapshot";
+
 export interface SharedEvent {
   /** The SSE `id:` field — the events table's ULID, the resume cursor. */
   id: string;
@@ -98,6 +106,35 @@ class SharedEventsManager {
     for (const listener of this.statusListeners) listener();
   }
 
+  /**
+   * The tail-only marker, which is NOT an event envelope: the server frames
+   * it as `event: stream.snapshot` with a body of exactly `{"snapshot_id":
+   * "<ulid>"}` (internal/api/events.go, writeSnapshotSSEEvent), so it has no
+   * `type` field to route on and never reaches handleMessage. Recording its
+   * id as `lastId` is what makes the manager's own reconnect resume from the
+   * boundary instead of asking for `latest` again and skipping whatever
+   * committed while the connection was down.
+   */
+  private handleSnapshotFrame = (raw: MessageEvent<string>) => {
+    let snapshotId = raw.lastEventId || null;
+    try {
+      const body = JSON.parse(raw.data) as { snapshot_id?: unknown };
+      if (typeof body.snapshot_id === "string" && body.snapshot_id) {
+        snapshotId = body.snapshot_id;
+      }
+    } catch {
+      // An unparseable marker still carries its id in the SSE `id:` field.
+    }
+    if (!snapshotId) return;
+    this.lastId = snapshotId;
+    this.snapshotId = snapshotId;
+    this.setSnapshot({
+      status: this.snapshot.status,
+      lastEventId: this.lastId,
+      snapshotId: this.snapshotId,
+    });
+  };
+
   private handleMessage = (raw: MessageEvent<string>) => {
     let envelope: EventEnvelope;
     try {
@@ -106,16 +143,6 @@ class SharedEventsManager {
       return; // a frame we cannot parse is dropped, never guessed at
     }
     const id = raw.lastEventId || envelope.id;
-    if (envelope.type === "dev.culture.nodes.stream.snapshot") {
-      this.lastId = id;
-      this.snapshotId = id;
-      this.setSnapshot({
-        status: this.snapshot.status,
-        lastEventId: this.lastId,
-        snapshotId: this.snapshotId,
-      });
-      return;
-    }
     if (raw.lastEventId && raw.lastEventId !== this.lastId) {
       this.lastId = raw.lastEventId;
       this.setSnapshot({
@@ -155,8 +182,8 @@ class SharedEventsManager {
       });
     };
     source.addEventListener(
-      "dev.culture.nodes.stream.snapshot",
-      this.handleMessage as EventListener,
+      SNAPSHOT_EVENT_NAME,
+      this.handleSnapshotFrame as EventListener,
     );
     for (const type of SHARED_EVENT_TYPES) {
       source.addEventListener(type, this.handleMessage as EventListener);

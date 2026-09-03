@@ -451,6 +451,13 @@ export interface MeshBridgeObservation {
 
 export interface MeshPayload {
   actors: Array<{
+    /**
+     * The `actors` row id of this actor's current revision — the identity
+     * `attempts.actor_id` records, and so the value `GET /v1alpha1/node-runs`
+     * reports as a node run's `actor_id`. Run attribution joins on this;
+     * `actor_key` cannot answer that join.
+     */
+    id: string;
     actor_key: string;
     machine: string | null;
     bridge: MeshBridgeObservation;

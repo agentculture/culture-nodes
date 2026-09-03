@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.48.1] - 2026-09-04
+
+### Added
+
+- `MeshActor.id` on `GET /v1alpha1/mesh`: the `actors` row id of an actor's
+  current revision — the identity `attempts.actor_id` records, and so the only
+  value a reader can join `GET /v1alpha1/node-runs` attribution on
+- migrations/0056: `worker_presence.namespace_id`, with the primary key moved
+  to `(namespace_id, worker_id)`
+- `tests/lint/eventsource_test.go` pins the `stream.snapshot` marker name
+  across server and client so the two cannot drift apart again
+
+### Fixed
+
+- the web client never received the tail-only `stream.snapshot` marker: it
+  listened for `dev.culture.nodes.stream.snapshot` and an event envelope,
+  while the server writes `event: stream.snapshot` with a bare
+  `{"snapshot_id"}` body. The marker id went unrecorded, so the shared
+  EventSource's own reconnect asked for `latest` again instead of resuming
+  from the boundary, skipping whatever committed while it was down (PR #292
+  review)
+- the Mesh drew no run→actor edge: attribution was matched against
+  `actor_key`, but `GET /v1alpha1/node-runs` reports the actors-table row id.
+  Attribution now resolves a row id, a bare key, and a digest-pinned
+  `actor://` reference alike (PR #292 review)
+- `GET /v1alpha1/mesh` returned every namespace's worker presence, and two
+  workers sharing a `NODES_WORKER_ID` across namespaces overwrote each
+  other's row (PR #292 review)
+
 ## [0.48.0] - 2026-09-04
 
 ### Added

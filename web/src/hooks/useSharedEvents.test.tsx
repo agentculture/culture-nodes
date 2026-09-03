@@ -68,6 +68,20 @@ class FakeEventSource {
     this.onerror?.();
   }
 
+  /**
+   * The `?from=latest` boundary marker exactly as internal/api/events.go
+   * frames it: native event name `stream.snapshot`, body `{"snapshot_id"}`,
+   * and no CloudEvents envelope at all.
+   */
+  emitSnapshot(id: string) {
+    const event = {
+      data: JSON.stringify({ snapshot_id: id }),
+      lastEventId: id,
+      type: "stream.snapshot",
+    };
+    for (const listener of this.listeners.get("stream.snapshot") ?? []) listener(event);
+  }
+
   emit(type: string, data: Record<string, unknown>, id: string) {
     const envelope = {
       id,
@@ -142,16 +156,27 @@ describe("useSharedEvents (task t27, c48/h41)", () => {
       />,
     );
 
-    act(() =>
-      FakeEventSource.instances[0].emit(
-        "dev.culture.nodes.stream.snapshot",
-        {},
-        "01SNAPSHOT",
-      ),
-    );
+    act(() => FakeEventSource.instances[0].emitSnapshot("01SNAPSHOT"));
 
     expect(snapshots.at(-1)).toBe("01SNAPSHOT");
     expect(events).toHaveLength(0);
+  });
+
+  it("resumes from the snapshot boundary after the connection closes, never from latest again", () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<Subscriber types={[RUN_CREATED]} report={NOOP} />);
+      act(() => FakeEventSource.instances[0].open());
+      act(() => FakeEventSource.instances[0].emitSnapshot("01SNAPSHOT"));
+      act(() => FakeEventSource.instances[0].fail());
+      act(() => vi.advanceTimersByTime(1000)); // the base reconnect delay
+
+      expect(FakeEventSource.instances).toHaveLength(2);
+      expect(FakeEventSource.instances[1].url).toBe("/v1alpha1/events?from=01SNAPSHOT");
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports the stream honestly: reconnecting until open, live after", () => {

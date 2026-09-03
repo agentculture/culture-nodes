@@ -2051,12 +2051,17 @@
           "bridge": {
             "$ref": "#/components/schemas/MeshBridgeObservation"
           },
+          "id": {
+            "description": "The `actors` row id of this actor's current (highest) revision -- the identity `attempts.actor_id` records, and therefore the value `GET /v1alpha1/node-runs` reports as a node run's `actor_id`. Join run attribution on this, not on `actor_key`.",
+            "type": "string"
+          },
           "machine": {
             "nullable": true,
             "type": "string"
           }
         },
         "required": [
+          "id",
           "actor_key",
           "machine",
           "bridge"

@@ -2,7 +2,7 @@
   "plan_slug": "web-ui-lift",
   "schema_version": 2,
   "created": "2026-09-03T20:58:40Z",
-  "updated": "2026-09-03T21:03:44Z",
+  "updated": "2026-09-03T21:04:33Z",
   "deviations": [],
   "evidence": [
     {
@@ -303,7 +303,7 @@
         "e6"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -317,7 +317,7 @@
         "e10"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -331,7 +331,7 @@
         "e12"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -345,7 +345,7 @@
         "e1"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -359,7 +359,7 @@
         "e5"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -371,7 +371,7 @@
       ],
       "evidence_refs": [],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -385,7 +385,7 @@
         "e6"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     },
     {
@@ -397,7 +397,7 @@
       ],
       "evidence_refs": [],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false
     }
   ],

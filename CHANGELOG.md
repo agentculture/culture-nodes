@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.48.0] - 2026-09-04
+
+### Added
+
+- web-ui-lift: one Culture node across Mesh, Design, Run and canvas views (glowing core, breathing halo, bezier edges); Mesh rebuilt on React Flow from real relationships — machines keyed on the bridge's self-reported hostname, worker presence rows (names only), a timed probe collector with three probe classes; GET /v1alpha1/mesh; tail-only cross-run stream (?from=latest with a stream.snapshot marker) so the Mesh never replays history; Design gallery drawing every published version from its IR; Design canvas that edits the author's YAML as a syntax tree (workflow-document) and publishes the document verbatim; walkthrough e2e mirroring the committed demo (docs/demos/web-ui-lift)
+- worker presence table (migrations/0055) and NODES_HOSTNAME for workers
+- design-token lint guard (tests/lint/webtokens_test.go), single-node import guard, single-EventSource guard
+
+### Changed
+
+- navigation on the PRD §8.6 spine: eight links in two groups; /runs hosts list, board and jobs behind a segmented toggle; /design hosts the gallery, New workflow, Generate and the canvas; old URLs redirect
+- SegmentedToggle replaces every ad-hoc tab strip (the /decisions strip now sits under its heading)
+- canvases fade in when ELK positions land; the fixture screenshot pass covers Mesh and Active graphs
+
+### Fixed
+
+- cursor-less cross-run stream connects replayed the whole namespace history through the Mesh
+- the graphical editor won't-do from the 2026-08-15 brief is reopened by a recorded decision after the round-trip spike (docs/decisions/2026-09-03-*)
+
 ## [0.47.21] - 2026-09-03
 
 ### Fixed

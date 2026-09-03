@@ -14,6 +14,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
+	"github.com/agentculture/culture-nodes/internal/mesh"
 	"github.com/agentculture/culture-nodes/internal/runners"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -88,6 +89,7 @@ type Server struct {
 	// blank. See WithBuildInfo.
 	buildVersion  string
 	buildRevision string
+	meshCollector *mesh.Collector
 
 	// artifactRouter is the only artifact content boundary exposed by this
 	// server. artifactInvocationStore deliberately has the one read method the
@@ -188,6 +190,12 @@ type Server struct {
 
 // Option configures a Server.
 type Option func(*Server)
+
+// WithMeshCollector supplies the independently timed bridge-probe cache used
+// by GET /v1alpha1/mesh. The request path only calls Snapshot.
+func WithMeshCollector(collector *mesh.Collector) Option {
+	return func(s *Server) { s.meshCollector = collector }
+}
 
 // WithPollInterval replaces the SSE handler's events-table poll interval.
 // It exists so tests do not have to wait out the 500ms production default.
@@ -501,6 +509,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
+	mux.HandleFunc("GET /v1alpha1/mesh", s.wrap(s.handleMesh))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}", s.wrap(s.handleGetActor))
 	mux.HandleFunc("GET /v1alpha1/actors/{id}/stats", s.wrap(s.handleGetActorStats))
 	mux.HandleFunc("POST /v1alpha1/actors/{id}/resume", s.wrap(s.handleResumeActor))

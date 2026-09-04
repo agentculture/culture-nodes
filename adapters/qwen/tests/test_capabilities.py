@@ -19,6 +19,7 @@ import pwd
 from pathlib import Path
 
 import pytest
+
 from qwen_bridge import __main__ as qwen_main
 from qwen_bridge import capabilities, preflight, qwen_probe
 from qwen_bridge.acp import errors

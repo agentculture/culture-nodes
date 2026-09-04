@@ -26,6 +26,7 @@ import subprocess
 import sys
 
 import pytest
+
 from qwen_bridge import deployment, preflight
 
 FULL_SHA = "774d5153c32a2e2fdb86f699d814977d111f1408"

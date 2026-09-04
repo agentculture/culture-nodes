@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from qwen_bridge import mapping, qwen_cli
 from qwen_bridge.config import Config
 

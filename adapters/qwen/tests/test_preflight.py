@@ -14,6 +14,7 @@ import os
 import socket
 
 import pytest
+
 from qwen_bridge import preflight
 
 # --- the protocol constants the engine also declares --------------------

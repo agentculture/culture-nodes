@@ -21,7 +21,7 @@ slug: `harness-interop-pi-qwen` · status: `exported` · from frame: `harness-in
 - covers: c2, h1, c40, h34
 - acceptance:
   - adapters/pi/ exists with pyproject.toml dependencies = \[\], src/`pi_bridge`/ ported from adapters/qwen minus acp/, and preflight.py, dialin.py, deployment.py, reap.py byte-identical to adapters/qwen's (md5 equal)
-  - `pi_cli.py` drives 'pi --mode json -p <instruction>' with cwd = the allowlisted repo, --no-session, provider/model from config; it parses `message_end` (usage + model) and `agent_end`; a fixture with a failed tool call still classifies from `agent_end`
+  - `pi_cli.py` drives 'pi --mode json -p INSTRUCTION' with cwd = the allowlisted repo, --no-session, provider/model from config; it parses `message_end` (usage + model) and `agent_end`; a fixture with a failed tool call still classifies from `agent_end`
   - tests/`fake_pi.py` emits the documented json-mode events from a recorded stream captured from pi 0.85.0 (recording command in the fixture header); the whole suite runs offline with no real pi
   - every invocation's stdout JSONL is tee'd to `state_dir`/pi-transcripts/ per invocation; cancel kills the process group (`start_new_session` + killpg) and a test proves the fake's child sleeper is gone and the result classifies as cancelled
   - capabilities.py confinement prose starts 'unix-user:<name>:' and mentions no sandbox; README.md documents trust model, invocation input, config, systemd unit; uv run pytest -q green
@@ -31,7 +31,7 @@ slug: `harness-interop-pi-qwen` · status: `exported` · from frame: `harness-in
 - covers: c4, h3
 - acceptance:
   - `unix_user_engine_ok` accepts pi; `UNIX_USER_PI_VERSION`=0.85.0, `UNIX_USER_QWEN_VERSION` stays 0.22.0, `UNIX_USER_PI_NODE_VERSION` pinned (22.x aarch64 tarball URL)
-  - the pi install step untars node into ~/.local/share/pi-node/<node>/, npm-installs @earendil-works/pi-coding-agent@<pin> into it, and writes ~/.local/bin/pi as a wrapper that prepends that node to PATH; idempotent on the pin (second run prints 'already installed')
+  - the pi install step untars node into ~/.local/share/pi-node/<node>/, npm-installs @earendil-works/pi-coding-agent@PIN into it, and writes ~/.local/bin/pi as a wrapper that prepends that node to PATH; idempotent on the pin (second run prints 'already installed')
   - bootstrap copies ~/.pi/agent/models.json (pi) the way it copies ~/.qwen/settings.json, saying 'absent' when missing; `unix_user_roles` pi -> pi-developer
   - bootstrap-accounts.sh maps thor|orin -> 'codex qwen pi' and spark stays 'claude qwen'
   - tests/`test_deploy_unix_user.py` covers the pi engine on the fake hosts (thor-fake/orin-fake naming per repo convention); files touched only: deploy/prod/lanes/unix-user.sh, deploy/prod/bootstrap-accounts.sh, tests/`test_deploy_unix_user.py`
@@ -57,7 +57,7 @@ slug: `harness-interop-pi-qwen` · status: `exported` · from frame: `harness-in
 - covers: c6, c8, c12
 - acceptance:
   - compose.thor.yml and compose.orin.yml declare `NODES_ACTOR_QWEN_THOR_TOKEN`, `NODES_ACTOR_QWEN_ORIN_TOKEN`, `NODES_ACTOR_PI_THOR_TOKEN`, `NODES_ACTOR_PI_ORIN_TOKEN` in both api and worker env blocks; audit-credentials.sh `audit_classification`() classifies all four
-  - nodes-op.sh actor table gains qwen-thor, qwen-orin, pi-thor, pi-orin with repo paths /home/culture-<engine>/git/culture-nodes-<role>; nodes-operator SKILL.md lists them with harness, host, port (8092 qwen / 8093 pi)
+  - nodes-op.sh actor table gains qwen-thor, qwen-orin, pi-thor, pi-orin with repo paths /home/culture-ENGINE/git/culture-nodes-ROLE; nodes-operator SKILL.md lists them with harness, host, port (8092 qwen / 8093 pi)
   - deploy/prod/README.md documents the register-actor.sh invocation with --os-user and --metadata harness=, model=, `model_endpoint`= for each of the four, and register-actor.sh's help text names those three keys as the comparison tags
   - tests/deploy `registeractor_test.go` (or the existing shell test) pins that the four token names are classified; files touched only: compose.\*.yml, audit-credentials.sh, register-actor.sh (help/docs), deploy/prod/README.md, .claude/skills/nodes-operator/\*\*
 
@@ -66,7 +66,7 @@ slug: `harness-interop-pi-qwen` · status: `exported` · from frame: `harness-in
 - depends on: t3, t4
 - covers: c12, h11, c32, h33
 - acceptance:
-  - deploy.sh thor and deploy.sh orin run `deploy_qwen_bridge` and `deploy_pi_bridge` as culture-qwen@<host> / culture-pi@<host> after the codex lane, using `account_prepare`, `stamp_revision`, uv tool install of the adapter, config rendered from a template with `__HOME__` substituted on the target, the unit installed into the account's systemd --user, and `account_register_os_user`
+  - deploy.sh thor and deploy.sh orin run `deploy_qwen_bridge` and `deploy_pi_bridge` as culture-qwen@HOST / culture-pi@HOST after the codex lane, using `account_prepare`, `stamp_revision`, uv tool install of the adapter, config rendered from a template with `__HOME__` substituted on the target, the unit installed into the account's systemd --user, and `account_register_os_user`
   - culture-nodes-pi-developer.service (ExecStartPre = pi-preflight.sh) and pi-developer.json.template exist; qwen reuses its versioned unit/template; actor-placement.sh knows 8092 (qwen) and 8093 (pi) on thor and orin
   - install-secrets.sh gains `install_qwen_account_env` and `install_pi_account_env` for thor and orin mirroring `install_codex_account_env` (bridge auth-token env + bridge-push.env under umask 077)
   - a second deploy run is a no-op per step (tests/`test_deploy_account_bridges.py` fake-host run asserts idempotence); tests/deploy Go lane tests locate the new lanes by literal (no case globbing before the real case)
@@ -88,7 +88,7 @@ slug: `harness-interop-pi-qwen` · status: `exported` · from frame: `harness-in
 - depends on: t1, t2, t7, t8, t6
 - covers: c4, h3, c6, h5, c15, h15, c16, h16, c17, h17, c29, h29, c12, h11, c32, h33
 - acceptance:
-  - bootstrap-accounts.sh thor and orin run (one #294 comment per typed sudo naming host and command); ssh culture-qwen@<host> and culture-pi@<host> open with the operator key on both hosts
+  - bootstrap-accounts.sh thor and orin run (one #294 comment per typed sudo naming host and command); ssh culture-qwen@HOST and culture-pi@HOST open with the operator key on both hosts
   - install-secrets.sh, then deploy.sh thor and deploy.sh orin (with `NODES_API_URL` exported to the LAN address) complete; a second deploy run pastes no-op per step; #289's exit-0 defect is checked by reading each lane's output, not the exit code
   - register-actor.sh ×4 with --os-user and harness/model/`model_endpoint` metadata; GET /v1alpha1/actors shows the four rows; audit-credentials.sh thor and orin pass
   - pasted outputs in docs/audits/2026-09-DD-harness-interop-cutover.md: is-active under each account, id -nG, ~/.local/bin/pi --version and qwen --version per account, curl thor:8000/v1/models from each account, spark's qwen-developer still active at rev 2, thor:8000 model list unchanged, nodes-op.sh assign smoke to each of the four succeeds, a workflow YAML naming actor://company/pi-thor validates and publishes

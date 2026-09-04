@@ -167,7 +167,8 @@ def test_actor_placement_knows_the_qwen_and_pi_ports():
     assert "qwen=8092" in out
     assert "pi=8093" in out
     assert "codex=8086" in out
-    assert "refused" in out and "LEAK" not in out
+    assert "refused" in out
+    assert "LEAK" not in out
     qwen_tmpl = json.loads(
         (ROOT / "deploy/prod/qwen-developer.json.template").read_text().replace("__HOME__", "/h")
     )

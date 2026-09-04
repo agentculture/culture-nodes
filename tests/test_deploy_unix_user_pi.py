@@ -396,7 +396,8 @@ def test_bootstrap_accounts_maps_thor_and_orin_to_codex_qwen_pi_and_spark_stays(
     assert re.search(r'^\s*spark\)\s+ENGINES="claude qwen"', script, re.M)
     assert re.search(r'^\s*orin\|thor\)\s+ENGINES="codex qwen pi"', script, re.M)
     header = script[: script.index("set -euo pipefail")]
-    assert "bootstrap-accounts.sh orin" in header and "codex qwen pi" in header
+    assert "bootstrap-accounts.sh orin" in header
+    assert "codex qwen pi" in header
     assert "bootstrap-accounts.sh thor" in header
     assert "bootstrap-accounts.sh spark" in header and "culture-claude + culture-qwen" in header
     for host in ("thor", "orin"):

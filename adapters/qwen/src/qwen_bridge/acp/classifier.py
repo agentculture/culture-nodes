@@ -170,6 +170,7 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
     terminal_stop: Any = None
     terminal_error: dict[str, Any] | None = None
     terminal_meta: dict[str, Any] | None = None
+    permission_cancelled = False
 
     # --- the downsampled accumulation (c21) --------------------------------
     final_text_parts: list[str] = []
@@ -268,6 +269,13 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         # a RESPONSE line
         result = obj.get("result")
         error = obj.get("error")
+        if isinstance(result, dict):
+            permission_outcome = result.get("outcome")
+            if (
+                isinstance(permission_outcome, dict)
+                and permission_outcome.get("outcome") == "cancelled"
+            ):
+                permission_cancelled = True
         if isinstance(result, dict) and "protocolVersion" in result:
             initialize_result = result
         elif isinstance(result, dict) and "modes" in result and "sessionId" in result:
@@ -338,7 +346,7 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         current_model_id=current_model_id,
     )
 
-    return {
+    parsed = {
         "status": status,
         "summary": summary,
         # no ACP update reports file changes as a first-class fact (the
@@ -363,3 +371,6 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         },
         "seam_facts": seam_facts.to_dict(),
     }
+    if permission_cancelled and status == _STATUS_OK:
+        parsed["outcome"] = "permission_blocked"
+    return parsed

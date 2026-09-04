@@ -49,8 +49,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from qwen_bridge.acp import errors, transport, wire
+from qwen_bridge.acp import errors
 from qwen_bridge.acp import probe as acp_probe
+from qwen_bridge.acp import transport, wire
 from qwen_bridge.config import Config
 
 #: Where the host keeps the qwen settings, relative to $HOME (measured on

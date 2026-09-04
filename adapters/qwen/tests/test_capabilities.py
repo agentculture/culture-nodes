@@ -19,12 +19,11 @@ import pwd
 from pathlib import Path
 
 import pytest
-
+from qwen_bridge import __main__ as qwen_main
 from qwen_bridge import capabilities, preflight, qwen_probe
 from qwen_bridge.acp import errors
 from qwen_bridge.config import Config
 from qwen_bridge.qwen_cli import ACP_MODES
-from qwen_bridge import __main__ as qwen_main
 
 HERE = Path(__file__).parent
 PROBE_FIXTURES = HERE / "fixtures" / "qwen_probe"
@@ -85,17 +84,11 @@ def test_the_supported_modes_are_exactly_the_ones_this_bridge_can_pass():
     assert set(capabilities.SUPPORTED_ACP_MODES) == ACP_MODES
 
 
-def test_yolo_is_unavailable_with_the_named_reason(tmp_path):
-    """The fresh-session shape measured 2026-08-25 exposed a fifth mode —
-    the widest grant. The shared document reports it UNAVAILABLE with the
-    h15 refusal (vocabulary + unverified mapping + the fresh-session
-    measurement), never as a fourth-plus grant."""
+def test_yolo_is_admitted_under_the_engine_account(tmp_path):
     qwen_bin, node_bin = _layout(tmp_path)
     host = _host(tmp_path, qwen_bin, node_bin)
-    assert host["sandbox_modes"] == ["plan", "default", "auto-edit", "auto"]
-    refused = host["sandbox_modes_unavailable"]
-    assert set(refused) == {"yolo"}
-    assert "h15" in refused["yolo"] and "vocabulary" in refused["yolo"]
+    assert host["sandbox_modes"] == ["plan", "default", "auto-edit", "auto", "yolo"]
+    assert "sandbox_modes_unavailable" not in host
 
 
 def test_there_is_no_default_mode_key(tmp_path):
@@ -114,9 +107,7 @@ def test_there_is_no_default_mode_key(tmp_path):
 
 def test_the_surface_is_a_document_the_control_plane_accepts(tmp_path):
     qwen_bin, node_bin = _layout(tmp_path)
-    preflight.validate_block(
-        preflight.capability_block(_host(tmp_path, qwen_bin, node_bin))
-    )
+    preflight.validate_block(preflight.capability_block(_host(tmp_path, qwen_bin, node_bin)))
 
 
 def test_every_supported_mode_grants_everything_the_host_can_do(tmp_path):
@@ -194,9 +185,7 @@ def test_the_missing_binary_is_a_named_refusal_not_a_crash(tmp_path):
         capabilities.host_facts(Config(repo_allowlist=(str(tmp_path),), qwen_bin=str(missing)))
 
 
-def test_the_missing_binary_prints_the_named_error_not_a_traceback(
-    tmp_path, capsys, monkeypatch
-):
+def test_the_missing_binary_prints_the_named_error_not_a_traceback(tmp_path, capsys, monkeypatch):
     """The operator leg of h5: `--print-capabilities` on a host whose qwen
     install is missing exits 2 with the named refusal (the same message a
     dispatch would get — the remedy, not a traceback)."""
@@ -261,9 +250,7 @@ def test_the_git_answer_is_measured_with_the_process_authority(tmp_path):
     host = capabilities.host_facts(cfg, version=lambda _p: "x")
     assert host["git_metadata_writable"] == preflight.GIT_METADATA_SUPPORTED
 
-    refused = capabilities.host_facts(
-        cfg, version=lambda _p: "x", git_probe=lambda _git_dir: False
-    )
+    refused = capabilities.host_facts(cfg, version=lambda _p: "x", git_probe=lambda _git_dir: False)
     assert refused["git_metadata_writable"] == preflight.GIT_METADATA_UNSUPPORTED_BY_SANDBOX
 
 

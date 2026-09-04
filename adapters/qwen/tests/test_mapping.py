@@ -289,7 +289,7 @@ def test_claim_record_never_uses_confirmed_or_observed_or_derived():
 
 def test_sync_response_ledger_delta_is_propose_only():
     response = mapping.sync_response(
-        _ok_result(),
+        _ok_result(summary='{"outcome":"completed","output":{}}'),
         CTX,
         default_success_outcome="completed",
         actor_id="qwen-bridge",
@@ -524,6 +524,20 @@ def test_sync_response_passes_through_a_supplied_workspace_measurement_untouched
     # actually measured against git ("b.py") — never conflated.
     assert r.body["output"]["changed_files"] == ["a.py"]
     assert r.body["workspace_measured"]["changed_files"] == ["b.py"]
+
+
+def test_workspace_write_with_no_measured_changes_is_no_changes_not_completed():
+    measured = {**_REAL_MEASUREMENT, "changed_files": [], "status_porcelain": ""}
+    r = mapping.sync_response(
+        _ok_result(summary='{"outcome":"completed","output":{}}'),
+        mapping.InvocationContext(sandbox="workspace-write"),
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+        workspace_measured=measured,
+    )
+    assert r.status_code == 200
+    assert r.body["outcome"] == "no_changes"
 
 
 def test_sync_response_defaults_workspace_measured_to_an_honest_unmeasured_shape():

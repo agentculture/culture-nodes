@@ -189,7 +189,13 @@ class AgentLink:
                 # an agent-to-client REQUEST: an a->c line too (c21),
                 # answered per the v1 client obligations
                 self._transcript.log("a->c", obj)
-                self.send(answer_agent_request(obj))
+                answer = answer_agent_request(obj)
+                self.send(answer)
+                if obj.get("method") == wire.METHOD_REQUEST_PERMISSION:
+                    # Unlike ordinary client traffic, this decision is part
+                    # of the driver result: the classifier must distinguish
+                    # a permission-starved end_turn from completed work.
+                    self.echo(answer)
                 continue
             self._transcript.log("a->c", obj)
             if is_response(obj) and obj.get("id") == want_id:

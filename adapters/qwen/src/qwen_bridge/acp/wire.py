@@ -84,17 +84,16 @@ SANDBOX_MODES = frozenset({"read-only", "workspace-write", "danger-full-access"}
 SANDBOX_WORKSPACE_WRITE = "workspace-write"
 
 #: The ACP session-mode vocabulary the policy may name (the measured
-#: session/new availableModes ids, the four the scratch session exposed
-#: on 2026-08-23 - spec c18). The h14 probe RE-MEASURED a fresh
+#: session/new availableModes ids. The scratch session exposed four on
+#: 2026-08-23 (spec c18); the h14 probe RE-MEASURED a fresh
 #: non-scratch session on the same 0.22.0 on 2026-08-25 and it exposed a
 #: FIFTH mode, 'yolo' (automatically approve all tools - the widest
-#: grant): mode exposure is environment-dependent, and until h15
-#: verifies the per-mode mapping live the vocabulary stays the four
-#: measured modes and 'yolo' fails closed with a distinct refusal. The
+#: grant). The dedicated culture-qwen account is now the confinement
+#: boundary, so yolo is admitted. The
 #: selection is additionally validated against the agent's OWN measured
 #: availableModes at session creation, so a mode the agent does not
 #: offer fails closed too.
-ACP_MODES = frozenset({"plan", "default", "auto-edit", "auto"})
+ACP_MODES = frozenset({"plan", "default", "auto-edit", "auto", "yolo"})
 
 # ---------------------------------------------------------------------------
 # The driver child's wire markers (see driver.py / dispatch.py)

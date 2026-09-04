@@ -104,6 +104,7 @@ def _replay_turn(session_id: str) -> None:
         "ok": "firehose_72_updates.json",
         "failed-tool": "end_turn_with_failed_tool.json",
         "cancelled": "cancelled.json",
+        "permission-blocked": "permission_blocked.json",
         "prompt-error": "prompt_error.json",
         "crash": "crash.json",
     }[BEHAVIOR]
@@ -113,6 +114,7 @@ def _replay_turn(session_id: str) -> None:
     updates = transcript.get("updates") or []
     terminal = transcript.get("terminal")
     waiting_for_cancel = bool(transcript.get("terminal_only_after_cancel"))
+    permission_request = transcript.get("permission_request")
 
     for i, update in enumerate(updates, start=1):
         _notify_update(session_id, update)
@@ -131,6 +133,12 @@ def _replay_turn(session_id: str) -> None:
         # mid-turn - exit 0 (a clean exit, mirroring the SIGTERM'd codex
         # session the rule was grounded on) and NO terminal response.
         sys.exit(0)
+    if permission_request is not None:
+        _emit(permission_request)
+        line = sys.stdin.readline()
+        if not line:
+            return
+        _remember("permission_answer.json", json.loads(line))
     if waiting_for_cancel:
         # Block on the client: a session/cancel notification (no id) ends
         # the turn with the measured cancelled terminal; EOF means the

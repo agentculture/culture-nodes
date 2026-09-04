@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.48.2] - 2026-09-04
+
+### Fixed
+
+- #295: the mesh collector polled every bridge over a keep-alive connection at the bridges' own 30 s idle timeout, so the single-threaded reference bridges never returned to their accept loop and every other client — healthz, the conformance kit, the worker's POST /v1/invocations — hung with `context deadline exceeded (awaiting headers)`; probes now use a no-keep-alive transport and set `req.Close`, with a regression test that fails on main against a single-connection fake bridge
+
 ## [0.48.1] - 2026-09-04
 
 ### Added

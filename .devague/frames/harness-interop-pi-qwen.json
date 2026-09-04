@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-04T13:28:23Z",
-  "updated": "2026-09-04T15:21:54Z",
+  "updated": "2026-09-04T19:01:05Z",
   "claims": [
     {
       "id": "c1",
@@ -990,5 +990,60 @@
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c28",
+      "seam": "nodes dispatch + actor registry",
+      "behavior": "pi and qwen are dispatchable actors on thor/orin; a run records which harness+model served it",
+      "source_text": "Culture Nodes supports Pi and Qwen Code as actors again: each runs as its own OS account on thor and orin through the existing actor contract, a workflow can name any of them as a node's actor, and a run records which harness and model served it \u2014 so a flow that sends the same request through several actors can compare them",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c29",
+      "seam": "GET /v1alpha1/actors + assign",
+      "behavior": "the four actors are registered, healthy, and reachable by nodes-op assign; a starved/no-write session reports a distinct outcome",
+      "source_text": "company/pi-thor, pi-orin, qwen-thor and qwen-orin are registered, healthy actors that nodes-op.sh assign and any workflow definition can target like codex-thor today; each actor row carries harness=, model= and model_endpoint=; a permission-starved or no-write session reports a distinct outcome, never completed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c30",
+      "seam": "live dispatch + CI + deploy",
+      "behavior": "one real pi run and one real qwen run each complete with a ledgered run; the conformance kit passes; deploy installs both bridges idempotently",
+      "source_text": "one real dispatch to a pi actor and one to a qwen actor on thor or orin each complete with a ledgered run and a handover ref; the conformance kit passes against the fake-backed pi and qwen bridges in CI; deploy.sh thor|orin installs both bridges into their accounts idempotently",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c2",
+      "seam": "adapters/pi bridge",
+      "behavior": "the pi bridge drives pi --mode json, shared core byte-identical to qwen, offline tests green",
+      "source_text": "a sixth adapter, adapters/pi (pi-bridge), drives @earendil-works/pi-coding-agent 0.84.2 as one pi process per invocation over its native JSONL surface (--mode json print run, or --mode rpc) and ports the byte-identical core (preflight.py, dialin.py, deployment.py, reap.py) from the qwen sibling unchanged",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c31",
+      "seam": "examples/harness-compare",
+      "behavior": "the example fans one instruction to a run-time actor list and joins per-actor outcomes; compiles + fixture-runs",
+      "source_text": "an example workflow under examples/ (harness-compare) fans one request to a list of actors chosen at run time and joins their results, so comparing harnesses is a flow an operator can run, not a property every dispatch must have; it is a possibility the design keeps open, and running it is optional",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c9",
+      "seam": "adapters/qwen #228",
+      "behavior": "a permission-cancelled qwen session reports permission_blocked and an empty workspace-write reports no_changes, never completed; yolo admitted",
+      "source_text": "issue #228 is answered, not patched around: under an engine account the confinement IS the account (no sudo, no docker group, 750 home \u2014 docs/deviations/2026-08-29-agents-as-os-users.md), which is exactly the boundary #228 item 3 said was missing, so the qwen bridge admits yolo (wire.ACP_MODES) when the bridge runs as culture-qwen, and the pi bridge \u2014 which has no permission prompt at all (docs/security.md: no built-in sandbox, tools run as the process user) \u2014 is admitted on the same reasoning; both bridges still report a permission-cancelled or empty-write session as a distinct outcome, never completed (#228 items 1 and 2)",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }

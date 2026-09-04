@@ -148,7 +148,8 @@ def test_the_pi_template_carries_the_preflight_and_bridge_keys():
     assert cfg["always_async"] is True
     assert cfg["default_sandbox"] == "workspace-write"
     assert cfg["state_dir"] == "/h/.local/state/culture-nodes-bridges/pi-developer"
-    assert cfg["provider"] and cfg["model"]
+    assert cfg["provider"]
+    assert cfg["model"]
     assert "auth_token" not in cfg
     assert cfg["port"] == 8093
 

@@ -369,25 +369,219 @@ func registerHarnessCompareActors(t *testing.T, db *postgres.Store, namespaceID,
 	return ids
 }
 
+// harnessCompareArrival is one element of the join's arrival array: the
+// slot's outcome and its node output — which for an agent node is the
+// bridge output merged with the bridge-measured `workspace_measured` block
+// (internal/worker/dispatch.go). Named rather than inlined so one arrival
+// can be handed to an assertion helper.
+type harnessCompareArrival struct {
+	FromNode string `json:"from_node"`
+	Outcome  string `json:"outcome"`
+	Output   struct {
+		Summary           string `json:"summary"`
+		WorkspaceMeasured struct {
+			Measured     bool     `json:"measured"`
+			ChangedFiles []string `json:"changed_files"`
+		} `json:"workspace_measured"`
+	} `json:"output"`
+}
+
 // harnessCompareJoined is the run output's documented shape: the join's
-// arrival array (internal/worker/paralleljoin.go, design D5), each element
-// carrying the slot's outcome and its node output — which for an agent node
-// is the bridge output merged with the bridge-measured `workspace_measured`
-// block (internal/worker/dispatch.go).
+// arrival array (internal/worker/paralleljoin.go, design D5).
 type harnessCompareJoined struct {
-	Policy      string `json:"policy"`
-	Cardinality int    `json:"cardinality"`
-	Arrivals    []struct {
-		FromNode string `json:"from_node"`
-		Outcome  string `json:"outcome"`
-		Output   struct {
-			Summary           string `json:"summary"`
-			WorkspaceMeasured struct {
-				Measured     bool     `json:"measured"`
-				ChangedFiles []string `json:"changed_files"`
-			} `json:"workspace_measured"`
-		} `json:"output"`
-	} `json:"arrivals"`
+	Policy      string                  `json:"policy"`
+	Cardinality int                     `json:"cardinality"`
+	Arrivals    []harnessCompareArrival `json:"arrivals"`
+}
+
+// assertHarnessCompareInvocation checks the one invocation a slot received
+// and returns the repo it named, so the caller can compare checkouts across
+// slots.
+func assertHarnessCompareInvocation(t *testing.T, inv actors.InvocationRequest, instruction string) string {
+	t.Helper()
+	var in struct {
+		Instruction    string `json:"instruction"`
+		Repo           string `json:"repo"`
+		Sandbox        string `json:"sandbox"`
+		SuccessOutcome string `json:"success_outcome"`
+		Handover       bool   `json:"handover"`
+	}
+	if err := json.Unmarshal(inv.Input, &in); err != nil {
+		t.Fatalf("slot %s input is not an object (%s): %v", inv.Node.ID, inv.Input, err)
+	}
+	if in.Instruction != instruction {
+		t.Errorf("slot %s received instruction %q, want the run's %q", inv.Node.ID, in.Instruction, instruction)
+	}
+	if in.Sandbox != "workspace-write" || !in.Handover || in.SuccessOutcome != "completed" {
+		t.Errorf("slot %s received sandbox/handover/success_outcome = %q/%v/%q, want workspace-write/true/completed", inv.Node.ID, in.Sandbox, in.Handover, in.SuccessOutcome)
+	}
+	if !strings.Contains(in.Repo, "/"+inv.Node.ID+"/") {
+		t.Errorf("slot %s received repo %q, want its own slot's checkout", inv.Node.ID, in.Repo)
+	}
+	return in.Repo
+}
+
+// assertHarnessCompareInvocations checks acceptance property 1: the same
+// instruction reached every named slot, each in its own checkout, with the
+// write posture and handover request the run asked for — the four things a
+// comparison has to hold constant or vary on purpose.
+func assertHarnessCompareInvocations(t *testing.T, invocations []actors.InvocationRequest, instruction string, named []string) {
+	t.Helper()
+	if len(invocations) != len(named) {
+		t.Fatalf("actor invocations = %d, want %d (one per named slot)", len(invocations), len(named))
+	}
+	seenRepo := map[string]string{}
+	for _, inv := range invocations {
+		seenRepo[inv.Node.ID] = assertHarnessCompareInvocation(t, inv, instruction)
+	}
+	if seenRepo["codex"] == seenRepo["pi"] {
+		t.Errorf("both slots received the same repo %q; each actor works in its own checkout", seenRepo["codex"])
+	}
+}
+
+// assertHarnessCompareArrival checks one arrival against the script of the
+// harness it came from: its outcome, that it carries a bridge-measured
+// block, and that the measured change set and summary are that slot's own
+// and not another's.
+func assertHarnessCompareArrival(t *testing.T, a harnessCompareArrival, output json.RawMessage) {
+	t.Helper()
+	script, ok := harnessCompareScript[a.FromNode]
+	if !ok {
+		t.Errorf("arrival from %q, which the run input never named", a.FromNode)
+		return
+	}
+	if a.Outcome != "completed" {
+		t.Errorf("slot %s arrived with outcome %q, want completed", a.FromNode, a.Outcome)
+	}
+	if !a.Output.WorkspaceMeasured.Measured {
+		t.Errorf("slot %s's joined output carries no bridge-measured block: %s", a.FromNode, output)
+	}
+	if got, want := a.Output.WorkspaceMeasured.ChangedFiles, script.changedFiles; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("slot %s's measured changed_files = %v, want %v (its own harness's, not another slot's)", a.FromNode, got, want)
+	}
+	if !strings.HasSuffix(a.Output.Summary, a.FromNode) {
+		t.Errorf("slot %s's joined summary = %q, want the one that slot's actor wrote", a.FromNode, a.Output.Summary)
+	}
+}
+
+// assertHarnessCompareJoined checks acceptance property 2: ONE joined
+// result, both actors' outcomes and measured change sets kept apart per
+// slot.
+func assertHarnessCompareJoined(t *testing.T, output json.RawMessage, named []string) {
+	t.Helper()
+	var joined harnessCompareJoined
+	if err := json.Unmarshal(output, &joined); err != nil {
+		t.Fatalf("run output is not the join's arrival array (%s): %v", output, err)
+	}
+	if joined.Policy != "all" {
+		t.Errorf("join policy = %q, want all", joined.Policy)
+	}
+	if joined.Cardinality != len(named) {
+		t.Errorf("join cardinality = %d, want %d: only the named slots fan out", joined.Cardinality, len(named))
+	}
+	if len(joined.Arrivals) != len(named) {
+		t.Fatalf("joined arrivals = %d, want %d: %s", len(joined.Arrivals), len(named), output)
+	}
+	var arrived []string
+	for _, a := range joined.Arrivals {
+		arrived = append(arrived, a.FromNode)
+		assertHarnessCompareArrival(t, a, output)
+	}
+	sort.Strings(arrived)
+	if strings.Join(arrived, ",") != strings.Join(named, ",") {
+		t.Errorf("arrivals came from %v, want exactly the named slots %v", arrived, named)
+	}
+}
+
+// harnessCompareAttemptModel reads the model one attempt reported. It reads
+// the attempt's wire payload rather than harness_test.go's attemptView,
+// which declares only what that file asserts on — widening it would change a
+// struct other tests depend on.
+func harnessCompareAttemptModel(t *testing.T, s *stack, runID, attemptID string) (string, bool) {
+	t.Helper()
+	var out struct {
+		Usage *struct {
+			UsageModel *string `json:"usage_model"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(attemptRaw(t, s, runID, attemptID), &out); err != nil {
+		t.Fatalf("decode attempt %s: %v", attemptID, err)
+	}
+	if out.Usage == nil || out.Usage.UsageModel == nil {
+		return "", false
+	}
+	return *out.Usage.UsageModel, true
+}
+
+// harnessCompareRunFacts walks the run view once and returns the two facts
+// properties 3 and 4 are asserted from: how many times each slot ran, and
+// the model each slot's attempt reported.
+func harnessCompareRunFacts(t *testing.T, s *stack, runID string, view runView) (ran map[string]int, usageModel map[string]string) {
+	t.Helper()
+	ran = map[string]int{}
+	usageModel = map[string]string{}
+	for _, nr := range view.NodeRuns {
+		ran[nr.NodeID]++
+		for _, at := range nr.Attempts {
+			if model, ok := harnessCompareAttemptModel(t, s, runID, at.ID); ok {
+				usageModel[nr.NodeID] = model
+			}
+		}
+	}
+	return ran, usageModel
+}
+
+// assertHarnessCompareSlotsRan checks acceptance property 3: the unset slots
+// never ran, and every named slot ran exactly once.
+func assertHarnessCompareSlotsRan(t *testing.T, ran map[string]int) {
+	t.Helper()
+	for _, slot := range harnessCompareSlots {
+		wasNamed := harnessCompareScript[slot].model != ""
+		switch {
+		case wasNamed && ran[slot] != 1:
+			t.Errorf("slot %s ran %d time(s), want 1", slot, ran[slot])
+		case !wasNamed && ran[slot] != 0:
+			t.Errorf("slot %s ran %d time(s), want 0: it was left unset in the run input", slot, ran[slot])
+		}
+	}
+}
+
+// assertHarnessCompareUsageModels checks acceptance property 4: each slot's
+// attempt carries the model its harness reported — the `usage.model` half of
+// the per-actor comparison, which lives on the attempt (`run <id>`), not in
+// the joined output.
+func assertHarnessCompareUsageModels(t *testing.T, usageModel map[string]string, named []string) {
+	t.Helper()
+	for _, slot := range named {
+		if got, want := usageModel[slot], harnessCompareScript[slot].model; got != want {
+			t.Errorf("slot %s's attempt reports usage_model %q, want %q", slot, got, want)
+		}
+	}
+}
+
+// assertHarnessCompareClaims checks acceptance property 5: each actor's
+// claim stays proposed, attributed to its own actor.
+func assertHarnessCompareClaims(t *testing.T, db *postgres.Store, namespaceID, runID string, agentIDs map[string]string, named []string) {
+	t.Helper()
+	records, err := ledgerFor(t, db, namespaceID).Records(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	claimsBy := map[string]int{}
+	for _, rec := range records {
+		if rec.RecordType != ledger.RecordClaim {
+			continue
+		}
+		if rec.Authority != ledger.AuthorityProposed {
+			t.Errorf("claim %s has authority %q, want proposed: an agent saying done is a claim, not evidence", rec.ID, rec.Authority)
+		}
+		claimsBy[rec.Origin.ActorID]++
+	}
+	for _, slot := range named {
+		if claimsBy[agentIDs[slot]] != 1 {
+			t.Errorf("slot %s's actor %s wrote %d claim(s), want 1", slot, agentIDs[slot], claimsBy[agentIDs[slot]])
+		}
+	}
 }
 
 // TestHarnessCompareFansOneInstructionToTwoActorsAndJoins is t5's fixture
@@ -402,12 +596,16 @@ type harnessCompareJoined struct {
 // completed with ONE joined result carrying both actors' outcomes and their
 // bridge-measured change sets, kept apart per slot; the unset slots never
 // ran; each slot's attempt carries the model that harness reported; and
-// each actor's proposed claim stays proposed. What it also records, because
-// the README says it: the handover ref is NOT in the joined result. It
-// reaches the run as `observed` evidence only when a control plane
-// configured with a handover remote fetches it (internal/handover) — the
-// workflow language has no binding surface for it, so this test asserts the
-// request asked for one and stops there.
+// each actor's proposed claim stays proposed. Each of those properties is
+// asserted by a helper above, one property per helper — the single-function
+// form of this test was over SonarCloud's cognitive-complexity ceiling
+// (go:S3776, 52 > 15), the same split the compile test above took.
+//
+// What it also records, because the README says it: the handover ref is NOT
+// in the joined result. It reaches the run as `observed` evidence only when
+// a control plane configured with a handover remote fetches it
+// (internal/handover) — the workflow language has no binding surface for it,
+// so this test asserts the request asked for one and stops there.
 func TestHarnessCompareFansOneInstructionToTwoActorsAndJoins(t *testing.T) {
 	s := pgtest.RequireStore(t, testStore)
 	ns := pgtest.MustNamespace(t, s, "e2e-harness-compare")
@@ -446,144 +644,12 @@ func TestHarnessCompareFansOneInstructionToTwoActorsAndJoins(t *testing.T) {
 		t.Fatalf("run state = %s, want completed (worker errors: %v)", view.Run.State, stack.errors())
 	}
 
-	// 1. The same instruction reached every named slot, each in its own
-	//    checkout, with the write posture and handover request the run asked
-	//    for — the four things a comparison has to hold constant or vary on
-	//    purpose.
-	invocations := agents.invocations()
-	if len(invocations) != len(named) {
-		t.Fatalf("actor invocations = %d, want %d (one per named slot)", len(invocations), len(named))
-	}
-	seenRepo := map[string]string{}
-	for _, inv := range invocations {
-		var in struct {
-			Instruction    string `json:"instruction"`
-			Repo           string `json:"repo"`
-			Sandbox        string `json:"sandbox"`
-			SuccessOutcome string `json:"success_outcome"`
-			Handover       bool   `json:"handover"`
-		}
-		if err := json.Unmarshal(inv.Input, &in); err != nil {
-			t.Fatalf("slot %s input is not an object (%s): %v", inv.Node.ID, inv.Input, err)
-		}
-		if in.Instruction != instruction {
-			t.Errorf("slot %s received instruction %q, want the run's %q", inv.Node.ID, in.Instruction, instruction)
-		}
-		if in.Sandbox != "workspace-write" || !in.Handover || in.SuccessOutcome != "completed" {
-			t.Errorf("slot %s received sandbox/handover/success_outcome = %q/%v/%q, want workspace-write/true/completed", inv.Node.ID, in.Sandbox, in.Handover, in.SuccessOutcome)
-		}
-		if !strings.Contains(in.Repo, "/"+inv.Node.ID+"/") {
-			t.Errorf("slot %s received repo %q, want its own slot's checkout", inv.Node.ID, in.Repo)
-		}
-		seenRepo[inv.Node.ID] = in.Repo
-	}
-	if seenRepo["codex"] == seenRepo["pi"] {
-		t.Errorf("both slots received the same repo %q; each actor works in its own checkout", seenRepo["codex"])
-	}
-
-	// 2. One joined result, both actors' outcomes and measured change sets
-	//    kept apart per slot.
-	var joined harnessCompareJoined
-	if err := json.Unmarshal(view.Run.Output, &joined); err != nil {
-		t.Fatalf("run output is not the join's arrival array (%s): %v", view.Run.Output, err)
-	}
-	if joined.Policy != "all" {
-		t.Errorf("join policy = %q, want all", joined.Policy)
-	}
-	if joined.Cardinality != len(named) {
-		t.Errorf("join cardinality = %d, want %d: only the named slots fan out", joined.Cardinality, len(named))
-	}
-	if len(joined.Arrivals) != len(named) {
-		t.Fatalf("joined arrivals = %d, want %d: %s", len(joined.Arrivals), len(named), view.Run.Output)
-	}
-	var arrived []string
-	for _, a := range joined.Arrivals {
-		arrived = append(arrived, a.FromNode)
-		script, ok := harnessCompareScript[a.FromNode]
-		if !ok {
-			t.Errorf("arrival from %q, which the run input never named", a.FromNode)
-			continue
-		}
-		if a.Outcome != "completed" {
-			t.Errorf("slot %s arrived with outcome %q, want completed", a.FromNode, a.Outcome)
-		}
-		if !a.Output.WorkspaceMeasured.Measured {
-			t.Errorf("slot %s's joined output carries no bridge-measured block: %s", a.FromNode, view.Run.Output)
-		}
-		if got, want := a.Output.WorkspaceMeasured.ChangedFiles, script.changedFiles; strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Errorf("slot %s's measured changed_files = %v, want %v (its own harness's, not another slot's)", a.FromNode, got, want)
-		}
-		if !strings.HasSuffix(a.Output.Summary, a.FromNode) {
-			t.Errorf("slot %s's joined summary = %q, want the one that slot's actor wrote", a.FromNode, a.Output.Summary)
-		}
-	}
-	sort.Strings(arrived)
-	if strings.Join(arrived, ",") != strings.Join(named, ",") {
-		t.Errorf("arrivals came from %v, want exactly the named slots %v", arrived, named)
-	}
-
-	// 3. The unset slots never ran, and every named slot ran exactly once.
-	ran := map[string]int{}
-	usageModel := map[string]string{}
-	for _, nr := range view.NodeRuns {
-		ran[nr.NodeID]++
-		for _, at := range nr.Attempts {
-			var out struct {
-				Usage *struct {
-					UsageModel *string `json:"usage_model"`
-				} `json:"usage"`
-			}
-			// attemptView declares only what harness_test.go asserts on;
-			// re-read this attempt's usage from the same wire payload.
-			raw := attemptRaw(t, stack, runID, at.ID)
-			if err := json.Unmarshal(raw, &out); err != nil {
-				t.Fatalf("decode attempt %s: %v", at.ID, err)
-			}
-			if out.Usage != nil && out.Usage.UsageModel != nil {
-				usageModel[nr.NodeID] = *out.Usage.UsageModel
-			}
-		}
-	}
-	for _, slot := range harnessCompareSlots {
-		wasNamed := harnessCompareScript[slot].model != ""
-		switch {
-		case wasNamed && ran[slot] != 1:
-			t.Errorf("slot %s ran %d time(s), want 1", slot, ran[slot])
-		case !wasNamed && ran[slot] != 0:
-			t.Errorf("slot %s ran %d time(s), want 0: it was left unset in the run input", slot, ran[slot])
-		}
-	}
-
-	// 4. Each slot's attempt carries the model its harness reported — the
-	//    `usage.model` half of the per-actor comparison, which lives on the
-	//    attempt (`run <id>`), not in the joined output.
-	for _, slot := range named {
-		if got, want := usageModel[slot], harnessCompareScript[slot].model; got != want {
-			t.Errorf("slot %s's attempt reports usage_model %q, want %q", slot, got, want)
-		}
-	}
-
-	// 5. Each actor's claim stays proposed, attributed to its own actor.
-	led := ledgerFor(t, stack.db, ns.ID)
-	records, err := led.Records(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("read ledger: %v", err)
-	}
-	claimsBy := map[string]int{}
-	for _, rec := range records {
-		if rec.RecordType != ledger.RecordClaim {
-			continue
-		}
-		if rec.Authority != ledger.AuthorityProposed {
-			t.Errorf("claim %s has authority %q, want proposed: an agent saying done is a claim, not evidence", rec.ID, rec.Authority)
-		}
-		claimsBy[rec.Origin.ActorID]++
-	}
-	for _, slot := range named {
-		if claimsBy[agentIDs[slot]] != 1 {
-			t.Errorf("slot %s's actor %s wrote %d claim(s), want 1", slot, agentIDs[slot], claimsBy[agentIDs[slot]])
-		}
-	}
+	assertHarnessCompareInvocations(t, agents.invocations(), instruction, named)
+	assertHarnessCompareJoined(t, view.Run.Output, named)
+	ran, usageModel := harnessCompareRunFacts(t, stack, runID, view)
+	assertHarnessCompareSlotsRan(t, ran)
+	assertHarnessCompareUsageModels(t, usageModel, named)
+	assertHarnessCompareClaims(t, stack.db, ns.ID, runID, agentIDs, named)
 }
 
 // attemptRaw fetches one attempt's wire payload from the run view, so the

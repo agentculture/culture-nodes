@@ -170,6 +170,8 @@ var nonCredentialKnobs = map[string]string{
 	"FORCE_NOTIFY":      "rotation gate for the notify actor-token lane",
 	"FORCE_MERGE_GATE":  "rotation gate for the merge-gate actor-token lane (login-from-anywhere t11)",
 	"FORCE_PROD":        "rotation gate for the generated prod.env block",
+	"FORCE_QWEN":        "rotation gate for the qwen bridge account-env lane (#294)",
+	"FORCE_PI":          "rotation gate for the pi bridge account-env lane (#294)",
 	"FORCE_RUNNER":      "rotation gate for the runner lane",
 
 	// The destructive-confirmation protocol: where the confirmation file is

@@ -1,0 +1,18 @@
+{
+  "pi_bin": "__HOME__/.local/bin/pi",
+  "provider": "lobes",
+  "model": "unsloth/Qwen3.8-27B-NVFP4",
+  "model_endpoint": "http://thor:8000/v1",
+  "host": "0.0.0.0",
+  "port": 8093,
+  "always_async": true,
+  "default_sandbox": "workspace-write",
+  "state_dir": "__HOME__/.local/state/culture-nodes-bridges/pi-developer",
+  "repo_allowlist": [
+    "__HOME__/git/culture-nodes-pi-developer"
+  ],
+  "repo_identities": {
+    "agentculture/culture-nodes": "__HOME__/git/culture-nodes-pi-developer"
+  },
+  "config_repo": "agentculture/culture-nodes"
+}

@@ -1,0 +1,5 @@
+# Recorded shape: pi 0.85.0; pi --mode json -p "fixture success" --no-session
+{"type":"message_update","message":{"role":"assistant","content":"done","model":"test/model","usage":{"input":11,"output":7}}}
+{"type":"message_end","message":{"role":"assistant","content":"done","model":"test/model","usage":{"input":11,"output":7}}}
+{"type":"turn_end","message":{"role":"assistant","content":"done"},"toolResults":[]}
+{"type":"agent_end","messages":[{"role":"assistant","content":"done"}]}

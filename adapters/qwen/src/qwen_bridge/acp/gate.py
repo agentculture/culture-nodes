@@ -53,8 +53,7 @@ def validate_initialize(result: dict[str, Any]) -> None:
 def resolve_acp_mode(requested: str | None, available_modes: Sequence[str]) -> str:
     """Pick the ACP session mode from the input/preflight policy, failing
     closed. The measured scratch-session default is `auto` (spec c18)
-    and h15 is explicit: UNTIL the per-mode mapping is verified live,
-    the bridge sets the mode from the policy and NEVER falls back to
+    and h15 is explicit: the bridge sets the mode from policy and NEVER falls back to
     that default - a session that runs in a mode nobody chose would be
     a silently-wider (or silently-different) grant. Three distinct
     refusals, one per failure kind:

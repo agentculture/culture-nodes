@@ -144,6 +144,8 @@ class InvocationContext:
     #: `claude_code_bridge.mapping.InvocationContext.continuation_ref`
     #: field for field (task t5).
     continuation_ref: str | None = None
+    #: Dispatch posture, used only for the unconditional no-change report.
+    sandbox: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,8 @@ def classify(
 
     status = task_result.get("status")
     if status == STATUS_OK:
+        if task_result.get("outcome") == "permission_blocked":
+            return Classification(domain=True, outcome="permission_blocked")
         outcome = ctx.success_outcome or default_success_outcome
         return Classification(domain=True, outcome=outcome)
 
@@ -471,7 +475,18 @@ def sync_response(
             retry_after_seconds=classification.retry_after_seconds,
         )
 
-    declared = declared_result_override(task_result)
+    if (
+        classification.outcome not in {"permission_blocked"}
+        and ctx.sandbox == "workspace-write"
+        and measured.get("measured") is True
+        and measured.get("changed_files") == []
+    ):
+        classification = Classification(domain=True, outcome="no_changes")
+    declared = (
+        None
+        if classification.outcome in {"permission_blocked", "no_changes"}
+        else declared_result_override(task_result)
+    )
     task_id = (task_result or {}).get("task_id")
     body = {
         "outcome": declared[0] if declared else classification.outcome,
@@ -548,7 +563,18 @@ def terminal_event(
             kind="failed", payload=_attach_provider_telemetry(payload, task_result)
         )
 
-    _declared = declared_result_override(task_result)
+    if (
+        classification.outcome not in {"permission_blocked"}
+        and ctx.sandbox == "workspace-write"
+        and measured.get("measured") is True
+        and measured.get("changed_files") == []
+    ):
+        classification = Classification(domain=True, outcome="no_changes")
+    _declared = (
+        None
+        if classification.outcome in {"permission_blocked", "no_changes"}
+        else declared_result_override(task_result)
+    )
     task_id = (task_result or {}).get("task_id")
     payload = {
         "outcome": _declared[0] if _declared else classification.outcome,

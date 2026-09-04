@@ -70,13 +70,11 @@ def _unix_user() -> str:
 #: decision. The test `test_the_supported_modes_are_exactly_the_ones_this
 #: bridge_can_pass` compares the two, so the decision is demanded rather
 #: than skipped.
-SUPPORTED_ACP_MODES = ("plan", "default", "auto-edit", "auto")
+SUPPORTED_ACP_MODES = ("plan", "default", "auto-edit", "auto", "yolo")
 
-#: The one mode the measured agent can expose that the bridge's vocabulary
-#: does not admit, and why — the h15 stance in the shared document's own
-#: words (the qwen section carries the same refusal reason from
-#: qwen_probe, so a reader sees one story in both blocks).
-_MODE_UNAVAILABLE = {"yolo": qwen_probe.MODE_REFUSAL_REASON}
+#: No measured agent mode is structurally unavailable: culture-qwen is the
+#: confinement boundary, including for yolo.
+_MODE_UNAVAILABLE = {}
 
 #: The toolchains this bridge reports on: the CLI it drives and the
 #: BUNDLED node runtime it launches with — nothing else. A qwen dispatch
@@ -169,7 +167,7 @@ def host_facts(
     qwen_bin = qwen_probe.locate(cfg)
     locate = locate or _layout_locate(qwen_bin)
     available, unavailable = preflight.measure_sandbox_modes(
-        SUPPORTED_ACP_MODES + ("yolo",),
+        SUPPORTED_ACP_MODES,
         unsupported=_MODE_UNAVAILABLE,
         probes=probes,
         capability_probe=capability_probe,

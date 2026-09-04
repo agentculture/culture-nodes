@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from qwen_bridge import qwen_probe
 from qwen_bridge.acp import errors
 from qwen_bridge.config import Config
@@ -203,11 +202,7 @@ def test_the_modes_are_the_agents_own_order():
     assert qwen_probe.modes_available(result) == ("plan", "default", "auto-edit", "auto")
 
 
-def test_a_mode_outside_the_vocabulary_is_refused_with_the_named_reason(tmp_path):
-    """The fresh-session shape measured 2026-08-25 exposes a fifth mode —
-    yolo, the widest grant. It is not admitted (the bridge vocabulary is
-    the four measured modes, h15), and the refusal names why rather than
-    silently dropping it."""
+def test_yolo_is_in_the_supported_agent_mode_vocabulary(tmp_path):
     qwen_bin, _ = _layout(tmp_path)
     result = _fixture("session-new-with-yolo.json")["response"]["result"]
     facts = qwen_probe.qwen_facts(
@@ -217,10 +212,8 @@ def test_a_mode_outside_the_vocabulary_is_refused_with_the_named_reason(tmp_path
         home=tmp_path,
         session=({"protocolVersion": 1}, result),
     )
-    assert facts["supported_modes"] == ("plan", "default", "auto-edit", "auto")
-    refused = facts["modes_refused"]
-    assert set(refused) == {"yolo"}
-    assert "h15" in refused["yolo"] and "vocabulary" in refused["yolo"]
+    assert facts["supported_modes"] == ("plan", "default", "auto-edit", "auto", "yolo")
+    assert facts["modes_refused"] is None
 
 
 def test_the_context_budget_is_none_where_the_agent_exposes_none():

@@ -1,0 +1,17 @@
+{
+  "provenance": "SYNTHESIZED regression transcript for issue #228: the unattended bridge answered session/request_permission with the ACP cancelled outcome, after which qwen ended the prompt turn with stopReason end_turn.",
+  "session_id": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c",
+  "updates": [],
+  "permission_request": {
+    "jsonrpc": "2.0",
+    "id": 40,
+    "method": "session/request_permission",
+    "params": {"sessionId": "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c", "options": []}
+  },
+  "permission_response": {
+    "jsonrpc": "2.0",
+    "id": 40,
+    "result": {"outcome": {"outcome": "cancelled"}}
+  },
+  "terminal": {"result": {"stopReason": "end_turn"}}
+}

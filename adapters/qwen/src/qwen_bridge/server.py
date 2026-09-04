@@ -612,6 +612,7 @@ class Handler(BaseHTTPRequestHandler):
             success_outcome=success_outcome,
             incomplete_outcome=incomplete_outcome,
             continuation_ref=continuation_ref,
+            sandbox=sandbox,
         )
 
         # t6 (c44/h37): exactly one in-flight invocation per session_key.

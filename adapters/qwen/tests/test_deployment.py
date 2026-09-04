@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 
 import pytest
 from qwen_bridge import deployment, preflight
@@ -243,7 +244,7 @@ def test_the_real_bridge_advertises_its_own_deployment(monkeypatch, tmp_path):
     from qwen_bridge import capabilities
     from qwen_bridge.config import Config
 
-    cfg = Config(actor_id="a", auth_token="t")
+    cfg = Config(actor_id="a", auth_token="t", qwen_bin=sys.executable)
     facts = capabilities.host_facts(cfg, capability_probe=lambda: ("bwrap", ""))
 
     assert "deployment" in facts

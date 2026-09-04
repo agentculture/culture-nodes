@@ -1,13 +1,15 @@
 """One script carries every lint job CI runs, and CI calls it (issue #123, task t8).
 
-Three CI jobs are literally named `lint`, and they invoke the same four
-linters differently:
+Five CI jobs are literally named `lint`, and they invoke the same linters
+differently:
 
     tests.yml                root scope, from the repo root
     adapter-codex.yml        from the REPO ROOT against adapters/codex paths,
                              so the ROOT black/isort/flake8 config applies
     adapter-claude-code.yml  from the ADAPTER DIRECTORY, so that adapter's own
                              config applies
+    adapter-pi.yml           from the ADAPTER DIRECTORY (adapters/pi)
+    adapter-qwen.yml         from the ADAPTER DIRECTORY (adapters/qwen)
 
 The difference is not cosmetic and it is invisible to anyone reading one file.
 Run the adapter-directory form for codex and it passes locally; CI runs the
@@ -22,9 +24,12 @@ workflow -- the moment a workflow spells out its own `black --check`, the two
 copies can disagree again and the defect is back with the docs still claiming
 otherwise.
 
-The scope is deliberately the three jobs named `lint`. go.yml's `go vet` and
-web.yml's `webglass` are a parked question, and `test_scope_is_exactly_the_jobs_named_lint`
-pins today's answer so widening it has to be a decision rather than a drift.
+The scope is deliberately the jobs named `lint`. It widened from three to five
+when the sixth adapter (pi) and the restored qwen adapter each gained a
+dedicated workflow (issue #294, frame decision c33 -- a deliberate widening of
+#123, not drift). go.yml's `go vet` and web.yml's `webglass` remain a parked
+question, and `test_scope_is_exactly_the_jobs_named_lint` pins today's answer so
+widening it further has to be a decision rather than a drift.
 """
 
 import re
@@ -42,6 +47,8 @@ JOB_WORKFLOWS = {
     "root": "tests.yml",
     "adapter-codex": "adapter-codex.yml",
     "adapter-claude-code": "adapter-claude-code.yml",
+    "adapter-pi": "adapter-pi.yml",
+    "adapter-qwen": "adapter-qwen.yml",
 }
 
 # The linters whose invocation differs between the three jobs. A workflow that
@@ -77,7 +84,7 @@ def test_the_script_is_executable():
     assert SCRIPT.stat().st_mode & 0o111
 
 
-def test_it_lists_exactly_the_three_jobs():
+def test_it_lists_exactly_the_five_jobs():
     result = run_script("--list")
 
     assert result.returncode == 0, result.stderr

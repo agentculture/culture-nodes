@@ -60,6 +60,10 @@ NODES_ACTOR_CODEX_ORIN_TOKEN=placeholder-codex-orin-token
 NODES_ACTOR_NOTIFY_TOKEN=placeholder-notify-token
 NODES_ACTOR_JIRA_TOKEN=placeholder-jira-token
 NODES_ACTOR_QWEN_TOKEN=placeholder-qwen-token
+NODES_ACTOR_QWEN_THOR_TOKEN=placeholder-qwen-thor-token
+NODES_ACTOR_QWEN_ORIN_TOKEN=placeholder-qwen-orin-token
+NODES_ACTOR_PI_THOR_TOKEN=placeholder-pi-thor-token
+NODES_ACTOR_PI_ORIN_TOKEN=placeholder-pi-orin-token
 `
 
 // auditPlaceholderValues are the secret VALUES of the fixture above. None may
@@ -80,6 +84,10 @@ var auditPlaceholderValues = []string{
 	"placeholder-codex-orin-token",
 	"placeholder-notify-token",
 	"placeholder-qwen-token",
+	"placeholder-qwen-thor-token",
+	"placeholder-qwen-orin-token",
+	"placeholder-pi-thor-token",
+	"placeholder-pi-orin-token",
 }
 
 // prodEnvWithout returns the complete fixture minus one key's whole line --
@@ -147,18 +155,28 @@ func syntheticComposeDir(t *testing.T, thorBody, orinBody string) string {
 // one key a FORCE rotation actually destroyed is gone from prod.env, and the
 // audit must exit non-zero and name it.
 func TestAuditFailsOnMissingRequiredKey(t *testing.T) {
-	c := newFakeCluster(t)
-	c.seedProdEnv(t, "thor", prodEnvWithout("NODES_ACTOR_CLAUDE_TOKEN"))
+	for _, key := range []string{
+		"NODES_ACTOR_CLAUDE_TOKEN",
+		"NODES_ACTOR_QWEN_THOR_TOKEN",
+		"NODES_ACTOR_QWEN_ORIN_TOKEN",
+		"NODES_ACTOR_PI_THOR_TOKEN",
+		"NODES_ACTOR_PI_ORIN_TOKEN",
+	} {
+		t.Run(key, func(t *testing.T) {
+			c := newFakeCluster(t)
+			c.seedProdEnv(t, "thor", prodEnvWithout(key))
 
-	out, code := runAudit(t, c, "thor")
-	if code == 0 {
-		t.Fatalf("audit passed with NODES_ACTOR_CLAUDE_TOKEN missing; it must fail. Output:\n%s", out)
-	}
-	if !strings.Contains(out, "missing (required)") {
-		t.Errorf("audit output does not carry the `missing (required)` section; an operator has to be able to see WHICH class failed. Output:\n%s", out)
-	}
-	if !strings.Contains(out, "NODES_ACTOR_CLAUDE_TOKEN") {
-		t.Errorf("audit failed without naming NODES_ACTOR_CLAUDE_TOKEN. Output:\n%s", out)
+			out, code := runAudit(t, c, "thor")
+			if code == 0 {
+				t.Fatalf("audit passed with %s missing; it must fail. Output:\n%s", key, out)
+			}
+			if !strings.Contains(out, "missing (required)") {
+				t.Errorf("audit output does not carry the `missing (required)` section; an operator has to be able to see WHICH class failed. Output:\n%s", out)
+			}
+			if !strings.Contains(out, key) {
+				t.Errorf("audit failed without naming %s. Output:\n%s", key, out)
+			}
+		})
 	}
 }
 

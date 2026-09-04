@@ -878,6 +878,43 @@ every other `--metadata` key, `os_user` is merged into the previous
 revision's metadata, never replaced — a later registration that only asks
 for a different key still carries `os_user` forward.
 
+### Qwen-versus-Pi harness-comparison actors (#294)
+
+Four dedicated lanes compare the qwen and pi harnesses while holding the
+model and OpenAI-compatible model endpoint constant. The thor bridges listen
+on ports 8092 (qwen) and 8093 (pi); orin uses the same respective ports. As
+with the codex registrations above, substitute each host's numeric LAN IP:
+
+```bash
+./register-actor.sh company/qwen-thor http://<thor-lan-ip>:8092 \
+  NODES_ACTOR_QWEN_THOR_TOKEN --os-user culture-qwen \
+  --metadata harness=qwen \
+  --metadata model=unsloth/Qwen3.8-27B-NVFP4 \
+  --metadata model_endpoint=http://thor:8000/v1 \
+  --metadata repository_identity=agentculture/culture-nodes
+
+./register-actor.sh company/qwen-orin http://<orin-lan-ip>:8092 \
+  NODES_ACTOR_QWEN_ORIN_TOKEN --os-user culture-qwen \
+  --metadata harness=qwen \
+  --metadata model=unsloth/Qwen3.8-27B-NVFP4 \
+  --metadata model_endpoint=http://thor:8000/v1 \
+  --metadata repository_identity=agentculture/culture-nodes
+
+./register-actor.sh company/pi-thor http://<thor-lan-ip>:8093 \
+  NODES_ACTOR_PI_THOR_TOKEN --os-user culture-pi \
+  --metadata harness=pi \
+  --metadata model=unsloth/Qwen3.8-27B-NVFP4 \
+  --metadata model_endpoint=http://thor:8000/v1 \
+  --metadata repository_identity=agentculture/culture-nodes
+
+./register-actor.sh company/pi-orin http://<orin-lan-ip>:8093 \
+  NODES_ACTOR_PI_ORIN_TOKEN --os-user culture-pi \
+  --metadata harness=pi \
+  --metadata model=unsloth/Qwen3.8-27B-NVFP4 \
+  --metadata model_endpoint=http://thor:8000/v1 \
+  --metadata repository_identity=agentculture/culture-nodes
+```
+
 ### Unbounded concurrency — placement is the containment
 
 The bridge's async runner spawns one thread + one `codex exec` subprocess

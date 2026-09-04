@@ -1,0 +1,196 @@
+{
+  "plan_slug": "harness-interop-pi-qwen",
+  "schema_version": 2,
+  "created": "2026-09-04T15:59:43Z",
+  "updated": "2026-09-04T19:02:05Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t3 landed its pi coverage in a new sibling module tests/test_deploy_unix_user_pi.py (a fourth file beyond the three the acceptance criteria name) because adding it to tests/test_deploy_unix_user.py would have taken that file to 1323 lines and tests/lint/filelength_test.go hard-fails anything over 1000; the sibling-module shape already exists for test_deploy_bootstrap_guards.py and test_deploy_account_bridges.py",
+      "task_ref": "t3",
+      "reason": "the 1000-line file guard was not in the task's acceptance text; the only literal-plan alternative was a red CI gate",
+      "affects": [
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "the adapter-pi.yml and adapter-qwen.yml conformance jobs run the tests/conformance in-process reference check (an in-process \u00a713-correct actor, no real binary, no network), not yet the LIVE fake-backed run against the started bridge with a shared -input JSON that c10/h9 describe; adapter-codex.yml has no conformance job at all and adapter-claude-code.yml runs a live one via its own run_conformance_kit.sh + a dynamic fake, so pi/qwen sit above the codex floor but below the claude-code aspiration",
+      "task_ref": "t8",
+      "reason": "a live fake-backed run needs a dynamic fake (pi's fake_pi replays one static fixture; qwen's is static too) plus a run_conformance_kit.sh per adapter \u2014 both live under adapters/, which t8's file set excludes; the reference check proves the kit compiles and the protocol reference holds",
+      "affects": [
+        "t8",
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 2
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "live runs 01M1PSWJ89T4FV616WJCTXHH6T (qwen-thor), 01M1PW8D3N6ZK2V4DNXT29CV6X (pi-thor)",
+      "behavior_text": "both actors completed a real nodes dispatch on unsloth/Qwen3.8-27B-NVFP4; actor rows carry harness/model/model_endpoint metadata",
+      "contract_text": "pi and qwen are dispatchable actors on thor/orin; a run records which harness+model served it",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "two production runs reached state=completed and were graded through the approval surface; actor metadata verified via GET /v1alpha1/actors",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-04T21:40:00Z",
+        "commit": "d4185f4efbc521755a0609faf16731c9f82ac965"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 3
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "GET /v1alpha1/actors + register-actor + healthz probes + assign smoke",
+      "behavior_text": "company/{qwen,pi}-{thor,orin} registered rev 1 with os_user/harness/model metadata; all four bridges healthz 200; nodes-op assign reaches each",
+      "contract_text": "the four actors are registered, healthy, and reachable by nodes-op assign; a starved/no-write session reports a distinct outcome",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "four bridges 200 on /healthz on both hosts; four actor rows present; four assign dispatches accepted",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-04T21:40:00Z",
+        "commit": "d4185f4efbc521755a0609faf16731c9f82ac965"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "live runs 01M1PSWJ/01M1PW8D + go test ./tests/conformance + deploy.sh thor|orin",
+      "behavior_text": "one pi + one qwen run each completed with a ledgered run and a grade; conformance reference check green; deploy installed both bridges idempotently",
+      "contract_text": "one real pi run and one real qwen run each complete with a ledgered run; the conformance kit passes; deploy installs both bridges idempotently",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "both runs completed; go test ./tests/conformance ok; deploy.sh ran both bridge lanes on thor and orin, second run no-op per step",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-04T21:40:00Z",
+        "commit": "d4185f4efbc521755a0609faf16731c9f82ac965"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "adapters/pi uv run pytest -q + tests/lint byte-identity guards",
+      "behavior_text": "pi bridge drives pi --mode json; preflight/dialin/deployment/reap byte-identical to qwen; 13 offline tests pass",
+      "contract_text": "the pi bridge drives pi --mode json, shared core byte-identical to qwen, offline tests green",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "adapters/pi: 13 passed; go test ./tests/lint ok (pi enrolled in the byte-identity + reaper guards)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-04T21:40:00Z",
+        "commit": "d4185f4efbc521755a0609faf16731c9f82ac965"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "go test ./tests/e2e -run TestHarnessCompare + tests/lint Example guards",
+      "behavior_text": "the example fans one instruction to named actor slots and joins per-actor outcomes; compiles + runs with two fake actors",
+      "contract_text": "the example fans one instruction to a run-time actor list and joins per-actor outcomes; compiles + fixture-runs",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "TestHarnessCompare* pass against pgtest; examplescompile + exampleportability green",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-04T21:40:00Z",
+        "commit": "d4185f4efbc521755a0609faf16731c9f82ac965"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "adapters/qwen uv run pytest -q (permission_blocked/no_changes/yolo tests)",
+      "behavior_text": "a cancelled permission -> permission_blocked; empty workspace-write -> no_changes; yolo admitted; neither ever completed",
+      "contract_text": "a permission-cancelled qwen session reports permission_blocked and an empty workspace-write reports no_changes, never completed; yolo admitted",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "adapters/qwen: 357 passed including the four new #228/yolo tests",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-04T21:40:00Z",
+        "commit": "d4185f4efbc521755a0609faf16731c9f82ac965"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "added",
+      "behavior_text": "the four NODES_ACTOR_{QWEN,PI}_{THOR,ORIN}_TOKEN values must be wired into prod.env AND api/worker force-recreated for a new actor to authenticate; deploy.sh did neither, so dispatch 401'd until a manual docker compose up -d --force-recreate (#300)",
+      "caused_by": [
+        "c29"
+      ],
+      "evidence_refs": [
+        "e2"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "the adapter-pi/qwen conformance jobs run the tests/conformance reference check, not yet the live fake-backed run with a shared -input (deferred to #297); deviation d2",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "pi_cli.parse_session now flattens the assistant's visible text into summary; before the fix summary was empty, the proposed claim statement was empty, and a clean pi run was refused contract_rejected (#299) \u2014 found only by the live dispatch, now fixed and proven by run 01M1PW8D3N6ZK2V4DNXT29CV6X",
+      "caused_by": [
+        "c2"
+      ],
+      "evidence_refs": [
+        "e1"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

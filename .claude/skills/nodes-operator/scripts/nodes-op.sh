@@ -47,7 +47,7 @@ usage: nodes-op.sh <verb> [args]
                                 Human --as lands confirmed; agent --as lands proposed.
   assign <actor> "<instruction>" [opts]   one-node workflow -> publish -> run -> watch
       opts: --sandbox read-only|workspace-write   (default read-only)
-            --mode plan|default|auto-edit|auto    (qwen actors only; required there)
+            --mode plan|default|auto-edit|auto|yolo (qwen actors only; required there. yolo is admitted since #294 t1 — the engine account is the confinement)
             --base-ref REF                         (bridge-fetched trusted base)
             --timeout DUR                          (default 15m)
             --retries N                            (default 1 — no auto-retry)
@@ -411,7 +411,11 @@ assign)
     # between a dispatch and this operator's checkout -- the account already
     # cannot see the operator's checkout.
     qwen-developer) ref="actor://company/qwen-developer@sha256:7777777777777777777777777777777777777777777777777777777777777777"; repo=/home/culture-qwen/git/culture-nodes-qwen-developer;;
-    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer)" >&2; exit 1;;
+    qwen-thor) ref="actor://company/qwen-thor@sha256:8888888888888888888888888888888888888888888888888888888888888888"; repo=/home/culture-qwen/git/culture-nodes-qwen-developer;;
+    qwen-orin) ref="actor://company/qwen-orin@sha256:9999999999999999999999999999999999999999999999999999999999999999"; repo=/home/culture-qwen/git/culture-nodes-qwen-developer;;
+    pi-thor) ref="actor://company/pi-thor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"; repo=/home/culture-pi/git/culture-nodes-pi-developer;;
+    pi-orin) ref="actor://company/pi-orin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac"; repo=/home/culture-pi/git/culture-nodes-pi-developer;;
+    *) echo "nodes-op: unknown actor '$actor' (codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer|qwen-thor|qwen-orin|pi-thor|pi-orin)" >&2; exit 1;;
   esac
   # --repo pins a dispatch to one isolated worktree; the bridge's own
   # repo_allowlist is the real gate (exact-match), so an unlisted path is

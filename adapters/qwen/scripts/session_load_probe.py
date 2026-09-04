@@ -107,8 +107,9 @@ class JsonRpc:
                 line = self._queue.get(timeout=remaining)
             except queue.Empty:
                 if self._proc.poll() is not None:
+                    code = self._proc.returncode
                     raise TimeoutError(
-                        f"{method}: the agent process exited (code {self._proc.returncode}) before answering"
+                        f"{method}: the agent process exited (code {code}) before answering"
                     )
                 raise
             line = line.strip()
@@ -159,7 +160,9 @@ def _spawn(backend: str, state_dir: Path, cwd: str):
         env = dict(os.environ)
         env["FAKE_ACP_BEHAVIOR"] = "load"
         env["FAKE_ACP_STATE_DIR"] = str(state_dir)
-        note = "fake_acp_agent.py (FAKE_ACP_BEHAVIOR=load; durable state simulated by its marker file)"
+        note = (
+            "fake_acp_agent.py (FAKE_ACP_BEHAVIOR=load; durable state simulated by its marker file)"
+        )
         return (
             subprocess.Popen(  # noqa: S603 - the probe's own boundary
                 [sys.executable, str(FAKE_AGENT), "--acp"],
@@ -179,7 +182,10 @@ def _spawn(backend: str, state_dir: Path, cwd: str):
     from qwen_bridge.config import Config
 
     qwen_bin = qwen_cli.locate_qwen_bin(Config())
-    note = f"real qwen binary at {qwen_bin} (located by qwen_cli.locate_qwen_bin - the known install paths, never PATH)"
+    note = (
+        f"real qwen binary at {qwen_bin} (located by qwen_cli.locate_qwen_bin - "
+        "the known install paths, never PATH)"
+    )
     proc = subprocess.Popen(  # noqa: S603 - the probe's own boundary
         [qwen_bin, "--acp"],
         stdin=subprocess.PIPE,
@@ -217,10 +223,16 @@ def run_probe(backend: str, timeout: float) -> dict[str, Any]:
         result["sequence"].append({"gen": 1, "step": "spawn", "note": spawn_note})
         rpc1 = JsonRpc(proc1, timeout=timeout)
         try:
-            init1 = rpc1.request("initialize", {
-                "protocolVersion": 1,
-                "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False},
-            })
+            init1 = rpc1.request(
+                "initialize",
+                {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {
+                        "fs": {"readTextFile": False, "writeTextFile": False},
+                        "terminal": False,
+                    },
+                },
+            )
             result["sequence"].append({"gen": 1, "step": "initialize", "response": init1})
             agent_info = (init1.get("result") or {}).get("agentInfo")
             if agent_info:
@@ -248,15 +260,25 @@ def run_probe(backend: str, timeout: float) -> dict[str, Any]:
 
         # -- generation 2: fresh process, load the recorded id -----------
         proc2, _ = _spawn(backend, state_dir, cwd)
-        result["sequence"].append({"gen": 2, "step": "spawn", "note": "a FRESH process, same state dir"})
+        result["sequence"].append(
+            {"gen": 2, "step": "spawn", "note": "a FRESH process, same state dir"}
+        )
         rpc2 = JsonRpc(proc2, timeout=timeout)
         try:
-            init2 = rpc2.request("initialize", {
-                "protocolVersion": 1,
-                "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False},
-            })
+            init2 = rpc2.request(
+                "initialize",
+                {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {
+                        "fs": {"readTextFile": False, "writeTextFile": False},
+                        "terminal": False,
+                    },
+                },
+            )
             result["sequence"].append({"gen": 2, "step": "initialize", "response": init2})
-            load2 = rpc2.request("session/load", {"cwd": cwd, "mcpServers": [], "sessionId": session_id})
+            load2 = rpc2.request(
+                "session/load", {"cwd": cwd, "mcpServers": [], "sessionId": session_id}
+            )
             result["sequence"].append({"gen": 2, "step": "session/load", "response": load2})
             if "result" in load2:
                 load_result = load2["result"] or {}
@@ -269,8 +291,9 @@ def run_probe(backend: str, timeout: float) -> dict[str, Any]:
                 error = load2.get("error") or {}
                 result["load_error"] = error
                 result["outcome"] = (
-                    f"load-refused: the fresh process's session/load answered with a JSON-RPC error "
-                    f"(code {error.get('code')}, {error.get('message')!r}) - the session did not survive "
+                    "load-refused: the fresh process's session/load answered with a "
+                    f"JSON-RPC error (code {error.get('code')}, "
+                    f"{error.get('message')!r}) - the session did not survive "
                     "the process kill on this backend"
                 )
         except TimeoutError as exc:
@@ -300,15 +323,18 @@ def main(argv: list[str]) -> int:
     backend = args.backend
     if backend == "auto":
         try:
-            from qwen_bridge.config import Config
             from qwen_bridge import qwen_cli
+            from qwen_bridge.config import Config
 
             qwen_bin = qwen_cli.locate_qwen_bin(Config())
             backend = "real"
             print(f"h14 probe: using the real qwen binary at {qwen_bin}", file=sys.stderr)
         except Exception as exc:
             backend = "fake"
-            print(f"h14 probe: real qwen unavailable ({exc}); using the fake agent backend", file=sys.stderr)
+            print(
+                f"h14 probe: real qwen unavailable ({exc}); using the fake agent backend",
+                file=sys.stderr,
+            )
 
     result = run_probe(backend, args.timeout)
 

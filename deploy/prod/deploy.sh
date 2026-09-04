@@ -318,8 +318,163 @@ PYEOF"
   say "codex-bridge active as $target — query CLI at ${remote_home:-\$HOME}/.local/bin/nodes (use the absolute path; ~/.local/bin is on PATH in login shells only)"
 }
 
-# Bridge lanes run for the codex hosts only; spark has no codex actor.
-if [[ "$HOST" != spark* ]]; then deploy_codex_bridge "$HOST"; fi
+# --- qwen + pi actor bridge lanes (#294; thor and orin, after the codex lane)
+#
+# thor and orin each gain a qwen bridge (company/qwen-<host>, :8092) and a pi
+# bridge (company/pi-<host>, :8093) beside the codex one, each running as its
+# own engine account (culture-qwen, culture-pi) exactly the way the codex
+# bridge runs as culture-codex since #243. One helper serves both because the
+# two lanes differ only in engine name, template, unit and whether a preflight
+# gates startup; a per-engine copy is how resolve_actor_row_id shipped as the
+# same bug three times.
+#
+# Unlike the codex lane these are ADDITIVE and SKIP rather than fail when their
+# account is not yet bootstrapped or its bridge secret is not yet installed:
+# the qwen/pi accounts are new (#294), a host may run a codex-only deploy
+# before they exist, and a hard exit here would refuse an otherwise-fine codex
+# deploy. install-secrets.sh writes the account's <engine>-bridge.env (the
+# auth token the render bakes into the config) and bridge-push.env; a missing
+# one is a printed hint, not a stopped deploy (#289: the caller reads each
+# lane's output, not the exit code).
+
+# The account-side config render for a thor/orin engine bridge. sed cannot do
+# it: the auth_token must be read from the account's own <engine>-bridge.env
+# (so it never crosses an ssh argv), and the port + registered actor_id are
+# overlaid too. __HOME__ resolves to the ACCOUNT's home on the far side, the
+# same generate-absolute-paths-at-install-time technique the codex config uses.
+# shellcheck disable=SC2016 # every expansion is for the remote shell
+ACCOUNT_ENGINE_RENDER_REMOTE='set -eu
+umask 077
+mkdir -p "$HOME/.config/culture-nodes-bridges" "$HOME/.local/state/culture-nodes-bridges/$ROLE"
+# The bridge binds 0.0.0.0, so it needs a token; it lives in the env file
+# install-secrets.sh wrote, sourced here (not passed as an argv) so the secret
+# stays off the process table.
+set -a; . "$HOME/.culture-nodes/$ENGINE-bridge.env"; set +a
+prog=$(cat <<"RENDERPY"
+import json, os, sys
+
+template, dest, engine, port, actor_id = sys.argv[1:6]
+home = os.path.expanduser("~")
+with open(template) as handle:
+    config = json.loads(handle.read().replace("__HOME__", home))
+token = os.environ.get(engine.upper() + "_BRIDGE_AUTH_TOKEN") or ""
+if token:
+    config["auth_token"] = token
+if actor_id:
+    config["actor_id"] = actor_id
+if port:
+    config["port"] = int(port)
+if not config.get("auth_token"):
+    sys.stderr.write("refusing: no auth_token for the " + engine + " bridge (it binds 0.0.0.0 and refuses to start without one); nothing rendered\n")
+    raise SystemExit(3)
+rendered = json.dumps(config, indent=2, sort_keys=True) + "\n"
+tmp = dest + ".new"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as out:
+    out.write(rendered)
+os.chmod(tmp, 0o600)
+os.replace(tmp, dest)
+print("rendered " + dest + " (port " + str(port) + ", allowlist " + ", ".join(config.get("repo_allowlist", [])) + ")")
+RENDERPY
+)
+python3 -c "$prog" "$TEMPLATE" "$HOME/.config/culture-nodes-bridges/$ROLE.json" "$ENGINE" "$PORT" "$ACTOR_ID"'
+
+deploy_account_engine_bridge() { # host engine — runs on thor and orin, AS culture-<engine>
+  local host=$1 engine=$2
+  local role adapter package template unit preflight actor_key target port ACTOR_ID remote_home
+
+  case "$engine" in
+    qwen) role=qwen-developer; adapter=qwen; package=qwen_bridge
+          template=qwen-developer.json.template; unit=culture-nodes-qwen-developer; preflight="" ;;
+    pi)   role=pi-developer; adapter=pi; package=pi_bridge
+          template=pi-developer.json.template; unit=culture-nodes-pi-developer; preflight=pi-preflight.sh ;;
+    *) echo "deploy_account_engine_bridge: unknown engine $engine" >&2; return 1 ;;
+  esac
+  actor_key="company/${engine}-${host}"
+  target=$(unix_user_target "$host" "$engine")
+  port=$(actor_bridge_port "$engine")
+
+  # Additive: an account that is not bootstrapped is not this deploy's failure
+  # (a codex-only deploy is a valid deploy). Skip loudly, name the hand-turn.
+  if ! account_reachable "$target"; then
+    say "WARNING: culture-$engine on $host is not bootstrapped ($target does not open with the operator key) — skipping the $engine bridge lane (#294 accounts are additive; bootstrap it and run install-secrets.sh, then re-deploy). Nothing on $host was stopped"
+    return 0
+  fi
+
+  # The account, its pinned engine + clone + inventory (as the account), and
+  # its own archive copy — exactly the codex lane's account_prepare.
+  account_prepare "$host" "$engine" || exit 1
+
+  # install-secrets.sh owns the bridge auth token; deploy.sh only consumes it.
+  ssh "$target" "test -f ~/.culture-nodes/${engine}-bridge.env" || {
+    say "WARNING: ~/.culture-nodes/${engine}-bridge.env missing in $target — skipping the $engine bridge (run deploy/prod/install-secrets.sh, whose install_${engine}_account_env step writes it, then re-deploy). Nothing on $host was stopped"
+    return 0
+  }
+
+  # pi's adapter (adapters/pi, task t2) may not be in every shipped tree yet;
+  # the stamp's parent dir is created so stamp_revision's write lands whether
+  # or not the archive already carried the package. mkdir -p is a no-op when
+  # the adapter is present (qwen always, pi once t2 lands).
+  ssh "$target" "mkdir -p $REMOTE_DIR/adapters/$adapter/src/$package"
+  # Before the install, never after: `uv tool install` copies (stamp_revision).
+  stamp_revision "$target" "$adapter" "$package"
+
+  say "installing the $engine-bridge uv tool in $target (archive-independent copy)"
+  ssh "$target" "\$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/$adapter"
+
+  if [ -n "$preflight" ]; then
+    say "installing $engine preflight in $target (with its pinned-version dependency beside it)"
+    # pi-preflight.sh reads the pinned version out of lanes/unix-user.sh next
+    # to itself, so it needs that file at a stable path (the unit's
+    # ExecStartPre points at the installed copy, never the archive the next
+    # deploy rm -rf's). It reads ONLY the UNIX_USER_PI_VERSION= line, so a
+    # stub carrying just that line is installed rather than the whole lane:
+    # the lane's own body contains the operator-material strings the account
+    # inventory greps for (its inventory pattern names NODES_DATABASE_URL),
+    # and copying the whole file into the account would trip that guard. The
+    # stub is extracted from the real lane at deploy time, so the pin cannot
+    # drift. Inventory allows the whole `bin` entry and does not recurse into
+    # bin/lanes/, so the stub is invisible to the entry list.
+    ssh "$target" "umask 077; mkdir -p ~/.culture-nodes/bin/lanes && cp $REMOTE_DIR/deploy/prod/$preflight ~/.culture-nodes/bin/$preflight && chmod +x ~/.culture-nodes/bin/$preflight && grep -m1 '^UNIX_USER_PI_VERSION=' $REMOTE_DIR/deploy/prod/lanes/unix-user.sh > ~/.culture-nodes/bin/lanes/unix-user.sh"
+  fi
+
+  # The registered row id the bridge stamps as origin_actor_id (a FOREIGN KEY
+  # into actors), resolved from thor's DB as the LOGIN user the way the codex
+  # lane resolves it (inlined for the same reason: resolve_actor_row_id is
+  # defined further down and this lane runs before it).
+  ACTOR_ID=$(ssh "${THOR_HOST:-thor}" "cd $REMOTE_DIR/deploy/prod 2>/dev/null && docker compose --env-file ~/.culture-nodes/prod.env -f compose.thor.yml exec -T postgres psql -U nodes -d nodes -Atc \"SELECT id FROM actors WHERE actor_key = '$actor_key' ORDER BY revision DESC LIMIT 1\"" 2>/dev/null | tr -d '\r' || true)
+  [ -n "$ACTOR_ID" ] || say "WARNING: no registered actor row for $actor_key yet — the $engine bridge keeps no actor_id; ledger commits will fail until you run register-actor.sh and re-deploy"
+
+  say "rendering $engine bridge config into $target from deploy/prod/$template (auth_token from ~/.culture-nodes/$engine-bridge.env, port $port)"
+  # shellcheck disable=SC2029 # ROLE/TEMPLATE/ENGINE/PORT/ACTOR_ID are deliberately expanded here; the token is read on the far side
+  ssh "$target" "ROLE='$role'; TEMPLATE='$REMOTE_DIR/deploy/prod/$template'; ENGINE='$engine'; PORT='$port'; ACTOR_ID='$ACTOR_ID'; $ACCOUNT_ENGINE_RENDER_REMOTE"
+
+  # Refuse a restart while a session is in flight AS the account (a redeploy
+  # kills the run and leaves it `running` in the ledger). No login-user unit to
+  # cut over: thor/orin never ran a qwen or pi bridge as the login user.
+  account_session_guard "$host" "$engine" || exit 1
+
+  say "installing $unit systemd user unit into $target"
+  ssh "$target" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); mkdir -p ~/.config/systemd/user && cp $REMOTE_DIR/deploy/prod/$unit.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart $unit && systemctl --user enable $unit"
+  ssh "$target" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); for i in \$(seq 1 15); do st=\$(systemctl --user is-active $unit || true); [ \"\$st\" = active ] && { echo \"$unit: active\"; exit 0; }; sleep 2; done; echo \"$unit failed to become active:\"; systemctl --user --no-pager -n 10 status $unit; exit 1"
+
+  # The registry row learns which account serves it (#204's lane tag).
+  account_register_os_user "$actor_key" "culture-$engine"
+
+  remote_home=$(ssh "$target" 'printf %s "$HOME"' || true)
+  say "$engine-bridge active as $target — config at ${remote_home:-\$HOME}/.config/culture-nodes-bridges/$role.json"
+}
+
+deploy_qwen_bridge() { deploy_account_engine_bridge "$1" qwen; }
+deploy_pi_bridge() { deploy_account_engine_bridge "$1" pi; }
+
+# Bridge lanes run for the codex hosts only; spark has no codex/qwen/pi thor
+# actor here (spark's qwen bridge is account_bridges_spark_lane's, in the case).
+if [[ "$HOST" != spark* ]]; then
+  deploy_codex_bridge "$HOST"
+  deploy_qwen_bridge "$HOST"
+  deploy_pi_bridge "$HOST"
+fi
 
 # --- human-inbox actor bridge lane (task t34: deploy wiring for the t16
 # kind=human bridge + its GitHub merge tracker; task t10: host derivation) --

@@ -45,7 +45,7 @@ import (
 // that does not advertise the surface leaves its actor dispatching exactly as
 // before. Guard 3 below is what keeps that a choice rather than a half-done
 // job, and what lets human-inbox opt in later without editing this list.
-var advertisingAdapters = []string{"claude-code", "codex", "colleague", "notify", "qwen"}
+var advertisingAdapters = []string{"claude-code", "codex", "colleague", "notify", "pi", "qwen"}
 
 // sharedModule is the protocol file — the one guards 2, 3 and 4 read.
 const sharedModule = "preflight.py"

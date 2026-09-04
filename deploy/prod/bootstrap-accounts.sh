@@ -3,9 +3,10 @@
 # agents-as-OS-users lane (#243), typed by the operator.
 #
 #   deploy/prod/bootstrap-accounts.sh spark    # culture-claude + culture-qwen
-#   deploy/prod/bootstrap-accounts.sh orin     # culture-codex
-#   deploy/prod/bootstrap-accounts.sh thor     # culture-codex (NOPASSWD today,
-#                                              # so deploy.sh thor can also do it)
+#   deploy/prod/bootstrap-accounts.sh orin     # culture-codex + culture-qwen + culture-pi
+#   deploy/prod/bootstrap-accounts.sh thor     # culture-codex + culture-qwen + culture-pi
+#                                              # (thor is NOPASSWD today, so
+#                                              # deploy.sh thor can also do it)
 #
 # It exists because `sudo -n` wants a password on spark and orin, so
 # deploy.sh cannot create the accounts unattended there; this wrapper runs
@@ -13,6 +14,13 @@
 # rather than sourced), so a hand-typed bootstrap and a scripted one cannot
 # drift apart. Every step is a no-op when already done; it never touches
 # /home/<login>/git; it asserts a 750 home and no sudo/docker membership.
+#
+# thor and orin carry three engines since #294 (codex qwen pi): the qwen and
+# pi accounts are the harness-comparison lanes beside codex, each with its
+# own pinned engine and its own copy of the login user's provider config
+# (~/.qwen/settings.json, ~/.pi/agent/models.json). spark keeps claude +
+# qwen: its culture-qwen and qwen-developer bridge stay as they are, and it
+# gets a pi account only if the operator asks.
 #
 # Each invocation is an operator hand-turn: record it as a comment on the
 # tracking issue (CLAUDE.md, "Every piece of operator work opens or updates
@@ -26,7 +34,7 @@ LANE="$SCRIPT_DIR/lanes/unix-user.sh"
 
 case "$HOST" in
   spark) ENGINES="claude qwen" ;;
-  orin|thor) ENGINES="codex" ;;
+  orin|thor) ENGINES="codex qwen pi" ;;
   *) echo "error: unknown host $HOST" >&2; echo "hint: one of spark, orin, thor" >&2; exit 1 ;;
 esac
 

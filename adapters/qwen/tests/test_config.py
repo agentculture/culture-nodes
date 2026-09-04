@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from qwen_bridge.config import (
     AgentIdentity,
     Config,

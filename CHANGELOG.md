@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.49.0] - 2026-09-04
+
+### Added
+
+- adapters/pi — a sixth actor-protocol bridge driving the pi coding agent (`@earendil-works/pi-coding-agent`) in headless `pi --mode json` print mode; one process per invocation, process-group cancellation, per-invocation JSONL transcripts, a fake pi for offline tests, zero runtime dependencies
+- Qwen Code and Pi as harness-comparison actors on thor and orin — company/qwen-thor, qwen-orin, pi-thor, pi-orin — each running as its own engine account (culture-qwen, culture-pi) against one served model (unsloth/Qwen3.8-27B-NVFP4 at thor:8000), so a workflow can name any harness and a run records which one served it
+- examples/harness-compare — a workflow that fans one instruction to a run-time set of actor slots and joins their outcomes for comparison
+- deploy/prod/pi-preflight.sh — a non-billable deploy-time and ExecStartPre preflight for a pi actor bridge
+- deploy.sh qwen and pi bridge lanes on thor and orin, the culture-nodes-pi-developer unit and pi-developer.json template, ports 8092 (qwen) / 8093 (pi), and install-secrets account steps
+- adapter-pi.yml and adapter-qwen.yml CI workflows; scripts/lint-all.sh widened from three to five lint jobs (recorded frame decision c33 for #294)
+
+### Changed
+
+- adapters/qwen: issue #228 answered — a permission-cancelled session reports the domain outcome permission_blocked and an empty workspace-write reports no_changes, neither ever completed; the bridge admits yolo under the engine account (the account is the confinement); the parked status is lifted
+- unix-user.sh gains the pi engine (pinned node 22 tarball + npm install + PATH wrapper) and the thor|orin host map now bootstraps codex qwen pi
+- tests/e2e/harnesscompare_test.go: the compile-level example test split into one helper per property it asserts — compile determinism, per-slot wiring, the single join, the single end node (SonarCloud CRITICAL `go:S3776`, cognitive complexity 49 > 15; measured 52 → 2 by gocognit). Behaviour unchanged: every extracted assertion was verified to still fail when its expectation is perturbed
+
 ## [0.48.2] - 2026-09-04
 
 ### Fixed

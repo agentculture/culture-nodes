@@ -1,0 +1,40 @@
+# systemd user unit for the pi actor bridge (adapters/pi, company/pi-<host>).
+#
+# Versioned here since #294, mirroring culture-nodes-qwen-developer.service:
+# under the culture-pi account the unit execs the console script `uv tool
+# install` copied into that account's own ~/.local/bin — archive-independent,
+# and independent of any checkout's branch (the human-inbox lesson). %h
+# resolves to /home/culture-pi because deploy.sh thor|orin installs this file
+# into that account's `systemd --user` instance over `ssh culture-pi@<host>`.
+#
+# Unlike the qwen unit, pi carries an ExecStartPre: deploy/prod/pi-preflight.sh
+# (task t4) is the non-billable readiness probe — it invokes the configured pi
+# binary with only `--version`, checks ~/.pi/agent/models.json names the
+# provider/model, probes GET <model_endpoint>/v1/models, asserts the allowlisted
+# checkout is owned by the running uid, and refuses if the account holds sudo or
+# docker. A failing check makes systemd refuse to run ExecStart at all, so the
+# first dispatch never discovers an unconfigured provider (spec c36/h31). The
+# preflight path is the one deploy.sh installs (%h/.culture-nodes/bin/
+# pi-preflight.sh); it takes the rendered bridge config as its argument, the
+# same document pi-bridge itself reads via PI_BRIDGE_CONFIG.
+#
+# The %h-does-not-expand caveat applies only to the CONTENTS of an
+# EnvironmentFile once systemd reads it as plain KEY=VALUE lines; every
+# directive VALUE below (Environment=, ExecStartPre=, ExecStart=,
+# EnvironmentFile=) is a unit-file directive where %h does expand. The bridge's
+# JSON config is not a systemd unit, so it carries __HOME__ placeholders the
+# deploy lane substitutes at install time instead.
+[Unit]
+Description=Culture Nodes pi bridge (pi-developer)
+After=network-online.target
+
+[Service]
+Environment=PI_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/pi-developer.json
+ExecStartPre=%h/.culture-nodes/bin/pi-preflight.sh %h/.config/culture-nodes-bridges/pi-developer.json
+EnvironmentFile=-%h/.culture-nodes/bridge-push.env
+ExecStart=%h/.local/bin/pi-bridge
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -5,10 +5,9 @@ driven over ACP (Agent Client Protocol) on stdio. Same actor protocol as the
 `codex`, `claude-code`, `colleague` and `jira` siblings: `POST /v1/invocations`,
 `POST /v1/invocations/<id>/cancel`, `GET /v1/capabilities`, `GET /healthz`.
 
-**Status: parked, and it runs.** The bridge was brought up as a real registered
-actor on 2026-08-27 and executed a live session end to end. It is **not** in
-routine use — see [Why it is parked](#why-it-is-parked) before investing in it.
-Zero runtime dependencies, stdlib only, like every adapter here.
+The bridge was brought up as a real registered actor on 2026-08-27 and
+executed a live session end to end. Zero runtime dependencies, stdlib only,
+like every adapter here.
 
 The account of how it got here, and the five defects found doing it, is
 [`docs/deliveries/2026-08-27-qwen-bridge-first-dispatch.md`](../../docs/deliveries/2026-08-27-qwen-bridge-first-dispatch.md).
@@ -20,51 +19,51 @@ The bridge's own capability document says it plainly:
 > `confinement: qwen-code runs its own tools in-process as the bridge user`
 > (measured 2026-08-23: no fs/terminal client requests, no sandbox helper)
 
-**There is no kernel confinement.** qwen-code executes its tools inside its own
-process, as whichever user runs the bridge. The ACP session modes
-(`plan`/`default`/`auto-edit`/`auto`) are an *approval policy*, not a sandbox:
-every supported mode can do everything that process can do. This is unlike the
-codex sibling, where `--sandbox` is a real kernel boundary.
+qwen-code executes its tools inside its own process. The production bridge runs
+as the dedicated Unix account `culture-qwen`, with no sudo access and no Docker
+group membership. **That Unix-user account is the confinement boundary.** ACP
+session modes are approval policies, not additional confinement; consequently
+`yolo` widens no OS authority and is admitted. See the account design in
+[`docs/deviations/2026-08-29-agents-as-os-users.md`](../../docs/deviations/2026-08-29-agents-as-os-users.md).
 
 What that leaves as the actual boundary:
 
 - **The exact-match repo allowlist** (`repo_allowlist` / `repo_allowlist_prefixes`).
   It governs which checkout a dispatch *resolves to*. It does not stop the
   process touching anything else the user can reach.
-- **The bridge user's own privileges.** Run it as a user whose reach you are
-  content to hand to a model.
+- **The `culture-qwen` account's privileges.** Its lack of sudo and Docker-group
+  access is the boundary around every mode.
 
-Practically: give it a dedicated worktree, and do not run it as a user with
-credentials you would not hand to a dispatch.
+Practically: give `culture-qwen` a dedicated worktree and only the credentials
+and paths intended for Qwen dispatches.
 
-## Why it is parked
+## Why it was parked
 
 `acp/transport.py` **fails closed** on `session/request_permission` — a bridge
-with no human attached must not invent consent. Correct. But with no one to
-answer, the first permission an agent requests is cancelled, the tool is
-skipped, and the agent ends its turn:
+with no human attached must not invent consent. The mode decision is now:
 
-| Mode | Completes shell-dependent work? |
+| Mode | Unattended policy |
 |---|---|
 | `plan` | no — analysis only by definition |
-| `default` | no — every edit and shell asks, every ask is cancelled |
-| `auto-edit` | no — edits pass, shell still asks |
-| `auto` | no — the classifier blocks what it dislikes, that ask is cancelled |
-| `yolo` | would — **refused by the bridge** (`wire.ACP_MODES`) |
+| `default` | permission requests are cancelled |
+| `auto-edit` | edits are approved by the agent policy; other permission requests are cancelled |
+| `auto` | agent-policy approvals apply; other permission requests are cancelled |
+| `yolo` | admitted; the account is the boundary |
 
-Worse, a clean `end_turn` classifies as success, so a session that did nothing
-reports `completed` with `changed_files: []` in the same payload — **issue #228**.
+Two reporting rules are unconditional in every mode: a bridge-cancelled
+permission followed by `end_turn` reports `permission_blocked`, and a
+`workspace-write` dispatch with no measured changed files reports `no_changes`.
+Neither reports `completed`.
 
-**If you are reigniting this, #228 is the thing to answer**, and it is a design
-question about what an unattended dispatch's authorization *means*, not a patch.
+Historical note: **#228 was the thing to answer**; this change answers it by
+admitting `yolo` under the engine account and adding those two distinct outcomes.
 
 One input to that decision, recorded so it is not re-derived: **h15's live check
 is satisfied.** Run `01M11NNKGNR8PMG995C2JPQ1G9` showed a fresh `session/new`
 returning `yolo` among `availableModes`, `session/set_mode` round-tripping with
 a confirming `mode-update` echo, and `auto` demonstrably behaving as its
-description claims. And admitting `yolo` would not widen confinement — per the
-trust model above, there is no kernel boundary to widen. It removes an approval
-prompt. Whether that is acceptable is a policy call, not a safety-evidence one.
+description claims. That evidence established that admitting `yolo` would not
+widen confinement; the dedicated account decision made that admission policy.
 
 ## The ACP seam
 
@@ -101,7 +100,7 @@ the first thing to read when a dispatch behaves oddly.
 |---|---|---|
 | `instruction` | yes | the prompt |
 | `repo` | yes | must match the allowlist exactly |
-| `mode` | **yes** | `plan` \| `default` \| `auto-edit` \| `auto`. Never defaulted |
+| `mode` | **yes** | `plan` \| `default` \| `auto-edit` \| `auto` \| `yolo`. Never defaulted |
 | `sandbox` | no | `read-only` \| `workspace-write`. Not a kernel boundary here |
 | `handover` | no | create + push a git ref. Requires `sandbox: workspace-write` |
 | `model` | no | overrides the configured model |
@@ -225,7 +224,7 @@ to state positively that no live session is held.
 
 | Issue | What |
 |---|---|
-| **#228** | a permission-starved session reports `completed` — **the blocker** |
+| **#228** | answered: `yolo` admitted under `culture-qwen`; permission-blocked and no-change turns report distinct outcomes |
 | #222 | `register-actor.sh` validates no `auth_token_env` against the compose files |
 | #224 | two workers, two credential sets |
 | #226 | no mesh-wide view of what each machine is serving |

@@ -39,6 +39,24 @@
 # and can run from install-secrets.sh before any deploy has happened.
 NODES_API_URL=${NODES_API_URL:-http://thor:18080}
 
+# actor_bridge_port <engine> -- the port a thor/orin engine bridge binds
+# (q5, #294). qwen listens on 8092 and pi on 8093 on BOTH thor and orin
+# (spec q5, docs/specs/2026-09-04-harness-interop-pi-qwen.md); codex stays on
+# 8086, the codex-bridge default its template already carries. One place
+# resolves the number so deploy.sh's rendered bridge config and register-actor
+# endpoints cannot disagree with each other -- the same reason WHICH HOST an
+# actor is served on lives only in the registry above. An unknown engine
+# fails rather than defaulting: a bridge bound to a guessed port is a bridge
+# nothing dispatches to.
+actor_bridge_port() { # engine
+  case "$1" in
+    qwen) printf '8092' ;;
+    pi) printf '8093' ;;
+    codex) printf '8086' ;;
+    *) return 1 ;;
+  esac
+}
+
 # actor_registration <actor_key>
 #
 # Echoes "id|revision|endpoint_ref|auth_token_env" for the actor's NEWEST

@@ -421,7 +421,13 @@ def test_lane_parses_and_defines_the_four_verbs():
 
 def test_versions_are_pinned_in_variables_at_the_top():
     block = _block()
-    for var in ("UNIX_USER_CODEX_VERSION=", "UNIX_USER_CLAUDE_VERSION=", "UNIX_USER_QWEN_VERSION="):
+    for var in (
+        "UNIX_USER_CODEX_VERSION=",
+        "UNIX_USER_CLAUDE_VERSION=",
+        "UNIX_USER_QWEN_VERSION=",
+        "UNIX_USER_PI_VERSION=",
+        "UNIX_USER_PI_NODE_VERSION=",
+    ):
         assert var in block, f"{var} is not pinned in the lane"
         assert block.index(var) < block.index("unix_user_bootstrap()")
 
@@ -657,7 +663,12 @@ def test_provision_qwen_on_spark_uses_the_standalone_installer(tmp_path: Path):
     assert (home / "git/culture-nodes-qwen-developer/.git").is_dir()
     assert (home / ".local/bin/qwen").exists()
     assert h.count("curl[", "install-qwen-standalone.sh") == 1
-    h.never("npm")
+    # No npm ran and no node landed: the lane TEXT names npm for the pi
+    # branch (and the ssh shim logs the whole remote script), so the fact is
+    # read from the account, not from the log.
+    h.never("npm[")
+    assert not (home / ".local/share/pi-node").exists()
+    assert not list(home.rglob("node_modules"))
 
 
 def test_provision_qwen_refuses_without_its_settings_file_and_names_the_bootstrap(

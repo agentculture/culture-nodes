@@ -100,17 +100,17 @@ uv run pytest -n auto                     # full test suite (xdist)
 uv run pytest tests/test_cli.py::test_whoami_text   # single test
 uv run pytest -n auto --cov=culture_nodes --cov-report=term  # with coverage (CI gates ≥60%)
 
-# Lint — ONE command, and it is the one CI runs (issue #123):
-scripts/lint-all.sh                       # all three jobs named `lint`
-scripts/lint-all.sh root                  # or one job: root | adapter-codex | adapter-claude-code
+# Lint — ONE command, and it is the one CI runs (issue #123, widened by #294):
+scripts/lint-all.sh                       # all five jobs named `lint`
+scripts/lint-all.sh root                  # or one job: root | adapter-codex | adapter-claude-code | adapter-pi | adapter-qwen
 scripts/lint-all.sh --list
 ```
 
 `scripts/lint-all.sh` is not a convenience wrapper around the commands below —
-the three `lint` workflows *invoke it*, so a green local run and a red CI lint
+the five `lint` workflows *invoke it*, so a green local run and a red CI lint
 job cannot drift apart by construction. That is the same shape as
 `scripts/check-zero-runtime-deps.sh`. Before it existed, an operator had to know
-that three workflows lint Python in two different styles over
+that the workflows lint Python in two different styles over
 overlapping-but-different paths, and that knowledge lived only here — which is
 exactly how PR #122 went red on three `lint` jobs after a fully green local run.
 
@@ -122,16 +122,21 @@ never less.
 
 The difference the script encodes, and the reason it must not be "simplified":
 `adapter-codex.yml` runs from the **repo root** against adapter paths (so the
-ROOT isort/black config applies), while `adapter-claude-code.yml` runs **inside
-the adapter directory** (so the ADAPTER's own config applies). Running only the
-adapter-dir form for codex passes locally and fails in CI.
+ROOT isort/black config applies), while `adapter-claude-code.yml`,
+`adapter-pi.yml` and `adapter-qwen.yml` run **inside the adapter directory** (so
+the ADAPTER's own config applies). Running only the adapter-dir form for codex
+passes locally and fails in CI.
 
-Scope is deliberately the three jobs literally named `lint`. `go vet` and
-`web.yml`'s `webglass` are **not** included: #123's defect is same-named jobs
-with different invocations, which those do not have, and pulling a Go toolchain
-and an npm install into a script authors run casually would change what "lint is
-green" means for every caller. `tests/test_lint_all.py` pins that exactly three
-workflow jobs are named `lint`, so widening this is a decision, not a drift.
+Scope is deliberately the five jobs literally named `lint`. This widened from
+three to five when the sixth adapter (`pi`) and the restored `qwen` adapter each
+gained a dedicated workflow (`adapter-pi.yml`, `adapter-qwen.yml`); that is the
+recorded frame decision **c33** for #294 — a deliberate widening of #123, not
+drift. `go vet` and `web.yml`'s `webglass` are still **not** included: #123's
+defect is same-named jobs with different invocations, which those do not have,
+and pulling a Go toolchain and an npm install into a script authors run casually
+would change what "lint is green" means for every caller. `tests/test_lint_all.py`
+pins that exactly five workflow jobs are named `lint`, so widening this further
+is a decision, not a drift.
 
 **A shared bridge module must stay byte-identical across all five adapters**
 (`tests/lint/` enforces it for `preflight.py`, `dialin.py`, `deployment.py`,

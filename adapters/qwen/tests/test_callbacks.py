@@ -4,6 +4,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
+
 from qwen_bridge.callbacks import CallbackConfig, CallbackEmitter
 
 from ._fakes import FakeCallbackReceiver

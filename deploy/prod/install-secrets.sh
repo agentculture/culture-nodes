@@ -550,6 +550,59 @@ install_codex_account_env() { # host
 install_codex_account_env "$THOR"
 install_codex_account_env "$ORIN"
 
+# --- qwen + pi bridge account env, thor and orin (#294) --------------------
+# QWEN_PI_ACCOUNT_ENV_START -- tests/test_deploy_account_bridges.py slices this
+# region and runs install_qwen_account_env / install_pi_account_env against a
+# fake account; keep the marker on the first line and its mate after the last.
+#
+# thor and orin each run a qwen and a pi actor bridge as culture-qwen /
+# culture-pi (#294). Mirrors install_codex_account_env in scope -- the account
+# holds the bridge auth-token env file and the bridge-push.env handover
+# credential, both umask 077, both mode 600 -- with the one difference that
+# there is NO login-user qwen/pi bridge on thor/orin to mirror from, so this
+# MINTS the auth token (the deploy lane bakes it into the rendered bridge
+# config). Guarded like every other bridge secret: an existing file is KEPT
+# unless FORCE_QWEN=1 / FORCE_PI=1, so the token is stable and a second
+# install-secrets run is a no-op per step. An unbootstrapped account is skipped
+# by name (deploy.sh creates it, this script re-runs after), and bridge-push.env
+# is relayed only when GITHUB_TOKEN_WORKER is set, as install_account_push_env
+# does for codex.
+install_bridge_account_env() { # host engine FORCE
+  local host=$1 engine=$2 force=$3 target var rc=0
+  target=$(unix_user_target "$host" "$engine")
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=15 "$target" 'id -un' >/dev/null 2>&1; then
+    echo "culture-$engine on $host is not bootstrapped or not reachable as $target — skipping its ${engine}-bridge.env (run deploy.sh $host, or the bootstrap by hand, then re-run this script)" >&2
+    return 0
+  fi
+  var=$(printf '%s_BRIDGE_AUTH_TOKEN' "$(printf '%s' "$engine" | tr '[:lower:]' '[:upper:]')")
+  # Minted locally; rides ssh stdin into the account, never an argv.
+  printf '%s=%s\n' "$var" "$(openssl rand -base64 32)" \
+    | ssh "$target" "FORCE=$force; ENGINE='$engine'; "'umask 077; mkdir -p ~/.culture-nodes; f=~/.culture-nodes/$ENGINE-bridge.env; new=$(cat); if [ -e "$f" ] && [ "$FORCE" != "1" ]; then echo "keeping existing $ENGINE-bridge.env (set FORCE for a rotation)" >&2; exit 3; fi; printf "%s\n" "$new" > "$f"; chmod 600 "$f"' || rc=$?
+  if [ "$rc" -eq 3 ]; then echo "kept existing ${engine}-bridge.env in $target"; rc=0
+  elif [ "$rc" -eq 0 ]; then echo "minted ~/.culture-nodes/${engine}-bridge.env in $target (mode 600)"; fi
+  [ "$rc" -eq 0 ] || return "$rc"
+  # The unattended handover push credential the qwen/pi units load via
+  # EnvironmentFile=-%h/.culture-nodes/bridge-push.env. Relayed, never minted.
+  if [ -n "${GITHUB_TOKEN_WORKER:-}" ]; then
+    printf 'GITHUB_TOKEN_WORKER=%s\n' "$GITHUB_TOKEN_WORKER" \
+      | ssh "$target" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/bridge-push.env; chmod 600 ~/.culture-nodes/bridge-push.env'
+    echo "installed mode-600 ~/.culture-nodes/bridge-push.env in $target"
+  fi
+}
+
+install_qwen_account_env() { # host
+  install_bridge_account_env "$1" qwen "${FORCE_QWEN:-0}"
+}
+
+install_pi_account_env() { # host
+  install_bridge_account_env "$1" pi "${FORCE_PI:-0}"
+}
+# QWEN_PI_ACCOUNT_ENV_END
+install_qwen_account_env "$THOR"
+install_qwen_account_env "$ORIN"
+install_pi_account_env "$THOR"
+install_pi_account_env "$ORIN"
+
 # --- merge-gate actor token (login-from-anywhere t11, spec c45) ------------
 #
 # The merge-gate scripts (scripts/merge-gate.py, scripts/collect-handover.py

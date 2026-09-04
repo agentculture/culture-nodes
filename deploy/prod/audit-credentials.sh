@@ -148,6 +148,15 @@ NODES_ACTOR_CLAUDE_TOKEN required
 NODES_ACTOR_CODEX_THOR_TOKEN required
 NODES_ACTOR_CODEX_ORIN_TOKEN required
 
+# Bearer serving company/qwen-thor.
+NODES_ACTOR_QWEN_THOR_TOKEN required
+# Bearer serving company/qwen-orin.
+NODES_ACTOR_QWEN_ORIN_TOKEN required
+# Bearer serving company/pi-thor.
+NODES_ACTOR_PI_THOR_TOKEN required
+# Bearer serving company/pi-orin.
+NODES_ACTOR_PI_ORIN_TOKEN required
+
 # The notify bridge's bearer, in its second custody point: the bridge holds
 # the same value in ~/.culture-nodes/notify.env. install-secrets.sh mints and
 # installs both halves unconditionally, so an absent control-plane copy is not

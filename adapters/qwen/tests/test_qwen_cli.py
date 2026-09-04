@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from qwen_bridge import mapping, qwen_cli
 from qwen_bridge.config import Config
 
@@ -40,7 +41,7 @@ HERE = Path(__file__).resolve().parent
 ACP_FIXTURES = HERE / "fixtures" / "acp"
 FAKE_AGENT = ACP_FIXTURES / "fake_acp_agent.py"
 SESSION_ID = "8c9f1b2e-4a6d-4e7f-9b3c-1d2e3f4a5b6c"  # the fixtures' fixed session
-MEASURED_MODES = ("plan", "default", "auto-edit", "auto")
+MEASURED_MODES = ("plan", "default", "auto-edit", "auto", "yolo")
 MEASURED_MODEL = "unsloth/Qwen3.8-27B-NVFP4"
 
 #: A repo path used by the PURE argv-shape test only; the live tests run
@@ -112,6 +113,10 @@ def _turn_stdout(turn_fixture: str, *, mode: str = "plan", with_handshake: bool 
         if turn.get("ext_request") is not None and i == turn.get("ext_after"):
             lines.append(turn["ext_request"])
     terminal = turn.get("terminal")
+    if turn.get("permission_request") is not None:
+        lines.append(turn["permission_request"])
+    if turn.get("permission_response") is not None:
+        lines.append(turn["permission_response"])
     if terminal:
         line = {"jsonrpc": "2.0", "id": 4}
         line.update(terminal)
@@ -208,6 +213,36 @@ def test_classifier_end_turn_with_failed_tool_is_ok_not_error():
     assert len(tool_calls) == 1
     assert tool_calls[0]["status"] == "failed"
     assert "No such file or directory" in tool_calls[0]["output"]
+
+
+def test_permission_cancelled_then_end_turn_is_permission_blocked_not_completed():
+    result = qwen_cli.parse_session(_turn_stdout("permission_blocked.json"))
+    assert result["status"] == "ok"
+    assert result["outcome"] == "permission_blocked"
+    classification = mapping.classify(
+        result, mapping.InvocationContext(), default_success_outcome="completed"
+    )
+    assert classification.domain is True
+    assert classification.outcome == "permission_blocked"
+    response = mapping.sync_response(
+        {**result, "summary": '{"outcome":"completed","output":{}}'},
+        mapping.InvocationContext(),
+        default_success_outcome="completed",
+        actor_id="a",
+        created_at="now",
+    )
+    assert response.body["outcome"] == "permission_blocked"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="subprocess Popen is required")
+def test_driver_records_its_cancelled_permission_answer(fake_acp_agent, tmp_path):
+    cfg = _cfg(fake_acp_agent, tmp_path, behavior="permission-blocked")
+    run = qwen_cli.run_sync(cfg, "needs a tool", str(tmp_path), mode="plan")
+    assert run.task_result["outcome"] == "permission_blocked"
+    answer = json.loads(
+        (_side_dir(tmp_path) / "permission_answer.json").read_text(encoding="utf-8")
+    )
+    assert answer["result"]["outcome"]["outcome"] == "cancelled"
 
 
 def test_classifier_cancelled_terminal_is_the_13_cancellation_outcome():
@@ -486,9 +521,10 @@ def test_mode_policy_no_mode_never_falls_back_to_measured_default():
     assert "never falls back" in str(excinfo.value)
 
 
-def test_mode_policy_outside_vocabulary_refuses():
-    with pytest.raises(qwen_cli.AcpPolicyError, match="not in the ACP mode vocabulary"):
-        qwen_cli.resolve_acp_mode("yolo", list(MEASURED_MODES))
+def test_mode_policy_accepts_yolo_only_when_agent_offers_it():
+    assert qwen_cli.resolve_acp_mode("yolo", list(MEASURED_MODES)) == "yolo"
+    with pytest.raises(qwen_cli.AcpPolicyError, match="does not offer mode 'yolo'"):
+        qwen_cli.resolve_acp_mode("yolo", ["plan", "auto"])
 
 
 def test_mode_policy_unoffered_mode_refuses():

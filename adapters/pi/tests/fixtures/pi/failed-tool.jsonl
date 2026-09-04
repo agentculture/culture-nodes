@@ -1,0 +1,4 @@
+# Hand-authored from pi 0.84.2 docs; command: pi --mode json -p "fixture failed tool" --no-session
+{"type":"message_end","message":{"role":"assistant","content":"handled failure","model":"test/model","usage":{"input":13,"output":9}}}
+{"type":"turn_end","message":{"role":"assistant","content":"handled failure"},"toolResults":[{"toolCallId":"call-1","toolName":"bash","content":"boom","isError":true}]}
+{"type":"agent_end","messages":[{"role":"assistant","content":"handled failure"}]}

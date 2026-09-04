@@ -181,3 +181,4 @@ issue,bucket,disposition,evidence_pointer
 294,finish work,"harness interoperability: Pi and Qwen Code as actors on thor/orin engine accounts — devague frame harness-interop-pi-qwen, plan of 11 tasks in flight",docs/plans/2026-09-04-harness-interop-pi-qwen.md
 295,bug tail,"mesh collector's keep-alive poll starves single-threaded bridges — collector fix in PR #296; bridge-side close_connection after read-only GETs is the follow-up",internal/mesh/collector.go / PR #296
 297,finish work,"adapter-pi/qwen conformance kit run live against a dynamic fake-backed bridge — the harness-swap proof deferred from #294 t8 (deviation d2)",adapters/pi/tests/fake_pi.py / adapter-pi.yml
+298,owner decisions,"first-class command (nodes verb or operator skill) for the agent-account bootstrap + bridge cutover — sequence bootstrap/secrets/deploy/register, ties to #204 lane tags and #118 hand-turn counting",docs/plans/2026-09-04-harness-interop-pi-qwen.md

@@ -1,0 +1,10 @@
+{
+  "instruction": "Read README.md and docs/guide.md, then add one sentence to README.md that states what the `nodes doctor` verb checks. Commit nothing; report what you changed.",
+  "sandbox": "workspace-write",
+  "handover": true,
+  "actors": {
+    "codex": { "repo": "/srv/checkouts/codex/culture-nodes-agent" },
+    "pi": { "repo": "/srv/checkouts/pi/culture-nodes-agent" },
+    "qwen": { "repo": "/srv/checkouts/qwen/culture-nodes-agent", "mode": "yolo" }
+  }
+}

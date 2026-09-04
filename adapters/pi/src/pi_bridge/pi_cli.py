@@ -101,7 +101,34 @@ def parse_session(stdout: str) -> dict[str, Any] | None:
         if result.get("result") == "" and result["messages"]:
             final = result["messages"][-1]
             result["result"] = final.get("content") or final.get("text") or ""
+    # The node contract's `completed` outcome and the proposed `claim` record
+    # both carry a `summary` that must hold the agent's actual answer — pi
+    # puts the answer in `result` (a list of text/thinking content blocks or a
+    # bare string), so flatten the *visible* text into `summary`. Without this
+    # the summary is empty, the claim statement is empty, and a clean pi run is
+    # refused `contract_rejected` (#299). Thinking blocks are excluded — the
+    # summary is the answer, not the reasoning.
+    result["summary"] = _visible_text(result.get("result"))
     return result
+
+
+def _visible_text(content: Any) -> str:
+    """Flatten pi message content to the assistant's visible answer text.
+
+    `content` is either a bare string or a list of content blocks
+    (`{"type": "text"|"thinking", ...}`); only `text` blocks contribute, so a
+    turn that ends with reasoning plus an answer yields just the answer.
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = [
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        return "\n".join(p for p in parts if p).strip()
+    return ""
 
 
 def spawn(

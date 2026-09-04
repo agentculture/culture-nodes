@@ -160,3 +160,25 @@ def test_async_dispatch_cancel_is_cancelled_kills_group_and_keeps_transcript(tmp
         pass
     else:
         assert Path(f"/proc/{child_pid}/stat").read_text().split()[2] == "Z"
+
+
+def test_parse_session_puts_the_visible_answer_in_summary_not_thinking():
+    # #299: a clean pi turn whose answer lives in a text content block must
+    # surface that text as `summary` (so the completed outcome and the
+    # proposed claim carry it); thinking blocks are excluded.
+    from pi_bridge import pi_cli
+
+    stdout = "\n".join(
+        [
+            '{"type":"message_end","message":{"model":"m","usage":{"input":5,"output":3},'
+            '"content":[{"type":"thinking","thinking":"let me think"},'
+            '{"type":"text","text":"the answer"}]}}',
+            '{"type":"agent_end","messages":[{"role":"assistant","content":['
+            '{"type":"thinking","thinking":"let me think"},{"type":"text","text":"the answer"}]}]}',
+        ]
+    )
+    result = pi_cli.parse_session(stdout)
+    assert result is not None
+    assert result["status"] == "ok"
+    assert result["summary"] == "the answer"
+    assert "let me think" not in result["summary"]

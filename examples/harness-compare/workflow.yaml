@@ -1,0 +1,404 @@
+# harness-compare: fan ONE request to several harnesses and join the
+# results (spec harness-interop-pi-qwen, claim c31 / honesty condition h26;
+# plan task t5; issue #294).
+#
+# One instruction goes to every actor slot the run input names; a join
+# waits for all of them and the run's result is the join's arrival array —
+# one element per actor, carrying that actor's outcome and its node output
+# (the bridge's own output merged with the bridge-measured
+# `workspace_measured` block, so `changed_files` is there as measured, not
+# as claimed). Running a comparison is optional: this is a flow an operator
+# can run, not a property every dispatch has.
+#
+# WHAT THE LANGUAGE CANNOT DO, AND WHAT THIS GRAPH DOES INSTEAD. A `uses:`
+# is a static registry id per node; nothing in the schema fans a token out
+# over a list carried by the run input. So the fan-out here is over a FIXED
+# set of four actor slots — one per harness this deployment registers — and
+# the run input's `actors` map says which of them run: a slot whose key is
+# present fans out (guard `has(input.actors.<slot>)` on its split edge),
+# a slot left out is skipped before the registry is ever consulted. The
+# join counts only the branches that actually fanned out
+# (internal/engine/parallel.go: cardinality is realized, not authored), so
+# naming two slots joins two arrivals. Comparing a fifth harness means
+# adding a fifth slot to this file — see README.md, which states this
+# limitation plainly rather than pretending the input list drives it.
+#
+# What each harness runs is its OWN shape (spec decision q4): pi is a bare
+# harness by design, qwen and colleague carry their vendored skills. This
+# graph adjusts nothing per slot but the input each bridge needs (`mode`
+# for the ACP-backed qwen bridge); it does not strip the harnesses to a
+# common denominator, and the run records which harness served each slot.
+#
+# Deployment configuration (task t16) — what this graph needs from outside
+# it, and where each value comes from.
+#
+#   RUN INPUT (the run's input document; input.json beside this file is a
+#   complete one):
+#     instruction        the ONE request every named actor receives.
+#     sandbox            read-only | workspace-write, passed to every
+#                        bridge; a write comparison (changed files, a
+#                        handover ref) needs workspace-write.
+#     handover           whether each bridge should create a handover ref
+#                        for what it changed (adapters/*/README.md's
+#                        `handover` input field; needs workspace-write).
+#     actors             WHICH slots run, and each slot's own checkout:
+#       actors.<slot>.repo    that actor's working directory ON ITS OWN
+#                             HOST — one per slot because a path is
+#                             meaningful on exactly one machine (#74).
+#       actors.qwen.mode      the ACP session mode the qwen bridge
+#                             requires (adapters/qwen/README.md); the
+#                             other bridges take no such field.
+#
+#   ACTOR REGISTRY (an id in `uses:`, resolved by
+#   internal/worker/registry.go against this deployment's actors table
+#   with the @sha256 revision suffix stripped). One id per slot; register
+#   whichever of them you intend to name in a run, against your own bridge:
+#     actor://company/developer     slot `claude` — the claude-code bridge,
+#                                   same identity examples/delivery-loop
+#                                   places its build node on.
+#     actor://company/codex-thor    slot `codex` — the codex bridge,
+#                                   examples/codex-smoke-pair's first actor.
+#     actor://company/qwen-thor     slot `qwen` — the ACP qwen bridge
+#                                   (adapters/qwen), registered by the
+#                                   harness-interop cycle.
+#     actor://company/pi-thor       slot `pi` — the pi bridge
+#                                   (adapters/pi), registered by the same
+#                                   cycle.
+#   Those ids carry this deployment's machine names because that is what
+#   we registered them as; they are registry KEYS, not hostnames a loader
+#   must own. What the comparison needs is that the ids resolve to
+#   DIFFERENT harnesses — that is the whole point of the graph.
+#
+#   The `usage.model` each harness reports is on the slot's ATTEMPT (the
+#   run view's `attempts[].usage.usage_model`), and a fetched handover ref
+#   is `observed` evidence in the run's LEDGER (internal/handover, only when
+#   the control plane is configured with a handover remote). Neither has a
+#   binding surface, so neither can be routed into the joined output — read
+#   them with `run <id>` and `ledger <id>` beside it. README.md says so.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: harness-compare
+  version: 1.0.0
+  ownerRef: team/platform-ai
+  description: >-
+    Fan one instruction to up to four harness actor slots chosen by the run
+    input, join every arrival, and emit one result per actor with its
+    outcome and bridge-measured change set.
+
+spec:
+  entry: fan
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [instruction, sandbox, handover, actors]
+        properties:
+          instruction:
+            type: string
+            minLength: 1
+          sandbox:
+            type: string
+            enum: [read-only, workspace-write]
+          handover:
+            type: boolean
+          # One key per slot that should run. A key's presence is what the
+          # split-edge guards test; leaving a key out is how a slot is left
+          # unset. At least one slot must run: a split that selects no edge
+          # is a routing failure, not an empty comparison.
+          actors:
+            type: object
+            minProperties: 1
+            additionalProperties: false
+            properties:
+              claude:
+                type: object
+                required: [repo]
+                properties:
+                  repo:
+                    type: string
+              codex:
+                type: object
+                required: [repo]
+                properties:
+                  repo:
+                    type: string
+              qwen:
+                type: object
+                required: [repo, mode]
+                properties:
+                  repo:
+                    type: string
+                  mode:
+                    type: string
+              pi:
+                type: object
+                required: [repo]
+                properties:
+                  repo:
+                    type: string
+    output:
+      schema:
+        type: object
+
+  # A four-way split is charged four transitions, four arrivals four more,
+  # plus the entry split and the join's own exit: 16 leaves headroom for
+  # one retry per slot without letting anything loop.
+  limits:
+    maxDuration: 2h
+    maxTransitions: 16
+    maxVisitsPerNode: 2
+    maxParallelTokens: 4
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 10
+
+  nodes:
+    # The fan-out router. Kind-implied outcome `split`; every guarded edge
+    # from it whose guard passes fires one token (design D1).
+    fan:
+      kind: parallel
+      ownerRef: team/platform-ai
+
+    # ---- the four harness slots --------------------------------------
+    # Identical except for the registry id and, for qwen, the ACP `mode`
+    # its bridge requires. Every slot declares the same three outcomes:
+    # `completed`; `no_changes` (a write dispatch whose measured change set
+    # is empty — a domain answer, not a failure); `permission_blocked` (a
+    # session that stopped at a permission prompt). All three are routed
+    # into the join, so an actor that did not complete still arrives and is
+    # compared under its own outcome. A slot's bridge may never produce the
+    # latter two; an undeclared-but-reported outcome would be a contract
+    # rejection, so they are declared here rather than assumed away.
+    claude:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/actors/claude/repo
+          sandbox: /run/input/sandbox
+          handover: /run/input/handover
+          # The declared outcome below is `completed`; the bridge is told so
+          # as a literal rather than a run-input field so the two cannot
+          # disagree per run.
+          success_outcome: { literal: completed }
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+          no_changes:
+            schema:
+              type: object
+          permission_blocked:
+            schema:
+              type: object
+      ledger:
+        propose: [claim]
+      policy:
+        # A billable session: one attempt, investigated rather than
+        # auto-retried (examples/codex-smoke-pair's reasoning). The timeout
+        # is the recovery story for a hung bridge, not a budget.
+        timeout: 20m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    codex:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/codex-thor@sha256:1111111111111111111111111111111111111111111111111111111111111a
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/actors/codex/repo
+          sandbox: /run/input/sandbox
+          handover: /run/input/handover
+          success_outcome: { literal: completed }
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+          no_changes:
+            schema:
+              type: object
+          permission_blocked:
+            schema:
+              type: object
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    qwen:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/qwen-thor@sha256:4444444444444444444444444444444444444444444444444444444444444444
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/actors/qwen/repo
+          sandbox: /run/input/sandbox
+          handover: /run/input/handover
+          # The ACP bridge refuses a dispatch that names no session mode
+          # (adapters/qwen's gate); it is the one per-harness input this
+          # graph carries, and it is the harness's own shape, not a
+          # levelling of it.
+          mode: /run/input/actors/qwen/mode
+          success_outcome: { literal: completed }
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo, mode]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+          no_changes:
+            schema:
+              type: object
+          permission_blocked:
+            schema:
+              type: object
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    pi:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/pi-thor@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      input:
+        bindings:
+          instruction: /run/input/instruction
+          repo: /run/input/actors/pi/repo
+          sandbox: /run/input/sandbox
+          handover: /run/input/handover
+          success_outcome: { literal: completed }
+      contract:
+        input:
+          schema:
+            type: object
+            required: [instruction, repo]
+        outcomes:
+          completed:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary:
+                  type: string
+          no_changes:
+            schema:
+              type: object
+          permission_blocked:
+            schema:
+              type: object
+      ledger:
+        propose: [claim]
+      policy:
+        timeout: 20m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    # The barrier. `all` over the REALIZED cardinality: every slot that
+    # fanned out must arrive, and only those.
+    gather:
+      kind: join
+      ownerRef: team/platform-ai
+      join:
+        policy: all
+
+    # The run's result is the join's arrival array: one element per actor
+    # with `from_node` (the slot), `outcome`, and `output` (bridge output +
+    # `workspace_measured.changed_files`).
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/gather/output
+
+  edges:
+    # Fan-out: one guarded edge per slot. `has()` on the run input's
+    # `actors` map is the whole "which actors" mechanism.
+    - from: fan.split
+      to: claude
+      when: has(input.actors.claude)
+    - from: fan.split
+      to: codex
+      when: has(input.actors.codex)
+    - from: fan.split
+      to: qwen
+      when: has(input.actors.qwen)
+    - from: fan.split
+      to: pi
+      when: has(input.actors.pi)
+
+    # Every declared outcome of every slot arrives at the join, so a
+    # non-completed answer is compared under its own name rather than
+    # stranding the barrier.
+    - from: claude.completed
+      to: gather
+    - from: claude.no_changes
+      to: gather
+    - from: claude.permission_blocked
+      to: gather
+
+    - from: codex.completed
+      to: gather
+    - from: codex.no_changes
+      to: gather
+    - from: codex.permission_blocked
+      to: gather
+
+    - from: qwen.completed
+      to: gather
+    - from: qwen.no_changes
+      to: gather
+    - from: qwen.permission_blocked
+      to: gather
+
+    - from: pi.completed
+      to: gather
+    - from: pi.no_changes
+      to: gather
+    - from: pi.permission_blocked
+      to: gather
+
+    - from: gather.joined
+      to: finish

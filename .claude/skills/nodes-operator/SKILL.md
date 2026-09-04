@@ -84,6 +84,23 @@ New actors: register with `deploy/prod/register-actor.sh`, then extend the
 actor table in `scripts/nodes-op.sh` (one case line) with a checkout under
 that bridge's account.
 
+**Harness-comparison lanes (#294).** Four actors run the same served model
+(`unsloth/Qwen3.8-27B-NVFP4` at `http://thor:8000/v1`) through two harnesses
+on the two prod hosts, so a run's harness is a property to compare rather than
+a fixed backend:
+
+| Actor | Harness | Host | Account | Port |
+|---|---|---|---|---|
+| `qwen-thor` | Qwen Code (ACP) | thor | `culture-qwen` | 8092 |
+| `qwen-orin` | Qwen Code (ACP) | orin | `culture-qwen` | 8092 |
+| `pi-thor` | pi (`--mode json`) | thor | `culture-pi` | 8093 |
+| `pi-orin` | pi (`--mode json`) | orin | `culture-pi` | 8093 |
+
+The qwen actors require `--mode` (`yolo` is admitted since #294 t1 — the
+engine account is the confinement); the pi actors take no mode. Dispatch the
+same instruction to more than one and read the runs side by side, or run the
+`examples/harness-compare` workflow to fan and join in one graph.
+
 ## `grade` — record an opinion on a run's actor
 
 ```bash

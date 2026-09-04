@@ -71,6 +71,8 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
                   credential itself                      (env: AUTH_TOKEN_ENV)
   --metadata      KEY=VALUE, repeatable. Merged over the previous revision's
                   metadata; keys not named here are carried forward unchanged.
+                  harness, model, and model_endpoint are the comparison tags
+                  for harness-comparison lanes.
                   e.g. --metadata handover_remote=ssh://thor/~/git/culture-nodes-agent
   --os-user       NAME, sugar for --metadata os_user=NAME. Records the
                   dedicated Unix account a bridge runs as (culture-codex,

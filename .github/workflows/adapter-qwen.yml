@@ -1,0 +1,108 @@
+name: Adapter / qwen
+
+# Tests adapters/qwen — the qwen-bridge, Qwen Code over ACP (qwen --acp,
+# stdio JSON-RPC). This is the dedicated workflow qwen's own t6 (Dockerfile +
+# CI + conformance) left undelivered, landing now alongside the pi adapter
+# (issue #294, task t8). Like adapter-claude-code.yml and adapter-pi.yml,
+# adapters/qwen is its own uv project (its own pyproject.toml + uv.lock),
+# separate from the root culture-nodes package tests.yml covers.
+#
+# Every step here runs against the FAKE qwen engine
+# (adapters/qwen/tests/_fakes.py) — never a real, billed, network-dependent
+# `qwen` install, and never the thor/orin gateway model.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "adapters/qwen/**"
+      - "tests/conformance/**"
+      - "internal/actors/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/adapter-qwen.yml"
+  push:
+    branches: [main]
+    paths:
+      - "adapters/qwen/**"
+      - "tests/conformance/**"
+      - "internal/actors/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/adapter-qwen.yml"
+
+defaults:
+  run:
+    working-directory: adapters/qwen
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      - run: uv run pytest -v
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      # Issue #123 / #294 (frame decision c33). The in-adapter-directory form,
+      # like adapter-claude-code.yml: run from THIS adapter's directory so its
+      # own black/isort/flake8 config applies (`src tests`, not adapter-prefixed
+      # paths). scripts/lint-all.sh carries both forms verbatim and cd's itself,
+      # so this step opts out of the job's defaults.run.working-directory rather
+      # than reaching up with `../..`.
+      - name: lint (adapters/qwen) — scripts/lint-all.sh adapter-qwen
+        working-directory: ${{ github.workspace }}
+        run: scripts/lint-all.sh adapter-qwen
+
+  conformance:
+    # The PRD §13 conformance kit (tests/conformance) is a Go module rooted at
+    # the repo top, so this job needs the Go toolchain and does not inherit the
+    # `defaults.run.working-directory` above.
+    #
+    # DEFERRED live run: adapter-claude-code.yml runs the kit against a LIVE
+    # fake-backed bridge via adapters/claude-code/scripts/run_conformance_kit.sh,
+    # whose fake answers the kit's THREE distinct inputs (sync / async / bad)
+    # dynamically. adapters/qwen ships no run_conformance_kit.sh harness yet
+    # (its t6 conformance run was undelivered), so — matching the instruction to
+    # NOT invent a live run that cannot actually pass — this job runs the kit's
+    # always-on reference check (no -endpoint: it drives an in-process
+    # §13-correct reference actor, installing NO qwen binary and making no
+    # network call), proving the kit compiles and the protocol reference holds.
+    # The live fake-backed run against the qwen-bridge with the SAME shared
+    # -input JSON used for the pi bridge (the spec's deterministic swap fixture,
+    # honesty condition for c33) lands with the adapter's own
+    # run_conformance_kit.sh in a follow-up under adapters/qwen (out of t8's
+    # file scope; see the task report).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: conformance reference check (no real qwen, no network)
+        working-directory: ${{ github.workspace }}
+        run: go test ./tests/conformance

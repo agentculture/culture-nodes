@@ -1,0 +1,109 @@
+name: Adapter / pi
+
+# Tests adapters/pi — the pi-bridge, the sixth actor-protocol adapter
+# (issue #294, task t8). Like adapter-claude-code.yml this is a NEW, dedicated
+# workflow: adapters/pi is its own uv project (its own pyproject.toml +
+# uv.lock), separate from the root culture-nodes package tests.yml covers.
+#
+# Every step here runs against the FAKE pi CLI
+# (adapters/pi/tests/fake_pi.py) — never a real, billed, network-dependent
+# `pi` install, and never the thor/orin gateway model. The pi harness has no
+# offline mock mode of its own, so the fake replays recorded event fixtures
+# exactly the way adapter-claude-code.yml drives tests/fake_claude.py.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "adapters/pi/**"
+      - "tests/conformance/**"
+      - "internal/actors/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/adapter-pi.yml"
+  push:
+    branches: [main]
+    paths:
+      - "adapters/pi/**"
+      - "tests/conformance/**"
+      - "internal/actors/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/adapter-pi.yml"
+
+defaults:
+  run:
+    working-directory: adapters/pi
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      - run: uv run pytest -v
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      # Issue #123 / #294 (frame decision c33). The in-adapter-directory form,
+      # like adapter-claude-code.yml: run from THIS adapter's directory so its
+      # own black/isort/flake8 config applies (`src tests`, not adapter-prefixed
+      # paths). scripts/lint-all.sh carries both forms verbatim and cd's itself,
+      # so this step opts out of the job's defaults.run.working-directory rather
+      # than reaching up with `../..`.
+      - name: lint (adapters/pi) — scripts/lint-all.sh adapter-pi
+        working-directory: ${{ github.workspace }}
+        run: scripts/lint-all.sh adapter-pi
+
+  conformance:
+    # The PRD §13 conformance kit (tests/conformance) is a Go module rooted at
+    # the repo top, so this job needs the Go toolchain and does not inherit the
+    # `defaults.run.working-directory` above.
+    #
+    # DEFERRED live run: adapter-claude-code.yml runs the kit against a LIVE
+    # fake-backed bridge via adapters/claude-code/scripts/run_conformance_kit.sh,
+    # whose fake understands claude_cli.py's whole argv/JSON surface and answers
+    # the kit's THREE distinct inputs (sync / async / bad) dynamically. pi's
+    # fake (adapters/pi/tests/fake_pi.py) replays ONE static event fixture and
+    # cannot answer three different inputs with three different outcomes, and
+    # adapters/pi ships no run_conformance_kit.sh harness yet. So — matching the
+    # instruction to NOT invent a live run that cannot actually pass — this job
+    # runs the kit's always-on reference check (no -endpoint: it drives an
+    # in-process §13-correct reference actor, installing NO pi binary and making
+    # no network call), proving the kit compiles and the protocol reference
+    # holds. The live fake-backed run against the pi-bridge with a shared
+    # -input JSON (spec honesty condition for c33) lands with the adapter's own
+    # run_conformance_kit.sh in a follow-up under adapters/pi (out of t8's file
+    # scope; see the task report).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: conformance reference check (no real pi, no network)
+        working-directory: ${{ github.workspace }}
+        run: go test ./tests/conformance

@@ -6,6 +6,8 @@
 #   lint-all.sh root                  the tests.yml `lint` job
 #   lint-all.sh adapter-codex         the adapter-codex.yml `lint` job
 #   lint-all.sh adapter-claude-code   the adapter-claude-code.yml `lint` job
+#   lint-all.sh adapter-pi            the adapter-pi.yml `lint` job
+#   lint-all.sh adapter-qwen          the adapter-qwen.yml `lint` job
 #   lint-all.sh --list                print the job names and exit
 #
 # # Why this exists
@@ -66,7 +68,7 @@ cd "$ROOT" || exit 2
 # green-here/red-there gap in miniature.
 MARKDOWNLINT_VERSION=0.21.0
 
-JOBS=(root adapter-codex adapter-claude-code)
+JOBS=(root adapter-codex adapter-claude-code adapter-pi adapter-qwen)
 
 FAILED=()
 # Two different facts, deliberately not one list. WAIVED is "the operator asked
@@ -81,7 +83,7 @@ WAIVED=()
 UNRUNNABLE=()
 
 usage() {
-	sed -n '2,10p' "${BASH_SOURCE[0]}" >&2
+	sed -n '2,11p' "${BASH_SOURCE[0]}" >&2
 	exit 2
 }
 
@@ -210,6 +212,33 @@ job_adapter_claude_code() {
 	step cc-flake8 in_dir "$dir" uv run flake8 src tests
 }
 
+# ---------------------------------------------------------------------------
+# job: adapter-pi -- .github/workflows/adapter-pi.yml, job `lint`
+# job: adapter-qwen -- .github/workflows/adapter-qwen.yml, job `lint`
+#
+# The sixth adapter (pi) and the restored qwen adapter each run the SAME
+# in-adapter-directory form as claude-code (issue #294, frame decision c33 --
+# a deliberate widening of #123's three jobs to five, not drift). Run from the
+# adapter directory (the workflow sets defaults.run.working-directory), so the
+# adapter's OWN black/isort/flake8 config and toolchain apply. Same load-bearing
+# `cd`, same bare `src tests` arguments -- never adapter-prefixed paths, which
+# would pull the ROOT config and reintroduce the #122 locally-green/CI-red gap.
+# ---------------------------------------------------------------------------
+
+job_adapter_pi() {
+	local dir="$ROOT/adapters/pi"
+	step pi-black in_dir "$dir" uv run black --check src tests
+	step pi-isort in_dir "$dir" uv run isort --check-only src tests
+	step pi-flake8 in_dir "$dir" uv run flake8 src tests
+}
+
+job_adapter_qwen() {
+	local dir="$ROOT/adapters/qwen"
+	step qwen-black in_dir "$dir" uv run black --check src tests
+	step qwen-isort in_dir "$dir" uv run isort --check-only src tests
+	step qwen-flake8 in_dir "$dir" uv run flake8 src tests
+}
+
 in_dir() {
 	local dir=$1
 	shift
@@ -237,6 +266,8 @@ for job in "${requested[@]}"; do
 	root) job_root ;;
 	adapter-codex) job_adapter_codex ;;
 	adapter-claude-code) job_adapter_claude_code ;;
+	adapter-pi) job_adapter_pi ;;
+	adapter-qwen) job_adapter_qwen ;;
 	*)
 		printf 'error: unknown job %s\n' "$job" >&2
 		printf 'hint: one of: %s\n' "${JOBS[*]}" >&2

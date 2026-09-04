@@ -146,6 +146,7 @@ func TestTheReaperGuardActuallyReadsSomething(t *testing.T) {
 		"claude-code/reap.py", "claude-code/reclaim.py",
 		"codex/reap.py", "codex/reclaim.py",
 		"colleague/reap.py", "colleague/reclaim.py",
+		"pi/reap.py", "pi/reclaim.py",
 		"qwen/reap.py", "qwen/reclaim.py",
 	}
 	sort.Strings(want)

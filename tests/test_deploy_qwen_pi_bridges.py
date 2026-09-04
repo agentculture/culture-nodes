@@ -62,9 +62,7 @@ _UV_WITH_PI = _UV_BODY.replace(
     1,
 )
 
-_PI_MODELS = json.dumps(
-    {"providers": {"lobes": {"models": [{"id": "unsloth/Qwen3.8-27B-NVFP4"}]}}}
-)
+_PI_MODELS = json.dumps({"providers": {"lobes": {"models": [{"id": "unsloth/Qwen3.8-27B-NVFP4"}]}}})
 
 _ENGINE_TOKENS = {
     "qwen": ("qwen-bridge.env", "QWEN_BRIDGE_AUTH_TOKEN=login-qwen-token\n"),
@@ -143,7 +141,9 @@ def test_the_pi_template_carries_the_preflight_and_bridge_keys():
     assert cfg["pi_bin"] == "/h/.local/bin/pi"
     assert cfg["model_endpoint"] == "http://thor:8000/v1"
     assert cfg["repo_allowlist"] == ["/h/git/culture-nodes-pi-developer"]
-    assert cfg["repo_identities"] == {"agentculture/culture-nodes": "/h/git/culture-nodes-pi-developer"}
+    assert cfg["repo_identities"] == {
+        "agentculture/culture-nodes": "/h/git/culture-nodes-pi-developer"
+    }
     assert cfg["config_repo"] == "agentculture/culture-nodes"
     assert cfg["always_async"] is True
     assert cfg["default_sandbox"] == "workspace-write"
@@ -227,7 +227,11 @@ def test_orin_installs_the_qwen_and_pi_bridges_into_their_accounts(tmp_path: Pat
     ):
         _assert_engine_bridge_installed(h, ORIN, engine, role, port, token)
         adapter = "qwen" if engine == "qwen" else "pi"
-        h.first("uv[", f"culture-{engine}", f"tool install --force ./culture-nodes-prod/adapters/{adapter}")
+        h.first(
+            "uv[",
+            f"culture-{engine}",
+            f"tool install --force ./culture-nodes-prod/adapters/{adapter}",
+        )
         h.first(f"systemctl[{ORIN}:culture-{engine}] --user restart culture-nodes-{role}")
         h.first(f"systemctl[{ORIN}:culture-{engine}] --user enable culture-nodes-{role}")
         h.first(

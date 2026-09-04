@@ -72,7 +72,12 @@ func New(config Config) *Collector {
 		// would be dropped and the bridge's accept loop never returns:
 		// every other client, the worker's POST /v1/invocations included,
 		// hangs (#295). A probe is one request; it must release the bridge.
-		config.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+		// Clone the default transport rather than building a bare one, so
+		// proxy-from-environment and the default dial/TLS timeouts survive
+		// (PR #296 review): only the keep-alive behaviour changes.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DisableKeepAlives = true
+		config.HTTPClient = &http.Client{Transport: transport}
 	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()

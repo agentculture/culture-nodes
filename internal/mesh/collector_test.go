@@ -1,9 +1,12 @@
 package mesh
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -176,4 +179,75 @@ func TestRunCollectsOnTimer(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
+}
+
+// #295: the reference bridges are single-threaded and serve one connection
+// at a time; a poller that keeps its connection alive between polls holds
+// the accept loop and every other client hangs. The collector must release
+// the bridge after each probe -- both by default (no keep-alive pool) and
+// per request (Connection: close), so a caller-supplied client cannot
+// reintroduce the starvation.
+func TestCollectorProbeReleasesSingleThreadedBridge(t *testing.T) {
+	// A bridge shaped like the adapters: one connection served at a time,
+	// keep-alive honoured until the peer closes. Serving happens in the
+	// accept loop, so a held connection blocks the next accept exactly as
+	// http.server.HTTPServer does.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	served := make(chan string, 8)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			reader := bufio.NewReader(conn)
+			for {
+				req, err := http.ReadRequest(reader)
+				if err != nil {
+					break
+				}
+				served <- req.RemoteAddr
+				body := `{"preflight":{"host":{"hostname":"thor","deployment":{"revision":"abc"}}}}`
+				fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+				if req.Close {
+					break
+				}
+			}
+			conn.Close()
+		}
+	}()
+
+	c := New(Config{ProbeTimeout: time.Second, MaxConcurrency: 1})
+	c.SetTargets([]Target{{Key: "codex-thor", URL: "http://" + ln.Addr().String()}})
+	c.Collect(context.Background())
+	if got := c.Snapshot()["codex-thor"]; got.Hostname != "thor" {
+		t.Fatalf("probe did not observe the bridge: %+v", got)
+	}
+	<-served
+
+	// A second, unrelated client -- its own transport, as curl or the worker
+	// would be, never the poller's pool -- must be served promptly: the
+	// probe's connection is gone, so the accept loop is free.
+	client := &http.Client{Timeout: 500 * time.Millisecond, Transport: &http.Transport{}}
+	resp, err := client.Get("http://" + ln.Addr().String() + "/healthz")
+	if err != nil {
+		t.Fatalf("second client starved behind the collector's connection: %v", err)
+	}
+	resp.Body.Close()
+
+	// And a caller-supplied keep-alive client is still forced to close per
+	// request, so the starvation cannot come back through Config.HTTPClient.
+	keepAlive := New(Config{ProbeTimeout: time.Second, MaxConcurrency: 1, HTTPClient: &http.Client{Transport: &http.Transport{}}})
+	keepAlive.SetTargets([]Target{{Key: "codex-thor", URL: "http://" + ln.Addr().String()}})
+	keepAlive.Collect(context.Background())
+	<-served
+	resp, err = client.Get("http://" + ln.Addr().String() + "/healthz")
+	if err != nil {
+		t.Fatalf("second client starved behind a caller-supplied keep-alive client: %v", err)
+	}
+	resp.Body.Close()
 }

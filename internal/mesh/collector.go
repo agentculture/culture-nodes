@@ -64,7 +64,15 @@ func New(config Config) *Collector {
 		config.MaxConcurrency = 4
 	}
 	if config.HTTPClient == nil {
-		config.HTTPClient = http.DefaultClient
+		// Never http.DefaultClient: its keep-alive pool re-uses one
+		// connection per bridge across polls. The reference bridges are
+		// single-threaded (ADR 0013) and drop an idle kept-alive peer only
+		// after Handler.timeout (30 s) -- the same 30 s this collector
+		// polls at -- so a pooled connection is re-used just before it
+		// would be dropped and the bridge's accept loop never returns:
+		// every other client, the worker's POST /v1/invocations included,
+		// hangs (#295). A probe is one request; it must release the bridge.
+		config.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
@@ -164,6 +172,11 @@ func (c *Collector) probe(parent context.Context, target Target) {
 		url = strings.TrimRight(url, "/") + actors.CapabilitiesPath
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err == nil {
+		// Belt and braces with the transport above: even a caller-supplied
+		// client must not hold a single-threaded bridge between polls (#295).
+		req.Close = true
+	}
 	if err == nil && target.Bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+target.Bearer)
 	}

@@ -35,13 +35,17 @@ func loadProdComposeFile(t *testing.T, path string) prodComposeFile {
 	return doc
 }
 
-// requiredActorTokenEnvVars are the three actor-credential keys every
+// requiredActorTokenEnvVars are the actor-credential keys every
 // service that calls into an actor endpoint needs -- the same set
 // codexworkerenv_test.go already requires of the worker service.
 var requiredActorTokenEnvVars = []string{
 	"NODES_ACTOR_CLAUDE_TOKEN",
 	"NODES_ACTOR_CODEX_THOR_TOKEN",
 	"NODES_ACTOR_CODEX_ORIN_TOKEN",
+	"NODES_ACTOR_QWEN_THOR_TOKEN",
+	"NODES_ACTOR_QWEN_ORIN_TOKEN",
+	"NODES_ACTOR_PI_THOR_TOKEN",
+	"NODES_ACTOR_PI_ORIN_TOKEN",
 }
 
 // TestActorCancelTokenEnvInThorAPIService asserts thor's api service

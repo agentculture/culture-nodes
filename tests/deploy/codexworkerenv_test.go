@@ -34,6 +34,10 @@ func TestCodexWorkerEnvInProdCompose(t *testing.T) {
 	requiredEnvVars := []string{
 		"NODES_ACTOR_CODEX_THOR_TOKEN",
 		"NODES_ACTOR_CODEX_ORIN_TOKEN",
+		"NODES_ACTOR_QWEN_THOR_TOKEN",
+		"NODES_ACTOR_QWEN_ORIN_TOKEN",
+		"NODES_ACTOR_PI_THOR_TOKEN",
+		"NODES_ACTOR_PI_ORIN_TOKEN",
 	}
 
 	// Test both prod compose files: thor and orin

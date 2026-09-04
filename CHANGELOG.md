@@ -15,6 +15,7 @@
 
 - adapters/qwen: issue #228 answered — a permission-cancelled session reports the domain outcome permission_blocked and an empty workspace-write reports no_changes, neither ever completed; the bridge admits yolo under the engine account (the account is the confinement); the parked status is lifted
 - unix-user.sh gains the pi engine (pinned node 22 tarball + npm install + PATH wrapper) and the thor|orin host map now bootstraps codex qwen pi
+- tests/e2e/harnesscompare_test.go: the compile-level example test split into one helper per property it asserts — compile determinism, per-slot wiring, the single join, the single end node (SonarCloud CRITICAL `go:S3776`, cognitive complexity 49 > 15; measured 52 → 2 by gocognit). Behaviour unchanged: every extracted assertion was verified to still fail when its expectation is perturbed
 
 ## [0.48.2] - 2026-09-04
 

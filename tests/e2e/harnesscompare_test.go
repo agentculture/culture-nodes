@@ -69,14 +69,12 @@ type compiledHarnessCompare struct {
 	} `json:"spec"`
 }
 
-// TestHarnessCompareWorkflowCompilesCleanlyAndDeterministically needs no
-// database — it is the deterministic compile-level half of t5's acceptance:
-// the example compiles through the same path `nodes validate` runs, twice to
-// the same digest, and its graph has the shape the README promises: a
-// parallel entry, one agent slot per harness each behind a guard on the
-// run input's `actors` map, a join with policy all, and an end node that
-// emits the join's arrival array.
-func TestHarnessCompareWorkflowCompilesCleanlyAndDeterministically(t *testing.T) {
+// compileHarnessCompareExample compiles the example twice through the same
+// path `nodes validate` runs, asserts it compiles clean, identically and
+// under the name the README documents, and returns the slice of the
+// normalized IR the structural assertions read.
+func compileHarnessCompareExample(t *testing.T) compiledHarnessCompare {
+	t.Helper()
 	source, err := os.ReadFile(filepath.Clean(harnessCompareWorkflowPath))
 	if err != nil {
 		t.Fatalf("read %s: %v", harnessCompareWorkflowPath, err)
@@ -111,72 +109,113 @@ func TestHarnessCompareWorkflowCompilesCleanlyAndDeterministically(t *testing.T)
 	if err := json.Unmarshal(compiled.Normalized, &ir); err != nil {
 		t.Fatalf("decode normalized IR: %v", err)
 	}
-	fan := ir.Spec.Nodes[ir.Spec.Entry]
-	if fan.Kind != "parallel" {
-		t.Errorf("entry node %q is kind %q, want parallel: the fan-out must be the first thing a run does", ir.Spec.Entry, fan.Kind)
-	}
+	return ir
+}
 
-	// Each slot: an agent node on its documented registry id, reached by a
-	// split edge guarded on the run input naming that slot, and routing
-	// its outcomes into the join.
-	for _, slot := range harnessCompareSlots {
-		node, ok := ir.Spec.Nodes[slot]
-		if !ok {
-			t.Errorf("no node %q: every harness slot must exist so a loader can register an actor behind it", slot)
-			continue
-		}
-		if node.Kind != "agent" {
-			t.Errorf("slot %q is kind %q, want agent", slot, node.Kind)
-		}
-		if id, _, _ := strings.Cut(node.Uses, "@"); id != "actor://"+harnessCompareSlotActorKeys[slot] {
-			t.Errorf("slot %q uses %q, want actor://%s (the registry id the README documents)", slot, node.Uses, harnessCompareSlotActorKeys[slot])
-		}
-		wantGuard := fmt.Sprintf("has(input.actors.%s)", slot)
-		var splitEdge, joinEdge bool
-		for _, e := range ir.Spec.Edges {
-			if e.From == ir.Spec.Entry+".split" && e.To == slot {
-				splitEdge = true
-				if strings.TrimSpace(e.When) != wantGuard {
-					t.Errorf("split edge into %q is guarded by %q, want %q: an unset slot must be skipped, not dispatched", slot, e.When, wantGuard)
-				}
-			}
-			if strings.HasPrefix(e.From, slot+".") && ir.Spec.Nodes[e.To].Kind == "join" {
-				joinEdge = true
+// harnessCompareSlotEdges scans the IR's edges once for the two a slot needs:
+// the split edge into it, and any edge out of it that lands on the join. The
+// split edge's guard is asserted here because the edge is where it lives — an
+// unset slot must be skipped, not dispatched.
+func harnessCompareSlotEdges(t *testing.T, ir compiledHarnessCompare, slot string) (splitEdge, joinEdge bool) {
+	t.Helper()
+	wantGuard := fmt.Sprintf("has(input.actors.%s)", slot)
+	for _, e := range ir.Spec.Edges {
+		if e.From == ir.Spec.Entry+".split" && e.To == slot {
+			splitEdge = true
+			if strings.TrimSpace(e.When) != wantGuard {
+				t.Errorf("split edge into %q is guarded by %q, want %q: an unset slot must be skipped, not dispatched", slot, e.When, wantGuard)
 			}
 		}
-		if !splitEdge {
-			t.Errorf("no edge from %s.split into slot %q", ir.Spec.Entry, slot)
-		}
-		if !joinEdge {
-			t.Errorf("slot %q routes no outcome into the join, so its result could never be compared", slot)
+		if strings.HasPrefix(e.From, slot+".") && ir.Spec.Nodes[e.To].Kind == "join" {
+			joinEdge = true
 		}
 	}
+	return splitEdge, joinEdge
+}
 
+// assertHarnessCompareSlot checks one harness slot: an agent node on its
+// documented registry id, reached by a guarded split edge, and routing its
+// outcomes into the join.
+func assertHarnessCompareSlot(t *testing.T, ir compiledHarnessCompare, slot string) {
+	t.Helper()
+	node, ok := ir.Spec.Nodes[slot]
+	if !ok {
+		t.Errorf("no node %q: every harness slot must exist so a loader can register an actor behind it", slot)
+		return
+	}
+	if node.Kind != "agent" {
+		t.Errorf("slot %q is kind %q, want agent", slot, node.Kind)
+	}
+	if id, _, _ := strings.Cut(node.Uses, "@"); id != "actor://"+harnessCompareSlotActorKeys[slot] {
+		t.Errorf("slot %q uses %q, want actor://%s (the registry id the README documents)", slot, node.Uses, harnessCompareSlotActorKeys[slot])
+	}
+	splitEdge, joinEdge := harnessCompareSlotEdges(t, ir, slot)
+	if !splitEdge {
+		t.Errorf("no edge from %s.split into slot %q", ir.Spec.Entry, slot)
+	}
+	if !joinEdge {
+		t.Errorf("slot %q routes no outcome into the join, so its result could never be compared", slot)
+	}
+}
+
+// harnessCompareJoinNode returns the id of the graph's single join node,
+// having checked its policy waits for every actor the fan-out asked.
+func harnessCompareJoinNode(t *testing.T, ir compiledHarnessCompare) string {
+	t.Helper()
 	var joins []string
 	for id, node := range ir.Spec.Nodes {
-		if node.Kind == "join" {
-			joins = append(joins, id)
-			if node.Join == nil || node.Join.Policy != "all" {
-				t.Errorf("join %q policy = %+v, want all: a comparison waits for every actor it asked", id, node.Join)
-			}
+		if node.Kind != "join" {
+			continue
+		}
+		joins = append(joins, id)
+		if node.Join == nil || node.Join.Policy != "all" {
+			t.Errorf("join %q policy = %+v, want all: a comparison waits for every actor it asked", id, node.Join)
 		}
 	}
 	if len(joins) != 1 {
 		t.Fatalf("join nodes = %v, want exactly one", joins)
 	}
+	return joins[0]
+}
+
+// assertHarnessCompareEnd checks the graph has exactly one end node and that
+// it emits the join's arrival array as the run's result.
+func assertHarnessCompareEnd(t *testing.T, ir compiledHarnessCompare, joinID string) {
+	t.Helper()
 	var ends int
 	for id, node := range ir.Spec.Nodes {
 		if node.Kind != "end" {
 			continue
 		}
 		ends++
-		if node.Output == nil || node.Output.From != "/nodes/"+joins[0]+"/output" {
-			t.Errorf("end node %q emits %+v, want /nodes/%s/output: the run's result must be the joined arrival array", id, node.Output, joins[0])
+		if node.Output == nil || node.Output.From != "/nodes/"+joinID+"/output" {
+			t.Errorf("end node %q emits %+v, want /nodes/%s/output: the run's result must be the joined arrival array", id, node.Output, joinID)
 		}
 	}
 	if ends != 1 {
 		t.Errorf("end nodes = %d, want exactly one", ends)
 	}
+}
+
+// TestHarnessCompareWorkflowCompilesCleanlyAndDeterministically needs no
+// database — it is the deterministic compile-level half of t5's acceptance:
+// the example compiles through the same path `nodes validate` runs, twice to
+// the same digest, and its graph has the shape the README promises: a
+// parallel entry, one agent slot per harness each behind a guard on the
+// run input's `actors` map, a join with policy all, and an end node that
+// emits the join's arrival array. Each of those properties is asserted by a
+// helper above, one property per helper — the single-function form of this
+// test was over SonarCloud's cognitive-complexity ceiling (go:S3776, 49 > 15).
+func TestHarnessCompareWorkflowCompilesCleanlyAndDeterministically(t *testing.T) {
+	ir := compileHarnessCompareExample(t)
+
+	if fan := ir.Spec.Nodes[ir.Spec.Entry]; fan.Kind != "parallel" {
+		t.Errorf("entry node %q is kind %q, want parallel: the fan-out must be the first thing a run does", ir.Spec.Entry, fan.Kind)
+	}
+	for _, slot := range harnessCompareSlots {
+		assertHarnessCompareSlot(t, ir, slot)
+	}
+	assertHarnessCompareEnd(t, ir, harnessCompareJoinNode(t, ir))
 }
 
 // harnessCompareActors is one HTTP server standing in for every actor slot

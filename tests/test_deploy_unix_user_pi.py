@@ -247,7 +247,8 @@ def test_provision_pi_installs_a_node_tarball_npm_pi_and_a_path_wrapper(tmp_path
     h.never("curl[", "claude.ai/install.sh")
     h.never("curl[", "install-qwen-standalone.sh")
     wrapper = home / ".local/bin/pi"
-    assert wrapper.is_file() and not wrapper.is_symlink(), "a wrapper script, not a symlink"
+    assert wrapper.is_file(), "the wrapper is a real file at ~/.local/bin/pi"
+    assert not wrapper.is_symlink(), "a wrapper script, not a symlink to npm's bin"
     assert os.access(wrapper, os.X_OK)
     text = wrapper.read_text()
     assert text.startswith("#!/usr/bin/env bash\n")

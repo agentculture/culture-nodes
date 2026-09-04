@@ -52,6 +52,7 @@ _ENV_STRING_FIELDS = {
     "PI_BRIDGE_PI_BIN": "pi_bin",
     "PI_BRIDGE_PROVIDER": "provider",
     "PI_BRIDGE_MODEL": "model",
+    "PI_BRIDGE_MODEL_ENDPOINT": "model_endpoint",
     "PI_BRIDGE_DEFAULT_SANDBOX": "default_sandbox",
     "PI_BRIDGE_STATE_DIR": "state_dir",
     # A field-name mapping table entry, not a credential.
@@ -252,6 +253,11 @@ class Config:
     pi_env: dict[str, str] = field(default_factory=dict)
     provider: str = ""
     model: str = ""
+    #: The OpenAI-style base URL of the served model, e.g.
+    #: ``http://thor:8000/v1``. The bridge does not call it (pi reads its
+    #: provider from ~/.pi/agent/models.json); it is preflight's health
+    #: target and the harness-comparison metadata the actor registers with.
+    model_endpoint: str = ""
     #: The sandbox value used when `input.sandbox` is absent.
     #: One of pi_cli.SANDBOX_MODES.
     default_sandbox: str = "workspace-write"
@@ -680,6 +686,7 @@ _FILE_FIELDS = {
     "pi_env": lambda v: {str(k): str(x) for k, x in dict(v).items()},
     "provider": str,
     "model": str,
+    "model_endpoint": str,
     "default_sandbox": str,
     "sync_max_steps": int,
     "default_max_steps": int,

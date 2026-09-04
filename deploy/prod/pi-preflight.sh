@@ -33,7 +33,7 @@
 #      provider under "providers" with a models[] entry whose id equals the
 #      configured model — a pi account without a matching provider has no
 #      way to serve the first request.
-#   3. GET <model_endpoint>/v1/models returns 200 and lists the configured
+#   3. GET <model_endpoint>/models returns 200 and lists the configured
 #      model. Skippable with SKIP_PI_ENDPOINT_CHECK=1 (downgraded to a
 #      warning), since at first bootstrap the endpoint may not be reachable
 #      yet in the order deploy steps run.
@@ -216,7 +216,7 @@ then
   exit 1
 fi
 
-# --- 3. GET <model_endpoint>/v1/models lists the model (skippable) ---------
+# --- 3. GET <model_endpoint>/models lists the model (skippable) ---------
 # At first bootstrap the endpoint may not be reachable yet in the order the
 # deploy steps run, so SKIP_PI_ENDPOINT_CHECK=1 downgrades this to a
 # warning rather than a refusal. Every other check stays a hard gate.
@@ -229,9 +229,9 @@ else
   ENDPOINT_BODY=$(mktemp)
   # shellcheck disable=SC2064
   trap "rm -f '$ENDPOINT_BODY'" EXIT
-  HTTP_CODE=$(curl -sS -m 10 -o "$ENDPOINT_BODY" -w '%{http_code}' "${MODEL_ENDPOINT%/}/v1/models" 2>/dev/null || echo "000")
+  HTTP_CODE=$(curl -sS -m 10 -o "$ENDPOINT_BODY" -w '%{http_code}' "${MODEL_ENDPOINT%/}/models" 2>/dev/null || echo "000")
   if [[ "$HTTP_CODE" != "200" ]]; then
-    echo "preflight: model endpoint ${MODEL_ENDPOINT%/}/v1/models did not return 200 (got $HTTP_CODE)" >&2
+    echo "preflight: model endpoint ${MODEL_ENDPOINT%/}/models did not return 200 (got $HTTP_CODE)" >&2
     exit 1
   fi
   if ! python3 - "$ENDPOINT_BODY" "$MODEL" <<'PYEOF'

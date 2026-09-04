@@ -144,13 +144,13 @@ func writePiModelsJson(t *testing.T, home, provider, model string) {
 }
 
 // newModelEndpoint starts an in-process HTTP server answering GET
-// /v1/models with an OpenAI-shaped list containing exactly the given model
+// /models with an OpenAI-shaped list containing exactly the given model
 // ids. It returns the server (t.Cleanup handles Close) and its base URL,
 // which the config's model_endpoint points at for check 3.
 func newModelEndpoint(t *testing.T, status int, modelIDs ...string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
+		if r.URL.Path != "/models" {
 			http.NotFound(w, r)
 			return
 		}
@@ -367,7 +367,7 @@ func TestPiPreflightRefusesModelNotUnderProvider(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Check 3: GET model_endpoint/v1/models returns 200 and lists the model
+// Check 3: GET model_endpoint/models returns 200 and lists the model
 // ---------------------------------------------------------------------------
 
 func TestPiPreflightRefusesEndpointModelNotListed(t *testing.T) {

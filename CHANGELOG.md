@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- tests/test_measurement_runner.py constructs the `ApiClient` before the `pytest.raises` block in `test_non_json_answer_is_a_runner_error`, so the block contains only the `get()` call under test (SonarCloud python:S5778 on #307). The construction cannot raise `RunnerError` today, so no assertion was ever at risk of passing for the wrong reason — but the block named one call and held two, and the next constructor argument that validates would turn a fixture break into a green test
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

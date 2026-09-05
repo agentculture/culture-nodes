@@ -983,8 +983,9 @@ def test_non_json_answer_is_a_runner_error(monkeypatch) -> None:
             return b"<html>blocked</html>"
 
     monkeypatch.setattr(runner.fleet.urllib.request, "urlopen", lambda req, timeout=0: _Resp())
+    client = runner.ApiClient("http://example.invalid")
     with pytest.raises(runner.RunnerError) as excinfo:
-        runner.ApiClient("http://example.invalid").get("/v1alpha1/actors")
+        client.get("/v1alpha1/actors")
     assert "not JSON" in str(excinfo.value)
 
 

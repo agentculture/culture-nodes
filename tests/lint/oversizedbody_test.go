@@ -138,19 +138,33 @@ type oversizedBodyRegions struct {
 	missing []string            // adapters that define do_POST but lack the region
 }
 
+// oversizedBodyGuardSource returns the server.py source of a package the
+// guard applies to, and ok=false for one it does not: the exempt bridge, a
+// package with no server.py, or one that does not answer HTTP at all. Both
+// tests below read "a bridge that must carry the helper" through this, so
+// the two cannot drift apart on which bridges those are.
+func oversizedBodyGuardSource(t *testing.T, pkg adapterPackage) (source string, ok bool) {
+	t.Helper()
+	if pkg.adapter == oversizedBodyExemptAdapter {
+		return "", false
+	}
+	if !pkg.has(t, "server.py") {
+		return "", false
+	}
+	source = pkg.read(t, "server.py")
+	if !strings.Contains(source, "def do_POST") {
+		return "", false // not an HTTP-answering bridge at all
+	}
+	return source, true
+}
+
 func groupOversizedBodyRegions(packages []adapterPackage, t *testing.T) oversizedBodyRegions {
 	t.Helper()
 	result := oversizedBodyRegions{byText: map[string][]string{}}
 	for _, pkg := range packages {
-		if pkg.adapter == oversizedBodyExemptAdapter {
+		source, ok := oversizedBodyGuardSource(t, pkg)
+		if !ok {
 			continue
-		}
-		if !pkg.has(t, "server.py") {
-			continue
-		}
-		source := pkg.read(t, "server.py")
-		if !strings.Contains(source, "def do_POST") {
-			continue // not an HTTP-answering bridge at all
 		}
 		region, ok := extractOversizedBodyRegion(source)
 		if !ok {
@@ -231,31 +245,33 @@ func TestOversizedBodyHelperIsByteIdenticalAcrossBridges(t *testing.T) {
 // nothing.
 func TestBridgesCallTheOversizedBodyGuardInPostAndDelete(t *testing.T) {
 	for _, pkg := range discoverAdapterPackages(t) {
-		if pkg.adapter == oversizedBodyExemptAdapter {
-			continue
-		}
-		if !pkg.has(t, "server.py") {
-			continue
-		}
-		source := pkg.read(t, "server.py")
-		if !strings.Contains(source, "def do_POST") {
+		source, ok := oversizedBodyGuardSource(t, pkg)
+		if !ok {
 			continue
 		}
 		if _, ok := extractOversizedBodyRegion(source); !ok {
 			continue // reported by the positive test above
 		}
 		t.Run(pkg.adapter, func(t *testing.T) {
-			for _, method := range []string{"do_POST", "do_DELETE"} {
-				body, ok := extractMethodBody(source, method)
-				if !ok {
-					t.Fatalf("adapters/%s server.py has no %s method", pkg.adapter, method)
-				}
-				if !strings.Contains(body, "self._refuse_oversized_body()") {
-					t.Errorf("adapters/%s's %s never calls self._refuse_oversized_body(): "+
-						"the guard is defined but not wired in", pkg.adapter, method)
-				}
-			}
+			assertOversizedBodyGuardIsWired(t, pkg.adapter, source)
 		})
+	}
+}
+
+// assertOversizedBodyGuardIsWired checks one bridge: every HTTP method that
+// takes a body calls the helper. Split out of the test above so the
+// per-method assertions are not read three loops deep (SonarCloud go:S3776).
+func assertOversizedBodyGuardIsWired(t *testing.T, adapter, source string) {
+	t.Helper()
+	for _, method := range []string{"do_POST", "do_DELETE"} {
+		body, ok := extractMethodBody(source, method)
+		if !ok {
+			t.Fatalf("adapters/%s server.py has no %s method", adapter, method)
+		}
+		if !strings.Contains(body, "self._refuse_oversized_body()") {
+			t.Errorf("adapters/%s's %s never calls self._refuse_oversized_body(): "+
+				"the guard is defined but not wired in", adapter, method)
+		}
 	}
 }
 

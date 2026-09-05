@@ -458,8 +458,9 @@ def test_runs_are_created_one_at_a_time(monkeypatch, capsys, tmp_path, fleet):
 
 def test_no_parallel_flag_exists():
     """The serial constraint is structural, not a default that can be flipped."""
+    parser = runner.build_parser()
     with pytest.raises(SystemExit):
-        runner.build_parser().parse_args(["--parallel"])
+        parser.parse_args(["--parallel"])
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +555,8 @@ def test_two_actors_on_one_slot_are_refused(monkeypatch, capsys, tmp_path, bridg
         path = _write_manifest(tmp_path, manifest)
         code, captured = _invoke(monkeypatch, capsys, control, path, tmp_path, "--yes")
         assert code == 1
-        assert "company/pi-orin" in captured.err and "company/pi-thor" in captured.err
+        assert "company/pi-orin" in captured.err
+        assert "company/pi-thor" in captured.err
         assert control.created == []
     finally:
         control.stop()
@@ -946,7 +948,8 @@ def test_get_defeats_the_edge_cache(monkeypatch) -> None:
     client.get("/v1alpha1/runs/x")
     client.get("/v1alpha1/runs/x")
     urls = [u for u, _ in seen]
-    assert all("_nocache=" in u for u in urls) and urls[0] != urls[1]
+    assert all("_nocache=" in u for u in urls)
+    assert urls[0] != urls[1]
     assert seen[0][1].get("Cache-control") == "no-cache"
 
 
@@ -983,8 +986,9 @@ def test_non_json_answer_is_a_runner_error(monkeypatch) -> None:
             return b"<html>blocked</html>"
 
     monkeypatch.setattr(runner.fleet.urllib.request, "urlopen", lambda req, timeout=0: _Resp())
+    client = runner.ApiClient("http://example.invalid")
     with pytest.raises(runner.RunnerError) as excinfo:
-        runner.ApiClient("http://example.invalid").get("/v1alpha1/actors")
+        client.get("/v1alpha1/actors")
     assert "not JSON" in str(excinfo.value)
 
 
@@ -994,6 +998,7 @@ def test_grader_must_be_registered_kind_agent(monkeypatch) -> None:
     monkeypatch.setattr(
         runner.fleet.ApiClient, "get", lambda self, path: {"items": rows}, raising=False
     )
+    client = runner.ApiClient("http://example.invalid")
     with pytest.raises(runner.RunnerError) as excinfo:
-        runner.fleet.resolve_grading_actor(runner.ApiClient("http://example.invalid"), "a1")
+        runner.fleet.resolve_grading_actor(client, "a1")
     assert "kind=engine" in str(excinfo.value)

@@ -51,7 +51,8 @@ def _load(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         f"harness_compare_default_manifest_{name}", MEASUREMENTS_DIR / f"{name}.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -112,8 +113,9 @@ def test_the_four_actor_manifest_is_still_refused_by_this_graph() -> None:
     If #304 lands a slot per registered actor this stops raising, which is
     the signal to move ``DEFAULT_MANIFEST`` back to the four-actor set.
     """
+    four_actor_slots = _resolved_slots(MEASUREMENTS_DIR / "basic.json")
     with pytest.raises(fleet.RunnerError) as excinfo:
-        fleet.refuse_slot_collisions(_resolved_slots(MEASUREMENTS_DIR / "basic.json"))
+        fleet.refuse_slot_collisions(four_actor_slots)
     assert "map to one workflow slot" in str(excinfo.value)
 
 

@@ -494,8 +494,10 @@ def test_the_script_never_reaches_for_root(tmp_path: Path):
     # and no substitution may wrap it.
     for line in body:
         assert not line.lstrip().startswith("sudo "), line
-        assert "$(sudo" not in line and "`sudo" not in line, line
-        assert "| sudo" not in line and "&& sudo" not in line, line
+        assert "$(sudo" not in line, line
+        assert "`sudo" not in line, line
+        assert "| sudo" not in line, line
+        assert "&& sudo" not in line, line
 
     h = Harness(tmp_path)
     h.bootstrap(THOR, "pi")

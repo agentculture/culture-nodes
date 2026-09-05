@@ -42,7 +42,8 @@ def _load_manifest_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "harness_compare_measurement_manifest", MEASUREMENTS_DIR / "manifest.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

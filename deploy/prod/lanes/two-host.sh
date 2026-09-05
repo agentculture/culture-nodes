@@ -75,7 +75,13 @@ quiesce_orin_worker() {
 restart_orin_worker() {
   if [ "$ORIN_WORKER_STACK" = present ]; then
     say "restarting orin's worker on $ORIN_HOST"
-    compose_orin "up -d worker"
+    # --force-recreate (#300): plain `up -d` leaves an already-running
+    # container's environment as it was at the container's last creation, so
+    # a prod.env actor-token change (or the NODES_NAMESPACE_ID rewrite above)
+    # never reaches it. No --build alongside it: the image (and the
+    # revision label the parity check reads) still comes only from the
+    # explicit `docker build` step.
+    compose_orin "up -d --force-recreate worker"
   fi
 }
 
@@ -152,7 +158,20 @@ thor_two_host_lane() {
   NS=$(ssh "$THOR_HOST" "curl -fsS http://localhost:18080/v1alpha1/namespaces | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0][\"id\"] if rows else \"\")'")
   [ -n "$NS" ] || { echo "no namespace row found" >&2; exit 1; }
   ssh "$THOR_HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-  compose_thor "up -d worker"
+  # --force-recreate api worker, not a bare `up -d worker` (#300): api reads
+  # the same NODES_ACTOR_*_TOKEN set as worker (it propagates run
+  # cancellation straight to an actor endpoint), and a plain `up -d` on
+  # either container only recreates it when compose itself detects an
+  # interpolated-config change — the failure mode #300 reproduced is exactly
+  # that detection not firing, so the recreate is made unconditional here
+  # instead. This is a single explicit step rather than folding
+  # --force-recreate into the "up -d --scale scheduler=0" call above: that
+  # call's implicit service set also includes postgres/backup/minio via
+  # COMPOSE_PROFILES in prod.env, and force-recreating those mid-migration
+  # window is out of scope for this fix. Still no --build — the revision
+  # label the parity check reads below comes only from the explicit
+  # `docker build` step.
+  compose_thor "up -d --force-recreate api worker"
   restart_orin_worker
   if revision_parity_check; then
     resume_sweep_schedule

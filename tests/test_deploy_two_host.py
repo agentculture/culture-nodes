@@ -104,6 +104,26 @@ def test_deploy_sources_the_real_two_host_lanes():
     assert 'source "$SCRIPT_DIR/lanes/two-host.sh"' in script
 
 
+def test_orin_case_recreates_only_its_worker_not_api_scheduler_or_postgres():
+    """deploy.sh's own `orin*)` case (#300).
+
+    Unlike the thor lane above, this call is not extracted into the
+    TWO_HOST_LANE block executed by the Harness (it lives directly in
+    deploy.sh's per-host case statement, which drives ssh/audit/doctor steps
+    the harness does not simulate), so it is asserted textually here instead
+    of via the recording shim. compose.orin.yml declares no `api` service —
+    orin runs a worker only — so the recreate names "worker" alone, and
+    never touches scheduler or postgres (neither of which exist on orin
+    either).
+    """
+    script = DEPLOY.read_text()
+    orin_case = script[script.index("orin*)") : script.index("spark*)")]
+    assert 'compose_orin "up -d --force-recreate worker"' in orin_case
+    assert "--force-recreate api" not in orin_case
+    assert "--force-recreate scheduler" not in orin_case
+    assert "--force-recreate postgres" not in orin_case
+
+
 def _write_exec(path: Path, body: str) -> None:
     path.write_text(body)
     path.chmod(0o755)
@@ -308,7 +328,12 @@ def test_thor_lane_records_the_r4_order_and_resumes_on_parity(tmp_path: Path):
         _docker(THOR, "run --rm migrate"),
         f"systemd-run[{THOR}]",
         _docker(THOR, "up -d --scale scheduler=0"),
-        _docker(ORIN, "up -d worker"),
+        # #300: api and worker are both force-recreated after the namespace
+        # id is resolved and written, so a changed prod.env actor-token set
+        # (or the namespace rewrite itself) reaches the running containers
+        # unconditionally rather than only when compose detects it.
+        _docker(THOR, "up -d --force-recreate api worker"),
+        _docker(ORIN, "up -d --force-recreate worker"),
         f"curl[{THOR}] -fsS http://localhost:18080/v1alpha1/version",
         f"docker[{THOR}] inspect",
         f"docker[{ORIN}] inspect",
@@ -321,6 +346,12 @@ def test_thor_lane_records_the_r4_order_and_resumes_on_parity(tmp_path: Path):
     # No compose rebuild anywhere: the label the parity check reads rides the
     # explicit `docker build`, and a `compose up --build` would re-tag it away.
     h.never("--build")
+    # #300's fix is scoped to api and worker: the postgres/backup/minio
+    # services that "up -d --scale scheduler=0" also brings up (via
+    # COMPOSE_PROFILES in prod.env) are never force-recreated, and scheduler
+    # itself is never force-recreated either.
+    h.never("--force-recreate --scale scheduler=0")
+    h.never("--force-recreate scheduler")
 
     dumps = list((h.thor_home / ".culture-nodes/backups").glob("predeploy-*.dump"))
     assert len(dumps) == 1
@@ -342,7 +373,7 @@ def test_parity_mismatch_leaves_the_scheduler_down_and_exits_nonzero(tmp_path: P
     h = Harness(tmp_path)
     result = h.run("thor", **{f"FAKE_IMAGE_REVISION_{ORIN.replace('-', '_')}": STALE})
     assert result.returncode == 3, result.stderr
-    h.first(*_docker(ORIN, "up -d worker"))
+    h.first(*_docker(ORIN, "up -d --force-recreate worker"))
     h.never("up -d scheduler")
     assert "sweep schedule: PAUSED" in result.stdout
     assert STALE[:12] in result.stdout + result.stderr

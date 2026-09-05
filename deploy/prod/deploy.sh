@@ -922,9 +922,16 @@ case "$HOST" in
     [ -n "$NS" ] || { echo "$THOR_HOST has no namespace yet — deploy thor first" >&2; exit 1; }
     ssh "$HOST" "grep -q '^THOR_IP=' ~/.culture-nodes/prod.env && sed -i 's/^THOR_IP=.*/THOR_IP=$THOR_IP/' ~/.culture-nodes/prod.env || echo THOR_IP=$THOR_IP >> ~/.culture-nodes/prod.env"
     ssh "$HOST" "grep -q '^NODES_NAMESPACE_ID=' ~/.culture-nodes/prod.env && sed -i 's/^NODES_NAMESPACE_ID=.*/NODES_NAMESPACE_ID=$NS/' ~/.culture-nodes/prod.env || echo NODES_NAMESPACE_ID=$NS >> ~/.culture-nodes/prod.env"
-    # No --build: the image was built and labelled above (see the image build
+    # --force-recreate (#300): a plain `up -d` only recreates the worker
+    # container when compose itself detects an interpolated-config change,
+    # and #300 reproduced that detection not firing for a prod.env
+    # actor-token addition — the worker kept its stale environment until a
+    # manual --force-recreate. compose.orin.yml declares no `api` service
+    # (orin runs a worker only, see that file's header), so unlike the thor
+    # lane's explicit "api worker" recreate this names "worker" alone. No
+    # --build: the image was built and labelled above (see the image build
     # step); a compose rebuild would drop the label the parity check reads.
-    compose_orin "up -d"
+    compose_orin "up -d --force-recreate worker"
     # The orin half of the r4 sequence: parity across thor's api and both
     # workers, and the sweep resumed only when it holds (TWO_HOST_LANE).
     orin_two_host_lane

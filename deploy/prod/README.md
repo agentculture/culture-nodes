@@ -915,6 +915,46 @@ with the codex registrations above, substitute each host's numeric LAN IP:
   --metadata repository_identity=agentculture/culture-nodes
 ```
 
+### The colleague harness lane on spark (#298 t5)
+
+The third harness in the comparison runs on **spark**, not on thor or orin:
+`culture-colleague` (the account), `colleague-developer` (the role — its
+config file, its unit and its clone) and `company/colleague-spark` (the
+registered actor). Its bridge listens on **port 8094**, beside the qwen
+bridge's 8092 and pi's 8093, so the three harness ports never collide on a
+host that ends up carrying more than one of them.
+
+The engine is `uv tool install colleague==<pin>` inside the account
+(`UNIX_USER_COLLEAGUE_VERSION` in `lanes/unix-user.sh`), and its provider
+config is `~/.colleague/config.json` — the `lobes` section that points a
+session at the gateway. The bootstrap copies the login user's copy into the
+account exactly as it copies qwen's `settings.json` and pi's `models.json`,
+and `unix_user_provision` refuses if the account has none.
+
+**Creating the account is a hand-turn.** `sudo` asks for a password on
+spark, so `deploy.sh spark` never creates `culture-colleague`: it deploys
+the colleague bridge when the account already opens with the operator key
+and *skips that half, loudly*, when it does not — the five existing spark
+bridges deploy either way. To bring the lane online, type the root step on
+spark and record it on #298:
+
+```bash
+sudo bash deploy/prod/lanes/unix-user.sh bootstrap colleague
+```
+
+Then register the actor (substitute spark's numeric LAN IP; the control
+plane reads the bearer from `NODES_ACTOR_COLLEAGUE_SPARK_TOKEN`, declared in
+both compose files):
+
+```bash
+./register-actor.sh company/colleague-spark http://<spark-lan-ip>:8094 \
+  NODES_ACTOR_COLLEAGUE_SPARK_TOKEN --os-user culture-colleague \
+  --metadata harness=colleague \
+  --metadata model=unsloth/Qwen3.8-27B-NVFP4 \
+  --metadata model_endpoint=http://thor:8000/v1 \
+  --metadata repository_identity=agentculture/culture-nodes
+```
+
 ### Unbounded concurrency — placement is the containment
 
 The bridge's async runner spawns one thread + one `codex exec` subprocess

@@ -21,8 +21,10 @@
 #                 login user and are not touched here.
 #   spark         account_bridges_spark_lane: the whole deploy. Bridge lanes
 #                 only -- no image, no compose, no runner, no cutover -- for
-#                 culture-claude (developer, planner, verifier, intake) and
-#                 culture-qwen (qwen-developer), reached as
+#                 culture-claude (developer, planner, verifier, intake),
+#                 culture-qwen (qwen-developer) and, once its account has
+#                 been bootstrapped by hand, culture-colleague
+#                 (colleague-developer, #298 t5), reached as
 #                 culture-<engine>@localhost because spark accepts no ssh to
 #                 itself; its login-user half runs locally.
 #
@@ -303,10 +305,24 @@ python3 -c "$prog" "$TEMPLATE" "$ROLE" "$NODES_API_URL"'
 # fail every turn on auth.
 account_render_bridge_config() { # target role template [actor_key]
   local target=$1 role=$2 template=$3 actor_key=${4:-$(account_role_actor_key "$2")}
-  local source="$HOME/.config/culture-nodes-bridges/$role.json" row_id="" engine_settings=""
-  case "$role" in qwen*) engine_settings="$HOME/.qwen/settings.json" ;; esac
+  local source="$HOME/.config/culture-nodes-bridges/$role.json" row_id="" engine_settings="" env_settings="" why=""
+  # Two engines read a provider config of the login user's; only qwen's also
+  # CARRIES a value across the boundary. colleague's config.json (#298 t5) is
+  # copied into the account by the bootstrap and read there, so this lane
+  # only asserts the login user still has the file it copied -- an account
+  # rendered against a provider config that has since been deleted would
+  # start and fail every session on its first request.
+  case "$role" in
+    qwen*)
+      engine_settings="$HOME/.qwen/settings.json"
+      env_settings=$engine_settings
+      why="it names the API-key variable a qwen session authenticates with (modelProviders.*[].envKey) and holds its value" ;;
+    colleague*)
+      engine_settings="$HOME/.colleague/config.json"
+      why="it is the provider config a colleague session reads (its lobes section points at the gateway), and the bootstrap copies it into the account" ;;
+  esac
   if [ -n "$engine_settings" ] && [ ! -s "$engine_settings" ]; then
-    echo "refusing: $engine_settings is missing — it names the API-key variable a qwen session authenticates with (modelProviders.*[].envKey) and holds its value; nothing rendered for $role" >&2
+    echo "refusing: $engine_settings is missing — $why; nothing rendered for $role" >&2
     return 1
   fi
   if [ ! -s "$source" ]; then
@@ -339,7 +355,7 @@ if settings_path:
         sys.stderr.write("refusing: " + settings_path + " names " + ", ".join(missing) + " as the API-key variable but its env block holds no value for it; the session could not authenticate\n")
         raise SystemExit(3)
     if names: out["qwen_env"] = {n: values[n] for n in names}
-print(json.dumps(out))' "$source" "$row_id" "$engine_settings" \
+print(json.dumps(out))' "$source" "$row_id" "$env_settings" \
     | ssh "$target" "ROLE='$role'; TEMPLATE='$REMOTE_DIR/deploy/prod/$template'; NODES_API_URL='$NODES_API_URL'; $ACCOUNT_RENDER_REMOTE"
 }
 
@@ -374,17 +390,36 @@ account_spark_preflight_doctor() { # host
 # token) happens BEFORE the first login-user unit is stopped, so a refused
 # spark deploy leaves the five bridges exactly as they were.
 account_bridges_spark_lane() { # host
-  local host=$1 login claude qwen target role
+  local host=$1 login claude qwen colleague target role colleague_ready=0
   login=$(id -un)
   claude=$(unix_user_target "$host" claude)
   qwen=$(unix_user_target "$host" qwen)
+  colleague=$(unix_user_target "$host" colleague)
 
   say "spark: bridge lanes only — no image, compose, runner or cutover on this host (#243)"
+  # culture-colleague (#298 t5) is OPT-IN, and deliberately so: creating it
+  # needs the root bootstrap, sudo asks for a password on spark, and that
+  # hand-turn is recorded on #298 rather than driven from here. A spark
+  # deploy must not start refusing the five bridges it already serves
+  # because a sixth account does not exist yet -- so the colleague half is
+  # skipped, loudly, until the account opens with the operator key. Every
+  # OTHER refusal (a missing provider config, a missing auth token) still
+  # refuses: skipped means "not bootstrapped", never "not configured".
+  if account_reachable "$colleague"; then
+    colleague_ready=1
+  else
+    say "spark: culture-colleague is not bootstrapped ($colleague does not open with the operator key) — skipping the colleague bridge; the five bridges below are deployed as usual"
+    say "spark: to bring it online, type the root step on $host (recorded on #298): sudo bash $SCRIPT_DIR/lanes/unix-user.sh bootstrap colleague"
+  fi
   account_ensure_bootstrapped "$host" claude qwen || exit 1
   unix_user_provision "$host" claude || exit 1
   unix_user_provision "$host" qwen || exit 1
   account_ship_archive "$claude"
   account_ship_archive "$qwen"
+  if [ "$colleague_ready" = 1 ]; then
+    unix_user_provision "$host" colleague || exit 1
+    account_ship_archive "$colleague"
+  fi
 
   # Before the install, never after: `uv tool install` copies (deploy.sh's
   # stamp_revision comment). Each adapter's stamp names this exact revision,
@@ -397,11 +432,24 @@ account_bridges_spark_lane() { # host
   stamp_revision "$target" qwen qwen_bridge
   say "installing the qwen bridge as a uv tool in $target (archive-independent copy)"
   ssh "$target" "\$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/qwen"
+  if [ "$colleague_ready" = 1 ]; then
+    target=$colleague
+    stamp_revision "$target" colleague colleague_bridge
+    say "installing the colleague bridge as a uv tool in $target (archive-independent copy)"
+    ssh "$target" "\$HOME/.local/bin/uv tool install --force ./$REMOTE_DIR/adapters/colleague"
+  fi
 
   for role in developer planner verifier intake; do
     account_render_bridge_config "$claude" "$role" "claude-$role.json.template" || exit 1
   done
   account_render_bridge_config "$qwen" qwen-developer qwen-developer.json.template || exit 1
+  # The registered actor is company/colleague-spark (the compose files name
+  # its bearer NODES_ACTOR_COLLEAGUE_SPARK_TOKEN), while the ROLE -- the
+  # config file, the unit and the clone -- is colleague-developer, so the
+  # actor key is passed explicitly instead of derived from the role.
+  if [ "$colleague_ready" = 1 ]; then
+    account_render_bridge_config "$colleague" colleague-developer colleague-developer.json.template company/colleague-spark || exit 1
+  fi
 
   # The developer's dial-in credential moves with the account (c27): one
   # plaintext custody point, re-issued INTO culture-claude. A failure here
@@ -415,7 +463,11 @@ account_bridges_spark_lane() { # host
   # the login user, then stop + disable its five units, then start the five
   # under their accounts. Same port per unit either side, so the login copy
   # must be down before the account copy can bind.
-  account_session_guard "$host" claude qwen || exit 1
+  if [ "$colleague_ready" = 1 ]; then
+    account_session_guard "$host" claude qwen colleague || exit 1
+  else
+    account_session_guard "$host" claude qwen || exit 1
+  fi
   account_cutover_login_unit "$host" "$login" \
     culture-nodes-claude-developer culture-nodes-claude-planner \
     culture-nodes-claude-verifier culture-nodes-claude-intake \
@@ -424,11 +476,20 @@ account_bridges_spark_lane() { # host
     account_install_unit "$claude" "culture-nodes-claude-$role"
   done
   account_install_unit "$qwen" culture-nodes-qwen-developer
+  # No login-user cutover for colleague: spark never ran a colleague bridge
+  # as its login user, so there is nothing to stop, disable or roll back to.
+  if [ "$colleague_ready" = 1 ]; then
+    account_install_unit "$colleague" culture-nodes-colleague-developer
+    say "spark: colleague bridge running as culture-colleague (culture-nodes-colleague-developer, port 8094); it never had a login-user copy, so there is no rollback pair to print for it"
+  fi
 
   for role in developer planner verifier intake; do
     account_register_os_user "$(account_role_actor_key "$role")" culture-claude
   done
   account_register_os_user company/qwen-developer culture-qwen
+  if [ "$colleague_ready" = 1 ]; then
+    account_register_os_user company/colleague-spark culture-colleague
+  fi
 
   account_bridges_summary "$host"
 }
@@ -444,7 +505,7 @@ account_bridges_summary() { # host
         unix_user_rollback_pair claude "culture-nodes-claude-$role" "$host"
       done
       unix_user_rollback_pair qwen culture-nodes-qwen-developer "$host"
-      say "re-copy a refreshed engine credential into an account: sudo bash $SCRIPT_DIR/lanes/unix-user.sh bootstrap claude qwen   (on $host; idempotent, root)"
+      say "re-copy a refreshed engine credential into an account: sudo bash $SCRIPT_DIR/lanes/unix-user.sh bootstrap claude qwen colleague   (on $host; idempotent, root)"
       ;;
     *)
       unix_user_rollback_pair codex codex-bridge "$host"

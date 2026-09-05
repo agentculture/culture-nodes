@@ -1,0 +1,37 @@
+# systemd user unit for the colleague actor bridge (adapters/colleague,
+# company/colleague-spark).
+#
+# Versioned here since #298 t5, modelled on culture-nodes-pi-developer.service
+# and culture-nodes-qwen-developer.service: under the culture-colleague
+# account the unit execs the console script `uv tool install` copied into that
+# account's own ~/.local/bin — archive-independent, and independent of any
+# checkout's branch (the human-inbox lesson). %h resolves to
+# /home/culture-colleague because deploy.sh spark installs this file into that
+# account's `systemd --user` instance over `ssh culture-colleague@localhost`.
+#
+# Unlike the pi unit this carries NO ExecStartPre: there is no
+# colleague-preflight.sh yet, and a preflight that does not exist must not be
+# named here — systemd would refuse to start the unit at all. The provision
+# lane's ~/.colleague/config.json assertion (lanes/unix-user.sh) is the
+# deploy-time half of the same guard; a colleague preflight is follow-up work,
+# not something this unit can claim.
+#
+# The %h-does-not-expand caveat applies only to the CONTENTS of an
+# EnvironmentFile once systemd reads it as plain KEY=VALUE lines; every
+# directive VALUE below (Environment=, ExecStart=, EnvironmentFile=) is a
+# unit-file directive where %h does expand. The bridge's JSON config is not a
+# systemd unit, so it carries __HOME__ placeholders the deploy lane
+# substitutes at install time instead.
+[Unit]
+Description=Culture Nodes colleague bridge (colleague-developer)
+After=network-online.target
+
+[Service]
+Environment=COLLEAGUE_BRIDGE_CONFIG=%h/.config/culture-nodes-bridges/colleague-developer.json
+EnvironmentFile=-%h/.culture-nodes/bridge-push.env
+ExecStart=%h/.local/bin/colleague-bridge
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

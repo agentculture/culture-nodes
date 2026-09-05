@@ -20,9 +20,17 @@ and `run.py` never re-implements validation or the digest.
 - `schema.json` — the manifest shape, as JSON Schema 2020-12.
 - `manifest.py` — loads, validates, canonicalises and digests a manifest.
   Zero third-party dependencies.
-- `basic.json` — the basic manifest: one rule per category, `sandbox:
-  read-only`, `runs_per_actor: 2`, against `company/pi-thor`,
-  `company/pi-orin`, `company/qwen-thor`, `company/qwen-orin`.
+- `basic-thor.json` — **the runner's default manifest**: one rule per
+  category, `sandbox: read-only`, `runs_per_actor: 2`, against
+  `company/pi-thor` and `company/qwen-thor` — the two actors the shipped
+  graph can actually reach.
+- `basic.json` — the same three rules against all four actors
+  (`company/pi-thor`, `company/pi-orin`, `company/qwen-thor`,
+  `company/qwen-orin`). It is **not runnable on today's graph** and is not
+  the default: the orin actors collapse onto the thor slots and the runner
+  refuses the pass (see "One limitation, stated plainly" below, and #304).
+  It is kept as the four-actor set to run once the graph has a slot per
+  registered actor.
 - `tests/fixtures/measurements/basic.yaml` — the same manifest, hand-authored sugar for `basic.json`.
   Present only because this interpreter happens to have PyYAML importable
   (see "JSON is canonical" below); it canonicalises to the exact same
@@ -118,13 +126,16 @@ export NODES_OP_COOKIE=...          # Cloudflare Access cookie; never echoed
 export MEASURE_RUNNER_ACTOR_ID=...  # the runner's own AGENT actor id
 
 uv run python examples/harness-compare/measurements/run.py \
-  --manifest examples/harness-compare/measurements/basic.json \
+  --manifest examples/harness-compare/measurements/basic-thor.json \
   --repo-map pi=/home/culture-pi/git/culture-nodes-agent \
   --repo-map qwen=/home/culture-qwen/git/culture-nodes-agent \
   --expect-revision "$(git rev-parse HEAD)" \
   --report docs/audits/measurements.jsonl \
   --yes
 ```
+
+`--manifest` is spelled out above so the command reads as one artifact, but
+that path *is* the default — a bare `run.py` runs the same manifest.
 
 ### Environment and flags
 
@@ -251,12 +262,23 @@ to gain a slot per host (or a per-host copy of the graph); `--slot` is the
 escape only for a deployment that genuinely registered the second host under
 another slot's id.
 
+That is why the runner's default manifest is `basic-thor.json` and not
+`basic.json`: the four-actor manifest hits this refusal before a single
+dispatch, so shipping it as the default would ship a runner whose no-flag
+invocation always aborts. `tests/test_measurement_default_manifest.py`
+asserts the default's actors resolve to distinct slots that the graph
+actually declares, so this cannot silently regress.
+
 ## Adding or changing a rule
 
-1. Add or edit a rule object in `basic.json` (or your own manifest file).
-   Keep every category's rule count and the manifest's other rules intact
-   unless you mean to change them — a manifest is a single artifact, not a
-   diff against the previous one.
+1. Add or edit a rule object in `basic.json` **and `basic-thor.json`** (or
+   in your own manifest file). The two shipped manifests carry the *same*
+   rule list and differ only in `actors`, so editing one and not the other
+   would silently make the default pass measure a different rule set from
+   the four-actor one; `tests/test_measurement_default_manifest.py` holds
+   the two rule lists equal. Keep every category's rule count and the
+   manifest's other rules intact unless you mean to change them — a
+   manifest is a single artifact, not a diff against the previous one.
 2. If you added or edited `tests/fixtures/measurements/basic.yaml` too, regenerate it from the JSON so
    the two stay byte-equivalent after canonicalisation (they are not meant
    to be maintained independently by hand):
@@ -275,13 +297,15 @@ another slot's id.
    ```bash
    uv run python examples/harness-compare/measurements/manifest.py validate examples/harness-compare/measurements/basic.json
    uv run python examples/harness-compare/measurements/manifest.py digest   examples/harness-compare/measurements/basic.json
+   uv run python examples/harness-compare/measurements/manifest.py validate examples/harness-compare/measurements/basic-thor.json
+   uv run python examples/harness-compare/measurements/manifest.py digest   examples/harness-compare/measurements/basic-thor.json
    ```
 
 4. Re-run the runner against the new digest:
 
    ```bash
    uv run python examples/harness-compare/measurements/run.py \
-     --manifest examples/harness-compare/measurements/basic.json \
+     --manifest examples/harness-compare/measurements/basic-thor.json \
      --repo-map pi=/home/culture-pi/git/culture-nodes-agent \
      --repo-map qwen=/home/culture-qwen/git/culture-nodes-agent \
      --report docs/audits/measurements.jsonl --yes
@@ -317,13 +341,18 @@ another slot's id.
   schema change that introduces a new keyword needs a matching validator
   change.
 
-## `basic-thor.json` — the first pass's actor set
+## `basic-thor.json` — the default, and the first pass's actor set
 
 `basic.json` names all four thor/orin actors, but `workflow.yaml` pins each
 slot to one registry id (`pi` → `company/pi-thor`, `qwen` → `company/qwen-thor`),
 so the orin actors cannot be reached through the graph today and the runner
 refuses a manifest whose actors collide on one slot. `basic-thor.json` is the
 same three rules restricted to the two thor actors; it is what the first
-measurement pass ran. It carries its own digest, so its runs and grades are
+measurement pass ran, and it is what `run.py` runs when no `--manifest` is
+given. It carries its own digest, so its runs and grades are
 distinguishable from a later four-actor pass once the graph gains a slot per
 registered actor.
+
+When #304 lands a slot per registered actor, the move is to point
+`DEFAULT_MANIFEST` back at `basic.json` — not to widen `basic-thor.json`,
+whose digest is what the first pass's audit rows are pinned to.

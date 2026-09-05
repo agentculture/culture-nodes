@@ -97,7 +97,18 @@ from pathlib import Path
 from typing import Any, Sequence
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_MANIFEST = HERE / "basic.json"
+
+#: The manifest a bare ``run.py`` runs. It is the THOR-ONLY set, not
+#: ``basic.json``, and that is deliberate: ``basic.json`` names all four
+#: thor/orin actors, while examples/harness-compare/workflow.yaml pins slot
+#: ``pi`` to ``company/pi-thor`` and slot ``qwen`` to ``company/qwen-thor``,
+#: so those four collapse onto two slots and ``refuse_slot_collisions``
+#: aborts the pass before a single dispatch (issue #304). A default that
+#: cannot reach dispatch is not a default, so the default is the actor set
+#: this graph can actually serve; ``--manifest basic.json`` still selects the
+#: four-actor set for a deployment (or a future graph) that has a slot per
+#: host. tests/test_measurement_default_manifest.py holds this to it.
+DEFAULT_MANIFEST = HERE / "basic-thor.json"
 DEFAULT_WORKFLOW = HERE.parent / "workflow.yaml"
 
 #: The checkout this runner can actually read, used only for the best-effort
@@ -656,7 +667,11 @@ def build_parser() -> argparse.ArgumentParser:
             "check each answer and post a proposed grade as an agent principal."
         ),
     )
-    parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="manifest file")
+    parser.add_argument(
+        "--manifest",
+        default=str(DEFAULT_MANIFEST),
+        help=f"manifest file (default: {DEFAULT_MANIFEST.name}, the actor set this graph reaches)",
+    )
     parser.add_argument("--workflow", default=str(DEFAULT_WORKFLOW), help="harness-compare graph")
     parser.add_argument("--api-url", default="", help="control plane base URL ($NODES_API_URL)")
     parser.add_argument(

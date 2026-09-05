@@ -50,3 +50,4 @@ issue,type,evidence_pointer
 298,Feature,Wanted and does not exist: one reviewed command from secrets to registration for a new harness actor; closes when deploy/prod/cutover.sh exists (plan harness-hardening-and-compare t10).
 300,Bug,"Broken now: deploy/prod/lanes/two-host.sh and deploy.sh's orin lane run compose up without recreating api/worker, so a changed prod.env token never reaches the worker; reproduced 2026-09-04 on thor; fixed by plan harness-hardening-and-compare t4."
 302,Task,"Refinements from PR #301 review, none blocking: oversized-body desync (7 bridges), pi second-timeout escape, pi tool-level read-only; plan harness-hardening-and-compare t1, t2, t9."
+303,Task,Scoped operator work: an interactive codex login on two hosts and a proving dispatch; closes when both lanes complete a read-only assign (plan harness-hardening-and-compare d1).

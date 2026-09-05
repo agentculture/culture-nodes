@@ -29,20 +29,21 @@ import (
 // fanned to several harnesses and joined into one result.
 const harnessCompareWorkflowPath = "../../examples/harness-compare/workflow.yaml"
 
-// harnessCompareSlots are the four fixed actor slots the workflow declares.
+// harnessCompareSlots are the five fixed actor slots the workflow declares.
 // The workflow language cannot fan out over a run-time list (`uses:` is a
 // static registry id per node), so the example fans over a fixed set of
 // slots and the run input says which of them run — see the example's README.
-var harnessCompareSlots = []string{"claude", "codex", "pi", "qwen"}
+var harnessCompareSlots = []string{"claude", "codex", "pi", "qwen", "colleague"}
 
 // harnessCompareSlotActorKeys are the registry ids the workflow places each
 // slot on, digest suffix stripped — what a deployment's actors table has to
 // carry for the slot to dispatch.
 var harnessCompareSlotActorKeys = map[string]string{
-	"claude": "company/developer",
-	"codex":  "company/codex-thor",
-	"pi":     "company/pi-thor",
-	"qwen":   "company/qwen-thor",
+	"claude":    "company/developer",
+	"codex":     "company/codex-thor",
+	"pi":        "company/pi-thor",
+	"qwen":      "company/qwen-thor",
+	"colleague": "company/colleague-spark",
 }
 
 // compiledHarnessCompare is the slice of the normalized IR the structural
@@ -587,8 +588,8 @@ func assertHarnessCompareClaims(t *testing.T, db *postgres.Store, namespaceID, r
 // TestHarnessCompareFansOneInstructionToTwoActorsAndJoins is t5's fixture
 // run: the harness-compare workflow, published and started through the real
 // HTTP API and driven by the real engine and worker against a real
-// PostgreSQL, with two fake actors behind two of its four slots. The run
-// input names exactly those two slots; the other two are left unset and
+// PostgreSQL, with two fake actors behind two of its five slots. The run
+// input names exactly those two slots; the other three are left unset and
 // unregistered.
 //
 // What it checks, in the order the acceptance criteria name it: the same

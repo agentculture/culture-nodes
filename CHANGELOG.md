@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.50.0] - 2026-09-05
+
+### Added
+
+- deploy/prod/cutover.sh — one reviewed command that takes a harness actor from secrets to registration on one host (preconditions, --dry-run, --yes, idempotent re-runs, named refusals); the root bootstrap stays the only hand-turn (#298)
+- examples/harness-compare/measurements — a declarative, re-runnable measurement manifest (schema, canonical digest, validator, basic set) and a zero-dependency runner that gates on each bridge's deployed revision, dispatches strictly one run at a time across the shared model, applies objective checks and posts grades; first pass audited in docs/audits/2026-09-05-first-measurement-pass-thor.md
+- adapters/pi and adapters/qwen run the PRD §13 conformance kit live in CI against their own fake-backed bridges with one shared input (#297; closes deviation d2 of harness-interop-pi-qwen)
+- colleague as an engine in the account lanes: unix-user/bootstrap/account-bridges support, culture-nodes-colleague-developer unit and template (port 8094), NODES_ACTOR_COLLEAGUE_SPARK_TOKEN compose keys; a fifth `colleague` slot and an optional `measurement` input object in examples/harness-compare
+- tests/lint/oversizedbody_test.go — the oversized-body helper is byte-identical across all seven bridges, with a negative drift case
+- company/measure-runner — a grading-only agent principal (never dispatched)
+
+### Changed
+
+- deploy lanes recreate api and worker (`up -d --force-recreate`) so a changed prod.env actor token reaches the running containers; the README rotation runbook no longer says `restart worker` (#300)
+- pi `sandbox: read-only` is enforced at the tool level with `--tools read`; the capabilities prose says tool-level, not a kernel boundary (#302)
+- pi's second sync timeout is caught the family way: timed_out reported, never SIGKILL (#302)
+
+### Fixed
+
+- every bridge answers 413 + Connection: close to an oversized declared body, draining at most MAX_BODY_BYTES before auth, instead of truncating and desynchronising the keep-alive connection (#302)
+- the measurement runner names itself in User-Agent (Cloudflare 1010), cache-busts API GETs (#305) and aborts a pass when a grade lands under another principal (#306)
+
 ## [0.49.0] - 2026-09-04
 
 ### Added

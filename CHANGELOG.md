@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- tests/test_measurement_default_manifest.py resolves `basic.json`'s slots before the `pytest.raises` block in `test_the_four_actor_manifest_is_still_refused_by_this_graph`, so the block contains only the call under test (SonarCloud python:S5778 on #307). `_resolved_slots` calls `fleet.slot_for`, which raises the same `RunnerError` type; the message assertion kept an unmappable actor key from passing the test silently, but it reported it as a wrong refusal message rather than as what it is — a broken fixture
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

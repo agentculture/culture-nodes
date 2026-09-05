@@ -112,8 +112,9 @@ def test_the_four_actor_manifest_is_still_refused_by_this_graph() -> None:
     If #304 lands a slot per registered actor this stops raising, which is
     the signal to move ``DEFAULT_MANIFEST`` back to the four-actor set.
     """
+    four_actor_slots = _resolved_slots(MEASUREMENTS_DIR / "basic.json")
     with pytest.raises(fleet.RunnerError) as excinfo:
-        fleet.refuse_slot_collisions(_resolved_slots(MEASUREMENTS_DIR / "basic.json"))
+        fleet.refuse_slot_collisions(four_actor_slots)
     assert "map to one workflow slot" in str(excinfo.value)
 
 

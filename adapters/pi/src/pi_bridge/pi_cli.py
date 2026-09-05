@@ -2,6 +2,11 @@
 
 Only documented flags are emitted.  A turn is successful only when an
 ``agent_end`` event is present; process exit status alone is never success.
+
+``run_sync`` follows the same never-SIGKILL stance as the sibling adapters'
+sync runners (``claude_cli.py`` and ``codex_cli.py``): a child that ignores
+SIGTERM past the grace period is left running and the timeout is reported
+honestly, never force-killed.
 """
 
 from __future__ import annotations
@@ -193,7 +198,12 @@ def run_sync(
     except subprocess.TimeoutExpired:
         timed_out = True
         terminate_group(proc)
-        stdout, stderr = proc.communicate(timeout=5)
+        try:
+            stdout, stderr = proc.communicate(timeout=max(cfg.sync_timeout_seconds * 0.2, 5.0))
+        except subprocess.TimeoutExpired:
+            # Still not done. Never SIGKILL — leave it running and report the
+            # timeout honestly; an operator can inspect/finish reaping later.
+            stdout, stderr = "", "pi did not exit after SIGTERM within the grace period"
     path = transcript_path(cfg, uuid.uuid4().hex)
     path.write_text(stdout, encoding="utf-8")
     return SyncRunResult(proc.returncode, stdout, stderr, parse_session(stdout), timed_out)

@@ -1030,15 +1030,30 @@ FORCE_CODEX=1 ./install-secrets.sh   # fresh bridge tokens; refuses without it
 ./deploy.sh orin
 ssh thor 'systemctl --user restart codex-bridge'
 ssh orin 'systemctl --user restart codex-bridge'
-# restart both workers — both carry both NODES_ACTOR_CODEX_*_TOKEN envs (c4):
+# recreate both workers — both carry both NODES_ACTOR_CODEX_*_TOKEN envs (c4):
 ssh thor 'docker compose --env-file ~/.culture-nodes/prod.env \
-  -f culture-nodes-prod/deploy/prod/compose.thor.yml restart worker'
+  -f culture-nodes-prod/deploy/prod/compose.thor.yml up -d --force-recreate worker'
 ssh orin 'docker compose --env-file ~/.culture-nodes/prod.env \
-  -f culture-nodes-prod/deploy/prod/compose.orin.yml restart worker'
+  -f culture-nodes-prod/deploy/prod/compose.orin.yml up -d --force-recreate worker'
 ```
 
-Restart both workers even when only one bridge's token rotated — each
-worker resolves both actors, so each needs the refreshed `prod.env`.
+`restart` is not enough for a `prod.env` change: it sends the running
+container's own process a restart signal and reuses that container's
+existing environment as it was at creation — it does not re-read
+`--env-file`, so a rotated token never reaches it that way (issue #300).
+`up -d --force-recreate` tears the container down and creates a fresh one
+from the same image with the current `prod.env` interpolated in, which is
+what actually delivers a rotated value.
+
+Recreate both workers even when only one bridge's token rotated — each
+worker resolves both actors, so each needs the refreshed `prod.env`. As of
+this fix, `./deploy.sh thor` / `./deploy.sh orin` above already
+force-recreate `api` and `worker` (and, on orin, `worker` only — it runs no
+`api` service) on every run, so the two manual commands here are now a
+belt-and-suspenders step, not the only path to a live rotation; the raw
+`docker compose ... up -d --force-recreate worker` form is what to reach for
+when rotating a token *without* running a full `deploy.sh` (e.g. rotating
+only `codex-bridge`'s own token, which the deploy lanes don't touch).
 
 ### issue #14 acceptance mapping
 

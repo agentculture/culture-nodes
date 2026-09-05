@@ -161,7 +161,7 @@ def test_engine_ok_accepts_pi_and_its_role_is_pi_developer(tmp_path: Path):
     assert result.stdout.strip() == "pi-developer"
     # The engine list is stated in one place for the operator too: the usage
     # line of the hand-typed bootstrap form names pi.
-    assert "<codex|claude|qwen|pi>" in _block()
+    assert "<codex|claude|qwen|pi|colleague>" in _block()
 
 
 # --- bootstrap ----------------------------------------------------------------
@@ -386,14 +386,15 @@ def _bootstrap_accounts_over_ssh(h: Harness, host_arg: str) -> subprocess.Comple
     )
 
 
-def test_bootstrap_accounts_maps_thor_and_orin_to_codex_qwen_pi_and_spark_stays(tmp_path: Path):
+def test_bootstrap_accounts_maps_thor_and_orin_to_codex_qwen_pi(tmp_path: Path):
     """#294: thor and orin each gain culture-qwen and culture-pi beside
-    culture-codex; spark keeps claude + qwen (its culture-qwen and the
-    qwen-developer bridge stay as they are, and spark gets no pi account
-    unless the operator asks). The header comment states the same map, so
-    what the operator reads is what the script runs."""
+    culture-codex, and spark gets no pi account unless the operator asks
+    (spark's own set gained colleague in #298 t5 --
+    tests/test_deploy_unix_user_colleague.py pins that half). The header
+    comment states the same map, so what the operator reads is what the
+    script runs."""
     script = BOOTSTRAP_ACCOUNTS.read_text()
-    assert re.search(r'^\s*spark\)\s+ENGINES="claude qwen"', script, re.M)
+    assert re.search(r'^\s*spark\)\s+ENGINES="claude qwen colleague"', script, re.M)
     assert re.search(r'^\s*orin\|thor\)\s+ENGINES="codex qwen pi"', script, re.M)
     header = script[: script.index("set -euo pipefail")]
     assert "bootstrap-accounts.sh orin" in header

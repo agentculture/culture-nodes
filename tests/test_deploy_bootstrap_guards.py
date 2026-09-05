@@ -186,8 +186,10 @@ def test_bootstrap_accounts_runs_the_doctor_before_the_local_sudo(tmp_path: Path
     result = _run_bootstrap_accounts(h, "spark")
     assert result.returncode == 0, result.stderr + result.stdout
     assert h.first(f"uv[{SPARK}:spark] run nodes doctor") < h.first("sudo[")
-    assert h.count("useradd[") == 2
+    # spark's engine set is claude qwen colleague since #298 t5.
+    assert h.count("useradd[") == 3
     assert oct(h.account_home(SPARK, "claude").stat().st_mode & 0o777) == "0o750"
+    assert oct(h.account_home(SPARK, "colleague").stat().st_mode & 0o777) == "0o750"
 
 
 def test_bootstrap_accounts_refuses_the_local_sudo_when_the_doctor_fails(tmp_path: Path):

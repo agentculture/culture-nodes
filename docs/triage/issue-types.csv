@@ -46,3 +46,7 @@ issue,type,evidence_pointer
 155,Task,Issue body asks for a design of the full cycle; origin/main:CLAUDE.md:62 still presents scope→think→challenge as a vendored operator skill chain rather than Culture Nodes flows.
 157,Task,"The prompt confirms the four issue types now exist; the remaining scoped work is assigning/migrating issues, while the issue body describes that backlog-classification task."
 293,Feature,"Wanted and does not exist: the Mesh shows a probe class but never install_mode or revision. Raised in review of PR #292; closes when the surface exists."
+297,Task,Scoped work that is neither bug nor feature: run the existing §13 kit live against fake-backed pi/qwen bridges (deviation d2 of plan harness-interop-pi-qwen); closes when adapter-pi.yml and adapter-qwen.yml run it (plan harness-hardening-and-compare t3).
+298,Feature,Wanted and does not exist: one reviewed command from secrets to registration for a new harness actor; closes when deploy/prod/cutover.sh exists (plan harness-hardening-and-compare t10).
+300,Bug,"Broken now: deploy/prod/lanes/two-host.sh and deploy.sh's orin lane run compose up without recreating api/worker, so a changed prod.env token never reaches the worker; reproduced 2026-09-04 on thor; fixed by plan harness-hardening-and-compare t4."
+302,Task,"Refinements from PR #301 review, none blocking: oversized-body desync (7 bridges), pi second-timeout escape, pi tool-level read-only; plan harness-hardening-and-compare t1, t2, t9."

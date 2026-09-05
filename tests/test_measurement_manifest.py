@@ -355,3 +355,12 @@ def test_schema_rule_object_is_additional_properties_false() -> None:
         "seeded-defect-named",
         "tests-named",
     ]
+
+
+def test_boolean_version_is_not_the_numeric_const() -> None:
+    """Python's True == 1 must not let ``"version": true`` pass ``const: 1``."""
+    data = json.loads(BASIC_JSON_PATH.read_text())
+    data["version"] = True
+    with pytest.raises(manifest.ManifestError) as excinfo:
+        manifest.validate_manifest(data)
+    assert "version" in str(excinfo.value)

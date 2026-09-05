@@ -125,3 +125,33 @@ def test_the_drain_stops_at_the_cap_instead_of_the_declared_length(bridge):
         assert elapsed < 5.0
     finally:
         sock.close()
+
+
+def test_dripping_client_cannot_hold_the_drain(bridge):
+    """Slowloris: declare more than the cap, send half of it, then stall.
+
+    The drain used to block up to the request's 30 s per read; it now gives
+    a dripping client 2 s per read and answers 413 anyway.
+    """
+    import time
+
+    host, port = bridge
+    sock = _connect((host, port), timeout=15.0)
+    try:
+        head = (
+            f"POST /v1/invocations HTTP/1.1\r\nHost: {host}\r\n"
+            f"Content-Type: application/json\r\nContent-Length: {CAP * 4}\r\n\r\n"
+        ).encode()
+        started = time.monotonic()
+        sock.sendall(head + b"x" * (CAP // 2))
+        data = b""
+        while b"\r\n\r\n" not in data:
+            piece = sock.recv(4096)
+            if not piece:
+                break
+            data += piece
+        elapsed = time.monotonic() - started
+    finally:
+        sock.close()
+    assert data.startswith(b"HTTP/1.1 413"), data[:80]
+    assert elapsed < 10.0, f"drain held the server for {elapsed:.1f}s"

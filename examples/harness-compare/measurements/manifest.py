@@ -151,7 +151,10 @@ def _type_name(value: Any) -> str:
 
 def _validate(instance: Any, schema: dict[str, Any], path: str) -> None:
     if "const" in schema:
-        if instance != schema["const"]:
+        # JSON types: True == 1 in Python, so a bool must not satisfy a numeric const.
+        if instance != schema["const"] or isinstance(instance, bool) != isinstance(
+            schema["const"], bool
+        ):
             raise ManifestError(f"must equal {schema['const']!r}, got {instance!r}", path)
         return
 

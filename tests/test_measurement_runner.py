@@ -967,3 +967,33 @@ def test_a_grade_overridden_to_the_human_principal_aborts() -> None:
 def test_a_grade_recorded_as_the_agent_principal_passes() -> None:
     appended = {"authority": "proposed", "origin": {"kind": "agent", "actor_id": "actor_runner"}}
     runner.assert_grade_landed_as(appended, "actor_runner")
+
+
+def test_non_json_answer_is_a_runner_error(monkeypatch) -> None:
+    """A 200 with an HTML body (an edge page) is an environment error, not a traceback."""
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"<html>blocked</html>"
+
+    monkeypatch.setattr(runner.fleet.urllib.request, "urlopen", lambda req, timeout=0: _Resp())
+    with pytest.raises(runner.RunnerError) as excinfo:
+        runner.ApiClient("http://example.invalid").get("/v1alpha1/actors")
+    assert "not JSON" in str(excinfo.value)
+
+
+def test_grader_must_be_registered_kind_agent(monkeypatch) -> None:
+    """An engine/runner/validator principal is refused before any dispatch (#307 review)."""
+    rows = [{"id": "a1", "actor_key": "company/x", "kind": "engine", "revision": 1}]
+    monkeypatch.setattr(
+        runner.fleet.ApiClient, "get", lambda self, path: {"items": rows}, raising=False
+    )
+    with pytest.raises(runner.RunnerError) as excinfo:
+        runner.fleet.resolve_grading_actor(runner.ApiClient("http://example.invalid"), "a1")
+    assert "kind=engine" in str(excinfo.value)

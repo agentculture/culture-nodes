@@ -183,7 +183,14 @@ class ApiClient:
             ) from None
         if not raw:
             return {}
-        return json.loads(raw.decode("utf-8"))
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise RunnerError(
+                f"{method} {path} answered {len(raw)} bytes that are not JSON: {exc}",
+                "the control plane (or an edge in front of it) returned a non-JSON body; "
+                "check NODES_API_URL and try the LAN listener",
+            ) from exc
 
     def get(self, path: str) -> Any:
         return self.request("GET", path)
@@ -195,7 +202,10 @@ class ApiClient:
 def _safe_detail(exc: urllib.error.HTTPError) -> str:
     """The server's own message, truncated — never the request we sent."""
     try:
-        payload = json.loads(exc.read().decode("utf-8"))
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            payload = {}
     except Exception:  # noqa: BLE001 - a non-JSON error body is still an error
         return exc.reason or "no detail"
     if isinstance(payload, dict):
@@ -225,7 +235,14 @@ def fetch_deployment(endpoint_ref: str, token: str = "", timeout: float = 20.0) 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-            payload = json.loads(resp.read().decode("utf-8"))
+            try:
+                payload = json.loads(resp.read().decode("utf-8"))
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise RunnerError(
+                    f"{endpoint_ref}/v1/capabilities answered a body that is not JSON: {exc}",
+                    "the bridge (or something in front of it) is not serving the capability "
+                    "document; check the endpoint before trusting its revision",
+                ) from exc
     except urllib.error.HTTPError as exc:
         raise RunnerError(
             f"bridge {endpoint_ref} answered /v1/capabilities with HTTP {exc.code}",
@@ -412,9 +429,10 @@ def resolve_grading_actor(api: ApiClient, actor_id: str) -> dict[str, Any]:
     items = listing.get("items", []) if isinstance(listing, dict) else listing
     for row in items or []:
         if row.get("id") == actor_id:
-            if row.get("kind") == "human":
+            if row.get("kind") != "agent":
                 raise RunnerError(
-                    f"refusing to grade as {actor_id}: that actor is registered kind=human",
+                    f"refusing to grade as {actor_id}: that actor is registered "
+                    f"kind={row.get('kind')}, and only kind=agent grades land proposed",
                     "a human grade lands confirmed on arrival (internal/api/grades.go); "
                     "the runner must grade as an agent so its grades land proposed",
                 )

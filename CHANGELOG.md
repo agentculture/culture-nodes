@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- tests/test_measurement_default_manifest.py splits the composite `_load` guard into two assertions, so a failure names whether the import spec or its loader was missing (SonarCloud python:S9073 on #307); matches the form already used in tests/test_merge_gate.py
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

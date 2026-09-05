@@ -7,12 +7,13 @@ carry more than one rule per category — run against a fixed list of
 answer is mechanically checked, and a 5/3/1 anchor rubric a human (or the
 runner, task t11) uses to grade the actual answer against.
 
-This directory is the **manifest** half only: schema, canonical digest,
-validator, and the basic three-rule set (task t7, plan
-`docs/plans/2026-09-05-harness-hardening-and-compare.md`). The **runner**
-that dispatches a manifest's rules to real actors, applies each rule's
-mechanical check, and posts grades is a separate module (`run.py`, task
-t11) — nothing here dispatches to an actor or a bridge.
+This directory holds both halves (plan
+`docs/plans/2026-09-05-harness-hardening-and-compare.md`): the **manifest**
+— schema, canonical digest, validator, and the basic three-rule set (task
+t7) — and the **runner** that dispatches a manifest's rules to real actors,
+applies each rule's mechanical check, and posts grades (task t11). They stay
+separate modules: `manifest.py` never dispatches to an actor or a bridge,
+and `run.py` never re-implements validation or the digest.
 
 ## Files
 
@@ -26,6 +27,13 @@ t11) — nothing here dispatches to an actor or a bridge.
   Present only because this interpreter happens to have PyYAML importable
   (see "JSON is canonical" below); it canonicalises to the exact same
   digest as `basic.json`.
+- `run.py` — the runner: the revision gate, serial dispatch, the report and
+  the grades. Importable as a module, runnable as a CLI.
+- `fleet.py` — the runner's fleet-facing half: the control-plane API client
+  (with the operator lane's auth convention), the bridge `/v1/capabilities`
+  probe, and actor/slot resolution. Split from `run.py` only to stay inside
+  the repo's 1000-line-per-file contract; it is not a separate tool.
+- `checks.py` — the three mechanical checks and the 5/3/1 anchor rating.
 
 ## JSON is canonical, YAML is authoring sugar
 
@@ -65,6 +73,8 @@ just the contract each kind promises):
   is the file the check considers correct. Used for `explain` rules: "what
   proves this code works".
 
+`checks.py` implements exactly these three and refuses any other kind.
+
 A rule's `anchors` (`"5"`, `"3"`, `"1"`) are the human-readable rubric a
 grader uses on top of the mechanical check — the mechanical check says
 whether the expected fact appears at all; the anchors say how *well* the
@@ -95,6 +105,126 @@ uv run python examples/harness-compare/measurements/manifest.py canonical <file>
 - A `.yaml`/`.yml` manifest with no importable YAML parser exits `2` with a
   hint, from any of the three subcommands, before validation is attempted.
 
+## The runner
+
+`run.py` takes a manifest and turns it into runs, checks and grades. It is
+zero-dependency python3 (stdlib `urllib`/`json`/`argparse`/`time`), so it
+runs anywhere python3 does — including on a deploy host with nothing
+installed.
+
+```bash
+export NODES_API_URL=https://nodes.culture.dev
+export NODES_OP_COOKIE=...          # Cloudflare Access cookie; never echoed
+export MEASURE_RUNNER_ACTOR_ID=...  # the runner's own AGENT actor id
+
+uv run python examples/harness-compare/measurements/run.py \
+  --manifest examples/harness-compare/measurements/basic.json \
+  --repo-map pi=/home/culture-pi/git/culture-nodes-agent \
+  --repo-map qwen=/home/culture-qwen/git/culture-nodes-agent \
+  --expect-revision "$(git rev-parse HEAD)" \
+  --report docs/audits/measurements.jsonl \
+  --yes
+```
+
+### Environment and flags
+
+| Name | What it is |
+| --- | --- |
+| `NODES_API_URL` | control plane base URL (`--api-url` overrides). LAN writes have been 401 since 0.47.0 — use the tunnel. |
+| `NODES_OP_COOKIE` | Cloudflare Access cookie, sent as `Cookie: CF_Authorization=...` exactly as `nodes-op.sh` sends it. Injected via `grant run --inject`, never pasted on a command line, and never printed by the runner. |
+| `NODES_OP_BEARER` | optional bearer, the same hook `nodes-op.sh` carries. |
+| `MEASURE_RUNNER_ACTOR_ID` | the grading principal (`--as` overrides). **Required** — see below. |
+| `NODES_BRIDGE_TOKEN` | default bearer for a bridge's authenticated `/v1/capabilities` (`--bridge-token slot-or-key=TOKEN` per actor). |
+| `--repo-map SLOT_OR_KEY=PATH` | each actor's checkout **on its own host**. Required per actor; the runner refuses rather than guessing, because a path is meaningful on exactly one machine. |
+| `--expect-revision SHA` | the revision gate below. |
+| `--qwen-mode MODE` | ACP session mode for the qwen slot (default `default`); the qwen bridge refuses a dispatch that names none. |
+| `--slot ACTOR_KEY=SLOT` | override the actor-key → workflow-slot mapping. |
+| `--report PATH` | JSON Lines report, appended to. |
+| `--gate-only` | read every bridge revision and stop, dispatching nothing. |
+| `--yes` | required: the pass dispatches real, billable agent sessions. |
+
+### The revision gate
+
+Before any dispatch the runner reads each actor's bridge
+`GET <endpoint_ref>/v1/capabilities` and pulls out the `deployment` block
+(`revision`, `install_mode`, `revision_is_dirty`).
+
+- With `--expect-revision <sha>` it **refuses**, naming every actor whose
+  revision differs and what that actor is actually running, before a single
+  session is spent.
+- Without the flag it refuses nothing and simply **records** what it saw —
+  into every run's input (`measurement_context.bridge_revisions`) and into
+  every grade's notes. A measurement whose build is unknown is still a
+  measurement; a measurement that *silently* mixes builds is not.
+
+`--gate-only` runs just this half. Read `install_mode` first: a `copy`
+install (the `uv tool install`ed bridges on thor and orin) goes stale
+silently until redeployed, while an `editable` one cannot go stale but can
+be serving uncommitted code (`revision_is_dirty`).
+
+### It is serial, deliberately
+
+pi, qwen and colleague are served by ONE model on one host. Two concurrent
+runs would not measure two actors, they would measure a contended queue —
+so the runner creates one run at a time across **all** actors and rules and
+waits for it to reach a terminal state before creating the next. There is no
+`--parallel` flag and adding one would silently change what every recorded
+duration means. `tests/test_measurement_runner.py` pins this: the fake API
+records concurrency and asserts the high-water mark is 1.
+
+### Grades are posted as an agent, never as a human
+
+`nodes-op.sh grade` defaults `--as` to the first registered `kind=human`
+actor, and a human grader's grade lands **confirmed** on arrival
+(`internal/api/grades.go`). A runner inheriting that default would mint
+confirmed grades in bulk for work no human read. So this runner:
+
+- refuses to start with no `MEASURE_RUNNER_ACTOR_ID` / `--as`;
+- refuses a principal whose registered `kind` is `human`;
+- files each grade against the actor that **actually served** the run
+  (`node_runs[].attempts[].actor_id`), flagging a routing mismatch in the
+  notes and the report if that is not the actor it addressed.
+
+Every grade it posts therefore lands `proposed` and waits for the ordinary
+review surface. Confirming them is a human's move, and the grade notes carry
+what that human needs: rule id, manifest digest, check kind, expected fact,
+verdict, fabrication flag and bridge revision.
+
+### How an answer is rated
+
+The mechanical check reads the actor's summary text — not its
+understanding — and `checks.py` says exactly what each rating means:
+
+- **5** — the expected fact is present **and** the answer points at
+  something specific: a `path:line` citation of the expected path
+  (the only thing that counts for `grep-cites-file-line`), a `line N` /
+  `` `quoted span` `` reference (`seeded-defect-named`), or a named
+  `test_*` function (`tests-named`).
+- **3** — the expected fact is present but the answer is **uncited** (no
+  specific reference at all) or **padded**: it names three or more distinct
+  file paths other than the expected one.
+- **1** — the expected fact is absent, or the run produced no answer
+  (failed, cancelled, timed out).
+
+The **fabrication flag** is a boolean in the notes: true when the answer
+cites a file path that does not exist in the checkout the runner can read.
+It is best-effort by construction — the actor read its own checkout on its
+own host, which the runner cannot see — so it is a signal for the human
+deciding the grade, never an input to the rating.
+
+### One limitation, stated plainly
+
+`examples/harness-compare/workflow.yaml` has five **fixed** slots and each
+slot's `uses:` is a static registry id — slot `pi` resolves to
+`actor://company/pi-thor` and nothing in the run input redirects it. So two
+manifest actors that map to the same slot (`company/pi-thor` and
+`company/pi-orin`) cannot both be dispatched through this graph, and the
+runner **refuses** such a manifest rather than running one host twice and
+labelling one of the results the other. Measuring both hosts needs the graph
+to gain a slot per host (or a per-host copy of the graph); `--slot` is the
+escape only for a deployment that genuinely registered the second host under
+another slot's id.
+
 ## Adding or changing a rule
 
 1. Add or edit a rule object in `basic.json` (or your own manifest file).
@@ -121,19 +251,41 @@ uv run python examples/harness-compare/measurements/manifest.py canonical <file>
    uv run python examples/harness-compare/measurements/manifest.py digest   examples/harness-compare/measurements/basic.json
    ```
 
-4. Re-run the runner (t11) against the new digest. **Re-running never edits
-   an old run or grade** — the ledger is append-only (CLAUDE.md's ledger
-   authority model: records are immutable; corrections append with
-   `supersedes`). Changing a rule and re-running produces new runs and new
-   grades pinned to the new digest, alongside — never instead of — whatever
-   the previous digest's runs and grades already recorded. If you want to
-   compare "before" and "after" a rule edit, keep both digests' runs
-   around; don't delete the old ones.
+4. Re-run the runner against the new digest:
 
-## What this module does not do
+   ```bash
+   uv run python examples/harness-compare/measurements/run.py \
+     --manifest examples/harness-compare/measurements/basic.json \
+     --repo-map pi=/home/culture-pi/git/culture-nodes-agent \
+     --repo-map qwen=/home/culture-qwen/git/culture-nodes-agent \
+     --report docs/audits/measurements.jsonl --yes
+   ```
 
-- It does not dispatch to any actor or bridge, and it does not know what a
-  "run" or a "grade" is in the ledger sense — that is `run.py` (task t11).
+   **Re-running never edits an old run, grade or report line** — the ledger
+   is append-only (CLAUDE.md's ledger authority model: records are
+   immutable; corrections append with `supersedes`), and the report is JSON
+   Lines appended to for exactly the same reason. Changing a rule and
+   re-running produces new runs and new grades pinned to the new digest,
+   alongside — never instead of — whatever the previous digest's runs and
+   grades already recorded. If you want to compare "before" and "after" a
+   rule edit, keep both digests' runs around; don't delete the old ones, and
+   don't rewrite the report: `manifest_digest` on each row is what tells
+   the two passes apart.
+
+5. Check the new rule's expected fact is actually reachable before spending
+   a pass on it. `--gate-only` costs nothing and tells you which build every
+   bridge is on; a rule whose `expect` names a file that moved in the
+   meantime will rate every actor 1 and prove nothing about the actors.
+
+## What these modules do not do
+
+- `manifest.py` does not dispatch to any actor or bridge, and does not know
+  what a "run" or a "grade" is in the ledger sense — that is `run.py`.
+- `run.py` does not confirm anything. Its grades are `proposed` claims from
+  an automated reader; deciding them is a human's move through the review
+  surface, and a 5 from the mechanical check is not evidence that the actor
+  understood the code.
+- The fabrication flag does not prove fabrication; see above.
 - It does not implement a general JSON Schema validator; `_validate` in
   `manifest.py` implements exactly the keywords `schema.json` uses. A
   schema change that introduces a new keyword needs a matching validator

@@ -914,3 +914,10 @@ def test_per_slot_bridge_token_env_wins_over_the_default(monkeypatch) -> None:
         elif default:
             tokens.setdefault(actor["actor_key"], default)
     assert tokens == {"company/pi-thor": "pi-only", "company/qwen-thor": "shared"}
+
+
+def test_api_client_names_itself_in_user_agent() -> None:
+    """Cloudflare's bot rules ban urllib's default agent (error 1010)."""
+    headers = runner.ApiClient("http://example.invalid", cookie="c")._headers()
+    assert headers["User-Agent"].startswith("culture-nodes-measure-runner/")
+    assert headers["Cookie"] == "CF_Authorization=c"

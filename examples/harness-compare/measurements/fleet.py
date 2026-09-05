@@ -109,6 +109,12 @@ def load_sibling(name: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+#: Cloudflare Access fronts nodes.culture.dev and its bot rules answer error
+#: 1010 (browser-signature ban) to urllib's default "Python-urllib/x.y"
+#: user-agent, while curl's is admitted; name the tool instead.
+USER_AGENT = "culture-nodes-measure-runner/1"
+
+
 class ApiClient:
     """The control-plane API, with the operator lane's auth conventions.
 
@@ -134,7 +140,7 @@ class ApiClient:
         return f"<ApiClient base_url={self.base_url!r} auth=<redacted>>"
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
         if self._cookie:
             headers["Cookie"] = f"CF_Authorization={self._cookie}"
         if self._bearer:
@@ -203,7 +209,7 @@ def fetch_deployment(endpoint_ref: str, token: str = "", timeout: float = 20.0) 
     (adapters/*/server.py ``_require_auth``), so a token may be supplied.
     """
     url = endpoint_ref.rstrip("/") + "/v1/capabilities"
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers, method="GET")

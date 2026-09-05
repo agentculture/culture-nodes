@@ -406,19 +406,37 @@ def require_grading_principal(actor_id: str) -> str:
 
 
 def resolve_grading_actor(api: ApiClient, actor_id: str) -> dict[str, Any]:
-    """Look the grading principal up and refuse a human one (c29 / h28)."""
+    """Look the grading principal up and refuse anything but an agent (c29 / h28).
+
+    ``kind=agent`` is the *only* kind this runner may grade as, and the check
+    belongs here rather than at grading time: ``POST /v1alpha1/.../grades``
+    admits exactly ``human`` and ``agent`` (internal/api/grades.go), so a
+    registered ``engine`` / ``validator`` / ``runner`` id would sail past a
+    human-only preflight, burn the whole billable serial pass, and only then
+    fail every grade — no grade rows, no report, nothing to show for the spend.
+    """
     require_grading_principal(actor_id)
     listing = api.get("/v1alpha1/actors")
     items = listing.get("items", []) if isinstance(listing, dict) else listing
     for row in items or []:
-        if row.get("id") == actor_id:
-            if row.get("kind") == "human":
-                raise RunnerError(
-                    f"refusing to grade as {actor_id}: that actor is registered kind=human",
-                    "a human grade lands confirmed on arrival (internal/api/grades.go); "
-                    "the runner must grade as an agent so its grades land proposed",
-                )
+        if row.get("id") != actor_id:
+            continue
+        kind = row.get("kind")
+        if kind == "agent":
             return row
+        if kind == "human":
+            raise RunnerError(
+                f"refusing to grade as {actor_id}: that actor is registered kind=human",
+                "a human grade lands confirmed on arrival (internal/api/grades.go); "
+                "the runner must grade as an agent so its grades land proposed",
+            )
+        raise RunnerError(
+            f"refusing to grade as {actor_id}: that actor is registered kind={kind!r}, "
+            "which cannot file a grade at all",
+            "grade as a kind=agent actor; internal/api/grades.go maps only human and "
+            "agent graders to a ledger origin, and it would reject this one after the "
+            "billable pass had already run",
+        )
     raise RunnerError(
         f"grading principal {actor_id} is not a registered actor",
         "register it (kind=agent) and re-run; the control plane resolves the grader's "

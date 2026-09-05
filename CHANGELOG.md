@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Fixed
+
+- the measurement runner refuses a grading principal of any kind other than agent BEFORE it dispatches anything — a registered engine/validator/runner id used to pass the human-only preflight, burn the whole billable serial pass, and only then fail every grade (internal/api/grades.go maps only human and agent to a ledger origin) (Qodo on PR #307)
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

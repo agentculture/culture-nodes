@@ -181,7 +181,11 @@ actor, and a human grader's grade lands **confirmed** on arrival
 confirmed grades in bulk for work no human read. So this runner:
 
 - refuses to start with no `MEASURE_RUNNER_ACTOR_ID` / `--as`;
-- refuses a principal whose registered `kind` is `human`;
+- refuses, **before dispatching anything**, a principal whose registered
+  `kind` is not `agent` — `human` for the reason above, and every other kind
+  (`engine`, `validator`, `runner`, …) because `internal/api/grades.go` maps
+  only `human` and `agent` graders to a ledger origin, so such a principal
+  would burn the whole billable serial pass and then fail every grade;
 - files each grade against the actor that **actually served** the run
   (`node_runs[].attempts[].actor_id`), flagging a routing mismatch in the
   notes and the report if that is not the actor it addressed.

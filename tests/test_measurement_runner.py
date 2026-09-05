@@ -40,6 +40,14 @@ MEASUREMENTS_DIR = ROOT / "examples" / "harness-compare" / "measurements"
 COOKIE = "cookie-value-that-must-never-be-printed"
 AGENT_ACTOR_ID = "actor-agent-measure-runner"
 HUMAN_ACTOR_ID = "actor-human-operator"
+# Kinds the registry carries that are neither human nor agent. The grade API
+# maps only human and agent to a ledger origin (internal/api/grades.go), so
+# these must be refused BEFORE the billable pass, not after it.
+NON_AGENT_ACTOR_IDS = {
+    "engine": "actor-engine-control-plane",
+    "validator": "actor-validator-merge-gate",
+    "runner": "actor-runner-headspace",
+}
 GOOD_REVISION = "a" * 40
 STALE_REVISION = "b" * 40
 
@@ -299,6 +307,15 @@ def fleet(bridges):
             "kind": "agent",
         },
     ]
+    actors.extend(
+        {
+            "id": actor_id,
+            "actor_key": f"company/{kind}",
+            "revision": 1,
+            "kind": kind,
+        }
+        for kind, actor_id in NON_AGENT_ACTOR_IDS.items()
+    )
     return {"actors": actors, "pi": pi, "qwen": qwen}
 
 
@@ -743,6 +760,37 @@ def test_a_human_principal_is_refused(monkeypatch, capsys, tmp_path, fleet):
         assert "kind=human" in captured.err
         assert control.grades == []
         assert control.created == []
+    finally:
+        control.stop()
+
+
+@pytest.mark.parametrize("kind", sorted(NON_AGENT_ACTOR_IDS))
+def test_a_non_agent_principal_is_refused_before_any_run(
+    kind, monkeypatch, capsys, tmp_path, fleet
+):
+    """Only kind=agent may grade, and the refusal must precede the spend.
+
+    A human principal has always been refused, but every *other* registered
+    kind used to sail through the preflight and die at grading time — after a
+    full serial pass of real, billable sessions, with no grade and no report
+    row to show for it (internal/api/grades.go admits human and agent only).
+    """
+    control = FakeControlPlane(fleet["actors"], {LOCATE_RULE["id"]: "x"})
+    try:
+        path = _write_manifest(tmp_path, _manifest([LOCATE_RULE]))
+        code, captured = _invoke(
+            monkeypatch,
+            capsys,
+            control,
+            path,
+            tmp_path,
+            "--yes",
+            principal=NON_AGENT_ACTOR_IDS[kind],
+        )
+        assert code == 1
+        assert f"kind={kind!r}" in captured.err
+        assert control.created == []
+        assert control.grades == []
     finally:
         control.stop()
 

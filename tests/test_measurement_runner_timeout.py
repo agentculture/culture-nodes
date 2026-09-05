@@ -128,7 +128,10 @@ def test_a_run_that_will_not_settle_stops_the_pass_rather_than_overlapping():
             control, "run-001", timeout=0.0, interval=0.0, sleep=_never_sleep, grace=0.0
         )
     message = str(caught.value)
-    assert "run-001" in message and "still running" in message
+    # Two separate facts: the message names the run a human has to cancel by
+    # hand, and it reports the state the control plane last gave for it.
+    assert "run-001" in message
+    assert "still running" in message
     assert "serial" in caught.value.hint
     assert caught.value.code == runner.EXIT_ENV_ERROR
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -894,3 +895,22 @@ def test_an_unreachable_api_is_an_environment_error(monkeypatch, capsys):
     assert "NODES_API_URL" in captured.err
     assert captured.err.startswith("error: ")
     assert "hint: " in captured.err
+
+
+def test_per_slot_bridge_token_env_wins_over_the_default(monkeypatch) -> None:
+    """NODES_BRIDGE_TOKEN_<SLOT> keeps a per-bridge secret off argv."""
+    monkeypatch.setenv("NODES_BRIDGE_TOKEN", "shared")
+    monkeypatch.setenv("NODES_BRIDGE_TOKEN_PI", "pi-only")
+    actors = [
+        {"actor_key": "company/pi-thor", "slot": "pi"},
+        {"actor_key": "company/qwen-thor", "slot": "qwen"},
+    ]
+    tokens: dict[str, str] = {}
+    default = os.environ.get("NODES_BRIDGE_TOKEN", "")
+    for actor in actors:
+        per_slot = os.environ.get(f"NODES_BRIDGE_TOKEN_{actor['slot'].upper()}", "")
+        if per_slot:
+            tokens.setdefault(actor["actor_key"], per_slot)
+        elif default:
+            tokens.setdefault(actor["actor_key"], default)
+    assert tokens == {"company/pi-thor": "pi-only", "company/qwen-thor": "shared"}

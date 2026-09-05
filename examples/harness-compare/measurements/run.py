@@ -634,8 +634,14 @@ def _run(args: argparse.Namespace, out, err) -> int:
 
     actors = resolve_actors(api, manifest["actors"], slot_overrides)
     refuse_slot_collisions(actors)
-    if default_bridge_token:
-        for actor in actors:
+    for actor in actors:
+        # NODES_BRIDGE_TOKEN_<SLOT> (e.g. NODES_BRIDGE_TOKEN_PI) keeps a
+        # per-bridge secret off argv, where `ps` would show it; the flag
+        # form stays for tests and one-offs.
+        per_slot = os.environ.get(f"NODES_BRIDGE_TOKEN_{actor['slot'].upper()}", "")
+        if per_slot:
+            bridge_tokens.setdefault(actor["actor_key"], per_slot)
+        elif default_bridge_token:
             bridge_tokens.setdefault(actor["actor_key"], default_bridge_token)
 
     deployments = gate_revisions(actors, args.expect_revision or None, bridge_tokens)

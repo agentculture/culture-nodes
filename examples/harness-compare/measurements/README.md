@@ -135,6 +135,7 @@ uv run python examples/harness-compare/measurements/run.py \
 | `NODES_OP_BEARER` | optional bearer, the same hook `nodes-op.sh` carries. |
 | `MEASURE_RUNNER_ACTOR_ID` | the grading principal (`--as` overrides). **Required** — see below. |
 | `NODES_BRIDGE_TOKEN` | default bearer for a bridge's authenticated `/v1/capabilities` (`--bridge-token slot-or-key=TOKEN` per actor). |
+| `NODES_BRIDGE_TOKEN_<SLOT>` | per-slot bearer (`NODES_BRIDGE_TOKEN_PI`, `NODES_BRIDGE_TOKEN_QWEN`, …); wins over the default and keeps the secret off argv. |
 | `--repo-map SLOT_OR_KEY=PATH` | each actor's checkout **on its own host**. Required per actor; the runner refuses rather than guessing, because a path is meaningful on exactly one machine. |
 | `--expect-revision SHA` | the revision gate below. |
 | `--qwen-mode MODE` | ACP session mode for the qwen slot (default `default`); the qwen bridge refuses a dispatch that names none. |

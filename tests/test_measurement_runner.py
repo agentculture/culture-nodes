@@ -948,3 +948,22 @@ def test_get_defeats_the_edge_cache(monkeypatch) -> None:
     urls = [u for u, _ in seen]
     assert all("_nocache=" in u for u in urls) and urls[0] != urls[1]
     assert seen[0][1].get("Cache-control") == "no-cache"
+
+
+def test_a_grade_overridden_to_the_human_principal_aborts() -> None:
+    """#306: the API replaces grading_actor_id with the bound principal."""
+    appended = {
+        "id": "rec_1",
+        "authority": "confirmed",
+        "origin": {"kind": "human", "actor_id": "actor_ori"},
+        "warning": "grading_actor_id overridden from actor_runner to authenticated actor actor_ori",
+    }
+    with pytest.raises(runner.RunnerError) as excinfo:
+        runner.assert_grade_landed_as(appended, "actor_runner")
+    assert "actor_ori" in str(excinfo.value)
+    assert "#306" in (getattr(excinfo.value, "hint", "") or " ".join(map(str, excinfo.value.args)))
+
+
+def test_a_grade_recorded_as_the_agent_principal_passes() -> None:
+    appended = {"authority": "proposed", "origin": {"kind": "agent", "actor_id": "actor_runner"}}
+    runner.assert_grade_landed_as(appended, "actor_runner")

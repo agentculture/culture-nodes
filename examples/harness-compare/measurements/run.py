@@ -346,7 +346,40 @@ def post_grade(
         "grading_actor_id": grading_actor_id,
         "category": category,
     }
-    return api.post(f"/v1alpha1/runs/{run_id}/grades", body)
+    appended = api.post(f"/v1alpha1/runs/{run_id}/grades", body)
+    assert_grade_landed_as(appended, grading_actor_id)
+    return appended
+
+
+def assert_grade_landed_as(appended: dict[str, Any], grading_actor_id: str) -> None:
+    """Abort the pass if the ledger recorded the grade under another actor.
+
+    internal/api/grades.go resolves the grading actor from the request's
+    BOUND PRINCIPAL (principalActor) and only warns about the body's
+    grading_actor_id — so a runner wearing the operator's Access cookie
+    mints confirmed human grades under the operator (issue #306, deviation
+    d4 of plan harness-hardening-and-compare). One such grade is one too
+    many: stop before the next dispatch rather than finish a pass whose
+    grades are not what the manifest promised.
+    """
+    origin = appended.get("origin") or {}
+    recorded = origin.get("actor_id") or appended.get("origin_actor_id") or ""
+    authority = appended.get("authority", "")
+    warning = appended.get("warning", "")
+    if "overridden" in warning or (recorded and recorded != grading_actor_id):
+        raise RunnerError(
+            f"the ledger recorded this grade under {recorded or 'an unnamed actor'} "
+            f"(authority {authority or 'unknown'}), not the named agent principal "
+            f"{grading_actor_id}: {warning or 'grading_actor_id was not honoured'}",
+            "authenticate as the agent principal itself (its own credential), or stop "
+            "grading through a human identity — see issue #306",
+        )
+    if authority and authority != "proposed":
+        raise RunnerError(
+            f"the ledger recorded this grade with authority {authority}; a manifest "
+            f"run's grades must land proposed",
+            "see issue #306",
+        )
 
 
 # ---------------------------------------------------------------------------

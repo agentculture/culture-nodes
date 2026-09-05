@@ -141,6 +141,8 @@ uv run python examples/harness-compare/measurements/run.py \
 | `--qwen-mode MODE` | ACP session mode for the qwen slot (default `default`); the qwen bridge refuses a dispatch that names none. |
 | `--slot ACTOR_KEY=SLOT` | override the actor-key → workflow-slot mapping. |
 | `--report PATH` | JSON Lines report, appended to. |
+| `--timeout SECONDS` | per-run watch timeout (default 1800); on expiry the run is cancelled, not just abandoned. |
+| `--cancel-grace SECONDS` | how long a cancelled run gets to reach a terminal state before the pass stops (default 120). |
 | `--gate-only` | read every bridge revision and stop, dispatching nothing. |
 | `--yes` | required: the pass dispatches real, billable agent sessions. |
 
@@ -172,6 +174,29 @@ waits for it to reach a terminal state before creating the next. There is no
 `--parallel` flag and adding one would silently change what every recorded
 duration means. `tests/test_measurement_runner.py` pins this: the fake API
 records concurrency and asserts the high-water mark is 1.
+
+A watch timeout (`--timeout`, 1800 s) is **not** an exception to that. A run
+the runner merely stopped watching is still a run holding the model, so on
+timeout it cancels the run (`POST /v1alpha1/runs/{id}/cancel`, the same call
+as `nodes-op.sh cancel`) and polls until the control plane reports it
+terminal — only then is the next measurement dispatched. The report row
+carries both words for what happened: `run_state` is `timed_out`, the
+runner's reason, and `settled_state` is what the ledger settled on, normally
+`cancelled`. A run that finished in the gap between the last poll and the
+cancel keeps its real `completed` state and its answer; rating that 1 would
+be a claim about the actor that is not true.
+
+If the control plane will not report the run terminal within
+`--cancel-grace` (120 s), the pass **stops** with an environment error
+naming the run, rather than dispatching the next measurement over the top of
+it. Everything already measured is already in the report — it is appended
+per run — so the honest move is to cancel that run by hand and re-run.
+
+The limit of that guarantee, stated plainly: the cancellation is durable in
+the ledger before the call answers, and the actor is *asked* to stop its
+session, but propagating a cancel to an actor is best-effort by design (PRD
+§13.6, `internal/api/cancelpropagate.go`). An actor that ignores the ask is
+a protocol limitation, not something this runner can wait out.
 
 ### Grades are posted as an agent, never as a human
 

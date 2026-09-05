@@ -32,9 +32,12 @@ FOUR THINGS THIS RUNNER IS CAREFUL ABOUT
    model on one host: two concurrent runs do not measure two actors, they
    measure a contended queue. So the runner creates ONE run at a time
    across ALL actors and rules, and waits for it to reach a terminal state
-   before creating the next. There is deliberately **no** ``--parallel``
-   flag (user constraint, 2026-09-05); adding one would silently change
-   what every recorded duration means.
+   before creating the next. A watch timeout is not an exception to that:
+   the runner cancels the run and waits for the control plane to report it
+   terminal before dispatching anything else, because a run it merely
+   stopped watching is still a run holding the model. There is deliberately
+   **no** ``--parallel`` flag (user constraint, 2026-09-05); adding one
+   would silently change what every recorded duration means.
 
 3. **The grading principal (c29 / h28).** Grades are posted with
    ``grading_actor_id`` = the agent actor named by
@@ -69,6 +72,8 @@ the live control plane, so this runner cannot drift from the operator lane:
   ``{"id","state"}`` (nodes-op.sh ``create``).
 - watch: ``GET /v1alpha1/runs/{id}`` until ``run.state`` is terminal
   (nodes-op.sh ``watch`` / ``run``).
+- cancel: ``POST /v1alpha1/runs/{id}/cancel {}`` -> ``{"state":...}``
+  (nodes-op.sh ``cancel``), used on a watch timeout only.
 - grade: ``POST /v1alpha1/runs/{id}/grades`` with ``{"rating",
   "rationale","evaluated_actor_id","grading_actor_id","category"}``
   (nodes-op.sh ``grade``).
@@ -223,29 +228,109 @@ def create_run(api: ApiClient, workflow_digest: str, run_input: dict[str, Any], 
     return run_id
 
 
+#: How long a cancelled run is given to reach a terminal state before the
+#: pass refuses to continue. Cancellation is committed by the control plane
+#: *before* it answers (internal/api/runs.go ``cancelRunWithReason``), so a
+#: run that is still not terminal after this long means the cancel never
+#: landed — not that it is taking its time.
+CANCEL_GRACE = 120.0
+
+
+def cancel_run(api: ApiClient, run_id: str) -> str:
+    """Ask the control plane to cancel a run. Best-effort; never raises.
+
+    ``POST /v1alpha1/runs/{id}/cancel`` (nodes-op.sh ``cancel``) commits the
+    cancellation before it answers and then asks the actor to stop the
+    session it parked (internal/api/cancelpropagate.go). Two answers are
+    expected here and neither is fatal: ``409`` because the run reached a
+    terminal state between the last poll and this call, or a transport
+    failure because the call did not land at all. Both are resolved by
+    ``settle_run``, which reads the control plane rather than trusting this
+    response — so the refusal to raise here costs nothing.
+    """
+    try:
+        result = api.post(f"/v1alpha1/runs/{run_id}/cancel", {})
+    except RunnerError:
+        return ""
+    return result.get("state", "") if isinstance(result, dict) else ""
+
+
+def settle_run(
+    api: ApiClient,
+    run_id: str,
+    interval: float,
+    sleep,
+    grace: float = CANCEL_GRACE,
+) -> tuple[dict[str, Any], str]:
+    """Poll until the control plane reports the run terminal, or refuse.
+
+    This is the half that makes the timeout path honest. A run the runner
+    stopped watching is still a run, and the next dispatch would land on the
+    same model host — measuring a contended queue, which is precisely what
+    seriality exists to prevent. So the pass continues only once the control
+    plane itself says the run is over; if it will not say so, the pass stops
+    rather than recording durations that mean nothing.
+    """
+    deadline = time.monotonic() + grace
+    while True:
+        view = api.get(f"/v1alpha1/runs/{run_id}")
+        state = (view.get("run") or {}).get("state", "")
+        if state in TERMINAL_STATES:
+            return view, state
+        if time.monotonic() >= deadline:
+            raise RunnerError(
+                f"run {run_id} timed out, was asked to cancel, and is still "
+                f"{state or 'in an unknown state'} {grace:.0f}s later",
+                f"cancel it by hand (nodes-op.sh cancel {run_id}) and re-run — the pass is "
+                "serial, and dispatching the next measurement while this one may still hold "
+                "the model would measure a contended queue rather than an actor",
+                EXIT_ENV_ERROR,
+            )
+        sleep(interval)
+
+
 def watch_run(
     api: ApiClient,
     run_id: str,
     timeout: float = 1800.0,
     interval: float = 5.0,
     sleep=time.sleep,
+    grace: float = CANCEL_GRACE,
 ) -> dict[str, Any]:
     """Poll ``GET /v1alpha1/runs/{id}`` to a terminal state.
 
     The blocking half of the serial constraint: nothing else is dispatched
-    until this returns. A timeout returns the last view seen with a
-    synthesised ``timed_out`` state rather than raising, so one hung actor
-    costs one 1-rated grade instead of abandoning the whole pass.
+    until this returns. A timeout therefore may not just *stop watching* —
+    it cancels the run and waits for the control plane to report it
+    terminal, because until then the run is still the shared model's work
+    and the next dispatch would overlap it.
+
+    The view comes back with a synthesised ``timed_out`` state, so one hung
+    actor still costs one 1-rated grade instead of abandoning the whole
+    pass; the state the control plane actually settled on is kept beside it
+    as ``settled_state``. A run that completed in the gap between the last
+    poll and the cancel keeps its real ``completed`` state and its answer —
+    rating that 1 would be a claim about the actor that is not true.
+
+    What this can and cannot promise: the cancellation is durable in the
+    ledger before the call answers, and the actor is *asked* to stop, but
+    that propagation is best-effort by design (PRD §13.6). An actor that
+    ignores the ask is a limitation of the protocol, not something this
+    runner can wait out.
     """
     deadline = time.monotonic() + timeout
-    view: dict[str, Any] = {}
     while True:
         view = api.get(f"/v1alpha1/runs/{run_id}")
         state = (view.get("run") or {}).get("state", "")
         if state in TERMINAL_STATES:
             return view
         if time.monotonic() >= deadline:
-            view.setdefault("run", {})["state"] = "timed_out"
+            cancel_run(api, run_id)
+            view, settled = settle_run(api, run_id, interval, sleep, grace)
+            run = view.setdefault("run", {})
+            run["settled_state"] = settled
+            if settled != "completed":
+                run["state"] = "timed_out"
             return view
         sleep(interval)
 
@@ -415,6 +500,7 @@ def run_pass(
     qwen_mode: str = DEFAULT_QWEN_MODE,
     timeout: float = 1800.0,
     interval: float = 5.0,
+    grace: float = CANCEL_GRACE,
     sleep=time.sleep,
     out=None,
 ) -> list[dict[str, Any]]:
@@ -441,9 +527,10 @@ def run_pass(
         run_input = build_run_input(rule, actor, repo, manifest_digest, revisions, qwen_mode)
         started = time.time()
         run_id = create_run(api, workflow_digest, run_input, rule["id"])
-        view = watch_run(api, run_id, timeout=timeout, interval=interval, sleep=sleep)
+        view = watch_run(api, run_id, timeout=timeout, interval=interval, sleep=sleep, grace=grace)
         elapsed = time.time() - started
-        state = (view.get("run") or {}).get("state", "")
+        run_view = view.get("run") or {}
+        state = run_view.get("state", "")
         answer = extract_answer(view, actor["slot"])
         if state != "completed":
             verdict = checks.rate(rule["check"]["kind"], rule["check"]["expect"], None)
@@ -473,6 +560,10 @@ def run_pass(
         record = {
             "run_id": run_id,
             "run_state": state,
+            # What the control plane settled on, which differs from
+            # `run_state` only for a run this pass timed out and cancelled:
+            # `timed_out` is the runner's word, `cancelled` is the ledger's.
+            "settled_state": run_view.get("settled_state", state),
             "node_outcome": answer["outcome"],
             "actor_key": actor["actor_key"],
             "actor_id": actor["actor_id"],
@@ -604,6 +695,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=1800.0, help="per-run watch timeout (s)")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="watch poll interval (s)")
     parser.add_argument(
+        "--cancel-grace",
+        type=float,
+        default=CANCEL_GRACE,
+        help="how long a timed-out run gets to go terminal after being cancelled (s)",
+    )
+    parser.add_argument(
         "--gate-only",
         action="store_true",
         help="run the revision gate and print what each bridge is serving, then stop",
@@ -715,6 +812,7 @@ def _run(args: argparse.Namespace, out, err) -> int:
         qwen_mode=args.qwen_mode,
         timeout=args.timeout,
         interval=args.poll_interval,
+        grace=args.cancel_grace,
         out=out,
     )
     render_table(records, out=out)

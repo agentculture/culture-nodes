@@ -21,6 +21,7 @@
 
 - every bridge answers 413 + Connection: close to an oversized declared body, draining at most MAX_BODY_BYTES before auth, instead of truncating and desynchronising the keep-alive connection (#302)
 - the measurement runner names itself in User-Agent (Cloudflare 1010), cache-busts API GETs (#305) and aborts a pass when a grade lands under another principal (#306)
+- the measurement runner's watch timeout no longer breaks its own serial guarantee: a timed-out run is cancelled and confirmed terminal by the control plane before the next measurement is dispatched (report rows carry `settled_state` beside `run_state`), and a run that will not settle within `--cancel-grace` stops the pass instead of overlapping two billable sessions on the shared model
 
 ## [0.49.0] - 2026-09-04
 

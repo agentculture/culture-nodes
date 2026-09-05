@@ -10,6 +10,9 @@ from pathlib import Path
 
 
 def main() -> int:
+    argv_file = os.environ.get("FAKE_PI_ARGV_FILE")
+    if argv_file:
+        Path(argv_file).write_text("\n".join(sys.argv[1:]), encoding="utf-8")
     if os.environ.get("FAKE_PI_IGNORE_SIGTERM") == "1":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     fixture = Path(os.environ["FAKE_PI_FIXTURE"])

@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-05T06:04:05Z",
-  "updated": "2026-09-05T06:07:59Z",
+  "updated": "2026-09-05T06:12:30Z",
   "targets": [
     {
       "id": "c1",
@@ -676,6 +676,14 @@
       "text": "no adapter-colleague.yml CI conformance job this cycle (frame park v6)",
       "kind": "follow_up",
       "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "pi, qwen and colleague share ONE served model (thor:8000, user note 2026-09-05): the measurement runner and the first pass (t13) must dispatch strictly one run at a time across ALL of those actors, never one per host; the runner takes a global serial mode as default",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
       "resolved": false,
       "resolution": ""
     }

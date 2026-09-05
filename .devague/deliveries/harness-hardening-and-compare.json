@@ -1,0 +1,469 @@
+{
+  "plan_slug": "harness-hardening-and-compare",
+  "schema_version": 2,
+  "created": "2026-09-05T06:15:14Z",
+  "updated": "2026-09-05T07:44:45Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "codex lanes unavailable at wave-0 fan-out: both dispatches (t1 run 01M1R34KG0AV1M62NZZ4PMK7GR on codex-thor, t4 run 01M1R34KQZYDZQPS6XWQZRT34J on codex-orin) failed in the first attempt with 'Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.' \u2014 codex's ChatGPT auth is spent on both hosts and only an interactive re-login (operator hand-turn) restores it; t1 and t4 are re-routed to local subagents (opus for t1, sonnet for t4) in hh/t1 and hh/t4 worktrees so wave 0 proceeds; wave 1's codex routing (t10, t11) is re-decided at that wave's start from the lane's state",
+      "task_ref": "t1",
+      "reason": "codex-bridge auth expiry on thor and orin (see deploy/prod/README.md 'codex re-login' runbook); user pre-authorized deviations and decisions for this run (2026-09-05)",
+      "affects": [
+        "t4",
+        "t10",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "first pass runs thor only: examples/harness-compare/workflow.yaml pins slot pi to actor://company/pi-thor and slot qwen to actor://company/qwen-thor (static registry ids; no per-host slot), so company/pi-orin and company/qwen-orin are unreachable through the graph and the runner (t11) refuses a manifest whose actors collide on one slot; t13 runs the basic rules against pi-thor and qwen-thor (2 actors x 3 rules x 2 = 12 runs) from a thor-only manifest, and the per-host slot design (one slot per registered actor vs a per-host copy of the graph) is a user decision filed as an issue",
+      "task_ref": "t13",
+      "reason": "graph slots are static registry ids (harness-compare README 'limitation, stated plainly'); found by t11 while wiring the runner",
+      "affects": [
+        "t12",
+        "t14"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "grades from the first pass stay PROPOSED: the runner grades as the agent principal company/measure-runner (c29), and confirming them is the human's act on the review surface; the assistant does not confirm under the operator's Access identity even though the run is autonomous, so t13's 'the operator confirms them' criterion is met by the user after the pass, and the stats audit reports proposed grades explicitly",
+      "task_ref": "t13",
+      "reason": "ledger authority model (PRD \u00a710.4: no actor promotes its own proposal; a machine confirming under a human identity would blend proposed and confirmed)",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "grades from the first pass landed CONFIRMED under company/ori (human), not proposed under company/measure-runner: internal/api/grades.go principalActor() replaces the body's grading_actor_id with the request's bound principal (the operator's Access cookie is company/ori), so the runner's --as is advisory and 14 grades (12 from the pass, 2 from the aborted launches' harness-compare category? \u2014 see the audit) are human-confirmed opinions produced by a machine; c29/h28 are NOT met; the runner now aborts the pass when the first grade's recorded actor differs from --as, and posting as an agent needs the agent's own credential (dial-in bearer) or an explicit delegation the API does not have (issue filed)",
+      "task_ref": "t13",
+      "reason": "principal binding (login-from-anywhere cycle) is correct API behaviour; the plan assumed grading_actor_id was honoured; the wrongly-confirmed grades cannot be un-confirmed in an append-only ledger \u2014 the user decides whether to supersede them",
+      "affects": [
+        "t14",
+        "t11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "risky",
+      "seq": 4
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "adapters/{pi,qwen,codex,claude-code,colleague,notify,human-inbox}/tests/test_server_oversized_body.py (2 tests each, 14 passed)",
+      "behavior_text": "raw socket sends Content-Length > cap: 413 + Connection: close + class actor_rejected_input, no auth header; fresh-connection GET /healthz then 200",
+      "contract_text": "c2 oversized-body refusal ported to every checkout bridge",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "real sockets against start_background on port 0 in all seven adapter suites, run at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "the same modules' second test (declares 10x cap, sends cap bytes)",
+      "behavior_text": "the 413 arrives within the 5 s socket timeout without waiting for the rest",
+      "contract_text": "c28 bounded drain",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "elapsed < 5.0 asserted; run at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "tests/lint/oversizedbody_test.go TestBridgesCallTheOversizedBodyGuardInPostAndDelete",
+      "behavior_text": "seven bridges define and call the helper in do_POST and do_DELETE; jira exempted by name",
+      "contract_text": "c18 all-backends rule for the fix",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "go test ./tests/lint -run OversizedBody ok at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/lint/oversizedbody_test.go TestOversizedBodyHelperIsByteIdenticalAcrossBridges + TestOversizedBodyComparisonDetectsDrift; filelength_test.go",
+      "behavior_text": "regions identical (sha 9641a6b6\u2026), drift detected in the negative fixture; every server.py <= 1000 lines (qwen 997, claude-code 991)",
+      "contract_text": "c13 shared modules untouched, helper identical, under the limit",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "the guard fails on a one-byte corrupted copy (negative case) \u2014 sensitivity proven; run at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "adapters/pi/tests/test_pi_cli.py::test_second_timeout_never_sigkills_and_maps_to_timeout_class",
+      "behavior_text": "FAKE_PI_HANG + FAKE_PI_IGNORE_SIGTERM under 0.15 s: timed_out=True, child pid alive after return, mapping class timeout",
+      "contract_text": "c3 pi second-timeout guard",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "22 passed in pi cli+surface at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "adapters/pi/tests/test_pi_cli.py build_argv/spawn sandbox tests + test_surface.py::test_confinement_states_read_only_is_tool_level_not_a_kernel_boundary + bwrap/docker grep guard",
+      "behavior_text": "read-only argv ends with --tools read; workspace-write/None carry no tool flag; prose names the flag and 'never a kernel boundary'",
+      "contract_text": "c4 pi tool-level read-only",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "22 passed at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "adapters/pi/scripts/run_conformance_kit.sh + adapters/qwen/scripts/run_conformance_kit.sh (exit 0, 4 PASS each) + tests/test_conformance_kit_inputs_match.py",
+      "behavior_text": "kit passes auth, sync, idempotent replay, async+callbacks, cancellation, contract-failure against each fake-backed bridge; inputs identical modulo scratch path",
+      "contract_text": "c5 live fake-backed conformance with one shared input",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "both scripts re-run locally at fed7f707da6894597a7468a6b5592aeee65ddf76; CI jobs switched to them",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_deploy_two_host.py (22 passed) + live docker inspect on thor",
+      "behavior_text": "thor lane emits 'up -d --force-recreate api worker', orin lane 'up -d --force-recreate worker'; prod-api-1/prod-worker-1 Created moved from 2026-09-04T18:30 to 2026-09-05T06:48 on deploy of fed7f707da6894597a7468a6b5592aeee65ddf76's ancestor 94415be",
+      "contract_text": "c7 deploy recreates api and worker",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "shim assertions + one real deploy on thor (compose.orin.yml has no api service, so orin recreates worker only)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "grep -c 'restart worker' deploy/prod/README.md == 0",
+      "behavior_text": "the rotation runbook uses up -d --force-recreate worker and explains why restart is not enough",
+      "contract_text": "c8 README runbook fixed",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "a grep, not a behavioral test; markdownlint clean",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_deploy_cutover.py (21 passed)",
+      "behavior_text": "dry-run empty shim log; undeclared compose key and unreachable account refuse by name; second run skips all; --yes required; no bootstrap/sudo; install-secrets.sh stays 999 lines",
+      "contract_text": "c9/c35 cutover.sh preconditions and idempotency",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "run at fed7f707da6894597a7468a6b5592aeee65ddf76 under the fake-ssh shims",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_deploy_unix_user_colleague.py (16 passed) \u2014 lane half; GET /v1alpha1/actors \u2014 registry half",
+      "behavior_text": "colleague engine accepted, config.json refusal, spark engine set, unit installed, compose keys declared; BUT company/colleague-spark is NOT registered (spark account does not exist; q8 decision)",
+      "contract_text": "c10 colleague actor registered with a fifth slot",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "lane tests pass; the registry read shows no colleague-spark row \u2014 the obligation's registry half is unmet by design this cycle",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_measurement_manifest.py (36 passed)",
+      "behavior_text": "schema validation names the path; digest stable across key order/whitespace and sensitive to every rule field; basic has one rule per category; YAML twin canonicalises to the same digest",
+      "contract_text": "c21 declarative re-runnable manifest",
+      "evidence_type": "automated",
+      "strength": "sensitivity",
+      "strength_basis": "parametrised digest-sensitivity over every rule field; run at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "tests/test_measurement_runner.py (44 passed) + live --gate-only against thor (both bridges revision 94415be, install_mode copy)",
+      "behavior_text": "stale revision refuses naming the actor; measurement and measurement_context (sandbox, bridge_revisions) set on every created run",
+      "contract_text": "c30 the manifest records what was measured",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "fake-API tests + one live gate read at the deployed revision",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "tests/test_measurement_runner.py::test_every_grade_names_the_agent_principal_and_never_the_human (passes against the fake API) vs the live ledger of run 01M1R60MMZ2RVP7YWXWMED5Z1Z",
+      "behavior_text": "LIVE: the grade record is authority=confirmed origin=human actor=company/ori \u2014 grades.go principalActor overrides grading_actor_id with the bound principal; all 12 pass grades landed that way",
+      "contract_text": "c29 grades land proposed under the agent principal",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "the fake-API test cannot see principal binding; the live ledger read is the fact (issue #306, deviation d4)",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "go test ./tests/e2e -run TestHarnessCompare (ok, real PostgreSQL) + tests/lint examplescompile/portability",
+      "behavior_text": "five guarded agent slots compile deterministically; the two-actor run leaves claude/qwen/colleague unset",
+      "contract_text": "c32 fifth slot in the proof",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "run at fed7f707da6894597a7468a6b5592aeee65ddf76",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o16",
+      "test_ref": "GET /v1alpha1/actors/{pi-thor,qwen-thor}/stats after the pass",
+      "behavior_text": "categories locate-exit-code-policy, review-seeded-defect, explain-output-tests present for both thor actors with 6 pass grades each (mean 3.67); orin actors 0 runs",
+      "contract_text": "c25 after-state: stats readable per manifest category",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "live read after the 12-run pass; grades are confirmed-under-operator, see o14",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-05T07:42:41Z",
+        "commit": "fed7f707da6894597a7468a6b5592aeee65ddf76"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "removed",
+      "behavior_text": "no colleague actor is registered or measured this cycle: the spark account does not exist (root hand-turn on spark), so company/colleague-spark, its slot and its runs wait; lane support shipped",
+      "caused_by": [
+        "c10"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "the orin deploy lane recreates only the worker: compose.orin.yml declares no api service",
+      "caused_by": [
+        "c7"
+      ],
+      "evidence_refs": [
+        "e8"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "runner GETs carry a unique _nocache query and Cache-Control: no-cache because the Access edge caches API JSON (a completed run served as running for 366 s, #305)",
+      "caused_by": [
+        "c30"
+      ],
+      "evidence_refs": [
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "the shared conformance -input carries mode=default for both pi and qwen: the qwen bridge refuses a dispatch naming no ACP mode and pi ignores the field",
+      "caused_by": [
+        "c5"
+      ],
+      "evidence_refs": [
+        "e7"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "amended",
+      "behavior_text": "manifest-pass grades land CONFIRMED under the operator's Access identity (company/ori), not proposed under company/measure-runner: internal/api/grades.go binds the grading actor to the request principal; a runner needs the agent's own credential or an explicit delegation (#306; proposed deviation d4)",
+      "caused_by": [
+        "c29"
+      ],
+      "evidence_refs": [
+        "e14"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "added",
+      "behavior_text": "the measurement runner aborts the pass as soon as the ledger records a grade under a principal other than the one it named, or with authority other than proposed (assert_grade_landed_as; proposed deviation d4)",
+      "caused_by": [
+        "c29"
+      ],
+      "evidence_refs": [
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b7",
+      "kind": "amended",
+      "behavior_text": "the first pass measured thor only (pi-thor, qwen-thor) from basic-thor.json: the compare graph pins each slot to a thor registry id, so orin actors are unreachable through it (#304; proposed deviation d2)",
+      "caused_by": [
+        "c32"
+      ],
+      "evidence_refs": [
+        "e16"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

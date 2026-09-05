@@ -6,7 +6,8 @@
 # Agents as OS users (#243): one Unix account per engine per host --
 # culture-codex, culture-qwen and culture-pi on thor and orin (#294 added
 # the last two), culture-claude (shared by the developer, planner, verifier
-# and intake bridges) and culture-qwen on spark. The account is the
+# and intake bridges), culture-qwen and culture-colleague (#298 t5) on
+# spark. The account is the
 # confinement: no sudo, no docker group, a 750 home the login user's 750
 # home cannot be read from, and only what its bridge needs inside.
 #
@@ -47,6 +48,15 @@ UNIX_USER_QWEN_VERSION=0.22.0
 UNIX_USER_PI_VERSION=0.85.0
 UNIX_USER_PI_NODE_VERSION=22.23.2
 UNIX_USER_PI_PACKAGE=@earendil-works/pi-coding-agent
+# colleague (#298 t5) is the third harness in the comparison and the only
+# one that is a plain Python distribution: `uv tool install colleague==<pin>`
+# inside the account, no system package and no node. 1.76.0 is the version
+# the spark login user runs today, and the account must run the same one --
+# the comparison holds the model constant, so the harness has to be a fact
+# this file states too (c24). Its provider config is ~/.colleague/config.json
+# (the `lobes` section points at the gateway), copied into the account by
+# the bootstrap the way qwen's settings.json and pi's models.json are.
+UNIX_USER_COLLEAGUE_VERSION=1.76.0
 UNIX_USER_CODEX_RELEASE_BASE=https://github.com/openai/codex/releases/download
 UNIX_USER_CLAUDE_INSTALLER=https://claude.ai/install.sh
 UNIX_USER_QWEN_INSTALLER=https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh
@@ -64,8 +74,8 @@ declare -F say >/dev/null 2>&1 || say() { printf '==> %s\n' "$*"; }
 # else is refused BEFORE it reaches a command line: the engine name is
 # spliced into useradd, ssh targets and paths.
 unix_user_engine_ok() {
-  case "$1" in codex|claude|qwen|pi) return 0 ;; esac
-  echo "unix-user: unknown engine '$1' (expected codex, claude, qwen or pi)" >&2
+  case "$1" in codex|claude|qwen|pi|colleague) return 0 ;; esac
+  echo "unix-user: unknown engine '$1' (expected codex, claude, qwen, pi or colleague)" >&2
   return 1
 }
 
@@ -74,13 +84,14 @@ unix_user_engine_ok() {
 # nodes-op.sh's actor table and the bridge's repo_allowlist carry); claude
 # gets one clone per bridge because four bridges share the account and a
 # worktree of the operator's checkout is unreadable from it (c25); qwen and
-# pi are one developer bridge each.
+# pi and colleague are one developer bridge each.
 unix_user_roles() {
   case "$1" in
     codex) echo agent ;;
     claude) echo "developer planner verifier intake" ;;
     qwen) echo qwen-developer ;;
     pi) echo pi-developer ;;
+    colleague) echo colleague-developer ;;
   esac
 }
 
@@ -137,7 +148,7 @@ fi
 [ -n "$pubkey_file" ] && [ -s "$pubkey_file" ] || { echo "unix-user bootstrap: no operator public key found ($login_home/.ssh/authorized_keys or an id_*.pub); set UNIX_USER_PUBKEY_FILE" >&2; exit 1; }
 [ $# -gt 0 ] || { echo "unix-user bootstrap: no engine named" >&2; exit 1; }
 for engine in "$@"; do
-  case "$engine" in codex|claude|qwen|pi) ;; *) echo "unix-user bootstrap: unknown engine $engine" >&2; exit 1 ;; esac
+  case "$engine" in codex|claude|qwen|pi|colleague) ;; *) echo "unix-user bootstrap: unknown engine $engine" >&2; exit 1 ;; esac
 done
 for engine in "$@"; do
   account=culture-$engine
@@ -164,11 +175,14 @@ for engine in "$@"; do
   # copied like the other two (#249 review, finding 1). pi is the same shape
   # (#294): its providers live in ~/.pi/agent/models.json (endpoint, model,
   # the dummy apiKey a keyless lobe wants), and the account reads its own.
+  # colleague (#298 t5) is the same shape again: ~/.colleague/config.json
+  # carries the `lobes` section that points a session at the gateway.
   case "$engine" in
     codex) cred_dir=.codex; cred_file=auth.json ;;
     claude) cred_dir=.claude; cred_file=.credentials.json ;;
     qwen) cred_dir=.qwen; cred_file=settings.json ;;
     pi) cred_dir=.pi/agent; cred_file=models.json ;;
+    colleague) cred_dir=.colleague; cred_file=config.json ;;
   esac
   # The top-level dot directory is what the account must own outright (pi
   # writes sessions beside its models.json under ~/.pi/agent, and a root-owned
@@ -218,7 +232,7 @@ for engine in "$@"; do
       chmod 600 "$dst"
       chown -R "$account:$account" "$home/$cred_top"
     else
-      echo "credential $src: absent on this host — $account will need its own $cred_dir/$cred_file (an $engine login, or for qwen/pi the provider config) before its bridge can start"
+      echo "credential $src: absent on this host — $account will need its own $cred_dir/$cred_file (an $engine login, or for qwen/pi/colleague the provider config) before its bridge can start"
     fi
   fi
   echo "account $account: home $home mode 750, linger on, key installed, groups: $groups"
@@ -281,7 +295,11 @@ echo "account $ACCOUNT: home mode 750, groups: $groups"'
 # ~/.local/share/pi-node/<node>/, pi is npm-installed INTO that node prefix,
 # and ~/.local/bin/pi is a wrapper (not a symlink) that prepends that node to
 # PATH and execs the real pi. The node dir is named for the node pin, so a
-# bumped node pin re-installs like a bumped pi pin does.
+# bumped node pin re-installs like a bumped pi pin does. colleague (#298 t5)
+# is the simplest of the five: a Python distribution the account's OWN uv
+# installs as a tool (`uv tool install colleague==<pin>`), so nothing is
+# installed system-wide and the account never needs a package manager it
+# does not have.
 UNIX_USER_ENGINE_INSTALL_REMOTE='set -euo pipefail
 bin=$HOME/.local/bin/$ENGINE
 mkdir -p "$HOME/.local/bin"
@@ -332,6 +350,14 @@ case "$ENGINE" in
     ;;
   claude) curl -fsSL "$CLAUDE_INSTALLER" | bash -s "$VERSION" ;;
   qwen) curl -fsSL "$QWEN_INSTALLER" | bash -s -- --version "$VERSION" ;;
+  colleague)
+    # The uv this account installed one step earlier in unix_user_provision,
+    # never the login user copy -- that one sits in a 0750 home this account
+    # cannot read. --force so a wrong pin is replaced rather than left in
+    # place; `have` above already returned for a matching one.
+    [ -x "$HOME/.local/bin/uv" ] || { echo "refusing: no uv in $HOME/.local/bin, so colleague cannot be installed as a tool in this account" >&2; exit 3; }
+    "$HOME/.local/bin/uv" tool install --force "colleague==$VERSION"
+    ;;
   pi)
     [ "$pi_node_arch" != unsupported ] || { echo "refusing: no node release tarball for $(uname -m) (nodejs.org ships linux-arm64 and linux-x64), so pi cannot be installed here" >&2; exit 3; }
     node_name=$(basename "$pi_node_dir")
@@ -469,6 +495,7 @@ unix_user_provision() {
     claude) version=$UNIX_USER_CLAUDE_VERSION ;;
     qwen) version=$UNIX_USER_QWEN_VERSION ;;
     pi) version=$UNIX_USER_PI_VERSION; how="node v$UNIX_USER_PI_NODE_VERSION tarball + npm inside the account under ~/.local/share/pi-node, no system node" ;;
+    colleague) version=$UNIX_USER_COLLEAGUE_VERSION; how="uv tool install inside the account, no system package" ;;
   esac
   # Values spliced into remote commands are shapes this lane owns, checked
   # before the splice: a version is a version, a repo URL is URL characters.
@@ -514,6 +541,18 @@ unix_user_provision() {
       return 1
     }
   fi
+  if [ "$engine" = colleague ]; then
+    # Same rule as pi and qwen (#294, #249 finding 1): the bootstrap copies
+    # ~/.colleague/config.json into the account; a colleague account without
+    # it has no provider at all, so its bridge would start and every session
+    # would fail on its first request.
+    say "asserting $account's ~/.colleague/config.json (provider config; its lobes section points at the gateway; copied by the bootstrap)"
+    ssh "$target" '[ -s "$HOME/.colleague/config.json" ]' || {
+      echo "provision refused on $host: $account has no ~/.colleague/config.json, so a colleague session under it has no provider and no model" >&2
+      echo "hint: re-run the bootstrap, which copies the login user's ~/.colleague/config.json into the account: sudo bash ${REMOTE_DIR:-culture-nodes-prod}/deploy/prod/lanes/unix-user.sh bootstrap colleague   (on $host)" >&2
+      return 1
+    }
+  fi
   if [ "$engine" = qwen ]; then
     # The bootstrap copies ~/.qwen/settings.json into the account; a qwen
     # account without it has no endpoint and no API key, so its bridge would
@@ -552,8 +591,10 @@ unix_user_provision() {
 # The session shapes the four engines run under a bridge, bracket idiom so
 # the pattern never matches the shell that carries it over ssh (the first
 # thor cutover refused every deploy on a phantom session until it did). pi
-# sessions are the bridge's own driver module (adapters/pi, #294), like qwen.
-UNIX_USER_SESSION_PATTERN='[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli|pi_bridge[.]pi_cli'
+# sessions are the bridge's own driver module (adapters/pi, #294), like qwen;
+# a colleague session is the `colleague work` subprocess the bridge spawns
+# (#298 t5), so the account's unit is as restart-guarded as the other four.
+UNIX_USER_SESSION_PATTERN='[c]laude -p|[c]odex exec|qwen_bridge[.]qwen_cli|pi_bridge[.]pi_cli|[c]olleague work'
 
 # unix_user_session_verdict <who> <where> <status> <how-to-look> -- the one
 # reading of a pgrep-over-ssh exit status, shared by the login-user check
@@ -569,7 +610,7 @@ unix_user_session_verdict() { # who where status how-to-look
         say "WARNING: a session is running as $who on $where and SKIP_SESSION_CHECK=1 — stopping or restarting its unit will kill that run mid-session"
         return 0
       fi
-      echo "refusing: a session (claude -p / codex exec / qwen / pi) is running as $who on $where; stopping or restarting its unit now would kill the run and leave it running in the ledger" >&2
+      echo "refusing: a session (claude -p / codex exec / qwen / pi / colleague) is running as $who on $where; stopping or restarting its unit now would kill the run and leave it running in the ledger" >&2
       echo "hint: wait for it to finish ($look), or export SKIP_SESSION_CHECK=1 to accept killing it" >&2
       return 1 ;;
     1)
@@ -588,9 +629,9 @@ unix_user_session_verdict() { # who where status how-to-look
 unix_user_session_check() {
   local host=$1 login=$2 status=0
   [[ "$login" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "unix_user_session_check: '$login' is not a login user name" >&2; return 1; }
-  say "session check: any claude -p / codex exec / qwen / pi session running as $login on $host?"
+  say "session check: any claude -p / codex exec / qwen / pi / colleague session running as $login on $host?"
   unix_user_login_exec "$host" "pgrep -u $login -f '$UNIX_USER_SESSION_PATTERN' >/dev/null" || status=$?
-  unix_user_session_verdict "$login" "$host" "$status" "pgrep -u $login -af 'claude -p|codex exec|qwen|pi_bridge' on $host"
+  unix_user_session_verdict "$login" "$host" "$status" "pgrep -u $login -af 'claude -p|codex exec|qwen|pi_bridge|colleague work' on $host"
 }
 
 # unix_user_account_session_check <host> <engine> -- the same question asked
@@ -604,9 +645,9 @@ unix_user_account_session_check() {
   unix_user_engine_ok "$engine" || return 1
   target=$(unix_user_target "$host" "$engine")
   account=culture-$engine
-  say "session check: any claude -p / codex exec / qwen / pi session running as $account on $host?"
+  say "session check: any claude -p / codex exec / qwen / pi / colleague session running as $account on $host?"
   ssh "$target" "pgrep -u $account -f '$UNIX_USER_SESSION_PATTERN' >/dev/null" || status=$?
-  unix_user_session_verdict "$account" "$target" "$status" "ssh $target pgrep -u $account -af 'claude -p|codex exec|qwen|pi_bridge'"
+  unix_user_session_verdict "$account" "$target" "$status" "ssh $target pgrep -u $account -af 'claude -p|codex exec|qwen|pi_bridge|colleague work'"
 }
 
 # unix_user_rollback_pair <engine> <unit> [host] -- the one-command-per-host
@@ -636,7 +677,7 @@ if [ "${BASH_SOURCE[0]:-}" = "${0:-}" ]; then
       for _engine in "$@"; do unix_user_engine_ok "$_engine" || exit 1; done
       exec bash -c "$UNIX_USER_BOOTSTRAP_ROOT_REMOTE" unix-user-bootstrap "$@" ;;
     *)
-      echo "usage: sudo bash ${0} bootstrap <codex|claude|qwen|pi>..." >&2
+      echo "usage: sudo bash ${0} bootstrap <codex|claude|qwen|pi|colleague>..." >&2
       exit 1 ;;
   esac
 fi

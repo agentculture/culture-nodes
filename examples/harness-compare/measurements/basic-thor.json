@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "actors": [
+    "company/pi-thor",
+    "company/qwen-thor"
+  ],
+  "rules": [
+    {
+      "id": "locate-exit-code-policy",
+      "category": "locate",
+      "instruction": "Read culture_nodes/cli/__init__.py and culture_nodes/cli/_errors.py. Where does the CLI define its exit-code policy — which exit code means success, which means a user-input error, and which means an environment error? Cite the file and the line number(s) where the policy is defined.",
+      "sandbox": "read-only",
+      "check": {
+        "kind": "grep-cites-file-line",
+        "expect": "culture_nodes/cli/_errors.py"
+      },
+      "anchors": {
+        "5": "Cites culture_nodes/cli/_errors.py at the lines defining EXIT_SUCCESS/EXIT_USER_ERROR/EXIT_ENV_ERROR (around lines 21-23) and correctly states 0/1/2 mean success/user error/environment error.",
+        "3": "Names the right values (0/1/2 and their meaning) but does not cite culture_nodes/cli/_errors.py with a line number, or pads the answer with unrelated file references.",
+        "1": "Cites the wrong file, gives the wrong exit-code meanings, fabricates a line number, or gives no answer."
+      },
+      "runs_per_actor": 2
+    },
+    {
+      "id": "review-seeded-defect",
+      "category": "review",
+      "instruction": "Review this unified diff against culture_nodes/api_client.py's `_error_from_body` function. Name the one seeded defect and the line it is on.\n\n```diff\n--- a/culture_nodes/api_client.py\n+++ b/culture_nodes/api_client.py\n@@ -169,14 +169,14 @@ def _error_from_body(status: int, raw: bytes) -> CliError:\n     if isinstance(payload, dict) and \"message\" in payload:\n         code = payload.get(\"code\")\n         if code not in (EXIT_USER_ERROR, EXIT_ENV_ERROR):\n             code = EXIT_USER_ERROR if status < 500 else EXIT_ENV_ERROR\n         return CliError(\n             code=code,\n             message=str(payload[\"message\"]),\n             remediation=str(payload.get(\"remediation\", \"\")),\n         )\n     return CliError(\n-        code=EXIT_USER_ERROR if status < 500 else EXIT_ENV_ERROR,\n+        code=EXIT_USER_ERROR if status <= 500 else EXIT_ENV_ERROR,\n         message=f\"nodes API returned HTTP {status} with an unrecognized error body\",\n         remediation=\"check the API server logs; this may indicate a client/server version mismatch\",\n     )\n```",
+      "sandbox": "read-only",
+      "check": {
+        "kind": "seeded-defect-named",
+        "expect": "500"
+      },
+      "anchors": {
+        "5": "Names the off-by-one/boundary defect precisely: the second branch changed `status < 500` to `status <= 500`, so an HTTP 500 response (a server error) is misclassified as EXIT_USER_ERROR instead of EXIT_ENV_ERROR, and cites line 179 (the changed `+` line).",
+        "3": "Identifies that the comparison operator changed from `<` to `<=` around status 500, but does not explain the consequence (500 misrouted to the wrong exit code) or does not cite the specific line.",
+        "1": "Points at the unchanged `code = EXIT_USER_ERROR if status < 500 else EXIT_ENV_ERROR` line above it, names an unrelated line, fabricates a different defect, or gives no answer."
+      },
+      "runs_per_actor": 2
+    },
+    {
+      "id": "explain-output-tests",
+      "category": "explain",
+      "instruction": "Read culture_nodes/cli/_output.py. Which test file in this repository exercises the behaviour it implements (the stdout/stderr split, --json mode, and the `error:`/`hint:` text format)? Name the file.",
+      "sandbox": "read-only",
+      "check": {
+        "kind": "tests-named",
+        "expect": "tests/test_cli.py"
+      },
+      "anchors": {
+        "5": "Names tests/test_cli.py and points to the assertions that check the `error:`/`hint:` text lines and/or the JSON error shape.",
+        "3": "Names tests/test_cli.py but without pointing to which assertions exercise it, or pads the answer with other, less directly relevant test files.",
+        "1": "Names the wrong test file, claims there is no test coverage, fabricates a file that does not exist, or gives no answer."
+      },
+      "runs_per_actor": 2
+    }
+  ]
+}

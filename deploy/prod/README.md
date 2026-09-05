@@ -915,6 +915,107 @@ with the codex registrations above, substitute each host's numeric LAN IP:
   --metadata repository_identity=agentculture/culture-nodes
 ```
 
+### The colleague harness lane on spark (#298 t5)
+
+The third harness in the comparison runs on **spark**, not on thor or orin:
+`culture-colleague` (the account), `colleague-developer` (the role — its
+config file, its unit and its clone) and `company/colleague-spark` (the
+registered actor). Its bridge listens on **port 8094**, beside the qwen
+bridge's 8092 and pi's 8093, so the three harness ports never collide on a
+host that ends up carrying more than one of them.
+
+The engine is `uv tool install colleague==<pin>` inside the account
+(`UNIX_USER_COLLEAGUE_VERSION` in `lanes/unix-user.sh`), and its provider
+config is `~/.colleague/config.json` — the `lobes` section that points a
+session at the gateway. The bootstrap copies the login user's copy into the
+account exactly as it copies qwen's `settings.json` and pi's `models.json`,
+and `unix_user_provision` refuses if the account has none.
+
+**Creating the account is a hand-turn.** `sudo` asks for a password on
+spark, so `deploy.sh spark` never creates `culture-colleague`: it deploys
+the colleague bridge when the account already opens with the operator key
+and *skips that half, loudly*, when it does not — the five existing spark
+bridges deploy either way. To bring the lane online, type the root step on
+spark and record it on #298:
+
+```bash
+sudo bash deploy/prod/lanes/unix-user.sh bootstrap colleague
+```
+
+Then register the actor (substitute spark's numeric LAN IP; the control
+plane reads the bearer from `NODES_ACTOR_COLLEAGUE_SPARK_TOKEN`, declared in
+both compose files):
+
+```bash
+./register-actor.sh company/colleague-spark http://<spark-lan-ip>:8094 \
+  NODES_ACTOR_COLLEAGUE_SPARK_TOKEN --os-user culture-colleague \
+  --metadata harness=colleague \
+  --metadata model=unsloth/Qwen3.8-27B-NVFP4 \
+  --metadata model_endpoint=http://thor:8000/v1 \
+  --metadata repository_identity=agentculture/culture-nodes
+```
+
+### Bringing a harness actor online: `cutover.sh` (#298)
+
+The three blocks above are the sequence written out by hand. `cutover.sh`
+runs it as one command, for **one host and one engine**:
+
+```bash
+./cutover.sh thor pi --dry-run          # read this first — it touches nothing
+./cutover.sh thor pi --yes              # then act
+./cutover.sh spark colleague --yes      # the spark lane, same command
+```
+
+It prints one line per step — `step <name>: run|skip|refuse — <detail>` —
+and stops at the first failure, naming the failed step on stderr with a
+non-zero exit. The five steps:
+
+| step | what it does | skips when |
+|---|---|---|
+| `account-exists` | `ssh culture-<engine>@<host> id -un` | never (a refusal here is the root hand-turn below) |
+| `compose-declares-token-key` | greps `compose.thor.yml`'s `api` + `worker` blocks and `compose.orin.yml`'s `worker` block for `NODES_ACTOR_<ENGINE>_<HOST>_TOKEN` | never |
+| `secrets` | `install-secrets.sh`'s `install_bridge_account_env` for this engine | the account's `<engine>-bridge.env` exists (`FORCE_QWEN` / `FORCE_PI` / `FORCE_COLLEAGUE=1` rotates it) |
+| `deploy` | `deploy.sh <host>`, which runs `deploy_account_engine_bridge <host> <engine>` | the bridge's `/v1/capabilities` deployment block already reports this checkout's revision |
+| `register` | `register-actor.sh` with `--os-user` and the `harness` / `model` / `model_endpoint` / `repository_identity` metadata | `register-actor.sh` itself answers `unchanged` |
+
+Because every step is idempotent, a re-run after a partial failure resumes
+rather than repeats, and a second identical run reports every step skipped
+and exits 0.
+
+**The one remaining hand-turn is the root bootstrap.** `cutover.sh` never
+calls `bootstrap-accounts.sh` and never calls `sudo`
+(`tests/test_deploy_cutover.py` checks both, in the script text and in the
+fake-host call log): creating `culture-<engine>` needs root, `sudo` asks for
+a typed password on orin and spark, and #243's every-hand-turn rule wants
+that step recorded rather than buried. An account that does not open is
+refused by name with the command to type:
+
+```bash
+sudo bash deploy/prod/lanes/unix-user.sh bootstrap pi   # on the host itself
+```
+
+Two things `cutover.sh` deliberately cannot fix for you:
+
+- **the compose token key** is a committed change. If
+  `NODES_ACTOR_<ENGINE>_<HOST>_TOKEN` is not already declared in both files'
+  `api`/`worker` environment blocks, the run refuses naming the key — a
+  bridge deployed without it answers 401 to every dispatch.
+- **`install-secrets.sh` does not grow.** It is 999 lines, one under the
+  hard limit `tests/lint/filelength_test.go` enforces, and it has no
+  subcommand entry point. `cutover.sh` lifts its already-fenced
+  `QWEN_PI_ACCOUNT_ENV` region (the same region
+  `tests/test_deploy_qwen_pi_bridges.py` has run standalone since #294) and
+  sources it, so there is one definition of `install_bridge_account_env`.
+  Running `install-secrets.sh` whole would rotate or re-check the entire
+  production secret set on *both* hosts — not what bringing one actor online
+  should do. `deploy.sh`, by contrast, reads its host from `argv` and cannot
+  be sourced, so the deploy step invokes it as a whole (`CUTOVER_DEPLOY_CMD`
+  overrides the command, the way `PSQL_CMD` overrides register-actor's psql).
+
+The endpoint is never hardcoded: the numeric LAN IP `register-actor.sh`
+requires (c20) is derived with `getent hosts` on the target, exactly as
+`deploy.sh` derives `THOR_IP`.
+
 ### Unbounded concurrency — placement is the containment
 
 The bridge's async runner spawns one thread + one `codex exec` subprocess
@@ -1030,15 +1131,30 @@ FORCE_CODEX=1 ./install-secrets.sh   # fresh bridge tokens; refuses without it
 ./deploy.sh orin
 ssh thor 'systemctl --user restart codex-bridge'
 ssh orin 'systemctl --user restart codex-bridge'
-# restart both workers — both carry both NODES_ACTOR_CODEX_*_TOKEN envs (c4):
+# recreate both workers — both carry both NODES_ACTOR_CODEX_*_TOKEN envs (c4):
 ssh thor 'docker compose --env-file ~/.culture-nodes/prod.env \
-  -f culture-nodes-prod/deploy/prod/compose.thor.yml restart worker'
+  -f culture-nodes-prod/deploy/prod/compose.thor.yml up -d --force-recreate worker'
 ssh orin 'docker compose --env-file ~/.culture-nodes/prod.env \
-  -f culture-nodes-prod/deploy/prod/compose.orin.yml restart worker'
+  -f culture-nodes-prod/deploy/prod/compose.orin.yml up -d --force-recreate worker'
 ```
 
-Restart both workers even when only one bridge's token rotated — each
-worker resolves both actors, so each needs the refreshed `prod.env`.
+`restart` is not enough for a `prod.env` change: it sends the running
+container's own process a restart signal and reuses that container's
+existing environment as it was at creation — it does not re-read
+`--env-file`, so a rotated token never reaches it that way (issue #300).
+`up -d --force-recreate` tears the container down and creates a fresh one
+from the same image with the current `prod.env` interpolated in, which is
+what actually delivers a rotated value.
+
+Recreate both workers even when only one bridge's token rotated — each
+worker resolves both actors, so each needs the refreshed `prod.env`. As of
+this fix, `./deploy.sh thor` / `./deploy.sh orin` above already
+force-recreate `api` and `worker` (and, on orin, `worker` only — it runs no
+`api` service) on every run, so the two manual commands here are now a
+belt-and-suspenders step, not the only path to a live rotation; the raw
+`docker compose ... up -d --force-recreate worker` form is what to reach for
+when rotating a token *without* running a full `deploy.sh` (e.g. rotating
+only `codex-bridge`'s own token, which the deploy lanes don't touch).
 
 ### issue #14 acceptance mapping
 

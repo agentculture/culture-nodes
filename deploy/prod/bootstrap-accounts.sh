@@ -3,6 +3,7 @@
 # agents-as-OS-users lane (#243), typed by the operator.
 #
 #   deploy/prod/bootstrap-accounts.sh spark    # culture-claude + culture-qwen
+#                                              # + culture-colleague
 #   deploy/prod/bootstrap-accounts.sh orin     # culture-codex + culture-qwen + culture-pi
 #   deploy/prod/bootstrap-accounts.sh thor     # culture-codex + culture-qwen + culture-pi
 #                                              # (thor is NOPASSWD today, so
@@ -18,9 +19,15 @@
 # thor and orin carry three engines since #294 (codex qwen pi): the qwen and
 # pi accounts are the harness-comparison lanes beside codex, each with its
 # own pinned engine and its own copy of the login user's provider config
-# (~/.qwen/settings.json, ~/.pi/agent/models.json). spark keeps claude +
-# qwen: its culture-qwen and qwen-developer bridge stay as they are, and it
-# gets a pi account only if the operator asks.
+# (~/.qwen/settings.json, ~/.pi/agent/models.json). spark carries claude +
+# qwen + colleague since #298 t5: its culture-qwen and qwen-developer bridge
+# stay as they are, culture-colleague is the third harness in the comparison
+# (its provider config is ~/.colleague/config.json), and spark gets a pi
+# account only if the operator asks.
+#
+# `spark` is a HAND-TURN: sudo asks for a password there, so this wrapper
+# runs the root script in place and the operator types it (#298). Nothing in
+# the deploy lane creates culture-colleague on its own.
 #
 # Each invocation is an operator hand-turn: record it as a comment on the
 # tracking issue (CLAUDE.md, "Every piece of operator work opens or updates
@@ -33,7 +40,7 @@ LANE="$SCRIPT_DIR/lanes/unix-user.sh"
 [ -f "$LANE" ] || { echo "error: $LANE missing" >&2; echo "hint: run from a checkout that carries deploy/prod/lanes/unix-user.sh" >&2; exit 2; }
 
 case "$HOST" in
-  spark) ENGINES="claude qwen" ;;
+  spark) ENGINES="claude qwen colleague" ;;
   orin|thor) ENGINES="codex qwen pi" ;;
   *) echo "error: unknown host $HOST" >&2; echo "hint: one of spark, orin, thor" >&2; exit 1 ;;
 esac

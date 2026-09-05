@@ -1,0 +1,692 @@
+{
+  "slug": "harness-hardening-and-compare",
+  "title": "harness-hardening-and-compare",
+  "frame_slug": "harness-hardening-and-compare",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-05T06:04:05Z",
+  "updated": "2026-09-05T06:12:30Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Harness hardening and measurement shipped: the pi and qwen bridges (and every checkout bridge) refuse oversized bodies with a 413 instead of desynchronizing the keep-alive connection, a hung pi sync reports the timeout outcome instead of a 500, pi's read-only sandbox mode is enforced at the tool level or refused, CI proves the harness swap by running the \u00a713 conformance kit live against fake-backed pi and qwen bridges with one shared input, deploy.sh recreates api and worker whenever the actor-token set changes, one reviewed command brings a new harness actor online after the root bootstrap, and the harness-compare workflow grades pi, qwen and colleague on the same served model across a declared task set.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "every clause of the announcement maps to at least one confirmed requirement (c2-c5, c7-c10, c21) and to a success signal in c27; a clause with no requirement behind it is struck from the announcement, not left as aspiration",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "oversized-body refusal (#302 item 1): _read_raw_body is byte-identical (md5 72fcf5a7) in pi, qwen, claude-code, codex, colleague, human-inbox and notify server.py and truncates at MAX_BODY_BYTES=8 MiB; notify and human-inbox already ship _refuse_oversized_body (drain in 64 KiB chunks, 413, Connection: close via _write_json(close=True)) \u2014 port that helper verbatim to the five checkout bridges and call it before _read_json_body in the invocation handler; jira's server.py already answers 413 at 1 MiB and is untouched",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "each of the five checkout bridges has a unit test that opens one keep-alive connection, sends a request declaring Content-Length above MAX_BODY_BYTES, receives 413 with Connection: close, and the helper text is byte-identical across the five (diff, not a per-adapter reformat); every server.py stays under 1000 lines",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "pi sync-timeout escape (#302 item 2): pi_cli.run_sync sends SIGTERM to the process group then calls communicate(timeout=5) with no second TimeoutExpired handler, so an ignoring child surfaces as a generic 500 instead of mapping.CLASS_TIMEOUT; claude_cli.py:252-262, codex_cli.py:365-376 and qwen acp/dispatch.py:229-240 all catch the second timeout and report timed_out=True \u2014 pi gains the same guard, and the test uses fake_pi with FAKE_PI_HANG=1 plus a SIGTERM-ignoring variant (fake_claude.py already has FAKE_CLAUDE_IGNORE_SIGTERM for this)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "a fake pi that ignores SIGTERM (FAKE_PI_IGNORE_SIGTERM) under a 0.15 s sync timeout returns SyncRunResult.timed_out=True and the handler answers the timeout outcome class, and the child is left running (asserted via its pid file), never SIGKILLed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "pi tool-level read-only (#302 item 3): pi 0.85.0 on thor (probed as culture-pi) exposes --tools/-t allowlist and --exclude-tools/-xt denylist over the built-ins read, bash, edit, write; pi_cli.spawn currently does 'del sandbox, mode' while capabilities.py advertises sandbox_modes=('read-only','workspace-write') and server.py validates the value \u2014 either build_argv adds --tools read for read-only (soft enforcement, no kernel-boundary claim) or read-only leaves SANDBOX_MODES and the advertised list",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "build_argv(cfg, instruction, sandbox='read-only') contains '--tools read'; workspace-write contains no --tools flag; the capabilities document's confinement prose says read-only is tool-level and names the flag; a handover dispatch still requires workspace-write (server.py:574 unchanged)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "live fake-backed conformance (#297, deviation d2): adapter-pi.yml and adapter-qwen.yml conformance jobs (lines 77-109) run 'go test ./tests/conformance' with no -endpoint; each adapter gains scripts/run_conformance_kit.sh modelled on adapters/claude-code/scripts/run_conformance_kit.sh (start_background on port 0, port file, the kit with -input/-async-input/-bad-input, -expect-callback-retry, -require-cancellation), and both workflows switch to it with the SAME -input JSON so the swap is proven over HTTP",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "adapters/pi/scripts/run_conformance_kit.sh and adapters/qwen/scripts/run_conformance_kit.sh exist, are executable, pass locally with only go, uv and the fake on the box, and both workflows' conformance job invokes them; the -input, -async-input and -bad-input strings are identical between the two scripts modulo the scratch repo path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "deploy.sh recreates api/worker on token change (#300): lanes/two-host.sh thor lane runs 'stop scheduler worker api', 'up -d --scale scheduler=0', 'up -d worker'; the orin lane runs 'up -d' (deploy.sh:927) \u2014 none passes --force-recreate, and prod-worker-1 on thor was recreated by hand at 2026-09-04T18:30 (docker inspect) \u2014 the lanes recreate api and worker, and tests/test_deploy_two_host.py's shim assertions (_docker(THOR, 'up -d --scale scheduler=0') etc.) move with the new argv",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "tests/test_deploy_two_host.py asserts that after a run the thor lane's compose argv includes --force-recreate for api and worker and the orin lane's does too, and the live test on thor shows prod-worker-1's Created timestamp move on a deploy with no code change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "deploy/prod/README.md's token-rotation runbook (lines 1033-1040) tells the operator to 'docker compose restart worker' after a prod.env change; restart re-uses the existing container and does not re-read --env-file, so the runbook itself reproduces #300 \u2014 it changes to the recreate form in the same PR",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "deploy/prod/README.md contains no 'docker compose ... restart worker' instruction for a token change; the rotation runbook shows the recreate form",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "first-class cutover command (#298): the manual sequence is bootstrap-accounts.sh (root, stays a hand-turn) \u2192 install-secrets.sh (999 lines, one under the 1000-line hard limit in tests/lint/filelength_test.go, so it cannot absorb new logic) \u2192 deploy.sh deploy_account_engine_bridge via lanes/account-bridges.sh (455 lines) and lanes/unix-user.sh (643, asserts ~/.pi/agent/models.json) \u2192 register-actor.sh with --os-user and harness/model/model_endpoint metadata (README 'Qwen-versus-Pi' section); the command sequences secrets \u2192 deploy \u2192 register with a dry-run and names every refused step (the #289 posture)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "deploy/prod/cutover.sh, given a host and an engine, with --dry-run prints every step it would run and exits 0 without ssh side effects (shim log empty); without --dry-run it runs install-secrets' engine lane, deploy_account_engine_bridge and register-actor in that order, stops at the first failure, names the failed step on stderr and exits non-zero; it never calls bootstrap-accounts.sh; the script stays under 1000 lines and install-secrets.sh does not grow",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "measure pi vs qwen vs colleague: examples/harness-compare/workflow.yaml fans one instruction over four fixed slots (claude, codex, qwen, pi; README: 'comparing a fifth harness means adding a fifth slot'); the live registry (GET /v1alpha1/actors on thor) has pi-thor/pi-orin/qwen-thor/qwen-orin with harness metadata but no colleague actor; adapters/colleague has a bridge and its own run_conformance_kit.sh (COLLEAGUE_ENGINE=mock) but no CI workflow, no deploy unit and no registration; colleague 1.76.0 is installed on spark and thor:8000 serves unsloth/Qwen3.8-27B-NVFP4 \u2014 the comparison adds a colleague slot and actor on the same model, then runs a declared task set per actor and grades each run (POST /v1alpha1/runs/{id}/grades, read back via /v1alpha1/actors/{id}/stats, category harness-compare)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "GET /v1alpha1/actors lists company/colleague-spark with harness=colleague and model=unsloth/Qwen3.8-27B-NVFP4 metadata; the colleague bridge on spark answers /v1/capabilities; examples/harness-compare compiles with five slots and tests/e2e/harnesscompare_test.go still passes with the unset colleague slot never running",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "no kernel sandbox returns for pi: frame harness-interop-pi-qwen claim c15 (confirmed) makes the engine account the confinement and capabilities.py's prose says 'pi has no sandbox'; #302 item 3 is tool-level only and never claims a kernel boundary; the Qodo writable_git finding (pi_cli.py:145) was pushed back on the same ground and stays out",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "no PR in this cycle adds bwrap, docker, or a micro-VM to the pi lane; capabilities.py keeps the 'pi has no sandbox' prose and adds only the tool-level wording",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "the byte-identical shared modules (preflight.py, deployment.py, dialin.py, reap.py, reclaim.py \u2014 tests/lint/preflightsurface_test.go, dialintransport_test.go, workspacereaper_test.go) are not touched; server.py is not a guarded module, but the oversized-body helper is copied verbatim into each bridge rather than formatted per adapter (CLAUDE.md: isort differs across adapters), and server.py sizes are 925/947/941/925/866 lines against the 1000-line limit, so the helper must stay under ~50 lines",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "tests/lint preflightsurface, dialintransport and workspacereaper guards pass unchanged; diff of the oversized-body helper across the five bridges is empty; go test ./tests/lint filelength passes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "all-backends rule (workspace CLAUDE.md): the oversized-body fix lands in every checkout bridge (pi, qwen, claude-code, codex, colleague), not just the two #302 names, because the code is one shared shape and a fix in one backend is a bug",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "grep for _refuse_oversized_body returns a hit in every adapters/*/src/*/server.py that has an invocation handler (pi, qwen, claude-code, codex, colleague, human-inbox, notify); jira excluded by its own 413",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "measurements are declarative and re-runnable (refines c19; user direction 2026-09-05): a manifest under examples/harness-compare/measurements/ (YAML authoring, JSON canonical like every other definition here) declares each measurement as a rule \u2014 id, category, instruction, an objective check (kind: grep-cites-file-line | seeded-defect-named | tests-named, with its expected value), grade anchors, and runs_per_actor \u2014 and a runner reads the manifest, fans every rule across the declared actor set through the harness-compare workflow, applies the check to each run's summary, and posts the anchored grade with the check result in the notes; adding or changing a rule and re-running appends new runs and grades (ledger is append-only), never edits old ones, and a run is tagged with the manifest digest so stats can be read per manifest version. The initial manifest is a BASIC set: one rule per category (locate, review, explain), runs_per_actor 2",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "the manifest validates against a committed schema; a rule edit changes the manifest digest; the runner refuses a manifest whose digest it cannot compute; re-running the same manifest appends new runs (count rises) and stats per digest are distinguishable; the basic set is exactly one rule per category",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "audience",
+      "text": "the operator running the thor/orin/spark fleet (Ori) and the mesh agents that dispatch to it: every checkout bridge's callers (the worker), the CI reader of the adapter workflows, and the next person bringing a harness online with one command",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "the delivery summary names which audience each shipped piece served, and the cutover script's --dry-run output was read by the operator before its first real run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "before_state",
+      "text": "today: five checkout bridges desync their keep-alive socket on a body over 8 MiB; a pi child that ignores SIGTERM surfaces as a 500; pi advertises read-only and ignores it; adapter-pi.yml and adapter-qwen.yml prove only the in-process reference actor (deviation d2 needs-follow-up); a deploy after a token change leaves api/worker stale until a hand-typed --force-recreate (#300, counted hand-turn); bringing up four actors in #294 took four hand-run scripts per host (#298); and the harness comparison is one graded run each for pi-thor and qwen-thor with no colleague in the fleet",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "each before-state clause is reproduced once before the fix lands (a failing test for the desync and the timeout; the d2 record for CI; the #300 and #298 issue bodies for the deploy and cutover; /actors/{id}/stats for the single data point)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "after_state",
+      "text": "after: an oversized body gets a 413 and a closed connection on every checkout bridge; a hung pi sync returns the timeout outcome; sandbox=read-only launches pi with --tools read; CI runs the \u00a713 kit live against fake-backed pi and qwen bridges with one shared input; deploy.sh recreates api and worker in both lanes and the README runbook agrees; deploy/prod/cutover.sh takes a host+engine from secrets to registration with --dry-run and named refusals; a colleague actor is registered on spark and the harness-compare workflow has a fifth slot; and a declared measurement manifest drives graded runs whose per-actor stats are readable per manifest version",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "each after-state clause is one of the success signals in c27 and is checked in validate-delivery, not asserted in the summary",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "why_it_matters",
+      "text": "the #294 cycle proved pi and qwen work by hand; this cycle makes the proof repeatable (CI, deploy, cutover) and the comparison a re-runnable instrument instead of an anecdote \u2014 the counted hand-turns (#118) drop by two, and 'which actor is better at what' (#28) gets its first manifest-driven data set",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "the delivery summary counts the hand-turns removed (#300's recreate, #298's script sequence) against the ones that remain (root bootstrap), and the first manifest run's stats are linked from it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "success_signal",
+      "text": "adapter-pi.yml and adapter-qwen.yml conformance jobs are green running go test with -endpoint against a started fake-backed bridge, same -input JSON in both; a unit test per checkout bridge sends a body over MAX_BODY_BYTES on a keep-alive connection and the next request on that connection parses cleanly; test_pi_cli proves a SIGTERM-ignoring fake yields timed_out=True; tests/test_deploy_two_host.py asserts the recreate argv in both lanes; a shim test drives cutover.sh --dry-run end to end and a refused step is named in its output; GET /v1alpha1/actors/{id}/stats for the five actors shows grades in the basic manifest's categories after one manifest run; deviation d2 closes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "every signal is a named test, workflow job or API read that validate-delivery can run or fetch; none is a sentence in a summary",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "bounded drain (challenge / security+concurrency lens): notify's _refuse_oversized_body drains the FULL declared Content-Length before answering 413, and notify's do_POST calls it before any auth check, so an unauthenticated client declaring a huge length can hold the single-threaded server reading for as long as it keeps sending (only the 30 s per-read socket timeout bounds it); the ported helper drains at most MAX_BODY_BYTES (or a small multiple) and then closes, and the same bound goes back into notify and human-inbox so all seven stay identical",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "a unit test declares Content-Length = 10 * MAX_BODY_BYTES on a keep-alive connection and sends only MAX_BODY_BYTES bytes; the handler answers 413 with Connection: close within the socket timeout without waiting for the rest",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "grade authority for the manifest runner (challenge / observability+containment lens): internal/api/grades.go makes a human principal's grade land confirmed and an agent's land proposed (nodes-op grade --as defaults to the first kind=human actor); a runner that posts with the operator's identity would mint confirmed human grades by machine, so the runner posts --as its own registered agent actor (e.g. company/measure-runner), grades land proposed with the check result in the notes, and the operator confirms them through the review surface; the runner never uses the human default",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "GET /v1alpha1/actors lists company/measure-runner with kind=agent; every grade a manifest run posts is authority=proposed and origin=agent in the ledger; the runner never calls nodes-op grade with a human actor as the grader",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "the manifest records what was actually measured (challenge / lifecycle lens): thor/orin bridges are uv-tool-install copies that only change on deploy.sh, and pi under --tools read behaves differently from the pi that earned the existing 4/5; each run therefore carries the rule's sandbox and each actor's bridge revision (the deployment block on /v1/capabilities), read before dispatch, and the runner refuses an actor whose revision is behind the merged main revision the manifest run expects",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "each manifest run's input carries sandbox and per-actor bridge revisions; the runner exits non-zero naming the stale actor when a /v1/capabilities revision differs from the expected one",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "fifth slot in the proof (challenge / overlooked-actors lens): tests/e2e/harnesscompare_test.go pins harnessCompareSlots = {claude, codex, pi, qwen} and a registry map of slot -> actor key; the colleague slot joins both, the compile test asserts five guarded agent nodes, and the two-actor run asserts the unset colleague slot never ran",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "go test ./tests/e2e -run TestHarnessCompare passes with five slots declared and the colleague slot unset",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "cutover.sh preconditions and idempotency (challenge / rollback lens): the compose files' api and worker environment blocks must already declare the actor token key for the engine and host (the NODES_ACTOR_..._TOKEN name register-actor.sh is given; a committed change no runtime script can make) and the engine account must exist on the host; cutover.sh checks both first and refuses by name; every step it runs is idempotent (install_bridge_account_env keeps an existing token unless the engine's FORCE flag is set, deploy_account_engine_bridge re-installs the same revision, register-actor.sh inserts a revision only when state differs) so a re-run after a partial failure converges, and --dry-run reports 'would skip' for steps already done",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "a shim test runs cutover.sh twice against the same fake host: the second run's log shows every step skipped and the exit is 0; a run against a compose file missing the token key exits non-zero naming the key",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Port the bounded oversized-body refusal to every checkout bridge and bound it in notify/human-inbox",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "adapters/{pi,qwen,claude-code,codex,colleague}/src/*/server.py gain _refuse_oversized_body, called first in do_POST/do_DELETE before any auth or body read; the helper drains at most MAX_BODY_BYTES then answers 413 with class actor_rejected_input and Connection: close",
+        "notify and human-inbox helpers gain the same drain bound; diff of the helper across all seven server.py files is empty (same bytes, copied not reformatted)",
+        "each of the five checkout bridges has a unit test that on one keep-alive connection sends a body declaring Content-Length above MAX_BODY_BYTES, gets 413 + Connection: close, and a following request on a fresh connection parses cleanly; a second test declares 10x the cap, sends only the cap, and gets the 413 within the socket timeout",
+        "every server.py stays under 1000 lines (go test ./tests/lint -run FileLength passes); all adapter unit suites and scripts/lint-all.sh are green"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h1",
+        "c18",
+        "h15",
+        "c28",
+        "h22",
+        "c13",
+        "h14"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t2",
+      "summary": "Guard pi's second sync timeout the family way and test it with a SIGTERM-ignoring fake",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "pi_cli.run_sync catches the second TimeoutExpired after terminate_group, sets timed_out=True with empty stdout and an explanatory stderr, never sends SIGKILL, and returns a SyncRunResult the handler maps to mapping.CLASS_TIMEOUT",
+        "tests/fake_pi.py gains FAKE_PI_IGNORE_SIGTERM=1; a test with sync_timeout_seconds=0.15 and that flag asserts timed_out=True, that the child pid (from FAKE_PI_CHILD_PID_FILE) is still alive after the call, and that the handler's response class is timeout; the test cleans the child up itself",
+        "the module docstring records the never-SIGKILL stance with a pointer to claude_cli.py and codex_cli.py"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h2"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t3",
+      "summary": "Add pi and qwen run_conformance_kit.sh harnesses and switch both adapter workflows to the live fake-backed run",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "adapters/pi/scripts/run_conformance_kit.sh and adapters/qwen/scripts/run_conformance_kit.sh exist, are executable, and follow adapters/claude-code/scripts/run_conformance_kit.sh: scratch repo, bridge config with the fake as the binary, start_background on port 0, healthz wait, then go test ./tests/conformance with -endpoint, -auth-token, -input, -async-input, -bad-input, -callback-wait, -timeout, -expect-callback-retry and -require-cancellation",
+        "the -input, -async-input and -bad-input JSON strings are identical between the two scripts modulo the scratch repo path (a test in tests/ or a shell diff in the script's own self-check asserts it)",
+        "adapter-pi.yml and adapter-qwen.yml conformance jobs run the scripts (Go toolchain + uv set up as adapter-claude-code.yml does) and pass in CI; the in-process reference check remains as a separate always-on step",
+        "no real pi or qwen binary is installed in CI; if a fake needed a per-input answer to pass, that is recorded as a deviation, not silently added"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "h4"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t4",
+      "summary": "Recreate api and worker in both deploy lanes and fix the README rotation runbook",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy/prod/lanes/two-host.sh's thor sequence recreates api and worker (the 'up -d --scale scheduler=0' and 'up -d worker' calls carry --force-recreate, or an equivalent explicit recreate step) and deploy.sh's orin lane recreates api and worker too; the compose config-hash label and the NODES_BUILD_REVISION parity check still pass",
+        "tests/test_deploy_two_host.py asserts the recreate argv in both lanes and the existing ordering assertions (stop, migrate, up, worker) still hold",
+        "deploy/prod/README.md contains no 'docker compose ... restart worker' step for a token change; the rotation runbook shows the recreate form and says why restart is not enough",
+        "live check recorded in the PR: a deploy.sh thor with no code change moves prod-worker-1's Created timestamp (docker inspect before/after)"
+      ],
+      "deps": [],
+      "covers": [
+        "c7",
+        "h6",
+        "c8",
+        "h7"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t5",
+      "summary": "Teach the account lanes the colleague engine and wire its unit, template and compose token keys",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "deploy/prod/lanes/unix-user.sh accepts engine 'colleague': role colleague-developer, credential file ~/.colleague/config.json copied from the login user, installer 'uv tool install colleague==<pinned>' inside the account, version pin UNIX_USER_COLLEAGUE_VERSION; bootstrap-accounts.sh spark's engine set becomes 'claude qwen colleague'",
+        "deploy/prod/culture-nodes-colleague-developer.service and colleague-developer.json.template exist, modelled on the pi pair; lanes/account-bridges.sh's spark lane can deploy the colleague bridge as culture-colleague; compose.thor.yml and compose.orin.yml declare NODES_ACTOR_COLLEAGUE_SPARK_TOKEN in both api and worker blocks",
+        "tests/test_deploy_unix_user*.py and tests/test_deploy_account_bridges.py cover the colleague engine under the fake-ssh shims, including the refusal when ~/.colleague/config.json is absent; a bootstrap is NOT run \u2014 the spark account remains a hand-turn recorded on #298"
+      ],
+      "deps": [],
+      "covers": [
+        "c10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t6",
+      "summary": "Add the colleague slot and the measurement input object to harness-compare and move the e2e slot pin",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "examples/harness-compare/workflow.yaml gains a fifth guarded agent slot 'colleague' on actor://company/colleague-spark with the same edges as the pi slot, and an optional top-level input object 'measurement' {manifest_digest, rule_id}; README.md documents both",
+        "tests/e2e/harnesscompare_test.go's harnessCompareSlots and slot->actor map include colleague; the compile test asserts five guarded agent nodes; the two-actor run asserts the unset colleague slot never ran; go test ./tests/e2e -run TestHarnessCompare and ./tests/lint pass"
+      ],
+      "deps": [],
+      "covers": [
+        "c32",
+        "h26"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t7",
+      "summary": "Define the measurement manifest: schema, digest, validator and the basic three-rule set",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "examples/harness-compare/measurements/schema.json (JSON Schema 2020-12) defines a manifest of rules {id, category, instruction, sandbox, check {kind: grep-cites-file-line|seeded-defect-named|tests-named, expect}, anchors {5,3,1}, runs_per_actor} and an actors list; basic.yaml declares exactly one rule per category (locate, review, explain), sandbox read-only, runs_per_actor 2",
+        "a zero-dependency python3 module examples/harness-compare/measurements/manifest.py validates a manifest against the schema, canonicalises it to JSON and prints its SHA-256 digest; editing any rule field changes the digest; an invalid manifest exits non-zero naming the field",
+        "tests cover validation, canonical digest stability across YAML key order, and the refusal; a test pins that basic.yaml has one rule per category"
+      ],
+      "deps": [],
+      "covers": [
+        "c21",
+        "h10"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t8",
+      "summary": "Lint guard: the oversized-body helper is byte-identical across all seven bridges",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/lint/oversizedbody_test.go extracts _refuse_oversized_body from every adapters/*/src/*/server.py that defines do_POST and fails if any two differ or if a checkout bridge lacks it; jira is exempted by name with the reason in a comment",
+        "go test ./tests/lint passes on the tip that carries t1 and fails on a copy with one bridge's helper altered (negative case in the test itself)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c13",
+        "h14"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t9",
+      "summary": "Enforce pi read-only at the tool level with --tools read",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "pi_cli.build_argv takes sandbox; read-only appends '--tools read', workspace-write appends no tool flag; spawn forwards sandbox instead of discarding it; a handover dispatch still requires workspace-write (server.py:574 unchanged)",
+        "capabilities.py's confinement prose states read-only is tool-level (--tools read), not a kernel boundary, and keeps 'pi has no sandbox'; test_surface.py and test_pi_cli.py cover both modes and the prose",
+        "no bwrap, docker or micro-VM appears in the pi lane (grep in adapters/pi/src is empty)"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c12",
+        "h13"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t10",
+      "summary": "Add deploy/prod/cutover.sh: secrets -> deploy -> register for one host and engine, dry-run first",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "cutover.sh HOST ENGINE [--dry-run] [--yes] checks preconditions first \u2014 the engine account exists on the host and both compose files declare the engine/host token key in api and worker blocks \u2014 and refuses by name otherwise; then runs install-secrets' install_bridge_account_env for the engine, deploy_account_engine_bridge, and register-actor.sh with --os-user and harness/model/model_endpoint metadata; stops at the first failure, names the failed step on stderr, exits non-zero",
+        "--dry-run prints every step with would-run / would-skip and exits 0 with an empty shim log; a second real run against the same fake host logs every step as skipped and exits 0",
+        "it never invokes bootstrap-accounts.sh or sudo; it stays under 1000 lines and install-secrets.sh does not grow; tests/test_deploy_cutover.py drives all of the above under the fake-ssh shims; deploy/prod/README.md and .claude/skills/nodes-operator/SKILL.md document it"
+      ],
+      "deps": [
+        "t4",
+        "t5"
+      ],
+      "covers": [
+        "c9",
+        "h21",
+        "c35",
+        "h27"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t11",
+      "summary": "Build the measurement runner: revision gate, dispatch per rule, checks, grades as an agent principal",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "examples/harness-compare/measurements/run.py (zero-dependency python3, curl-free urllib) reads a manifest, computes its digest, resolves each declared actor's row and bridge endpoint from GET /v1alpha1/actors, reads the deployment block from each bridge's /v1/capabilities, and exits non-zero naming any actor whose revision differs from --expect-revision",
+        "for each rule x actor x runs_per_actor it creates a harness-compare run with category = rule id, input.sandbox = the rule's sandbox, input.measurement = {manifest_digest, rule_id}, and per-actor bridge revisions in the input; it watches to terminal, applies the rule's check to the actor's summary, and posts a grade with the anchored rating and the check result in the notes, --as the agent actor id given by MEASURE_RUNNER_ACTOR_ID (never the human default)",
+        "a test against a fake API (stdlib http server) proves: stale revision refuses, category and measurement fields are set, each of the three check kinds yields the anchored rating, and every posted grade names the agent principal; ledger records from a fake-API run are authority proposed",
+        "README documents how to add or change a rule and re-run, and that re-runs append (never edit) runs and grades"
+      ],
+      "deps": [
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c30",
+        "h24",
+        "c29",
+        "h28"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t12",
+      "summary": "Register the measure-runner agent principal and the colleague actor when its account exists",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "company/measure-runner is registered kind=agent (register-actor.sh or the API) and GET /v1alpha1/actors lists it; if an agent row needs an endpoint, the row points at a bridge that only serves capabilities and this is recorded",
+        "after the spark bootstrap hand-turn (recorded on #298), cutover.sh spark colleague registers company/colleague-spark with harness=colleague and model=unsloth/Qwen3.8-27B-NVFP4, the bridge answers /v1/capabilities, and GET /v1alpha1/actors shows it; until then this half of the task is explicitly deferred in the delivery summary"
+      ],
+      "deps": [
+        "t8",
+        "t10",
+        "t5"
+      ],
+      "covers": [
+        "h9"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t13",
+      "summary": "First manifest pass on the deployed fleet: pi and qwen on thor and orin",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the fixed bridges are deployed to thor and orin (deploy.sh, revisions checked via /v1/capabilities) and the CI conformance jobs are green on the merged revision",
+        "run.py basic.yaml completes 3 rules x 4 actors x 2 runs; every grade lands proposed; the operator confirms them through the review surface; GET /v1alpha1/actors/{id}/stats for the four actors shows grades in categories locate, review and explain",
+        "the pass's stats snapshot (per actor, per category: completion, attempts_per_completion, duration p50/p95, tokens, mean grade) is written to docs/audits/ with the manifest digest and bridge revisions"
+      ],
+      "deps": [
+        "t11",
+        "t9",
+        "t3",
+        "t8",
+        "t4"
+      ],
+      "covers": [
+        "c25",
+        "h18"
+      ],
+      "instruction": ""
+    },
+    {
+      "id": "t14",
+      "summary": "Validate delivery and summarize: evidence for every success signal, hand-turn accounting, d2 closed",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "validate-delivery files evidence for each c27 signal from named tests, workflow runs or API reads; any signal that cannot be shown is filed as a behavioral delta, not asserted",
+        "the delivery summary maps every announcement clause to its requirement and signal, counts the hand-turns removed (#300 recreate, #298 sequence) against the one remaining (root bootstrap on spark), links the first-pass stats audit, and names what each shipped piece served",
+        "before-state reproductions are cited: the failing desync and timeout tests before t1/t2, deviation d2, the #300/#298 bodies, the pre-pass stats; d2 is marked closed and #302, #300, #298, #297 are closed or commented with what remains"
+      ],
+      "deps": [
+        "t12",
+        "t13"
+      ],
+      "covers": [
+        "c1",
+        "h12",
+        "c23",
+        "h16",
+        "c24",
+        "h17",
+        "c26",
+        "h19",
+        "c27",
+        "h20"
+      ],
+      "instruction": ""
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "a grading-only agent principal (company/measure-runner) may need an endpoint_url to register as kind=agent; if so it points at a capabilities-only stub and the plan records it",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "the colleague half of t12 waits on the spark root bootstrap hand-turn (q8): culture-colleague does not exist and sudo on spark needs a typed password; until then colleague is lane-supported (t5) but not registered or measured",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "the control plane's handling of a bridge 413 (internal/actors/client.go) was not read during /challenge (c33): t1's e2e-style check should send one oversized dispatch through the fake-backed bridge and confirm it classifies as a contract failure rather than retrying",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "why 'up -d' did not recreate the worker on thor is unproven (frame park v1); t4's unconditional recreate does not depend on it, but the live before/after check in t4 is what shows the fix works",
+      "kind": "unknown_nonblocking",
+      "task_id": "t4",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "server.py line budget: qwen 947 and claude-code 941 leave ~50 lines under the hard limit for the helper and its call sites; if it does not fit, a byte-identical sibling module is the escape and t8's guard must follow it",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "the first pass (t13) runs 24 sessions against one served model on thor:8000 with pi/qwen sessions on thor and orin; lobe concurrency is the binding limit \u2014 run one actor per host at a time; the pass is cheap in subscription terms but its wall-clock is unmeasured",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "orphaned pi processes after a second timeout are not reaped (frame park v5); a follow-up reaper, not this plan",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "no adapter-colleague.yml CI conformance job this cycle (frame park v6)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "pi, qwen and colleague share ONE served model (thor:8000, user note 2026-09-05): the measurement runner and the first pass (t13) must dispatch strictly one run at a time across ALL of those actors, never one per host; the runner takes a global serial mode as default",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

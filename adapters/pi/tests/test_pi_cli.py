@@ -1,4 +1,6 @@
 import os
+import re
+import signal
 import time
 from pathlib import Path
 
@@ -35,6 +37,76 @@ def test_argv_is_documented_surface_only():
 def test_input_model_overrides_configured_model():
     cfg = Config(model="configured")
     assert pi_cli.build_argv(cfg, "x", model="override")[-2:] == ["--model", "override"]
+
+
+def test_read_only_sandbox_appends_tools_read():
+    # #302 item 3: read-only is enforced at the tool level with pi's own
+    # `--tools` allowlist, restricted to the built-in `read` tool.
+    cfg = Config(pi_bin="/opt/pi")
+    argv = pi_cli.build_argv(cfg, "x", sandbox="read-only")
+    pair = list(zip(argv, argv[1:]))
+    assert ("--tools", "read") in pair
+
+
+def test_workspace_write_sandbox_appends_no_tool_flag():
+    cfg = Config(pi_bin="/opt/pi")
+    argv = pi_cli.build_argv(cfg, "x", sandbox="workspace-write")
+    assert "--tools" not in argv
+
+
+def test_no_sandbox_appends_no_tool_flag():
+    cfg = Config(pi_bin="/opt/pi")
+    argv = pi_cli.build_argv(cfg, "x", sandbox=None)
+    assert "--tools" not in argv
+
+
+def test_spawn_forwards_read_only_sandbox_as_tools_read(tmp_path):
+    argv_file = tmp_path / "argv.txt"
+    cfg = Config(
+        pi_bin=str(FAKE),
+        pi_env={
+            "FAKE_PI_FIXTURE": str(FIXTURES / "success.jsonl"),
+            "FAKE_PI_ARGV_FILE": str(argv_file),
+        },
+    )
+    proc = pi_cli.spawn(cfg, "x", str(tmp_path), sandbox="read-only")
+    proc.communicate(timeout=5)
+    recorded = argv_file.read_text(encoding="utf-8").splitlines()
+    pair = list(zip(recorded, recorded[1:]))
+    assert ("--tools", "read") in pair
+
+
+def test_spawn_forwards_workspace_write_sandbox_with_no_tools_flag(tmp_path):
+    argv_file = tmp_path / "argv.txt"
+    cfg = Config(
+        pi_bin=str(FAKE),
+        pi_env={
+            "FAKE_PI_FIXTURE": str(FIXTURES / "success.jsonl"),
+            "FAKE_PI_ARGV_FILE": str(argv_file),
+        },
+    )
+    proc = pi_cli.spawn(cfg, "x", str(tmp_path), sandbox="workspace-write")
+    proc.communicate(timeout=5)
+    recorded = argv_file.read_text(encoding="utf-8").splitlines()
+    assert "--tools" not in recorded
+
+
+def test_no_bwrap_docker_or_microvm_in_pi_lane():
+    # c12 frame boundary: pi's own modules never introduce a kernel/VM
+    # sandbox — read-only stays tool-level (`--tools read`). The four shared
+    # bridge modules (byte-identical across adapters, see test_surface.py)
+    # are excluded: they are cited infrastructure other adapters (e.g. codex)
+    # genuinely use bwrap probes in, not pi-authored logic.
+    shared = {"preflight.py", "dialin.py", "deployment.py", "reap.py"}
+    src_dir = Path(__file__).parents[1] / "src" / "pi_bridge"
+    needle = re.compile(r"bwrap|docker|micro-vm|microvm", re.IGNORECASE)
+    offenders = []
+    for path in src_dir.glob("*.py"):
+        if path.name in shared:
+            continue
+        if needle.search(path.read_text(encoding="utf-8")):
+            offenders.append(path.name)
+    assert offenders == []
 
 
 def test_message_end_usage_and_agent_end_are_authoritative():
@@ -94,6 +166,65 @@ def test_cancel_kills_process_group_and_transcript_survives(tmp_path):
         # retain the proc entry until PID 1 reaps it.
         stat = Path(f"/proc/{child_pid}/stat").read_text().split()[2]
         assert stat == "Z"
+
+
+def test_second_timeout_never_sigkills_and_maps_to_timeout_class(tmp_path):
+    """A pi process that ignores SIGTERM survives — the family never SIGKILLs.
+
+    Mirrors claude_cli.py / codex_cli.py: the second ``communicate`` after
+    ``terminate_group`` also raises ``TimeoutExpired`` when the child ignores
+    SIGTERM, and ``run_sync`` must report the timeout honestly (empty
+    stdout, explanatory stderr, ``timed_out=True``) rather than escalating to
+    SIGKILL. The handler then maps that onto ``mapping.CLASS_TIMEOUT``.
+    """
+    pid_file = tmp_path / "fake.pid"
+    cfg = Config(
+        pi_bin=str(FAKE),
+        state_dir=str(tmp_path / "state"),
+        sync_timeout_seconds=0.15,
+        pi_env={
+            "FAKE_PI_FIXTURE": str(FIXTURES / "incomplete.jsonl"),
+            "FAKE_PI_HANG": "1",
+            "FAKE_PI_IGNORE_SIGTERM": "1",
+            "FAKE_PI_CHILD_PID_FILE": str(pid_file),
+        },
+    )
+    try:
+        result = pi_cli.run_sync(cfg, "x", str(tmp_path))
+
+        assert result.timed_out
+        assert result.stdout == ""
+        assert "did not exit after SIGTERM" in result.stderr
+
+        # The pid file is written before the fake replays its fixture, so by
+        # the time run_sync has given up waiting the fake has long since
+        # started and recorded itself.
+        fake_pid = int(pid_file.read_text())
+        os.kill(fake_pid, 0)  # raises ProcessLookupError if the fake died
+
+        ctx = mapping.InvocationContext(run_id="w", node_run_id="n", attempt_id="a")
+        response = mapping.sync_response(
+            result.task_result,
+            ctx,
+            default_success_outcome="completed",
+            actor_id="pi",
+            created_at="2026-09-05T00:00:00Z",
+            timed_out=result.timed_out,
+        )
+        assert response.body["class"] == mapping.CLASS_TIMEOUT
+    finally:
+        try:
+            fake_pid = int(pid_file.read_text())
+        except (FileNotFoundError, ValueError):
+            pass
+        else:
+            try:
+                os.killpg(fake_pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    os.kill(fake_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_usage_maps_to_actor_contract():

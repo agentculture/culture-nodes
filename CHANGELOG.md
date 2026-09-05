@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- review(#307): SonarCloud test-style findings (S9073 composite assertions, S5778 single-invocation exception tests) landed from the pr-upkeep sweep's review-fix branches plus the five it had not reached
+
+## [0.50.0] - 2026-09-05
+
+### Added
+
+- deploy/prod/cutover.sh — one reviewed command that takes a harness actor from secrets to registration on one host (preconditions, --dry-run, --yes, idempotent re-runs, named refusals); the root bootstrap stays the only hand-turn (#298)
+- examples/harness-compare/measurements — a declarative, re-runnable measurement manifest (schema, canonical digest, validator, basic set) and a zero-dependency runner that gates on each bridge's deployed revision, dispatches strictly one run at a time across the shared model, applies objective checks and posts grades; first pass audited in docs/audits/2026-09-05-first-measurement-pass-thor.md
+- adapters/pi and adapters/qwen run the PRD §13 conformance kit live in CI against their own fake-backed bridges with one shared input (#297; closes deviation d2 of harness-interop-pi-qwen)
+- colleague as an engine in the account lanes: unix-user/bootstrap/account-bridges support, culture-nodes-colleague-developer unit and template (port 8094), NODES_ACTOR_COLLEAGUE_SPARK_TOKEN compose keys; a fifth `colleague` slot and an optional `measurement` input object in examples/harness-compare
+- tests/lint/oversizedbody_test.go — the oversized-body helper is byte-identical across all seven bridges, with a negative drift case
+- company/measure-runner — a grading-only agent principal (never dispatched)
+
+### Changed
+
+- deploy lanes recreate api and worker (`up -d --force-recreate`) so a changed prod.env actor token reaches the running containers; the README rotation runbook no longer says `restart worker` (#300)
+- pi `sandbox: read-only` is enforced at the tool level with `--tools read`; the capabilities prose says tool-level, not a kernel boundary (#302)
+- pi's second sync timeout is caught the family way: timed_out reported, never SIGKILL (#302)
+
+### Fixed
+
+- every bridge answers 413 + Connection: close to an oversized declared body, draining at most MAX_BODY_BYTES before auth, instead of truncating and desynchronising the keep-alive connection (#302)
+- the measurement runner names itself in User-Agent (Cloudflare 1010), cache-busts API GETs (#305) and aborts a pass when a grade lands under another principal (#306)
+- the measurement runner's watch timeout no longer breaks its own serial guarantee: a timed-out run is cancelled and confirmed terminal by the control plane before the next measurement is dispatched (report rows carry `settled_state` beside `run_state`), and a run that will not settle within `--cancel-grace` stops the pass instead of overlapping two billable sessions on the shared model
+- the measurement runner's default manifest is `basic-thor.json`, the actor set the harness-compare graph can actually reach: it defaulted to `basic.json`, whose four thor/orin actors collapse onto two fixed slots, so a no-flag run (and the README's documented runner command) aborted on the slot-collision refusal before any dispatch (#304)
+
 ## [0.49.0] - 2026-09-04
 
 ### Added

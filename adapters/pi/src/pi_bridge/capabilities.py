@@ -21,7 +21,10 @@ def _unix_user() -> str:
 def _confinement() -> str:
     return (
         f"unix-user:{_unix_user()}: pi has no sandbox and no tool-approval prompt; "
-        "tools run with the bridge process user's full account authority"
+        "tools run with the bridge process user's full account authority. "
+        "read-only is enforced at the tool level via pi's own `--tools read` flag "
+        "(the read tool only — no bash, edit, or write), never a kernel boundary; "
+        "workspace-write runs with no tool restriction, i.e. the account's full authority"
     )
 
 

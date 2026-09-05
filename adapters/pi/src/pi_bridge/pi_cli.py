@@ -2,6 +2,11 @@
 
 Only documented flags are emitted.  A turn is successful only when an
 ``agent_end`` event is present; process exit status alone is never success.
+
+``run_sync`` follows the same never-SIGKILL stance as the sibling adapters'
+sync runners (``claude_cli.py`` and ``codex_cli.py``): a child that ignores
+SIGTERM past the grace period is left running and the timeout is reported
+honestly, never force-killed.
 """
 
 from __future__ import annotations
@@ -46,13 +51,24 @@ def _env(cfg: Config) -> dict[str, str]:
     return env
 
 
-def build_argv(cfg: Config, instruction: str, *, model: str | None = None) -> list[str]:
+def build_argv(
+    cfg: Config, instruction: str, *, model: str | None = None, sandbox: str | None = None
+) -> list[str]:
     argv = [cfg.pi_bin, "--mode", "json", "-p", instruction, "--no-session", "-a"]
     if cfg.provider:
         argv += ["--provider", cfg.provider]
     selected_model = model or cfg.model
     if selected_model:
         argv += ["--model", selected_model]
+    # #302 item 3: pi has no kernel sandbox (the account is the confinement,
+    # spec c15) — `read-only` is enforced at the *tool* level instead, via
+    # pi's own `--tools` allowlist, restricted to the built-in `read` tool.
+    # This is honest read-only (no bash/edit/write reach pi's tool-call
+    # surface at all), never a claim of a kernel boundary. `workspace-write`
+    # (and no sandbox given) run with pi's default tool set — the account's
+    # full authority — so no flag is appended.
+    if sandbox == "read-only":
+        argv += ["--tools", "read"]
     return argv
 
 
@@ -142,10 +158,10 @@ def spawn(
     continuation_ref: str | None = None,
     writable_git: bool = False,
 ) -> subprocess.Popen:
-    del sandbox, mode, continuation_ref, writable_git
+    del mode, continuation_ref, writable_git
     try:
         return subprocess.Popen(
-            build_argv(cfg, instruction, model=model),
+            build_argv(cfg, instruction, model=model, sandbox=sandbox),
             cwd=repo,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -193,7 +209,12 @@ def run_sync(
     except subprocess.TimeoutExpired:
         timed_out = True
         terminate_group(proc)
-        stdout, stderr = proc.communicate(timeout=5)
+        try:
+            stdout, stderr = proc.communicate(timeout=max(cfg.sync_timeout_seconds * 0.2, 5.0))
+        except subprocess.TimeoutExpired:
+            # Still not done. Never SIGKILL — leave it running and report the
+            # timeout honestly; an operator can inspect/finish reaping later.
+            stdout, stderr = "", "pi did not exit after SIGTERM within the grace period"
     path = transcript_path(cfg, uuid.uuid4().hex)
     path.write_text(stdout, encoding="utf-8")
     return SyncRunResult(proc.returncode, stdout, stderr, parse_session(stdout), timed_out)

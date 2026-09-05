@@ -176,12 +176,13 @@ class Handler(BaseHTTPRequestHandler):
         """Answer 413 + Connection: close when the declared body exceeds
         MAX_BODY_BYTES; True means the request was refused and handled.
 
-        Truncating the read at the cap instead (the previous behavior)
-        left the remainder unread on the keep-alive connection, so the
-        next request's parse started mid-body — request
-        desynchronization. The declared body is drained in bounded chunks
-        before the 413 so closing the socket cannot RST the response out
-        of the client's receive buffer.
+        Truncating at the cap left the remainder on the keep-alive socket
+        (request desync). Something is drained because a socket closed with
+        bytes in flight can RST the 413 out of the client's receive buffer,
+        but this runs BEFORE auth, so the drain is bounded twice: at most
+        MAX_BODY_BYTES (not the declared length), and 2 s per read instead
+        of the request's 30 s — a dripping client cannot hold the
+        single-threaded server (pre-auth read amplification, slowloris).
         """
         try:
             length = int(self.headers.get("Content-Length", "0") or "0")
@@ -189,9 +190,13 @@ class Handler(BaseHTTPRequestHandler):
             length = 0
         if length <= MAX_BODY_BYTES:
             return False
-        remaining = length
+        self.connection.settimeout(2.0)
+        remaining = MAX_BODY_BYTES
         while remaining > 0:
-            chunk = self.rfile.read(min(remaining, 65536))
+            try:
+                chunk = self.rfile.read(min(remaining, 65536))
+            except OSError:
+                break
             if not chunk:
                 break
             remaining -= len(chunk)

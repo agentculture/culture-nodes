@@ -174,6 +174,16 @@ NODES_ACTOR_NOTIFY_TOKEN required
 # is precisely why the audit has to.
 NODES_ACTOR_QWEN_TOKEN required
 
+# The colleague bridge's bearer (adapters/colleague on spark, registered as
+# company/colleague-spark; #298 t5). OPTIONAL, unlike the qwen and pi bearers
+# above, because that lane is opt-in: creating culture-colleague is a typed
+# root step on spark, and `deploy.sh spark` skips the colleague half until the
+# account exists. An absent value on a host whose fleet carries no colleague
+# actor is therefore a deployment choice, not loss -- but it is REPORTED, so
+# the moment the actor IS registered the audit says which host is missing the
+# bearer its dispatches will present.
+NODES_ACTOR_COLLEAGUE_SPARK_TOKEN optional
+
 # The merge gate's own bearer (login-from-anywhere t11, spec c45): the api
 # service resolves it to the registered company/merge-gate agent actor, and
 # scripts/merge-gate.py / collect-handover.py --gate post under it. Optional

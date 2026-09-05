@@ -12,10 +12,11 @@ actor obliges anyone to run it.
 ## What one run does
 
 ```text
-                 ┌── claude ──┐
-  fan (parallel) ├── codex  ──┤ gather (join, all) ── finish (end)
-                 ├── qwen   ──┤
-                 └── pi     ──┘
+                 ┌── claude     ──┐
+                 ├── codex      ──┤
+  fan (parallel) ├── qwen       ──┤ gather (join, all) ── finish (end)
+                 ├── pi         ──┤
+                 └── colleague  ──┘
 ```
 
 1. `fan` is a `parallel` node. Its `split` outcome has one edge per harness
@@ -27,7 +28,8 @@ actor obliges anyone to run it.
    `repo` from `input.actors.<slot>.repo` (a path is meaningful on exactly one
    host — issue #74 — so each actor names its own checkout). The `qwen` slot
    additionally receives `input.actors.qwen.mode`, the ACP session mode its
-   bridge requires.
+   bridge requires. The `colleague` slot takes only `repo`, the same shape as
+   `pi`.
 3. `gather` is a `join` with `policy: all` over the *realized* cardinality:
    it waits for every slot that fanned out, and only those.
 4. `finish` emits `/nodes/gather/output` — the join's arrival array — as the
@@ -81,8 +83,8 @@ run measured.
 `uses:` is a static registry id, and there is no node kind that creates one
 token per element of an input array. What this example does instead:
 
-- the fan-out is over a **fixed set of four actor slots** — `claude`, `codex`,
-  `qwen`, `pi` — one per harness this deployment registers;
+- the fan-out is over a **fixed set of five actor slots** — `claude`, `codex`,
+  `qwen`, `pi`, `colleague` — one per harness this deployment registers;
 - the run input's `actors` **map** says which slots run. Its keys are the
   slots; a missing key is an unset slot. Guards on the split edges
   (`has(input.actors.<slot>)`) are the selection mechanism, and the join
@@ -92,8 +94,8 @@ token per element of an input array. What this example does instead:
   (`/run/input/actors/pi/repo`), never by searching a list for itself;
 - at least one slot must be named — a split that selects no edge is a routing
   failure, not an empty comparison;
-- comparing a fifth harness means adding a fifth slot to `workflow.yaml`, not
-  a fifth element to the input.
+- comparing a sixth harness means adding a sixth slot to `workflow.yaml`, not
+  a sixth element to the input.
 
 Nothing here invents a language feature; if a run-time fan-out lands later,
 this example is the one to rewrite against it.
@@ -128,10 +130,17 @@ file. In short:
 | `codex` | `actor://company/codex-thor` | `adapters/codex` |
 | `qwen` | `actor://company/qwen-thor` | `adapters/qwen` |
 | `pi` | `actor://company/pi-thor` | `adapters/pi` |
+| `colleague` | `actor://company/colleague-spark` | the colleague bridge |
 
 These are registry **keys** a deployment registers against its own bridge
 (`deploy/prod/register-actor.sh`), not hostnames the graph requires. Register
 only the slots you intend to name; a slot you never name is never resolved.
+
+The `colleague` slot's actor, `company/colleague-spark`, is registered by
+task t12 once the `culture-colleague` account exists on spark — it is not
+registered yet. Until then, leave the `colleague` key out of the run input:
+an unregistered actor id would fail dispatch, not the graph, so the slot's
+guard is what keeps it from ever being consulted.
 
 Run input (`input.json` is a complete example):
 
@@ -142,6 +151,7 @@ Run input (`input.json` is a complete example):
 | `handover` | ask each bridge to create a handover ref for what it changed (needs `workspace-write`) |
 | `actors.<slot>.repo` | that actor's checkout on its own host |
 | `actors.qwen.mode` | the ACP mode for the qwen slot (required when `qwen` is named) |
+| `measurement` | optional; tags the run with the measurement manifest (task t7) that drove it — `manifest_digest` and `rule_id` — so per-actor stats can be read per manifest version. Omitted for a run that is not part of a measurement pass. |
 
 ## How an operator runs it
 
@@ -185,16 +195,16 @@ CLAUDE.md's assessment half applies to every actor a comparison dispatches.
 
 - `TestHarnessCompareWorkflowCompilesCleanlyAndDeterministically` — no
   database: the example compiles to the same digest twice and has exactly
-  this shape (parallel entry, four guarded agent slots on the documented
+  this shape (parallel entry, five guarded agent slots on the documented
   registry ids, one `all` join, one end node emitting the join's output).
 - `TestHarnessCompareFansOneInstructionToTwoActorsAndJoins` — real
   PostgreSQL, real API/engine/worker, **two fake actors** behind the `codex`
   and `pi` slots; the run input names only those two. It checks that both
   received the same instruction in their own checkouts, that the run ends with
   one joined result carrying both outcomes and both bridge-measured change
-  sets kept apart per slot, that the unset `claude`/`qwen` slots never ran,
-  that each slot's attempt reports its own model, and that each actor's claim
-  stays `proposed`.
+  sets kept apart per slot, that the unset `claude`/`qwen`/`colleague` slots
+  never ran, that each slot's attempt reports its own model, and that each
+  actor's claim stays `proposed`.
 
 `tests/lint/examplescompile_test.go` and `tests/lint/exampleportability_test.go`
 compile and portability-check this example with every other one.

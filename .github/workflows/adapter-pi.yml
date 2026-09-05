@@ -79,21 +79,21 @@ jobs:
     # the repo top, so this job needs the Go toolchain and does not inherit the
     # `defaults.run.working-directory` above.
     #
-    # DEFERRED live run: adapter-claude-code.yml runs the kit against a LIVE
-    # fake-backed bridge via adapters/claude-code/scripts/run_conformance_kit.sh,
-    # whose fake understands claude_cli.py's whole argv/JSON surface and answers
-    # the kit's THREE distinct inputs (sync / async / bad) dynamically. pi's
-    # fake (adapters/pi/tests/fake_pi.py) replays ONE static event fixture and
-    # cannot answer three different inputs with three different outcomes, and
-    # adapters/pi ships no run_conformance_kit.sh harness yet. So — matching the
-    # instruction to NOT invent a live run that cannot actually pass — this job
-    # runs the kit's always-on reference check (no -endpoint: it drives an
-    # in-process §13-correct reference actor, installing NO pi binary and making
-    # no network call), proving the kit compiles and the protocol reference
-    # holds. The live fake-backed run against the pi-bridge with a shared
-    # -input JSON (spec honesty condition for c33) lands with the adapter's own
-    # run_conformance_kit.sh in a follow-up under adapters/pi (out of t8's file
-    # scope; see the task report).
+    # Two checks run here (task t3, issue #297):
+    #   1. the kit's always-on reference check (no -endpoint: an in-process
+    #      §13-correct reference actor, installing NO pi binary and making no
+    #      network call) — proves the kit itself compiles and the protocol
+    #      reference holds, independent of this adapter.
+    #   2. the LIVE fake-backed run, via
+    #      adapters/pi/scripts/run_conformance_kit.sh: a real pi-bridge process
+    #      started in-process (start_background) on an ephemeral port, with
+    #      `pi_bin` pointed at the FAKE pi CLI (adapters/pi/tests/fake_pi.py,
+    #      replaying one static event fixture), driven over real HTTP with the
+    #      SAME -input/-async-input/-bad-input JSON adapter-qwen.yml's live run
+    #      uses (modulo the scratch repo path) — the deterministic harness-swap
+    #      proof (was DEFERRED here pending this task; see the script's own
+    #      docstring for why one static fixture is enough for every check the
+    #      kit runs).
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,6 +104,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
       - name: conformance reference check (no real pi, no network)
         working-directory: ${{ github.workspace }}
         run: go test ./tests/conformance
+
+      - name: conformance kit against the live fake-backed pi-bridge
+        working-directory: ${{ github.workspace }}
+        run: ./adapters/pi/scripts/run_conformance_kit.sh

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- tests/test_measurement_runner.py constructs the `ApiClient` before the `pytest.raises` block in `test_grader_must_be_registered_kind_agent`, so the block holds only the `resolve_grading_actor()` call it is named for (SonarCloud python:S5778 on #307). `ApiClient.__init__` only stores four attributes today, so no assertion was passing for the wrong reason — but a block that names one call and holds two turns any future constructor validation into a fixture break that reads as a green test
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

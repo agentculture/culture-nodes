@@ -994,6 +994,7 @@ def test_grader_must_be_registered_kind_agent(monkeypatch) -> None:
     monkeypatch.setattr(
         runner.fleet.ApiClient, "get", lambda self, path: {"items": rows}, raising=False
     )
+    client = runner.ApiClient("http://example.invalid")
     with pytest.raises(runner.RunnerError) as excinfo:
-        runner.fleet.resolve_grading_actor(runner.ApiClient("http://example.invalid"), "a1")
+        runner.fleet.resolve_grading_actor(client, "a1")
     assert "kind=engine" in str(excinfo.value)

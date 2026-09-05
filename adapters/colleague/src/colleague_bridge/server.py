@@ -140,7 +140,12 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.bridge  # type: ignore[attr-defined]
 
     def _write_json(
-        self, status: int, body: dict[str, Any], *, extra_headers: dict[str, str] | None = None
+        self,
+        status: int,
+        body: dict[str, Any],
+        *,
+        extra_headers: dict[str, str] | None = None,
+        close: bool = False,
     ) -> None:
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
@@ -148,6 +153,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
+        if close:
+            # send_header sees the Connection: close and flips
+            # self.close_connection, so the handler loop really hangs up
+            # after this response.
+            self.send_header("Connection", "close")
         self.end_headers()
         try:
             self.wfile.write(payload)
@@ -164,6 +174,42 @@ class Handler(BaseHTTPRequestHandler):
 
     def _drain_body(self) -> None:
         self._read_raw_body()
+
+    def _refuse_oversized_body(self) -> bool:
+        """Answer 413 + Connection: close when the declared body exceeds
+        MAX_BODY_BYTES; True means the request was refused and handled.
+
+        Truncating the read at the cap instead left the remainder unread
+        on the keep-alive connection, so the next request's parse started
+        mid-body — request desynchronization. Something is drained before
+        the 413 because a socket closed with bytes still in flight can RST
+        the response out of the client's receive buffer, but the drain is
+        bounded at MAX_BODY_BYTES rather than the declared length: this
+        runs before auth, so draining everything a client declares would
+        let an unauthenticated caller hold the single-threaded server
+        reading for as long as it likes — pre-auth read amplification.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            length = 0
+        if length <= MAX_BODY_BYTES:
+            return False
+        remaining = MAX_BODY_BYTES
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+        self._write_json(
+            413,
+            {
+                "error": f"request body exceeds {MAX_BODY_BYTES} bytes",
+                "class": mapping.CLASS_ACTOR_REJECTED_INPUT,
+            },
+            close=True,
+        )
+        return True
 
     def _read_json_body(self) -> dict[str, Any] | None:
         raw = self._read_raw_body()
@@ -242,6 +288,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
         try:
+            if self._refuse_oversized_body():
+                return
             if self.path == INVOCATIONS_PATH:
                 self._handle_invocation()
                 return
@@ -259,6 +307,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib naming
         try:
+            if self._refuse_oversized_body():
+                return
             m = _ID_RE.match(self.path)
             if m:
                 self._handle_cancel(m.group(1))

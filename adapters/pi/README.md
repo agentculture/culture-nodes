@@ -8,16 +8,24 @@ and requires `agent_end` before claiming success. There is no ACP package.
 
 ## Trust model
 
-The account is the boundary. Pi has no sandbox and no tool-approval prompt;
-its tools run as the process user. `input.sandbox` describes dispatch policy
-but does not add confinement. Run the bridge under a dedicated Unix account
-whose files, credentials, processes, and network access may safely be exposed
-to the agent. The exact repository allowlist selects the working directory; it
-does not prevent pi from reaching other resources available to that account.
-Project-local `.pi` resources retain their normal pi behavior. The bridge does
-not pass `--no-extensions`, `--no-skills`, or `--no-prompt-templates` by
-default. It does pass `-a`, explicitly trusting project-local `.pi` resources
-for that allowlisted repository and that run.
+The account is the boundary. Pi has no kernel sandbox and no tool-approval
+prompt; its tools run as the process user. Run the bridge under a dedicated
+Unix account whose files, credentials, processes, and network access may
+safely be exposed to the agent. The exact repository allowlist selects the
+working directory; it does not prevent pi from reaching other resources
+available to that account. Project-local `.pi` resources retain their normal
+pi behavior. The bridge does not pass `--no-extensions`, `--no-skills`, or
+`--no-prompt-templates` by default. It does pass `-a`, explicitly trusting
+project-local `.pi` resources for that allowlisted repository and that run.
+
+`input.sandbox` (#302 item 3) is enforced at the *tool* level, not a kernel
+boundary: `read-only` appends `--tools read` to the pi invocation, so only
+pi's built-in `read` tool is available for that turn — no `bash`, `edit`, or
+`write`. `workspace-write` (and omitting `sandbox`) pass no `--tools` flag,
+so pi runs with its full default tool set and the account's full authority.
+This is an honest, previously-missing enforcement of a mode the bridge had
+advertised but not applied — it is still not confinement: a `read` tool call
+still runs as the same Unix account described above.
 
 Cancellation sends SIGTERM to the complete process group, including tool
 children. Every invocation is tee'd while parsed to

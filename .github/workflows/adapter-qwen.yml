@@ -79,20 +79,23 @@ jobs:
     # the repo top, so this job needs the Go toolchain and does not inherit the
     # `defaults.run.working-directory` above.
     #
-    # DEFERRED live run: adapter-claude-code.yml runs the kit against a LIVE
-    # fake-backed bridge via adapters/claude-code/scripts/run_conformance_kit.sh,
-    # whose fake answers the kit's THREE distinct inputs (sync / async / bad)
-    # dynamically. adapters/qwen ships no run_conformance_kit.sh harness yet
-    # (its t6 conformance run was undelivered), so — matching the instruction to
-    # NOT invent a live run that cannot actually pass — this job runs the kit's
-    # always-on reference check (no -endpoint: it drives an in-process
-    # §13-correct reference actor, installing NO qwen binary and making no
-    # network call), proving the kit compiles and the protocol reference holds.
-    # The live fake-backed run against the qwen-bridge with the SAME shared
-    # -input JSON used for the pi bridge (the spec's deterministic swap fixture,
-    # honesty condition for c33) lands with the adapter's own
-    # run_conformance_kit.sh in a follow-up under adapters/qwen (out of t8's
-    # file scope; see the task report).
+    # Two checks run here (task t3, issue #297):
+    #   1. the kit's always-on reference check (no -endpoint: an in-process
+    #      §13-correct reference actor, installing NO qwen binary and making no
+    #      network call) — proves the kit itself compiles and the protocol
+    #      reference holds, independent of this adapter.
+    #   2. the LIVE fake-backed run, via
+    #      adapters/qwen/scripts/run_conformance_kit.sh: a real qwen-bridge
+    #      process started in-process (start_background) on an ephemeral port,
+    #      with `qwen_bin` pointed at the FAKE ACP agent
+    #      (adapters/qwen/tests/fixtures/acp/fake_acp_agent.py,
+    #      FAKE_ACP_BEHAVIOR=ok), driven over real HTTP with the SAME
+    #      -input/-async-input/-bad-input JSON adapter-pi.yml's live run uses
+    #      (modulo the scratch repo path, and this bridge's own required
+    #      `mode` field, which the pi bridge tolerates as a harmless extra) —
+    #      the deterministic harness-swap proof (was DEFERRED here pending
+    #      this task; see the script's own docstring for why one static
+    #      fixture is enough for every check the kit runs).
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -103,6 +106,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
       - name: conformance reference check (no real qwen, no network)
         working-directory: ${{ github.workspace }}
         run: go test ./tests/conformance
+
+      - name: conformance kit against the live fake-backed qwen-bridge
+        working-directory: ${{ github.workspace }}
+        run: ./adapters/qwen/scripts/run_conformance_kit.sh

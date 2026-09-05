@@ -80,9 +80,14 @@ to the operator's own checkout: `codex-thor` and `codex-orin` each run as
 `verifier`, `intake` run as `culture-claude` on spark, each in its own clone
 under `/home/culture-claude/git/culture-nodes-<role>`; `qwen-developer` runs
 as `culture-qwen` on spark, in `/home/culture-qwen/git/culture-nodes-qwen-developer`.
-New actors: register with `deploy/prod/register-actor.sh`, then extend the
-actor table in `scripts/nodes-op.sh` (one case line) with a checkout under
-that bridge's account.
+New actors: for a harness lane (qwen, pi, colleague) run
+`deploy/prod/cutover.sh <host> <engine> --dry-run` and then `--yes` — one
+command for secrets → deploy → registration, refusing by name when the
+engine account or the compose token key is missing (#298); creating the
+`culture-<engine>` account stays a root hand-turn typed on the host. For
+anything else, register with `deploy/prod/register-actor.sh` directly. Either
+way, then extend the actor table in `scripts/nodes-op.sh` (one case line)
+with a checkout under that bridge's account.
 
 **Harness-comparison lanes (#294).** Four actors run the same served model
 (`unsloth/Qwen3.8-27B-NVFP4` at `http://thor:8000/v1`) through two harnesses

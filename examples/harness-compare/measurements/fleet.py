@@ -23,6 +23,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -149,8 +150,17 @@ class ApiClient:
 
     def request(self, method: str, path: str, body: Any = None) -> Any:
         url = f"{self.base_url}{path}"
+        if method == "GET":
+            # The Access edge (nodes.culture.dev) caches API GETs that carry
+            # no Cache-Control (observed: cf-cache-status HIT, age 366 s, a
+            # completed run still served as "running"), so a watch loop
+            # would never see the terminal state. A unique query value
+            # defeats the cache until the control plane sends no-store.
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}_nocache={time.monotonic_ns()}"
         data = None
         headers = self._headers()
+        headers["Cache-Control"] = "no-cache"
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"

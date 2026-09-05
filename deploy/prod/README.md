@@ -955,6 +955,67 @@ both compose files):
   --metadata repository_identity=agentculture/culture-nodes
 ```
 
+### Bringing a harness actor online: `cutover.sh` (#298)
+
+The three blocks above are the sequence written out by hand. `cutover.sh`
+runs it as one command, for **one host and one engine**:
+
+```bash
+./cutover.sh thor pi --dry-run          # read this first — it touches nothing
+./cutover.sh thor pi --yes              # then act
+./cutover.sh spark colleague --yes      # the spark lane, same command
+```
+
+It prints one line per step — `step <name>: run|skip|refuse — <detail>` —
+and stops at the first failure, naming the failed step on stderr with a
+non-zero exit. The five steps:
+
+| step | what it does | skips when |
+|---|---|---|
+| `account-exists` | `ssh culture-<engine>@<host> id -un` | never (a refusal here is the root hand-turn below) |
+| `compose-declares-token-key` | greps `compose.thor.yml`'s `api` + `worker` blocks and `compose.orin.yml`'s `worker` block for `NODES_ACTOR_<ENGINE>_<HOST>_TOKEN` | never |
+| `secrets` | `install-secrets.sh`'s `install_bridge_account_env` for this engine | the account's `<engine>-bridge.env` exists (`FORCE_QWEN` / `FORCE_PI` / `FORCE_COLLEAGUE=1` rotates it) |
+| `deploy` | `deploy.sh <host>`, which runs `deploy_account_engine_bridge <host> <engine>` | the bridge's `/v1/capabilities` deployment block already reports this checkout's revision |
+| `register` | `register-actor.sh` with `--os-user` and the `harness` / `model` / `model_endpoint` / `repository_identity` metadata | `register-actor.sh` itself answers `unchanged` |
+
+Because every step is idempotent, a re-run after a partial failure resumes
+rather than repeats, and a second identical run reports every step skipped
+and exits 0.
+
+**The one remaining hand-turn is the root bootstrap.** `cutover.sh` never
+calls `bootstrap-accounts.sh` and never calls `sudo`
+(`tests/test_deploy_cutover.py` checks both, in the script text and in the
+fake-host call log): creating `culture-<engine>` needs root, `sudo` asks for
+a typed password on orin and spark, and #243's every-hand-turn rule wants
+that step recorded rather than buried. An account that does not open is
+refused by name with the command to type:
+
+```bash
+sudo bash deploy/prod/lanes/unix-user.sh bootstrap pi   # on the host itself
+```
+
+Two things `cutover.sh` deliberately cannot fix for you:
+
+- **the compose token key** is a committed change. If
+  `NODES_ACTOR_<ENGINE>_<HOST>_TOKEN` is not already declared in both files'
+  `api`/`worker` environment blocks, the run refuses naming the key — a
+  bridge deployed without it answers 401 to every dispatch.
+- **`install-secrets.sh` does not grow.** It is 999 lines, one under the
+  hard limit `tests/lint/filelength_test.go` enforces, and it has no
+  subcommand entry point. `cutover.sh` lifts its already-fenced
+  `QWEN_PI_ACCOUNT_ENV` region (the same region
+  `tests/test_deploy_qwen_pi_bridges.py` has run standalone since #294) and
+  sources it, so there is one definition of `install_bridge_account_env`.
+  Running `install-secrets.sh` whole would rotate or re-check the entire
+  production secret set on *both* hosts — not what bringing one actor online
+  should do. `deploy.sh`, by contrast, reads its host from `argv` and cannot
+  be sourced, so the deploy step invokes it as a whole (`CUTOVER_DEPLOY_CMD`
+  overrides the command, the way `PSQL_CMD` overrides register-actor's psql).
+
+The endpoint is never hardcoded: the numeric LAN IP `register-actor.sh`
+requires (c20) is derived with `getent hosts` on the target, exactly as
+`deploy.sh` derives `THOR_IP`.
+
 ### Unbounded concurrency — placement is the containment
 
 The bridge's async runner spawns one thread + one `codex exec` subprocess

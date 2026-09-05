@@ -946,7 +946,8 @@ def test_get_defeats_the_edge_cache(monkeypatch) -> None:
     client.get("/v1alpha1/runs/x")
     client.get("/v1alpha1/runs/x")
     urls = [u for u, _ in seen]
-    assert all("_nocache=" in u for u in urls) and urls[0] != urls[1]
+    assert all("_nocache=" in u for u in urls)
+    assert urls[0] != urls[1]
     assert seen[0][1].get("Cache-control") == "no-cache"
 
 

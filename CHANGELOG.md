@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- tests/test_measurement_runner.py splits the composite edge-cache assertion into two, so a failure names whether a GET lost its `_nocache=` parameter or two GETs shared a URL (SonarCloud python:S9073 on #307)
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

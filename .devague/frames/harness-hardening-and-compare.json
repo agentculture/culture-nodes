@@ -1,0 +1,829 @@
+{
+  "slug": "harness-hardening-and-compare",
+  "title": "harness-hardening-and-compare",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-09-05T05:38:34Z",
+  "updated": "2026-09-05T06:03:00Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Harness hardening and measurement shipped: the pi and qwen bridges (and every checkout bridge) refuse oversized bodies with a 413 instead of desynchronizing the keep-alive connection, a hung pi sync reports the timeout outcome instead of a 500, pi's read-only sandbox mode is enforced at the tool level or refused, CI proves the harness swap by running the \u00a713 conformance kit live against fake-backed pi and qwen bridges with one shared input, deploy.sh recreates api and worker whenever the actor-token set changes, one reviewed command brings a new harness actor online after the root bootstrap, and the harness-compare workflow grades pi, qwen and colleague on the same served model across a declared task set.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "every clause of the announcement maps to at least one confirmed requirement (c2-c5, c7-c10, c21) and to a success signal in c27; a clause with no requirement behind it is struck from the announcement, not left as aspiration",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "oversized-body refusal (#302 item 1): _read_raw_body is byte-identical (md5 72fcf5a7) in pi, qwen, claude-code, codex, colleague, human-inbox and notify server.py and truncates at MAX_BODY_BYTES=8 MiB; notify and human-inbox already ship _refuse_oversized_body (drain in 64 KiB chunks, 413, Connection: close via _write_json(close=True)) \u2014 port that helper verbatim to the five checkout bridges and call it before _read_json_body in the invocation handler; jira's server.py already answers 413 at 1 MiB and is untouched",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "each of the five checkout bridges has a unit test that opens one keep-alive connection, sends a request declaring Content-Length above MAX_BODY_BYTES, receives 413 with Connection: close, and the helper text is byte-identical across the five (diff, not a per-adapter reformat); every server.py stays under 1000 lines",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "pi sync-timeout escape (#302 item 2): pi_cli.run_sync sends SIGTERM to the process group then calls communicate(timeout=5) with no second TimeoutExpired handler, so an ignoring child surfaces as a generic 500 instead of mapping.CLASS_TIMEOUT; claude_cli.py:252-262, codex_cli.py:365-376 and qwen acp/dispatch.py:229-240 all catch the second timeout and report timed_out=True \u2014 pi gains the same guard, and the test uses fake_pi with FAKE_PI_HANG=1 plus a SIGTERM-ignoring variant (fake_claude.py already has FAKE_CLAUDE_IGNORE_SIGTERM for this)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "a fake pi that ignores SIGTERM (FAKE_PI_IGNORE_SIGTERM) under a 0.15 s sync timeout returns SyncRunResult.timed_out=True and the handler answers the timeout outcome class, and the child is left running (asserted via its pid file), never SIGKILLed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "pi tool-level read-only (#302 item 3): pi 0.85.0 on thor (probed as culture-pi) exposes --tools/-t allowlist and --exclude-tools/-xt denylist over the built-ins read, bash, edit, write; pi_cli.spawn currently does 'del sandbox, mode' while capabilities.py advertises sandbox_modes=('read-only','workspace-write') and server.py validates the value \u2014 either build_argv adds --tools read for read-only (soft enforcement, no kernel-boundary claim) or read-only leaves SANDBOX_MODES and the advertised list",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "build_argv(cfg, instruction, sandbox='read-only') contains '--tools read'; workspace-write contains no --tools flag; the capabilities document's confinement prose says read-only is tool-level and names the flag; a handover dispatch still requires workspace-write (server.py:574 unchanged)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "live fake-backed conformance (#297, deviation d2): adapter-pi.yml and adapter-qwen.yml conformance jobs (lines 77-109) run 'go test ./tests/conformance' with no -endpoint; each adapter gains scripts/run_conformance_kit.sh modelled on adapters/claude-code/scripts/run_conformance_kit.sh (start_background on port 0, port file, the kit with -input/-async-input/-bad-input, -expect-callback-retry, -require-cancellation), and both workflows switch to it with the SAME -input JSON so the swap is proven over HTTP",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "adapters/pi/scripts/run_conformance_kit.sh and adapters/qwen/scripts/run_conformance_kit.sh exist, are executable, pass locally with only go, uv and the fake on the box, and both workflows' conformance job invokes them; the -input, -async-input and -bad-input strings are identical between the two scripts modulo the scratch repo path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "assumption",
+      "text": "the fakes need less 'dynamic mode' than #297 states: the kit's -bad-input ({\"repo\": ...}, no instruction) is refused by the bridge's own validation ladder before any subprocess, and async is the bridge's 'async: true' flag, so a fake only has to replay a deterministic success for any instruction and hang until SIGTERM for -require-cancellation \u2014 fake_pi.py already has FAKE_PI_FIXTURE + FAKE_PI_HANG (29 lines) and fake_acp_agent.py already has FAKE_ACP_BEHAVIOR=ok plus a cancel path (239 lines); the harness script sets those env knobs the way the claude script sets FAKE_CLAUDE_STREAM_DELAY",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "neither fake gains argv-based discrimination; if a kit check fails because a fake needs a distinct answer per input, that is recorded as a deviation rather than silently adding one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "deploy.sh recreates api/worker on token change (#300): lanes/two-host.sh thor lane runs 'stop scheduler worker api', 'up -d --scale scheduler=0', 'up -d worker'; the orin lane runs 'up -d' (deploy.sh:927) \u2014 none passes --force-recreate, and prod-worker-1 on thor was recreated by hand at 2026-09-04T18:30 (docker inspect) \u2014 the lanes recreate api and worker, and tests/test_deploy_two_host.py's shim assertions (_docker(THOR, 'up -d --scale scheduler=0') etc.) move with the new argv",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "tests/test_deploy_two_host.py asserts that after a run the thor lane's compose argv includes --force-recreate for api and worker and the orin lane's does too, and the live test on thor shows prod-worker-1's Created timestamp move on a deploy with no code change",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "deploy/prod/README.md's token-rotation runbook (lines 1033-1040) tells the operator to 'docker compose restart worker' after a prod.env change; restart re-uses the existing container and does not re-read --env-file, so the runbook itself reproduces #300 \u2014 it changes to the recreate form in the same PR",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "deploy/prod/README.md contains no 'docker compose ... restart worker' instruction for a token change; the rotation runbook shows the recreate form",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "first-class cutover command (#298): the manual sequence is bootstrap-accounts.sh (root, stays a hand-turn) \u2192 install-secrets.sh (999 lines, one under the 1000-line hard limit in tests/lint/filelength_test.go, so it cannot absorb new logic) \u2192 deploy.sh deploy_account_engine_bridge via lanes/account-bridges.sh (455 lines) and lanes/unix-user.sh (643, asserts ~/.pi/agent/models.json) \u2192 register-actor.sh with --os-user and harness/model/model_endpoint metadata (README 'Qwen-versus-Pi' section); the command sequences secrets \u2192 deploy \u2192 register with a dry-run and names every refused step (the #289 posture)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "deploy/prod/cutover.sh <host> <engine> with --dry-run prints every step it would run and exits 0 without ssh side effects (shim log empty); without --dry-run it runs install-secrets' engine lane, deploy_account_engine_bridge and register-actor in that order, stops at the first failure, names the failed step on stderr and exits non-zero; it never calls bootstrap-accounts.sh; the script stays under 1000 lines and install-secrets.sh does not grow",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h21",
+          "text": "deploy/prod/cutover.sh, given a host and an engine, with --dry-run prints every step it would run and exits 0 without ssh side effects (shim log empty); without --dry-run it runs install-secrets' engine lane, deploy_account_engine_bridge and register-actor in that order, stops at the first failure, names the failed step on stderr and exits non-zero; it never calls bootstrap-accounts.sh; the script stays under 1000 lines and install-secrets.sh does not grow",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "measure pi vs qwen vs colleague: examples/harness-compare/workflow.yaml fans one instruction over four fixed slots (claude, codex, qwen, pi; README: 'comparing a fifth harness means adding a fifth slot'); the live registry (GET /v1alpha1/actors on thor) has pi-thor/pi-orin/qwen-thor/qwen-orin with harness metadata but no colleague actor; adapters/colleague has a bridge and its own run_conformance_kit.sh (COLLEAGUE_ENGINE=mock) but no CI workflow, no deploy unit and no registration; colleague 1.76.0 is installed on spark and thor:8000 serves unsloth/Qwen3.8-27B-NVFP4 \u2014 the comparison adds a colleague slot and actor on the same model, then runs a declared task set per actor and grades each run (POST /v1alpha1/runs/{id}/grades, read back via /v1alpha1/actors/{id}/stats, category harness-compare)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "GET /v1alpha1/actors lists company/colleague-spark with harness=colleague and model=unsloth/Qwen3.8-27B-NVFP4 metadata; the colleague bridge on spark answers /v1/capabilities; examples/harness-compare compiles with five slots and tests/e2e/harnesscompare_test.go still passes with the unset colleague slot never running",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "the comparison starts from one data point: /v1alpha1/actors/{id}/stats shows pi-thor 1 completed + 1 failed and qwen-thor 1 completed, each with one confirmed grade of 4 in category harness-compare; pi-orin and qwen-orin have zero runs (delivery doc 'orin harness parity') \u2014 a measurement needs several runs per actor per task kind, on both hosts, before a per-actor verdict is more than an anecdote",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "no kernel sandbox returns for pi: frame harness-interop-pi-qwen claim c15 (confirmed) makes the engine account the confinement and capabilities.py's prose says 'pi has no sandbox'; #302 item 3 is tool-level only and never claims a kernel boundary; the Qodo writable_git finding (pi_cli.py:145) was pushed back on the same ground and stays out",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "no PR in this cycle adds bwrap, docker, or a micro-VM to the pi lane; capabilities.py keeps the 'pi has no sandbox' prose and adds only the tool-level wording",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "the byte-identical shared modules (preflight.py, deployment.py, dialin.py, reap.py, reclaim.py \u2014 tests/lint/preflightsurface_test.go, dialintransport_test.go, workspacereaper_test.go) are not touched; server.py is not a guarded module, but the oversized-body helper is copied verbatim into each bridge rather than formatted per adapter (CLAUDE.md: isort differs across adapters), and server.py sizes are 925/947/941/925/866 lines against the 1000-line limit, so the helper must stay under ~50 lines",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "tests/lint preflightsurface, dialintransport and workspacereaper guards pass unchanged; diff of the oversized-body helper across the five bridges is empty; go test ./tests/lint filelength passes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "no real pi or qwen binary is installed or invoked in CI (#297 last paragraph): the fake is the backend, as adapter-claude-code.yml already does; a live smoke against thor stays an operator step",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "non_goal",
+      "text": "adapter-codex.yml gains no conformance job this cycle: #297 item 4 calls it a follow-on, and adapters/codex/scripts/run_conformance_kit.sh dispatches real billable codex with no mock engine (its header says it is never wired into CI)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "non_goal",
+      "text": "the root useradd step stays a human hand-turn: bootstrap-accounts.sh needs sudo (NOPASSWD on thor, typed password on orin) and #298 says so explicitly; the cutover command starts after it and counts it as the one remaining hand-turn",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "non_goal",
+      "text": "no run-time fan-out lands in the workflow language: examples/harness-compare/README.md records that a node's uses: is a static registry id and the fan-out is over fixed slots; the colleague comparison adds a fifth slot, not a list feature",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "all-backends rule (workspace CLAUDE.md): the oversized-body fix lands in every checkout bridge (pi, qwen, claude-code, codex, colleague), not just the two #302 names, because the code is one shared shape and a fix in one backend is a bug",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "grep for _refuse_oversized_body returns a hit in every adapters/*/src/*/server.py that has an invocation handler (pi, qwen, claude-code, codex, colleague, human-inbox, notify); jira excluded by its own 413",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "measurement set (q6 proposal): 5 actors (pi-thor, pi-orin, qwen-thor, qwen-orin, colleague-spark) x 3 read-only categories x 3 runs = 45 graded runs, dispatched through examples/harness-compare with the same instruction per task. Categories, each with an objectively checkable answer: compare-locate (find where a named behaviour lives, cite file:line \u2014 checked against grep), compare-review (review a small diff carrying one seeded defect \u2014 checked against the seed), compare-explain (explain a module's contract and name its tests \u2014 checked against the file). Grade 1-5 with anchors: 5 correct and cited, 3 correct but uncited or padded, 1 wrong, fabricated or no answer; fabrication counted separately as a boolean in the grade notes. Read alongside stats: completion rate, retry_burn.attempts_per_completion, duration p50/p95, usage tokens \u2014 all already on /actors/{id}/stats",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "assumption",
+      "text": "the 45 runs cost session time, not subscription: pi, qwen and colleague all run against the local model on thor:8000, so the #48 window is untouched; the binding limit is the lobe's concurrency (one run per host at a time, per lane-capacity memory) and the operator's grading time \u2014 roughly 45 grades at a minute each",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the 30 basic runs (5 actors x 3 rules x 2) complete without the operator's Claude window being consumed by bridge sessions \u2014 checked by the subscription usage meter before and after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "measurements are declarative and re-runnable (refines c19; user direction 2026-09-05): a manifest under examples/harness-compare/measurements/ (YAML authoring, JSON canonical like every other definition here) declares each measurement as a rule \u2014 id, category, instruction, an objective check (kind: grep-cites-file-line | seeded-defect-named | tests-named, with its expected value), grade anchors, and runs_per_actor \u2014 and a runner reads the manifest, fans every rule across the declared actor set through the harness-compare workflow, applies the check to each run's summary, and posts the anchored grade with the check result in the notes; adding or changing a rule and re-running appends new runs and grades (ledger is append-only), never edits old ones, and a run is tagged with the manifest digest so stats can be read per manifest version. The initial manifest is a BASIC set: one rule per category (locate, review, explain), runs_per_actor 2",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "the manifest validates against a committed schema; a rule edit changes the manifest digest; the runner refuses a manifest whose digest it cannot compute; re-running the same manifest appends new runs (count rises) and stats per digest are distinguishable; the basic set is exactly one rule per category",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "decision",
+      "text": "c19's fixed 5x3x3 layout is replaced by the manifest in c21: the numbers become manifest fields, not spec constants; c19 should be rejected in favour of c21 when the frame is confirmed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "audience",
+      "text": "the operator running the thor/orin/spark fleet (Ori) and the mesh agents that dispatch to it: every checkout bridge's callers (the worker), the CI reader of the adapter workflows, and the next person bringing a harness online with one command",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "the delivery summary names which audience each shipped piece served, and the cutover script's --dry-run output was read by the operator before its first real run",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "before_state",
+      "text": "today: five checkout bridges desync their keep-alive socket on a body over 8 MiB; a pi child that ignores SIGTERM surfaces as a 500; pi advertises read-only and ignores it; adapter-pi.yml and adapter-qwen.yml prove only the in-process reference actor (deviation d2 needs-follow-up); a deploy after a token change leaves api/worker stale until a hand-typed --force-recreate (#300, counted hand-turn); bringing up four actors in #294 took four hand-run scripts per host (#298); and the harness comparison is one graded run each for pi-thor and qwen-thor with no colleague in the fleet",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "each before-state clause is reproduced once before the fix lands (a failing test for the desync and the timeout; the d2 record for CI; the #300 and #298 issue bodies for the deploy and cutover; /actors/{id}/stats for the single data point)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "after_state",
+      "text": "after: an oversized body gets a 413 and a closed connection on every checkout bridge; a hung pi sync returns the timeout outcome; sandbox=read-only launches pi with --tools read; CI runs the \u00a713 kit live against fake-backed pi and qwen bridges with one shared input; deploy.sh recreates api and worker in both lanes and the README runbook agrees; deploy/prod/cutover.sh takes a host+engine from secrets to registration with --dry-run and named refusals; a colleague actor is registered on spark and the harness-compare workflow has a fifth slot; and a declared measurement manifest drives graded runs whose per-actor stats are readable per manifest version",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "each after-state clause is one of the success signals in c27 and is checked in validate-delivery, not asserted in the summary",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "why_it_matters",
+      "text": "the #294 cycle proved pi and qwen work by hand; this cycle makes the proof repeatable (CI, deploy, cutover) and the comparison a re-runnable instrument instead of an anecdote \u2014 the counted hand-turns (#118) drop by two, and 'which actor is better at what' (#28) gets its first manifest-driven data set",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "the delivery summary counts the hand-turns removed (#300's recreate, #298's script sequence) against the ones that remain (root bootstrap), and the first manifest run's stats are linked from it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "success_signal",
+      "text": "adapter-pi.yml and adapter-qwen.yml conformance jobs are green running go test with -endpoint against a started fake-backed bridge, same -input JSON in both; a unit test per checkout bridge sends a body over MAX_BODY_BYTES on a keep-alive connection and the next request on that connection parses cleanly; test_pi_cli proves a SIGTERM-ignoring fake yields timed_out=True; tests/test_deploy_two_host.py asserts the recreate argv in both lanes; a shim test drives cutover.sh --dry-run end to end and a refused step is named in its output; GET /v1alpha1/actors/{id}/stats for the five actors shows grades in the basic manifest's categories after one manifest run; deviation d2 closes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "every signal is a named test, workflow job or API read that validate-delivery can run or fetch; none is a sentence in a summary",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "bounded drain (challenge / security+concurrency lens): notify's _refuse_oversized_body drains the FULL declared Content-Length before answering 413, and notify's do_POST calls it before any auth check, so an unauthenticated client declaring a huge length can hold the single-threaded server reading for as long as it keeps sending (only the 30 s per-read socket timeout bounds it); the ported helper drains at most MAX_BODY_BYTES (or a small multiple) and then closes, and the same bound goes back into notify and human-inbox so all seven stay identical",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "a unit test declares Content-Length = 10 * MAX_BODY_BYTES on a keep-alive connection and sends only MAX_BODY_BYTES bytes; the handler answers 413 with Connection: close within the socket timeout without waiting for the rest",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "grade authority for the manifest runner (challenge / observability+containment lens): internal/api/grades.go makes a human principal's grade land confirmed and an agent's land proposed (nodes-op grade --as defaults to the first kind=human actor); a runner that posts with the operator's identity would mint confirmed human grades by machine, so the runner posts --as its own registered agent actor (e.g. company/measure-runner), grades land proposed with the check result in the notes, and the operator confirms them through the review surface; the runner never uses the human default",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "GET /v1alpha1/actors lists company/measure-runner with kind=agent; every grade a manifest run posts is authority=proposed and origin=agent in the ledger; nodes-op grade --as <human> is never called by the runner",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h28",
+          "text": "GET /v1alpha1/actors lists company/measure-runner with kind=agent; every grade a manifest run posts is authority=proposed and origin=agent in the ledger; the runner never calls nodes-op grade with a human actor as the grader",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "the manifest records what was actually measured (challenge / lifecycle lens): thor/orin bridges are uv-tool-install copies that only change on deploy.sh, and pi under --tools read behaves differently from the pi that earned the existing 4/5; each run therefore carries the rule's sandbox and each actor's bridge revision (the deployment block on /v1/capabilities), read before dispatch, and the runner refuses an actor whose revision is behind the merged main revision the manifest run expects",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "each manifest run's input carries sandbox and per-actor bridge revisions; the runner exits non-zero naming the stale actor when a /v1/capabilities revision differs from the expected one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "cutover.sh preconditions and idempotency (challenge / rollback lens): the compose files' api and worker environment blocks must already declare NODES_ACTOR_<ENGINE>_<HOST>_TOKEN (a committed change no runtime script can make) and the engine account must exist on the host; cutover.sh checks both first and refuses by name; every step it runs is idempotent (install_bridge_account_env keeps an existing token unless FORCE_<ENGINE>=1, deploy_account_engine_bridge re-installs the same revision, register-actor.sh inserts a revision only when state differs) so a re-run after a partial failure converges, and --dry-run reports 'would skip' for steps already done",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "a shim test runs cutover.sh twice against the same fake host: the second run's log shows every step skipped and the exit is 0; a run against a compose file missing the token key exits non-zero naming the key",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "fifth slot in the proof (challenge / overlooked-actors lens): tests/e2e/harnesscompare_test.go pins harnessCompareSlots = {claude, codex, pi, qwen} and a registry map of slot -> actor key; the colleague slot joins both, the compile test asserts five guarded agent nodes, and the two-actor run asserts the unset colleague slot never ran",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "go test ./tests/e2e -run TestHarnessCompare passes with five slots declared and the colleague slot unset",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "assumption",
+      "text": "a 413 is a contract failure, not a retry storm (challenge / adjacent-systems lens): the bridge's 413 body carries class actor_rejected_input and the control plane classifies from the body class (internal/actors/client.go, \u00a713.5); the client's 4xx path was NOT read in this pass \u2014 counter-evidence to gather at plan time is one dispatch with an oversized instruction against a fake-backed bridge in the e2e stack",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "assumption",
+      "text": "colleague's mock engine exists in the installed 1.76.0 ('colleague backends list' shows mock and vllm-openai; COLLEAGUE_ENGINE=mock colleague whoami answers), so adapters/colleague/scripts/run_conformance_kit.sh can run on spark before the actor is registered; whether the bridge's vllm-openai engine reaches thor:8000 from a spark engine account is untested",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "cutover.sh preconditions and idempotency (challenge / rollback lens): the compose files' api and worker environment blocks must already declare the actor token key for the engine and host (the NODES_ACTOR_..._TOKEN name register-actor.sh is given; a committed change no runtime script can make) and the engine account must exist on the host; cutover.sh checks both first and refuses by name; every step it runs is idempotent (install_bridge_account_env keeps an existing token unless the engine's FORCE flag is set, deploy_account_engine_bridge re-installs the same revision, register-actor.sh inserts a revision only when state differs) so a re-run after a partial failure converges, and --dry-run reports 'would skip' for steps already done",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "a shim test runs cutover.sh twice against the same fake host: the second run's log shows every step skipped and the exit is 0; a run against a compose file missing the token key exits non-zero naming the key",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "why 'docker compose up -d' did not recreate the worker on thor: Compose v2.40.3 hashes the resolved service config, so a changed interpolated env value should recreate \u2014 unless the tokens were written to prod.env after the deploy ran (#298 notes 'prod.env token values left for a later step'). Read-only probing cannot settle it; a scratch env-file hash comparison on thor would",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "load_agent_config_source is defined in pi, qwen and codex config.py and called by no adapter src (grep over adapters/*/src); Qodo flagged it High on pi __main__.py:128 ('identity checks never run') and it is in none of the four issues \u2014 a family-wide latent gap that either joins the robustness batch under the all-backends rule or gets its own issue",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "server.py line budget after the oversized-body helper: qwen 947 and claude-code 941 leave roughly 50 lines under the 1000-line hard limit; if the helper plus its call site exceeds that, a byte-identical sibling module (the deployment.py precedent) is the escape, which would then need a lint guard of its own",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "dispatching the measurement runs needs a fresh Cloudflare Access cookie via https://nodes.culture.dev (LAN writes 401 since 0.47.0) and shares the operator's subscription window with every bridge session (#48); pi/qwen run on the local model so the token cost is the window, not dollars \u2014 the exact per-run session cost on thor is unmeasured",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "orphaned pi processes under the family stance: after the second timeout the child is left running; adapters/pi async_runner tracks pid liveness only and nothing reaps a SIGTERM-ignoring pi under culture-pi (claude-code has the same gap); a measurement campaign could accumulate them \u2014 a periodic reap is a follow-up, not this cycle",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v6",
+      "text": "adapter-colleague.yml does not exist: colleague gets a fleet presence this cycle but no CI conformance job; its mock-engine script makes one cheap, and it would be the third live fake-backed job after claude-code, pi and qwen",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "adapters/{pi,qwen,claude-code,codex,colleague,human-inbox,notify}/src/*/server.py _read_raw_body",
+      "finding": "one byte-identical 8-line reader (md5 72fcf5a7) truncates a declared body at MAX_BODY_BYTES and leaves the remainder on the keep-alive socket; notify and human-inbox already carry _refuse_oversized_body (drain, 413, Connection: close) so the fix is a port, not a design; jira's server.py already 413s at 1 MiB",
+      "seeds": [
+        "c2",
+        "c13",
+        "c18"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "adapters/pi/src/pi_bridge/pi_cli.py run_sync + terminate_group vs claude_cli.py:252-262, codex_cli.py:365-376, adapters/qwen acp/dispatch.py:229-240",
+      "finding": "pi is the only sibling whose second communicate() is unguarded; the other three catch the second TimeoutExpired, never SIGKILL, and report timed_out honestly \u2014 #302's 'mirror in qwen' is already true for qwen, and its SIGKILL proposal contradicts the family stance",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "pi 0.85.0 --help on thor as culture-pi; adapters/pi capabilities.py:46-53; pi_cli.spawn ('del sandbox, mode'); server.py:508-579 sandbox validation",
+      "finding": "pi has --tools/--exclude-tools over read, bash, edit, write; the bridge validates and advertises read-only then discards it at spawn \u2014 the advertise-then-ignore gap #302 item 3 names is real and closable at argv level",
+      "seeds": [
+        "c4",
+        "c12"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "adapters/pi/tests/fake_pi.py (29 lines, FAKE_PI_FIXTURE/HANG/SLEEP_CHILD), adapters/qwen/tests/fixtures/acp/fake_acp_agent.py (239 lines, FAKE_ACP_BEHAVIOR), adapters/claude-code/tests/fake_claude.py + scripts/run_conformance_kit.sh, tests/conformance/README.md flags",
+      "finding": "the claude fake is env-driven too (no argv discrimination); the kit's bad input is refused by the bridge and async is a bridge flag, so both existing fakes already answer the kit \u2014 what is missing is the two run_conformance_kit.sh scripts and the workflow switch",
+      "seeds": [
+        "c5",
+        "c6",
+        "c14"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": ".github/workflows/adapter-pi.yml and adapter-qwen.yml conformance jobs (lines 77-109); adapter-codex.yml (no conformance job); devague deviation d2 on plan harness-interop-pi-qwen",
+      "finding": "both jobs run the in-process reference check only, as d2 records ('needs-follow-up'); codex stays a follow-on per #297 item 4 and its own script header",
+      "seeds": [
+        "c5",
+        "c15"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "deploy/prod/lanes/two-host.sh thor_two_host_lane (stop scheduler worker api / up -d --scale scheduler=0 / up -d worker), deploy.sh:927 compose_orin 'up -d'; thor docker inspect prod-api-1/prod-worker-1 (created 2026-09-04T18:30, Compose v2.40.3); tests/test_deploy_two_host.py shim assertions",
+      "finding": "no lane passes --force-recreate; the running containers date from the manual recreate; the shim tests pin the exact compose argv so the fix is testable and the assertions must move with it",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "deploy/prod/README.md token-rotation runbook (lines 1025-1040)",
+      "finding": "the documented rotation ends in 'docker compose restart worker', which does not re-read --env-file \u2014 the runbook reproduces #300 by hand",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "deploy/prod/bootstrap-accounts.sh, install-secrets.sh (999 lines), deploy.sh (953) + lanes/account-bridges.sh (455) + lanes/unix-user.sh (643, models.json assert), register-actor.sh, README 'Qwen-versus-Pi harness-comparison actors'; culture_nodes/cli/_commands (15 verbs, zero-dep runtime), .claude/skills/nodes-operator/scripts/nodes-op.sh; tests/lint/filelength_test.go",
+      "finding": "the four scripts are real and separately tested under fake-ssh shims; install-secrets.sh cannot grow; the nodes CLI is zero-dependency and the deploy lane needs ssh+docker, which is the crux of the verb-vs-skill-vs-script decision",
+      "seeds": [
+        "c9",
+        "c16"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "examples/harness-compare/{workflow.yaml,README.md} (four fixed slots; 'fifth harness = fifth slot'); GET thor:18080/v1alpha1/actors (no colleague row); adapters/colleague (bridge + run_conformance_kit.sh COLLEAGUE_ENGINE=mock, no workflow, no deploy unit); colleague 1.76.0 on spark; thor:8000 /v1/models; spark:8001 (401 gateway)",
+      "finding": "colleague is a bridge without a fleet presence: measuring it through the ledger means a deploy + registration + fifth slot; the model can be held constant on thor:8000 as frame harness-interop s10 already noted",
+      "seeds": [
+        "c10",
+        "c17"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "GET /v1alpha1/actors/{id}/stats for pi-thor, qwen-thor, pi-orin, qwen-orin; nodes-op.sh grade (POST /v1alpha1/runs/{id}/grades); docs/deliveries/2026-09-04-harness-interop-pi-qwen.md 'Remaining Work'",
+      "finding": "the grading and per-actor analytics surfaces from #28 exist and already hold one confirmed 4/5 per thor actor in category harness-compare; orin actors have never run \u2014 the measurement is a matter of running enough graded work, not of building instruments",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / adjacent-systems lens: internal/actors/client.go (not read), install-secrets.sh lanes 460-600 (install_bridge_account_env, install_qwen/pi_account_env), compose.thor.yml api+worker env blocks",
+      "finding": "per-engine token lanes already exist so cutover.sh composes them; the compose declaration is a committed change; the control-plane 4xx path is the one adjacent surface this pass did not read",
+      "seeds": [
+        "c31",
+        "c33"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / security+concurrency lens: adapters/notify server.py do_POST (refusal before auth), Handler.timeout=30, single-threaded HTTPServer",
+      "finding": "the existing helper drains the whole declared body pre-auth; bounded by socket timeout per read only",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / observability+containment+rollback lens: internal/api/grades.go origin rules, nodes-op.sh grade --as default, register-actor.sh idempotency, install-secrets FORCE guards",
+      "finding": "a runner with the human identity would mint confirmed grades; cutover steps are individually idempotent so the script can be",
+      "seeds": [
+        "c29",
+        "c31"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / migration lens: no schema, migration or store change in any claim (internal/store untouched; grades and stats APIs already exist)",
+      "finding": "clean pass \u2014 residual risk only if the manifest digest tagging turns into a run-metadata column later",
+      "seeds": []
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / unstated-assumptions lens: pi 0.85.0 --help (--tools applies to built-in, extension and custom tools; built-ins are read, bash, edit, write), examples/harness-compare/input.json (sandbox workspace-write, handover true)",
+      "finding": "the sample input is a write dispatch and q2's enforcement removes bash from a read-only pi \u2014 the comparison's baseline changes with the fix (raised as q7)",
+      "seeds": [
+        "c30"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / overlooked-actors+lifecycle lens: getent passwd on spark (culture-claude, culture-qwen), tests/e2e/harnesscompare_test.go harnessCompareSlots, bridge install_mode (uv tool copies on thor/orin)",
+      "finding": "colleague needs an account decision (q8); the fifth slot needs the e2e pin moved; fixes reach prod only by deploy",
+      "seeds": [
+        "c32",
+        "c30"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / cheap probes: colleague backends list + COLLEAGUE_ENGINE=mock whoami, nodes run create --help, harness-compare input schema lines 93-116",
+      "finding": "mock engine present; runs carry only a category; top-level input admits extra keys (tagging raised as q9)",
+      "seeds": [
+        "c34"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}

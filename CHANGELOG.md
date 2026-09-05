@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- tests/test_measurement_runner_timeout.py splits the composite `_load` guard into two assertions, so a failure names whether the spec or its loader was missing (SonarCloud python:S9073 on #307)
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

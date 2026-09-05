@@ -32,9 +32,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MEASUREMENTS_DIR = ROOT / "examples" / "harness-compare" / "measurements"
+YAML_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "measurements" / "basic.yaml"
 SCHEMA_PATH = MEASUREMENTS_DIR / "schema.json"
 BASIC_JSON_PATH = MEASUREMENTS_DIR / "basic.json"
-BASIC_YAML_PATH = MEASUREMENTS_DIR / "basic.yaml"
+BASIC_YAML_PATH = YAML_FIXTURE
 
 
 def _load_manifest_module() -> ModuleType:

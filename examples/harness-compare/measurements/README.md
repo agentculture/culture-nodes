@@ -22,7 +22,7 @@ t11) — nothing here dispatches to an actor or a bridge.
 - `basic.json` — the basic manifest: one rule per category, `sandbox:
   read-only`, `runs_per_actor: 2`, against `company/pi-thor`,
   `company/pi-orin`, `company/qwen-thor`, `company/qwen-orin`.
-- `basic.yaml` — the same manifest, hand-authored sugar for `basic.json`.
+- `tests/fixtures/measurements/basic.yaml` — the same manifest, hand-authored sugar for `basic.json`.
   Present only because this interpreter happens to have PyYAML importable
   (see "JSON is canonical" below); it canonicalises to the exact same
   digest as `basic.json`.
@@ -101,7 +101,7 @@ uv run python examples/harness-compare/measurements/manifest.py canonical <file>
    Keep every category's rule count and the manifest's other rules intact
    unless you mean to change them — a manifest is a single artifact, not a
    diff against the previous one.
-2. If you added or edited `basic.yaml` too, regenerate it from the JSON so
+2. If you added or edited `tests/fixtures/measurements/basic.yaml` too, regenerate it from the JSON so
    the two stay byte-equivalent after canonicalisation (they are not meant
    to be maintained independently by hand):
 
@@ -109,7 +109,7 @@ uv run python examples/harness-compare/measurements/manifest.py canonical <file>
    uv run python - <<'EOF'
    import json, yaml
    data = json.load(open("examples/harness-compare/measurements/basic.json"))
-   with open("examples/harness-compare/measurements/basic.yaml", "w") as f:
+   with open("examples/harness-compare/measurements/tests/fixtures/measurements/basic.yaml", "w") as f:
        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True, width=100)
    EOF
    ```

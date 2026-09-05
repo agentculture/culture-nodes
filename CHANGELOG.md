@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.50.1] - 2026-09-05
+
+### Changed
+
+- review(#307): SonarCloud test-style findings (S9073 composite assertions, S5778 single-invocation exception tests) landed from the pr-upkeep sweep's review-fix branches plus the five it had not reached
+
 ## [0.50.0] - 2026-09-05
 
 ### Added

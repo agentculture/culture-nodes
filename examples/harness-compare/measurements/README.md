@@ -290,3 +290,14 @@ another slot's id.
   `manifest.py` implements exactly the keywords `schema.json` uses. A
   schema change that introduces a new keyword needs a matching validator
   change.
+
+## `basic-thor.json` — the first pass's actor set
+
+`basic.json` names all four thor/orin actors, but `workflow.yaml` pins each
+slot to one registry id (`pi` → `company/pi-thor`, `qwen` → `company/qwen-thor`),
+so the orin actors cannot be reached through the graph today and the runner
+refuses a manifest whose actors collide on one slot. `basic-thor.json` is the
+same three rules restricted to the two thor actors; it is what the first
+measurement pass ran. It carries its own digest, so its runs and grades are
+distinguishable from a later four-actor pass once the graph gains a slot per
+registered actor.

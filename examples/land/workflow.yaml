@@ -1,0 +1,279 @@
+# The LAND NODE (loop-closure task t6; spec c3/c15/c35/c39/c40, honesty
+# h9/h12/h22/h26/h27; issues #315 and #309 step 2).
+#
+# After every actor run that hands over a ref, this graph puts that ref on
+# the PR branch without an operator cherry-pick: fetch the handover ref from
+# the producing actor's own remote, rebase it onto the branch tip, push it
+# WITHOUT --force, and reset the producing actor's checkout to the new tip.
+# One code node does the work (examples/land/land.py, stdlib-only, run
+# through the runner boundary under the culture-land engine account -- never
+# in the control-plane process), and writes one record per step reached, so
+# a landing that stopped half way is legible in the ledger and a re-run
+# continues where it stopped instead of pushing twice.
+#
+# ---------------------------------------------------------------------------
+# HOW THE DOMAIN ANSWERS TRAVEL
+# ---------------------------------------------------------------------------
+#
+# The worker recognises only passed/failed (or the merge-gate trio) as a code
+# node's outcomes (internal/worker/code.go), so `land` answers passed/failed
+# and `land-verdict` routes the failure port on `output.exit_code` -- the
+# development-loop / combining-loop idiom. land.py's published codes:
+#
+#   0  landed        the handover is on the branch and the checkout is reset
+#   2  environment   git/ssh/http machinery failed, or no push credential
+#   3  routed_human  a derived routing record was written (rebase conflict,
+#                    stale after the bounded retry, .github/ implicated) and
+#                    nothing was pushed in that round
+#   4  refused       the input contract was violated
+#   5  waiting       a lease is held elsewhere -- park and re-enter
+#
+# The three graph outcomes the task names -- landed, routed_human, waiting --
+# are therefore the `landed` end node, the `needs-human` approval reached
+# through land-verdict.routed_human, and the `waiting` park reached through
+# land-verdict.waiting, which re-enters `land` (idempotent by construction:
+# every step already done is detected and skipped).
+#
+# ---------------------------------------------------------------------------
+# THE TWO LEASES (recorded design choice, plan task t6)
+# ---------------------------------------------------------------------------
+#
+# Per-target-branch: a lock directory under the land checkout's .git, so two
+# landings on one PR branch serialise (h26) -- the second reports `waiting`
+# and the ledger shows it waiting for the first's lease. Per-checkout: a lock
+# directory under the PRODUCING actor's checkout .git (reached through the
+# same handover_remote transport the fetch used) PLUS a control-plane read of
+# that actor's live attempts (GET /v1alpha1/node-runs, states
+# leased/running/waiting_external). Either says busy and the reset does not
+# run (h12) -- the #307 collision, where two runs shared one engine-account
+# checkout and HEAD moved under a live session, is what this guards.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration -- WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#
+#   RUNNER REGISTRY (the id in `uses:`, resolved against this deployment's
+#   runner-services registry -- `nodes runner-services register`):
+#     runner://headspace/land   the runner service that executes the land
+#                               operation on the host holding the culture-land
+#                               account and its checkout (deploy/prod/cutover.sh
+#                               `<host> land`; actor company/land-<host>).
+#
+#   GRANTED ENVIRONMENT VALUES (environmentRefs; the runner boundary refuses
+#   the operation by name when one is unset):
+#     LAND_SOURCE_URL / LAND_SOURCE_SHA256   where land.py is fetched from and
+#                               the digest the bootstrap refuses to run without
+#                               (the merge-gate / combining-loop discipline: a
+#                               loader chooses WHOSE code runs, and verifies it).
+#     GITHUB_TOKEN_WORKER       the push credential (Contents: write), from
+#                               culture-land's ~/.culture-nodes/bridge-push.env
+#                               (deploy/prod/lanes/land-secrets.sh). Environment
+#                               only; helpers reset on push; never in argv.
+#     NODES_API_URL             the control plane the checkout lease reads live
+#                               attempts from. Unset it and the record says
+#                               `active_attempts: null` -- unchecked, not zero.
+#
+#   The runner boundary itself supplies NODES_INPUT_JSON (this node's bound
+#   input), NODES_RUN_ID / NODES_NODE_RUN_ID / NODES_ATTEMPT_ID (this run's
+#   identity, which the routing record is attributed to) and NODES_WORKSPACE.
+#
+# Per-run values arrive as the triggering event's payload -- the run input:
+# the handover ref (preserve.py mints refs/culture-nodes/<run-id>/<tail>,
+# never pushed), the producing actor's handover_remote (registry.go:218,
+# the same value scripts/collect-handover.py resolves), the PR branch, the
+# work-item join key (spec c2), the producing actor's id and run id.
+#
+# ---------------------------------------------------------------------------
+# WHAT IS DELIBERATELY NOT HERE (other tasks own it)
+# ---------------------------------------------------------------------------
+#
+#  1. The gate chain and the single version bump (t7) and the thread reply +
+#     resolve (t8): land.py reaches each as a named hook point and writes a
+#     `not_implemented` record with the owning task, never a silent skip.
+#  2. Merging the PR. The node has no merge call (grep-asserted in
+#     tests/test_land_node.py); human-merges-pr stays the only merge path.
+#  3. Repair. A conflict or a twice-stale push is a derived routing record to
+#     a human in internal/repair's shape; nothing is re-dispatched here.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: land
+  version: 0.1.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: land
+
+  triggers:
+    - onEvent: land.handover.ready
+      when: >-
+        event.payload.handover_ref.startsWith("refs/culture-nodes/") &&
+        size(event.payload.target_branch) > 0 &&
+        size(event.payload.work_item) > 0
+
+  contract:
+    input:
+      schema:
+        type: object
+        required: [handover_ref, handover_remote, target_branch, work_item, actor_id, run_id]
+        properties:
+          handover_ref: {type: string, minLength: 1}
+          handover_remote: {type: string, minLength: 1}
+          target_branch: {type: string, minLength: 1}
+          work_item: {type: string, minLength: 1}
+          actor_id: {type: string, minLength: 1}
+          run_id: {type: string, minLength: 1}
+    output:
+      schema: {type: object}
+
+  # A landing that waits re-enters `land` after each park; twelve parks of
+  # five minutes bound a lease wait to an hour before the run stops.
+  limits:
+    maxDuration: 24h
+    maxTransitions: 40
+    maxVisitsPerNode: 12
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 100
+
+  nodes:
+    land:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/land@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # network: full, as examples/merge-gate and examples/combining-loop
+        # declare for the same fetch-by-digest bootstrap (#50: an egress
+        # allowlist is not yet expressible). The cross-host fetch through
+        # handover_remote is the egress this node adds (spec s23, risk r1).
+        network: full
+        environmentRefs:
+          - LAND_SOURCE_URL
+          - LAND_SOURCE_SHA256
+          - GITHUB_TOKEN_WORKER
+          - NODES_API_URL
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["LAND_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["LAND_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("land: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "land.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path]).returncode)
+      input:
+        bindings:
+          handover_ref: /run/input/handover_ref
+          handover_remote: /run/input/handover_remote
+          target_branch: /run/input/target_branch
+          work_item: /run/input/work_item
+          actor_id: /run/input/actor_id
+          run_id: /run/input/run_id
+      contract:
+        outcomes:
+          passed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                state: {type: string}
+          failed:
+            schema:
+              type: object
+              required: [operation_id, state]
+              properties:
+                exit_code: {type: integer}
+      ledger:
+        observe: [evidence]
+      policy:
+        # 15m is the runner boundary's operation cap (policy.timeout_exceeds_
+        # runner_cap, 900s); a landing is a fetch, a rebase and a push, so a
+        # run that needs longer is stuck, not slow.
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    land-verdict:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        from: /nodes/land/output
+      select:
+        - outcome: routed_human
+          when: "output.exit_code == 3"
+        - outcome: waiting
+          when: "output.exit_code == 5"
+        - outcome: refused
+          when: "output.exit_code == 4"
+        - outcome: environment_failure
+          when: "true"
+
+    # The park: no lease held while a lander elsewhere finishes. Re-enters
+    # `land`, which detects every step already done and skips it.
+    waiting:
+      kind: wait
+      ownerRef: team/platform-ai
+      until:
+        duration: 5m
+
+    # A conflict, a twice-stale push or a .github/ change: a person decides.
+    # The routing record land.py wrote names the reason and the paths.
+    needs-human:
+      kind: approval
+      ownerRef: team/platform-ai
+      approverRef: group/platform-maintainers
+      deadline: 168h
+      input:
+        bindings:
+          landing: /run/input
+          land: /nodes/land/output
+
+    landed:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/land/output
+
+    escalated:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/needs-human/output
+
+    not-landed:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/land/output
+
+  edges:
+    - from: land.passed
+      to: landed
+    - from: land.failed
+      to: land-verdict
+
+    - from: land-verdict.routed_human
+      to: needs-human
+    - from: land-verdict.waiting
+      to: waiting
+    - from: land-verdict.refused
+      to: not-landed
+    - from: land-verdict.environment_failure
+      to: not-landed
+
+    - from: waiting.completed
+      to: land
+
+    - from: needs-human.approved
+      to: escalated
+    - from: needs-human.rejected
+      to: escalated
+    - from: needs-human.expired
+      to: escalated

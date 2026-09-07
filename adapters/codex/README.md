@@ -223,6 +223,9 @@ rule as `adapters/colleague`'s `config.py`: file sets the baseline,
 | `sync_timeout_seconds` | `CODEX_BRIDGE_SYNC_TIMEOUT_SECONDS` | `300.0` | Bounds one foreground `codex exec` call. On expiry: SIGTERM (never SIGKILL), then a timeout response. |
 | `async_wait_seconds` | `CODEX_BRIDGE_ASYNC_WAIT_SECONDS` | `3600.0` | Overall ceiling the async runner waits for a codex subprocess to finish before SIGTERM + reporting a timeout failure. |
 | `state_dir` | `CODEX_BRIDGE_STATE_DIR` | `.codex-bridge-state` | Where the idempotency replay store lives. |
+| `liveness_mode` | `CODEX_BRIDGE_LIVENESS_MODE` | `"LOCK"` | How this lane's `liveness` fact is derived (issue #308). `LOCK`: the first run whose output carries the spent-refresh-token text flips `session_ok=false reason=refresh_token_spent` and holds it until cleared (a restart re-probes once). `CHECK`: additionally, a dry read-only `codex exec` probe runs when `/v1/capabilities` is read and the last answer is older than the TTL, so the fact flips before a dispatch fails. |
+| `liveness_probe_timeout_seconds` | `CODEX_BRIDGE_LIVENESS_PROBE_TIMEOUT_SECONDS` | `20.0` | Wall-clock bound on one liveness probe. A probe that runs out reports `probe_timeout`, never a verdict. |
+| `liveness_check_ttl_seconds` | `CODEX_BRIDGE_LIVENESS_CHECK_TTL_SECONDS` | `120.0` | How long a `CHECK` answer is served from cache before the next surface read re-probes — one micro-session per window per lane. |
 
 Point the process at a config file with `CODEX_BRIDGE_CONFIG=/path/to/bridge.json`
 or `codex-bridge --config /path/to/bridge.json`. Example:
@@ -310,6 +313,7 @@ The document is exactly what an actor registration carries in
 | `git_metadata_writable` | `not-probed` — codex confines a session with a helper this bridge process is not inside, so the write this process CAN make under `.git` is not the write a dispatch gets. Measured, not assumed, the moment a probe can run under codex's own sandbox (issue #94) |
 | `dispatch_grants` | What each `--sandbox` mode actually grants a session — writes, egress, the ability to start a nested confinement helper (issue #96) |
 | `toolchains` | `uv`, `go`, `gh` and `codex` itself: where each is, how it was packaged, what version it reports, and **which modes can actually run it** |
+| `liveness` | Whether the codex **session** behind this bridge can start (issue #308). Both codex lanes answered `/healthz` 200 with a spent refresh token and a wave found out by dispatching into them. `LOCK` mode latches on the spent-token sentence in a run's output (`Your access token could not be refreshed because your refresh token was revoked` / `... was already used`); `CHECK` mode also measures it with a dry `codex exec --sandbox read-only --skip-git-repo-check` bounded at 20 s. A run that hits it is answered with class `credential_spent`, distinct from `execution` and `capacity_exhausted`, so the control plane can route around the lane |
 
 The measurement is the point. Issues #18/#63: `--sandbox workspace-write`
 was requested on three hosts whose kernel restricted unprivileged user

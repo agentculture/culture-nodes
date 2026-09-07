@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from codex_bridge import codex_cli, mapping, preserve, scope_guard, workspace
+from codex_bridge import codex_cli, liveness, mapping, preserve, scope_guard, workspace
 from codex_bridge.callbacks import CallbackConfig, CallbackEmitter
 from codex_bridge.config import Config
 from codex_bridge.session_registry import SessionRegistry
@@ -122,10 +122,13 @@ class AsyncInvocation:
 class AsyncRunner:
     """Owns every in-flight asynchronous invocation for one bridge process."""
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, liveness_state: liveness.LivenessState | None = None) -> None:
         self._cfg = cfg
         self._lock = threading.Lock()
         self._invocations: dict[str, AsyncInvocation] = {}
+        #: The bridge's lane latch (issue #308): a spent-credential refusal
+        #: on this path locks the same lane the sync path does.
+        self.liveness_state = liveness_state
 
     def start(
         self,
@@ -263,6 +266,11 @@ class AsyncRunner:
             if inv.session_registry is not None:
                 inv.session_registry.release(inv.session_key, inv.session_holder)
         task_result = codex_cli.parse_session(stdout_text)
+        # #308: the live refusal printed its sentence to stderr with no
+        # terminal event, so stderr is read once the child has exited.
+        task_result = codex_cli.credential_refusal(
+            task_result, stdout_text, _finished_stderr(inv.proc), liveness_state=self.liveness_state
+        )
 
         # t10: measured AFTER the session ends, against the snapshot taken
         # right before it started — this is what makes head_before/after
@@ -416,3 +424,14 @@ class AsyncRunner:
             if item is _EOF:
                 break
             lines.append(item.rstrip("\n"))
+
+
+def _finished_stderr(proc: subprocess.Popen) -> str:
+    """What an EXITED child left on stderr, or "" — never a blocking read
+    on a process that is still running, and never a raise."""
+    if proc.poll() is None or proc.stderr is None:
+        return ""
+    try:
+        return proc.stderr.read() or ""
+    except (OSError, ValueError):
+        return ""

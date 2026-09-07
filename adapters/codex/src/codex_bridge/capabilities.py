@@ -19,7 +19,7 @@ import pwd
 import sys
 from typing import Any, Callable, Sequence
 
-from codex_bridge import deployment, preflight
+from codex_bridge import codex_cli, deployment, liveness, preflight
 from codex_bridge.config import Config
 
 
@@ -176,9 +176,18 @@ def host_facts(
     locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
     version: Callable[[str], str | None] = preflight.toolchain_version,
     git_probe: Callable[[Any], bool] | None = None,
+    liveness_state: liveness.LivenessState | None = None,
+    liveness_probe: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
+
+    *liveness_state* is the bridge process's latch (issue #308, task t9) —
+    the running server passes its own so a lane locked by a run's output
+    stays locked across surface reads; a caller without one (the
+    `--print-capabilities` flag) gets a fresh, unmeasured latch. In CHECK
+    mode *liveness_probe* (default: the real dry exec) runs when the latch
+    is not fresh; in LOCK mode nothing is probed. See `liveness_fact`.
 
     Every measurement input is injectable so a test can assert both kinds of
     kernel and both kinds of host, rather than whichever one is running the
@@ -247,7 +256,34 @@ def host_facts(
         deployment=deployment.deployment_facts(
             sys.modules[__package__], "culture-nodes-codex-bridge"
         ),
+        liveness=liveness_fact(cfg, liveness_state, liveness_probe),
     )
+
+
+def liveness_fact(
+    cfg: Config,
+    state: liveness.LivenessState | None = None,
+    probe: Callable[[], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """This lane's `liveness` fact, per its configured mode (issue #308).
+
+    LOCK reports the latch as it stands — `unmeasured` until a run's output
+    carries the spent-credential sentence, `false` from then until cleared.
+    CHECK additionally spends one dry read-only exec (`codex_cli.
+    liveness_probe`, bounded at `cfg.liveness_probe_timeout_seconds`) when
+    the last answer is older than `cfg.liveness_check_ttl_seconds`, so a
+    collector reading the surface every interval flips the fact before a
+    dispatch pays for the discovery, and reads inside the interval cost
+    nothing. The lock a run sets is itself a fresh record, so CHECK mode
+    honours it for one TTL and then lets the probe speak.
+    """
+    mode = liveness.parse_mode(cfg.liveness_mode)
+    if state is None:
+        state = liveness.LivenessState(mode)
+    if mode == liveness.MODE_CHECK and not state.fresh(cfg.liveness_check_ttl_seconds):
+        measure = probe or (lambda: codex_cli.liveness_probe(cfg))
+        state.record(measure())
+    return state.fact()
 
 
 def _confinement(probes: Sequence[tuple[str, str]]) -> str:

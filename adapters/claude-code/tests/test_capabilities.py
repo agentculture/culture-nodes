@@ -58,6 +58,9 @@ def test_the_kernel_probe_changes_nothing_on_this_backend(tmp_path):
     split the all-backends rule asks for."""
     permissive = capabilities.host_facts(Config(), probes=_permissive(tmp_path))
     restricted = capabilities.host_facts(Config(), probes=_restricted(tmp_path))
+    for host in (permissive, restricted):
+        # `liveness.checked_at` is a clock reading, not a host fact (#308).
+        host["liveness"].pop("checked_at")
     assert permissive == restricted
 
 

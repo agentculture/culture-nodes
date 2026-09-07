@@ -50,6 +50,7 @@ from typing import Any
 from codex_bridge import (
     capabilities,
     codex_cli,
+    liveness,
     mapping,
     preflight,
     preserve,
@@ -139,11 +140,20 @@ class Bridge:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.idempotency = IdempotencyStore(cfg.state_dir)
-        self.async_runner = AsyncRunner(cfg)
+        # Issue #308 / task t9: one latch per process, shared with the async
+        # runner so a run on either path locks the same lane.
+        self.liveness = liveness.LivenessState(cfg.liveness_mode)
+        self.async_runner = AsyncRunner(cfg, liveness_state=self.liveness)
         # t6 (c44/h37): exactly one in-flight invocation per session_key;
         # a concurrent collision forks cold rather than interleaving turns
         # on one provider thread — see session_registry.py's docstring.
         self.session_registry = SessionRegistry(max_inflight=cfg.max_inflight_per_session_key)
+
+    def rederive_liveness(self) -> None:
+        """Measure the lane once at process start, in either mode (decision
+        q7): a lock the previous process held died with it, and a live probe
+        is the bridge's half of clearing one."""
+        self.liveness.record(codex_cli.liveness_probe(self.cfg))
 
 
 def decide_async(cfg: Config, *, force_async: bool | None, max_steps: int | None) -> bool:
@@ -346,7 +356,8 @@ class Handler(BaseHTTPRequestHandler):
         """
         if not self._require_auth():
             return
-        self._write_json(200, preflight.capability_block(capabilities.host_facts(self.bridge.cfg)))
+        host = capabilities.host_facts(self.bridge.cfg, liveness_state=self.bridge.liveness)
+        self._write_json(200, preflight.capability_block(host))
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
         try:
@@ -747,6 +758,8 @@ class Handler(BaseHTTPRequestHandler):
             # of forking.
             if held:
                 self.bridge.session_registry.release(session_key, idem_key)
+        # #308: a spent refresh token is its own class, and it locks the lane.
+        result = codex_cli.with_credential_refusal(result, liveness_state=self.bridge.liveness)
         measured = workspace.measure(handle)
         response = mapping.sync_response(
             result.task_result,
@@ -948,6 +961,7 @@ def make_server(cfg: Config) -> BridgeHTTPServer:
 
 def serve_forever(cfg: Config) -> None:  # pragma: no cover - exercised via __main__, not unit tests
     server = make_server(cfg)
+    server.bridge.rederive_liveness()  # #308: re-derive this half at start
     logger.info("codex-bridge listening on http://%s:%d", cfg.host, server.server_address[1])
     try:
         server.serve_forever()

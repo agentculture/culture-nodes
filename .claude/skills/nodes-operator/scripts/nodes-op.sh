@@ -57,7 +57,7 @@ usage: nodes-op.sh <verb> [args]
                                                     developer lane only, see below)
             --no-watch                             (create and return the run id)
             --yes                                  (required: this bills a session)
-  actors                       registered actor rows, over the API (no ssh)
+  actors                       registered actor rows, over the API (no ssh); 4th column is the lane's liveness (session_ok/reason/mode/locked)
 
 Actors known to `assign`:
   codex-thor, codex-orin   codex bridges on thor/orin. Cross-machine, separate
@@ -498,10 +498,23 @@ actors)
   # that GET /v1alpha1/actors already returns actor_key, revision AND
   # endpoint_ref, so the ssh path was answering a question the API answers.
   # Registration itself still goes through register-actor.sh.
+  # Fourth column (issue #308, t11): the row's liveness fact when the control
+  # plane attaches one — session_ok/reason/mode/locked. A lane reading
+  # session_ok=false or locked=true is not in the next split plan; a row
+  # without the fact reads unmeasured, which is not a verdict (c26).
   api_get /v1alpha1/actors | py 'import json,sys
 rows = json.load(sys.stdin).get("items", [])
+def live(r):
+    f = r.get("liveness")
+    if not isinstance(f, dict):
+        return "session_ok=unmeasured reason=unmeasured mode=- locked=-"
+    ok = f.get("session_ok")
+    ok = "unmeasured" if ok is None else str(bool(ok)).lower()
+    locked = f.get("locked")
+    locked = "-" if locked is None else str(bool(locked)).lower()
+    return "session_ok=%s reason=%s mode=%s locked=%s" % (ok, f.get("reason", "unmeasured"), f.get("mode", "-"), locked)
 for r in sorted(rows, key=lambda r: (r.get("actor_key",""), r.get("revision",0))):
-    print("|".join([str(r.get("actor_key","")), str(r.get("revision","")), str(r.get("endpoint_ref") or "")]))'
+    print("|".join([str(r.get("actor_key","")), str(r.get("revision","")), str(r.get("endpoint_ref") or ""), live(r)]))'
   ;;
 *)
   usage

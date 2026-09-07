@@ -869,6 +869,54 @@ outright; only a numeric LAN IP is accepted (c20). `--human <actor_key>`
 registers a person as an endpoint-less `kind=human` actor — the second of
 the three onboarding places in `docs/operations/people.md`.
 
+#### Lane liveness: `fallback_actor` and `liveness_mode` (issue #308)
+
+On 2026-09-07 both codex bridges answered `/healthz` 200 and `codex login
+status` printed "Logged in using ChatGPT", and minutes later every dispatch
+failed with "refresh token was revoked". The fact that tells those apart is
+the bridge's `liveness` host fact on `/v1/capabilities` —
+`{session_ok, reason, checked_at, mode}` — which the control plane attaches
+to each actor row (t10) and three detectors read: `nodes doctor`'s
+`lane_liveness` check, `deploy.sh`'s one-line-per-lane tail after doctor,
+and `nodes-op.sh actors`' fourth column. None of them gates anything; a
+lane nobody measured (`session_ok=null`, `reason=unmeasured`) is not a dead
+lane.
+
+Two knobs, in two different places:
+
+- **`--metadata fallback_actor=<actor_key>`** (registry metadata) names the
+  lane the worker routes to when this actor's newest fact reads
+  `session_ok=false` or `locked=true` (parsed by the worker after t10; until
+  then carried, not read). Point the two codex lanes at each other:
+
+  ```bash
+  ./register-actor.sh company/codex-thor http://<thor-lan-ip>:8086 \
+    NODES_ACTOR_CODEX_THOR_TOKEN --metadata fallback_actor=company/codex-orin
+  ./register-actor.sh company/codex-orin http://<orin-lan-ip>:8086 \
+    NODES_ACTOR_CODEX_ORIN_TOKEN --metadata fallback_actor=company/codex-thor
+  ```
+
+  Like every other `--metadata` key it is merged into the previous revision's
+  metadata, never replaced. A fallback is another live lane, never a retry
+  into the dead one.
+- **`liveness_mode`** (bridge configuration, NOT registry metadata): how the
+  lane derives the fact — `liveness_mode` in the bridge's config JSON or env
+  `CODEX_BRIDGE_LIVENESS_MODE` in the account's `~/.culture-nodes/codex-bridge.env`.
+  `LOCK` (default) costs nothing and flips `session_ok=false
+  reason=refresh_token_spent` on the first run whose output carries the
+  spent-credential text, holding it until the bridge restarts and re-probes;
+  `CHECK` additionally runs a dry read-only `codex exec` probe (bounded by
+  `CODEX_BRIDGE_LIVENESS_PROBE_TIMEOUT_SECONDS`, cached for
+  `CODEX_BRIDGE_LIVENESS_CHECK_TTL_SECONDS`) when the surface is read, so the
+  fact flips before a dispatch pays for it — one micro-session per window per
+  lane. `adapters/codex/README.md` lists all three keys.
+
+Restoring a dead lane is a hand-turn: an interactive `codex login` as the
+engine account on the bridge host, `lanes/unix-user.sh bootstrap codex` to
+re-copy the credential, then a bridge restart so its start-up probe clears
+the latch. `codex-preflight.sh`'s check 3 (`login status`) is advisory since
+this incident — it reads the stored credential, not the session.
+
 `--os-user NAME` is sugar for `--metadata os_user=NAME` — a first-class
 metadata key (issue #204) that records the dedicated Unix account a bridge
 runs as (`culture-codex`, `culture-claude`, `culture-qwen`), so the registry

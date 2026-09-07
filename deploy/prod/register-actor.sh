@@ -26,6 +26,24 @@
 # dispatch resolves its checkout from. Both are facts about the deployment, not
 # about the graph or the agent -- which is why they live here.
 #
+# `--metadata fallback_actor=<actor_key>` (issue #308, loop-closure t11) names
+# the lane the worker routes a dispatch to when THIS actor's newest liveness
+# fact reads session_ok=false or locked=true (parsed by the worker after t10;
+# until then it is carried, not read). The value is an actor_key, so it passes
+# the metadata value grammar below (`/` is allowed). Point the two codex lanes
+# at each other:
+#
+#   register-actor.sh company/codex-thor http://<thor-ip>:8086 \
+#     NODES_ACTOR_CODEX_THOR_TOKEN --metadata fallback_actor=company/codex-orin
+#   register-actor.sh company/codex-orin http://<orin-ip>:8086 \
+#     NODES_ACTOR_CODEX_ORIN_TOKEN --metadata fallback_actor=company/codex-thor
+#
+# A fallback is only ever another live lane, never a retry into the dead one;
+# a lane nobody measured (session_ok=null, `unmeasured`) is not dead (c26).
+# How a lane derives the fact is bridge configuration, not registry metadata:
+# `liveness_mode` in the bridge's config JSON, or env CODEX_BRIDGE_LIVENESS_MODE
+# (LOCK: latch on the first spent-credential run; CHECK: probe before dispatch).
+#
 # `--os-user NAME` is sugar for `--metadata os_user=NAME`: it is a first-class
 # metadata key (issue #204) that records the dedicated Unix account a bridge
 # actually runs as (e.g. `culture-codex`, `culture-claude`, `culture-qwen`),

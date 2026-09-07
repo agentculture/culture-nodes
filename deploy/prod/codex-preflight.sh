@@ -19,16 +19,19 @@
 # since preflight is meant to validate the file an operator is about to
 # ship, not the merged runtime config a running bridge process would use.
 #
-# Checks, in order. Checks 1-6 and 8 each have their own failure class with
-# a distinct one-line "preflight: ..." message on stderr and a non-zero
-# exit. Check 7 is the one exception — see its own section below:
+# Checks, in order. Checks 1, 2, 4-6 and 8 each have their own failure class
+# with a distinct one-line "preflight: ..." message on stderr and a non-zero
+# exit. Checks 3 and 7 are ADVISORY — printed, never a refusal — see their
+# own sections below:
 #   1. codex_bin is set and is an executable file (never a PATH lookup —
 #      an operator who left codex_bin as the bare, PATH-resolvable name
 #      "codex" is exactly the mistake this check exists to catch)
 #   2. `<codex_bin> --version` runs and its output parses to a version
-#   3. `<codex_bin> login status` reports an authenticated session
-#      (codex_env.CODEX_HOME, when set, is passed through to this call —
-#      it selects which auth profile codex reads)
+#   3. ADVISORY ONLY, does not fail the deploy: `<codex_bin> login status`
+#      reports an authenticated session (codex_env.CODEX_HOME, when set, is
+#      passed through to this call — it selects which auth profile codex
+#      reads). Downgraded by loop-closure t11 (issue #308): the substring
+#      does not detect a revoked token — see the check's own section.
 #   4. every repo_allowlist entry is a real git checkout
 #   5. state_dir exists (created if absent) and is writable
 #   6. a non-loopback host requires auth_token to be set
@@ -157,7 +160,23 @@ if [[ ! "$VERSION_LINE" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]; then
   exit 1
 fi
 
-# --- 3. `<codex_bin> login status` reports an authenticated session --------
+# --- 3. `<codex_bin> login status` reports an authenticated session —
+# ADVISORY ONLY, does not fail the deploy (issue #308, loop-closure t11) ---
+# Why advisory: on 2026-09-07 both codex lanes printed "Logged in using
+# ChatGPT" here, and minutes later every dispatch failed with "Your access
+# token could not be refreshed because your refresh token was revoked".
+# `login status` reads the stored credential file; it does not exercise the
+# session, so a spent refresh token passes it. The authoritative fact is the
+# bridge's `liveness` host fact (adapters/codex/src/codex_bridge/liveness.py;
+# CHECK mode runs a bounded dry probe, LOCK mode latches on a run's output),
+# advertised on /v1/capabilities, read by `nodes doctor`'s lane_liveness
+# check and printed per lane by deploy.sh's detector tail. A preflight that
+# refused on this signal would also block the very deploy that ships the
+# probe, and a "logged in" here proves nothing — so both answers are printed
+# for what they are and neither decides. Deliberately NOT replaced by a real
+# `codex exec` here: that is billable, and this script's contract is that it
+# never is (the static guard in tests/deploy/codexpreflight_test.go).
+#
 # CODEX_HOME, when the config sets one, selects which auth profile codex
 # reads — it must ride along on this call specifically, since that is the
 # only codex invocation this script makes that consults stored auth.
@@ -170,9 +189,11 @@ else
 fi
 LOGIN_OUTPUT_LOWER=$(printf '%s' "$LOGIN_OUTPUT" | tr '[:upper:]' '[:lower:]')
 if [[ "$LOGIN_STATUS" -ne 0 || "$LOGIN_OUTPUT_LOWER" != *"logged in"* ]]; then
-  echo "preflight: codex login status did not report an authenticated session" >&2
-  exit 1
+  echo "preflight: WARNING codex login status did not report an authenticated session — advisory only (issue #308): the bridge's liveness fact on /v1/capabilities is what decides; re-login as the engine account before dispatching" >&2
 fi
+# A positive answer is deliberately NOT echoed: it would be the first stderr
+# line of every later refusal (the distinct-message guard reads that line),
+# and "logged in" is the signal this section just explained proves nothing.
 
 # --- 4. every repo_allowlist entry is a real git checkout -------------------
 if [[ ${#REPOS[@]} -gt 0 ]]; then

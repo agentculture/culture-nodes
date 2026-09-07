@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/hand_turn.schema.json",
+  "title": "Ledger record: hand_turn",
+  "description": "One HAND-TURN: a step a person performed by hand between a finished actor run and a landed change (issue #319, decision c25). It is a CLAIM about what a person did, never evidence of it: an observing agent writes it as origin=agent authority=proposed against a confirmed `hand_turn_definition` record, a person entering one directly (`nodes hand-turn`) writes it proposed under their own identity, and either reaches `confirmed` only through the ordinary review transaction (PRD §10.8). The record is registered additively after the PRD §10.2 set, like `grade`, and changes nothing in the producer/authority matrix -- there is deliberately no human->observed or human->confirmed-outside-review rule for it. Per-actor stats (`hand_turns_by_stage`) count the CONFIRMED subset only, so the number a delivery summary cites is the number a person ratified.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "hand_turn"
+    },
+    "data": {
+      "type": "object",
+      "$comment": "The three core fields are required: a hand-turn with no description, no stage, or no work item is not countable, and countable is the whole point.",
+      "required": [
+        "what",
+        "stage",
+        "work_item"
+      ],
+      "properties": {
+        "what": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the person did, in one line (e.g. `cherry-picked review-fix/t3 onto the PR branch`)."
+        },
+        "stage": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The loop stage the turn belongs to. The vocabulary is the confirmed `hand_turn_definition`'s `stages` list (e.g. dispatch, land, review, cleanup); it is a string here so the definition can grow without a schema change."
+        },
+        "work_item": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The work-item key the turn served (a Jira key such as `SCRUM-9`; migrations/0057, decision c41). Stats bucket confirmed turns per work item by this value."
+        },
+        "definition_ref": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The `hand_turn_definition` record this turn was recognised against. Null for a turn a person entered without one -- a real answer, not an omission."
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The definition rule id that matched (e.g. `commit_without_run`), so a rejected proposal tells the human which rule to iterate."
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Pointers to what the observer saw -- commit shas, PR event ids, comment URLs. References, not evidence: the record stays a claim."
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the turn happened, as read from the source (commit time, comment time), distinct from the envelope's created_at."
+        }
+      }
+    }
+  }
+}

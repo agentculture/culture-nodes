@@ -1,0 +1,266 @@
+{
+  "work_item": "SCRUM-7",
+  "pull_request": "agentculture/culture-nodes#307",
+  "runs": [
+    {
+      "id": "run_01T3",
+      "work_item": "SCRUM-7",
+      "created_at": "2026-09-05T08:00:00Z",
+      "node_runs": [
+        {
+          "node_id": "work",
+          "attempts": [
+            {
+              "actor_id": "actor_codex_thor",
+              "started_at": "2026-09-05T08:01:00Z",
+              "completed_at": "2026-09-05T08:40:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "run_01T4",
+      "work_item": "SCRUM-7",
+      "created_at": "2026-09-05T09:00:00Z",
+      "node_runs": [
+        {
+          "node_id": "work",
+          "attempts": [
+            {
+              "actor_id": "actor_codex_orin",
+              "started_at": "2026-09-05T09:02:00Z",
+              "completed_at": "2026-09-05T09:55:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "handover_refs": [
+    {
+      "ref": "refs/heads/handover/run_01T3",
+      "commit": "f1e2d3c4b5a69788",
+      "run_id": "run_01T3"
+    },
+    {
+      "ref": "refs/heads/handover/run_01T4",
+      "commit": "0a1b2c3d4e5f6071",
+      "run_id": "run_01T4"
+    }
+  ],
+  "pr_events": [
+    {
+      "id": "c-bot",
+      "type": "commit",
+      "sha": "f1e2d3c4b5a69788",
+      "author": "culture-nodes-bot",
+      "branch": "spec/harness-hardening-and-compare",
+      "message": "t3: land handover",
+      "at": "2026-09-05T08:39:00Z"
+    },
+    {
+      "id": "c-hover",
+      "type": "commit",
+      "sha": "0a1b2c3d4e5f6071",
+      "author": "operator",
+      "branch": "spec/harness-hardening-and-compare",
+      "message": "t4: landed via handover",
+      "at": "2026-09-05T11:00:00Z"
+    },
+    {
+      "id": "c-inwin",
+      "type": "commit",
+      "sha": "9988776655443322",
+      "author": "operator",
+      "branch": "spec/harness-hardening-and-compare",
+      "message": "tests: tidy",
+      "at": "2026-09-05T09:30:00Z"
+    },
+    {
+      "id": "c-cherry",
+      "type": "commit",
+      "sha": "a029689c1d2e3f40",
+      "author": "operator",
+      "branch": "spec/harness-hardening-and-compare",
+      "message": "review(#307): cherry-pick the eight review-fix/* fixes onto the PR branch",
+      "at": "2026-09-05T14:12:00Z"
+    },
+    {
+      "id": "b-create-1",
+      "type": "branch_created",
+      "branch": "review-fix/t1",
+      "author": "operator",
+      "at": "2026-09-05T12:01:00Z"
+    },
+    {
+      "id": "b-create-2",
+      "type": "branch_created",
+      "branch": "review-fix/t2",
+      "author": "operator",
+      "at": "2026-09-05T12:02:00Z"
+    },
+    {
+      "id": "b-create-3",
+      "type": "branch_created",
+      "branch": "review-fix/t3",
+      "author": "operator",
+      "at": "2026-09-05T12:03:00Z"
+    },
+    {
+      "id": "b-create-4",
+      "type": "branch_created",
+      "branch": "review-fix/t4",
+      "author": "operator",
+      "at": "2026-09-05T12:04:00Z"
+    },
+    {
+      "id": "b-create-5",
+      "type": "branch_created",
+      "branch": "review-fix/t5",
+      "author": "operator",
+      "at": "2026-09-05T12:05:00Z"
+    },
+    {
+      "id": "b-create-6",
+      "type": "branch_created",
+      "branch": "review-fix/t6",
+      "author": "operator",
+      "at": "2026-09-05T12:06:00Z"
+    },
+    {
+      "id": "b-create-7",
+      "type": "branch_created",
+      "branch": "review-fix/t7",
+      "author": "operator",
+      "at": "2026-09-05T12:07:00Z"
+    },
+    {
+      "id": "b-create-8",
+      "type": "branch_created",
+      "branch": "review-fix/t8",
+      "author": "operator",
+      "at": "2026-09-05T12:08:00Z"
+    },
+    {
+      "id": "b-delete-1",
+      "type": "branch_deleted",
+      "branch": "review-fix/t1",
+      "author": "operator",
+      "at": "2026-09-05T15:01:00Z"
+    },
+    {
+      "id": "b-delete-2",
+      "type": "branch_deleted",
+      "branch": "review-fix/t2",
+      "author": "operator",
+      "at": "2026-09-05T15:02:00Z"
+    },
+    {
+      "id": "b-delete-3",
+      "type": "branch_deleted",
+      "branch": "review-fix/t3",
+      "author": "operator",
+      "at": "2026-09-05T15:03:00Z"
+    },
+    {
+      "id": "b-delete-4",
+      "type": "branch_deleted",
+      "branch": "review-fix/t4",
+      "author": "operator",
+      "at": "2026-09-05T15:04:00Z"
+    },
+    {
+      "id": "b-delete-5",
+      "type": "branch_deleted",
+      "branch": "review-fix/t5",
+      "author": "operator",
+      "at": "2026-09-05T15:05:00Z"
+    },
+    {
+      "id": "b-delete-6",
+      "type": "branch_deleted",
+      "branch": "review-fix/t6",
+      "author": "operator",
+      "at": "2026-09-05T15:06:00Z"
+    },
+    {
+      "id": "b-delete-7",
+      "type": "branch_deleted",
+      "branch": "review-fix/t7",
+      "author": "operator",
+      "at": "2026-09-05T15:07:00Z"
+    },
+    {
+      "id": "b-delete-8",
+      "type": "branch_deleted",
+      "branch": "review-fix/t8",
+      "author": "operator",
+      "at": "2026-09-05T15:08:00Z"
+    },
+    {
+      "id": "b-delete-bot",
+      "type": "branch_deleted",
+      "branch": "review-fix/t9",
+      "author": "culture-nodes-bot",
+      "at": "2026-09-05T15:30:00Z"
+    },
+    {
+      "id": "b-delete-feat",
+      "type": "branch_deleted",
+      "branch": "feat/old-spike",
+      "author": "operator",
+      "at": "2026-09-05T15:31:00Z"
+    }
+  ],
+  "issue_comments": [
+    {
+      "id": "cm-1",
+      "author": "operator",
+      "url": "https://github.com/agentculture/culture-nodes/pull/307#discussion_r1",
+      "thread_fixed_by_loop": true,
+      "body": "Fixed in a029689 -- split the composite guard as suggested.",
+      "at": "2026-09-05T14:20:00Z"
+    },
+    {
+      "id": "cm-2",
+      "author": "operator",
+      "url": "https://github.com/agentculture/culture-nodes/pull/307#discussion_r2",
+      "thread_fixed_by_loop": true,
+      "body": "Done, the runner tests are split into test_measurement_runner_review.py.",
+      "at": "2026-09-05T14:21:00Z"
+    },
+    {
+      "id": "cm-3",
+      "author": "operator",
+      "url": "https://github.com/agentculture/culture-nodes/pull/307#discussion_r3",
+      "thread_fixed_by_loop": true,
+      "body": "Dropped the unused os import.",
+      "at": "2026-09-05T14:22:00Z"
+    },
+    {
+      "id": "cm-bot",
+      "author": "culture-nodes-bot",
+      "url": "https://github.com/agentculture/culture-nodes/pull/307#discussion_r4",
+      "thread_fixed_by_loop": true,
+      "body": "Fixed in handover run_01T3. - culture-nodes (Claude)",
+      "at": "2026-09-05T08:41:00Z"
+    },
+    {
+      "id": "cm-unrelated",
+      "author": "operator",
+      "url": "https://github.com/agentculture/culture-nodes/pull/307#issuecomment-1",
+      "thread_fixed_by_loop": false,
+      "body": "Looks good overall.",
+      "at": "2026-09-05T13:00:00Z"
+    },
+    {
+      "id": "cm-reset",
+      "author": "operator",
+      "url": "https://github.com/agentculture/culture-nodes/issues/286#issuecomment-9",
+      "thread_fixed_by_loop": false,
+      "body": "Had to reset the thor account checkout over ssh before the wave-1 dispatch (git checkout -B main origin/main) -- the scope guard refused the stale tree.",
+      "at": "2026-09-05T07:50:00Z"
+    }
+  ]
+}

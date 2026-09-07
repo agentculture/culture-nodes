@@ -44,6 +44,9 @@ const (
 	SchemaLedgerDispatchPreflight       = "ledger/dispatch_preflight.schema.json"
 	SchemaLedgerDispatchAcknowledgement = "ledger/dispatch_acknowledgement.schema.json"
 
+	SchemaLedgerHandTurn           = "ledger/hand_turn.schema.json"
+	SchemaLedgerHandTurnDefinition = "ledger/hand_turn_definition.schema.json"
+
 	SchemaRunnerOperation = "runner/operation.schema.json"
 	SchemaRunnerResult    = "runner/result.schema.json"
 )
@@ -51,7 +54,9 @@ const (
 // ledgerRecordTypes lists the MVP record types in PRD §10.2 order, followed
 // by the ones registered additively after them: `grade` (issue #28 item 1)
 // and the clarify-then-commit gate's `dispatch_preflight` /
-// `dispatch_acknowledgement` pair (issue #67, task t14).
+// `dispatch_acknowledgement` pair (issue #67, task t14), and the hand-turn
+// ledger's `hand_turn` / `hand_turn_definition` pair (issue #319, decision
+// c25, task t16).
 var ledgerRecordTypes = []string{
 	"announcement",
 	"claim",
@@ -66,6 +71,8 @@ var ledgerRecordTypes = []string{
 	"grade",
 	"dispatch_preflight",
 	"dispatch_acknowledgement",
+	"hand_turn",
+	"hand_turn_definition",
 }
 
 // LedgerRecordTypes returns the registered work-ledger record types.

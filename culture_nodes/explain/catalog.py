@@ -465,6 +465,38 @@ already committed — the API's own remediation names the fix (re-read the
 current ledger version and submit a new review request).
 """
 
+_HAND_TURN = """\
+# culture-nodes hand-turn
+
+Record one hand-turn — a step a person performed by hand between a finished
+actor run and a landed change — against a work item (issue #319, decision
+c25). One HTTP call: `POST /v1alpha1/hand-turns` (`api/openapi/openapi.yaml`,
+`hand-turns` tag). No authority logic lives here.
+
+## Usage
+
+    culture-nodes hand-turn "<what>" --stage <stage> --work-item KEY \\
+        [--as ACTOR] [--run RUN-ID] [--definition-ref ID] [--rule ID] \\
+        [--evidence REF]... [--token TOKEN] [--json]
+
+The record files against the NEWEST run whose `work_item` is `KEY` (`--run`
+names one explicitly; it must carry the same key). It ALWAYS lands
+`proposed` under the recording actor's identity — a person's or the
+observing agent's (`examples/hand-turn-observer`) — and is confirmed only
+through `culture-nodes review create` / `commit` on that run. The
+producer/authority matrix is unchanged: there is no direct-confirm carve-out
+for hand-turns the way there is for a human's own grade, because a hand-turn
+is a claim about the world, not an opinion.
+
+`GET /v1alpha1/actors/{id}/stats` reports `hand_turns_by_stage` over the
+CONFIRMED subset only, per stage and work item; a delivery summary cites that
+count (`docs/operations/hand-turn-ledger.md`).
+
+Like `human-tasks decide`, the route needs the decision bearer: `--token` or
+`$NODES_HUMAN_DECISION_TOKEN`; the actor comes from `--as` or
+`$NODES_HAND_TURN_ACTOR_ID`. Neither is ever printed.
+"""
+
 _HUMAN_TASKS = """\
 # culture-nodes human-tasks
 
@@ -664,6 +696,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("review",): _REVIEW,
     ("review", "create"): _REVIEW,
     ("review", "commit"): _REVIEW,
+    ("hand-turn",): _HAND_TURN,
     ("human-tasks",): _HUMAN_TASKS,
     ("human-tasks", "list"): _HUMAN_TASKS,
     ("human-tasks", "get"): _HUMAN_TASKS,

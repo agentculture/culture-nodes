@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/ledger/hand_turn_definition.schema.json",
+  "title": "Ledger record: hand_turn_definition",
+  "description": "The human's DEFINITION of what counts as a hand-turn, and at which stage (issue #319, decision c25). An observing agent proposes `hand_turn` records against it and names it in `definition_ref`; the human iterates the definition from what the agent got wrong. Like every other record it is written proposed and confirmed through a review transaction -- the person who wrote it is the person who confirms it, through the same surface, so the ledger shows the definition was ratified rather than merely typed. A correction is a new record with `supersedes` pointing at the old one, never an edit.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "required": [
+    "record_type"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "hand_turn_definition"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "stages",
+        "rules"
+      ],
+      "properties": {
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "The loop stages a hand-turn may be filed under, in loop order (e.g. dispatch, land, review, cleanup)."
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "stage",
+              "description"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Stable rule id a `hand_turn.rule` cites (e.g. `commit_without_run`)."
+              },
+              "stage": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Which of `stages` a match is filed under."
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The rule in the human's words (e.g. `a commit on the PR branch with no run attempt in the window`)."
+              }
+            }
+          },
+          "description": "What the observer recognises. Any matcher parameters (patterns, windows) are additional properties of a rule; the schema pins only what makes a rule citable."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Why the definition is what it is, for the next person iterating it."
+        }
+      }
+    }
+  }
+}

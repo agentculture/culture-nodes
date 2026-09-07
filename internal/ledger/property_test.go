@@ -468,7 +468,8 @@ func randomAgentRecord(t *testing.T, rng *rand.Rand) ledger.Record {
 // Phase 0 record type's payload is documentary and optional, so `{}`
 // satisfies it; the additively-registered types (`grade`, and the
 // clarify-then-commit gate's `dispatch_preflight` /
-// `dispatch_acknowledgement`) require their core fields, so each needs an
+// `dispatch_acknowledgement`, and the hand-turn ledger's `hand_turn` /
+// `hand_turn_definition`) require their core fields, so each needs an
 // actual minimal payload here.
 //
 // Supplying one matters for a reason beyond convenience: schema validation
@@ -499,6 +500,20 @@ func minimalPayload(recordType ledger.RecordType) map[string]any {
 			"verdict":          "proceed",
 			"preflight_ref":    "ledger_00000000000000000000000001",
 			"preflight_digest": "sha256:" + strings.Repeat("0", 64),
+		}
+	case ledger.RecordHandTurn:
+		return map[string]any{
+			"what":      "Minimal payload for a property test that is not about hand-turn content.",
+			"stage":     "land",
+			"work_item": "SCRUM-0",
+		}
+	case ledger.RecordHandTurnDefinition:
+		return map[string]any{
+			"stages": []string{"land"},
+			"rules": []map[string]any{{
+				"id": "property_fixture", "stage": "land",
+				"description": "Minimal payload for a property test that is not about definition content.",
+			}},
 		}
 	default:
 		return map[string]any{}

@@ -251,6 +251,28 @@
         ],
         "type": "object"
       },
+      "ActorHandTurnStageCount": {
+        "properties": {
+          "count": {
+            "description": "Confirmed hand_turn records under this stage for this work item.",
+            "type": "integer"
+          },
+          "stage": {
+            "description": "The hand_turn record's `data.stage`.",
+            "type": "string"
+          },
+          "work_item": {
+            "description": "The hand_turn record's `data.work_item`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "work_item",
+          "count"
+        ],
+        "type": "object"
+      },
       "ActorLedgerAuthorityCount": {
         "description": "How many ledger records this actor originated (`origin.actor_id`) at a given authority — every record_type, not only `claim`; PRD §10.4 uses \"claim\" generically for anything an agent asserts.",
         "properties": {
@@ -371,6 +393,13 @@
           "grades": {
             "$ref": "#/components/schemas/ActorGrades"
           },
+          "hand_turns_by_stage": {
+            "description": "CONFIRMED hand_turn records only — a confirming review record exists for the turn — per stage and work item, on runs this actor attempted (task t16, decision c25). Proposed and rejected turns contribute nothing. Always present; empty when nothing was confirmed.",
+            "items": {
+              "$ref": "#/components/schemas/ActorHandTurnStageCount"
+            },
+            "type": "array"
+          },
           "retry_burn": {
             "$ref": "#/components/schemas/ActorRetryBurn"
           },
@@ -394,7 +423,8 @@
           "claims_by_authority",
           "retry_burn",
           "usage",
-          "grades"
+          "grades",
+          "hand_turns_by_stage"
         ],
         "type": "object"
       },
@@ -730,6 +760,120 @@
           "rationale",
           "evaluated_actor_id",
           "grading_actor_id"
+        ],
+        "type": "object"
+      },
+      "CreateHandTurnDefinitionRequest": {
+        "properties": {
+          "actor_id": {
+            "description": "The actor recording the definition — normally the person; kind decides origin, authority is always proposed.",
+            "type": "string"
+          },
+          "human_logins": {
+            "description": "The logins whose acts count as a person's; a bot login never proposes a hand-turn.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "notes": {
+            "description": "Why the definition is what it is, for the next person iterating it.",
+            "type": "string"
+          },
+          "rules": {
+            "description": "What the observer recognises — `{id, stage, description}` plus the matcher parameters the observer understands.",
+            "items": {
+              "additionalProperties": true,
+              "required": [
+                "id",
+                "stage",
+                "description"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "run_id": {
+            "description": "File against this run instead of the newest one carrying `work_item`.",
+            "type": "string"
+          },
+          "stages": {
+            "description": "The loop stages a hand-turn may be filed under, in loop order.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "supersedes": {
+            "description": "The previous definition record this one replaces.",
+            "type": "string"
+          },
+          "work_item": {
+            "description": "The work-item key the definition is filed against (its newest run).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stages",
+          "rules",
+          "work_item",
+          "actor_id"
+        ],
+        "type": "object"
+      },
+      "CreateHandTurnRequest": {
+        "properties": {
+          "actor_id": {
+            "description": "The actor recording the turn — the observing agent or the person. Its registered kind (human or agent) becomes the record's origin; the authority is always proposed.",
+            "type": "string"
+          },
+          "definition_ref": {
+            "description": "The hand_turn_definition record the turn was recognised against; recorded as the record's subject_ref too.",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "description": "Pointers to what the observer saw — commit shas, event ids, comment URLs. References, not evidence.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "observed_at": {
+            "description": "When the turn happened as read from the source, distinct from the record's created_at.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "rule": {
+            "description": "The definition rule id that matched (e.g. `commit_without_run`), so a rejection tells the human which rule to iterate.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "File against this run instead of the newest one carrying `work_item`; it must carry the same work item.",
+            "type": "string"
+          },
+          "stage": {
+            "description": "The loop stage the turn belongs to — one of the confirmed hand_turn_definition's `stages` (e.g. dispatch, land, review, cleanup). A string, so the definition can grow without an API change.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "what": {
+            "description": "What the person did, in one line (e.g. `cherry-picked review-fix/t3 onto the PR branch`).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "work_item": {
+            "description": "The work-item key the turn served (e.g. `SCRUM-9`). The record is filed against the newest run carrying it.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "stage",
+          "work_item",
+          "actor_id"
         ],
         "type": "object"
       },
@@ -4833,6 +4977,140 @@
         ]
       }
     },
+    "/v1alpha1/hand-turn-definitions": {
+      "post": {
+        "description": "Appends a hand_turn_definition ledger record (schemas/ledger/hand_turn_definition.schema.json; decision c25, honesty h17): the stages a hand-turn may be filed under and the rules the observing agent recognises turns by. Filed against the newest run carrying `work_item` (or `run_id`) exactly like POST /v1alpha1/hand-turns, written `proposed` under `actor_id`'s registered kind, and confirmed through the review surface — so the ledger shows the definition was ratified, not merely typed. An iteration names the record it replaces in `supersedes`; the old record is untouched and leaves every projection, and a second replacement of the same record is refused (409).",
+        "operationId": "createHandTurnDefinition",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHandTurnDefinitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerRecord"
+                }
+              }
+            },
+            "description": "The proposed hand_turn_definition record."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "stages or rules is empty, a core field is missing, or the ledger refused the record."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No decision bearer, bound principal, or agent bearer was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run carries `work_item`, `run_id` names no run, or `actor_id` is not a registered actor."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The record named in `supersedes` already has a live replacement."
+          }
+        },
+        "summary": "Record the human's definition of what counts as a hand-turn.",
+        "tags": [
+          "hand-turns"
+        ]
+      }
+    },
+    "/v1alpha1/hand-turns": {
+      "post": {
+        "description": "Appends a hand_turn ledger record (schemas/ledger/hand_turn.schema.json; issue #319, decision c25): one step a person performed by hand — a cherry-pick, a branch delete, a reply posted by hand, a checkout reset over ssh — between a finished actor run and a landed change. The record is filed against the NEWEST run whose `work_item` equals the request's (migrations/0057, decision c41); `run_id` may name a specific run instead, and must then carry the same work item. A work item no run carries is a 404 naming the fix, never a record with no run. `actor_id` is looked up in the registry and its kind (human or agent) becomes the record's origin — the observing agent (examples/hand-turn-observer) writes as itself, a person typing `nodes hand-turn` writes as themselves. The authority is ALWAYS `proposed`: unlike a grade, a hand-turn is a claim about the world, and it reaches `confirmed` only through the review surface (POST /v1alpha1/runs/{id}/reviews + POST /v1alpha1/reviews/{id}/commit), where a person confirms a batch and iterates the definition from what the observer got wrong. `GET /v1alpha1/actors/{id}/stats`' `hand_turns_by_stage` counts the confirmed subset only. Like the other decision routes this one requires the decision bearer (or a bound principal / an agent actor's own bearer).",
+        "operationId": "createHandTurn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHandTurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerRecord"
+                }
+              }
+            },
+            "description": "The proposed hand_turn record."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A core field is missing, `run_id` names a run carrying a different work item, the actor's registered kind is neither human nor agent, or the ledger refused the record."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No decision bearer, bound principal, or agent bearer was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run carries `work_item`, `run_id` names no run, or `actor_id` is not a registered actor."
+          }
+        },
+        "summary": "Record one hand-turn against a work item.",
+        "tags": [
+          "hand-turns"
+        ]
+      }
+    },
     "/v1alpha1/healthz": {
       "get": {
         "description": "Always `200` once the process is serving requests. Does not touch the database.",
@@ -7898,6 +8176,10 @@
     {
       "description": "Opinion records — a 1-5 rating plus rationale — evaluating a completed run/attempt against an actor (issue #28 item 1; PRD §10.4 extended). Follows the same producer/authority matrix every other ledger record does; never observed or derived, and never self-graded.",
       "name": "grades"
+    },
+    {
+      "description": "Hand-turn records (issue #319, decision c25): one step a person performed by hand between a finished actor run and a landed change, filed against a work item. Always appended `proposed` — by the observing agent or by the person — and confirmed only through the ordinary review surface; per-actor stats count the confirmed subset. The producer/authority matrix is unchanged by this record kind.",
+      "name": "hand-turns"
     },
     {
       "description": "The paused-on-a-human side of an approval node (PRD §9.9): list and inspect human_tasks rows, and commit the decision that resumes the run. Unlike every other operation in this API, the decision endpoint is not authless — see its own description.",

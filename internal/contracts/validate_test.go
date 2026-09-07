@@ -208,6 +208,12 @@ func TestMalformedFixturesReportPointerPaths(t *testing.T) {
 			wantPointer: "/data/evaluated_actor_id",
 		},
 		{
+			// The hand-turn ledger's kind dispatches the same way (task t16).
+			fixture:     "ledger-hand-turn-missing-stage.json",
+			schema:      contracts.SchemaLedgerRecord,
+			wantPointer: "/data/stage",
+		},
+		{
 			fixture:     "runner-operation-unpinned-image.json",
 			schema:      contracts.SchemaRunnerOperation,
 			wantPointer: "/execution/image_digest",

@@ -8,7 +8,9 @@
 //     record types (PRD §10.2), and the additively-registered domain
 //     records — `grade` (issue #28 item 1) and the clarify-then-commit
 //     gate's `dispatch_preflight`/`dispatch_acknowledgement` pair (issue
-//     #67) — plus record.schema.json which dispatches on record_type;
+//     #67), and the hand-turn ledger's `hand_turn`/`hand_turn_definition`
+//     pair (issue #319, decision c25) — plus record.schema.json which
+//     dispatches on record_type;
 //   - workflow/ the workflow authoring document (PRD §9.1, §11.1);
 //   - runner/   the runner-agnostic operation and result contracts (PRD §13.7).
 //

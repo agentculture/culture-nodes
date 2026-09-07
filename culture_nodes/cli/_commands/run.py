@@ -85,6 +85,11 @@ def _format_run_metadata_lines(run: dict[str, object]) -> list[str]:
     category = run.get("category")
     if category:
         lines.append(f"category: {category}")
+    # work_item is its own column and filter (decision c41), rendered on its
+    # own line so it is never mistaken for the category tag.
+    work_item = run.get("work_item")
+    if work_item:
+        lines.append(f"work_item: {work_item}")
     return lines
 
 
@@ -99,6 +104,8 @@ def cmd_run_create(args: argparse.Namespace) -> int:
         body["description"] = args.description
     if args.category is not None:
         body["category"] = args.category
+    if args.work_item is not None:
+        body["work_item"] = args.work_item
     client = client_from_args(args)
     resp = client.request("POST", f"{API_PREFIX}/runs", json_body=body)
     json_mode = bool(getattr(args, "json", False))
@@ -130,6 +137,7 @@ def cmd_run_list(args: argparse.Namespace) -> int:
             "updated_since": args.updated_since,
             "updated_until": args.updated_until,
             "sort": args.sort,
+            "work_item": args.work_item,
             "limit": args.limit,
         },
     )
@@ -153,6 +161,9 @@ def cmd_run_list(args: argparse.Namespace) -> int:
                     line += f"  {name}"
                 elif hint:
                     line += f"  {hint} (derived)"
+                work_item = item.get("work_item")
+                if work_item:
+                    line += f"  [{work_item}]"
                 lines.append(line)
             emit_result("\n".join(lines), json_mode=False)
     return 0
@@ -388,6 +399,16 @@ def register(sub: argparse._SubParsersAction) -> None:
         default=None,
         help="Optional flat category tag (e.g. review, audit). Retaggable via 'run retag'.",
     )
+    create.add_argument(
+        "--work-item",
+        dest="work_item",
+        default=None,
+        help=(
+            "Optional work-item key this run belongs to (e.g. SCRUM-9). Its own run "
+            "column, distinct from --category; set at creation only. Filter with "
+            "'run list --work-item'."
+        ),
+    )
     create.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(create)
     create.set_defaults(func=cmd_run_create)
@@ -417,6 +438,12 @@ def register(sub: argparse._SubParsersAction) -> None:
             "Sort column (default: created_at, or updated_at when "
             "--updated-since/--updated-until is set and --sort is omitted)."
         ),
+    )
+    listp.add_argument(
+        "--work-item",
+        dest="work_item",
+        default=None,
+        help="Only runs whose work_item key matches exactly (e.g. SCRUM-9).",
     )
     listp.add_argument("--limit", type=int, default=None, help="Max items to return.")
     listp.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)

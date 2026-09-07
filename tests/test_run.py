@@ -622,3 +622,99 @@ def test_run_retag_404_unknown_run(fake_api, capsys) -> None:
     captured = capsys.readouterr()
     assert rc == 1
     assert "no run with id bogus" in captured.err
+
+
+def test_run_create_sends_work_item(fake_api) -> None:
+    """``--work-item`` rides POST /v1alpha1/runs as ``work_item`` (t1, c41).
+
+    It is its own field: the body must NOT gain a ``category`` the caller did
+    not pass, because work_item is a separate run column, not a category tag.
+    """
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["body"] = json.loads(b)
+        h.send_json(
+            201,
+            {
+                "id": "run-1",
+                "workflow_digest": "sha256:abc",
+                "state": "running",
+                "created_at": "t",
+                "work_item": "SCRUM-9",
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs", handler)
+    fake_api.start()
+    rc = main(
+        [
+            "run",
+            "create",
+            "--workflow",
+            "sha256:abc",
+            "--work-item",
+            "SCRUM-9",
+            "--api-url",
+            fake_api.base_url,
+        ]
+    )
+    assert rc == 0
+    assert seen["body"] == {"workflow_digest": "sha256:abc", "work_item": "SCRUM-9"}
+
+
+def test_run_create_text_renders_work_item(fake_api, capsys) -> None:
+    def handler(h, m, q, b):
+        h.send_json(
+            201,
+            {
+                "id": "run-1",
+                "workflow_digest": "sha256:abc",
+                "state": "running",
+                "created_at": "t",
+                "work_item": "SCRUM-9",
+            },
+        )
+
+    fake_api.route("POST", r"/v1alpha1/runs", handler)
+    fake_api.start()
+    rc = main(["run", "create", "--workflow", "sha256:abc", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "work_item: SCRUM-9" in out
+    assert "category:" not in out
+
+
+def test_run_list_work_item_query(fake_api, capsys) -> None:
+    """``run list --work-item KEY`` drives GET /v1alpha1/runs?work_item=KEY.
+
+    No ``category`` query parameter is ever sent: the API has no category
+    filter and this task deliberately does not add one (decision c41).
+    """
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["query"] = q
+        h.send_json(
+            200,
+            {
+                "items": [
+                    {
+                        "id": "run-1",
+                        "state": "running",
+                        "workflow_digest": "sha256:abc",
+                        "created_at": "t",
+                        "work_item": "SCRUM-9",
+                    }
+                ]
+            },
+        )
+
+    fake_api.route("GET", r"/v1alpha1/runs", handler)
+    fake_api.start()
+    rc = main(["run", "list", "--work-item", "SCRUM-9", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert seen["query"] == {"work_item": ["SCRUM-9"]}
+    assert "run-1" in out
+    assert "SCRUM-9" in out

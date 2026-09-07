@@ -28,6 +28,11 @@ type createRunRequest struct {
 	Name           string          `json:"name,omitempty"`
 	Description    string          `json:"description,omitempty"`
 	Category       string          `json:"category,omitempty"`
+	// WorkItem is the key of the work item this run belongs to (a Jira
+	// issue key such as SCRUM-9; migrations/0057, decision c41). Optional
+	// and additive like the three above; it is its OWN run column and list
+	// filter, never written into Category, and never retaggable via PATCH.
+	WorkItem string `json:"work_item,omitempty"`
 }
 
 // handleCreateRun is POST /v1alpha1/runs. It resolves the pinned,
@@ -66,7 +71,8 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 	// unknown-success window a post-commit UPDATE opened — a retry after
 	// that 5xx would have created a duplicate run).
 	run, err := s.Engine.CreateRun(ctx, cw, req.Input,
-		engine.WithRunMetadata(req.Name, req.Description, req.Category))
+		engine.WithRunMetadata(req.Name, req.Description, req.Category),
+		engine.WithRunWorkItem(req.WorkItem))
 	if err != nil {
 		return classify(err)
 	}
@@ -114,6 +120,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 		State:        state,
 		Subject:      r.URL.Query().Get("subject"),
 		WorkflowKey:  r.URL.Query().Get("workflow_key"),
+		WorkItem:     r.URL.Query().Get("work_item"),
 		Cursor:       cursor,
 		Limit:        parseLimit(r, 50, 500),
 		UpdatedSince: updatedSince,
@@ -245,6 +252,15 @@ func (s *Server) handlePatchRun(w http.ResponseWriter, r *http.Request) error {
 		return badRequest(
 			"description is set at run creation only and cannot be changed afterward (frame decision q4) — remove it from the request body",
 			"PATCH /v1alpha1/runs/%s: description is immutable", id)
+	}
+	// work_item (migrations/0057, decision c41) is set once, when the run is
+	// minted for its work item — by POST /v1alpha1/runs or by the trigger
+	// from the event payload — and is not a retag. Refused for the same
+	// reason name/description are: a typed decode would silently drop it.
+	if _, ok := raw["work_item"]; ok {
+		return badRequest(
+			"work_item is set at run creation only and cannot be changed afterward — remove it from the request body",
+			"PATCH /v1alpha1/runs/%s: work_item is immutable", id)
 	}
 	categoryRaw, ok := raw["category"]
 	if !ok {

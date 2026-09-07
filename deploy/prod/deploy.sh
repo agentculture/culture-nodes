@@ -910,6 +910,8 @@ deploy_jira() { # host
 # --- the two-host r4 sequence (task t2, spec c25/c26/c28, #230) -----------
 # shellcheck source=deploy/prod/lanes/two-host.sh
 source "$SCRIPT_DIR/lanes/two-host.sh"
+# shellcheck source=deploy/prod/lanes/liveness-detector.sh
+source "$SCRIPT_DIR/lanes/liveness-detector.sh"
 
 case "$HOST" in
   thor*)
@@ -931,18 +933,21 @@ case "$HOST" in
     # now instead of 18 hours later from a 401 (issue #69 item 2).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     # Doctor is the second detector (PR #208 review finding 2): after the
-    # stack is up, the Python nodes CLI's four checks say whether the agent
+    # stack is up, the Python nodes CLI's five checks say whether the agent
     # lane this deploy just reconfigured can actually work — prompt file,
-    # skills kit, API reachability, and the userns sysctl a workspace-write
-    # dispatch silently loses writes without (#63). Same posture as the
-    # credential audit above: a detector that fails the deploy LOUDLY at
-    # the end, not a gate that leaves the stack half-shipped.
+    # skills kit, API reachability, the userns sysctl a workspace-write
+    # dispatch silently loses writes without (#63), and which lanes the
+    # control plane measures dead (#308). Same posture as the credential
+    # audit above: a detector that fails the deploy LOUDLY at the end, not
+    # a gate that leaves the stack half-shipped.
     # As the ACCOUNT since #243: the agent lane is culture-codex's checkout
-    # and culture-codex's nodes CLI, so that is where the four checks mean
+    # and culture-codex's nodes CLI, so that is where the five checks mean
     # something. The login user's copies are the rollback posture, not the
     # lane this deploy shipped.
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    # Third detector (#308, t11): the codex bridge's liveness fact, one line, never a gate.
+    lane_liveness_detector "$HOST"
     account_bridges_summary "$HOST"
     deploy_summary thor
     ;;
@@ -973,6 +978,7 @@ case "$HOST" in
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    lane_liveness_detector "$HOST"  # same liveness detector as the thor lane (#308, t11)
     account_bridges_summary "$HOST"
     deploy_summary orin
     ;;

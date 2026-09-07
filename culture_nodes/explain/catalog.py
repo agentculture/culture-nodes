@@ -26,7 +26,7 @@ response.
 - `culture-nodes learn` — structured self-teaching prompt.
 - `culture-nodes explain <path>` — markdown docs for any noun/verb.
 - `culture-nodes overview` — descriptive snapshot of the agent.
-- `culture-nodes doctor` — check the agent-identity and API-reachability invariants.
+- `culture-nodes doctor` — five checks: identity, skills, API reachability, userns, lane liveness.
 - `culture-nodes cli overview` — describe the CLI surface.
 
 ## Product verbs (thin API clients)
@@ -123,13 +123,24 @@ so a stray path never hard-fails.
 _DOCTOR = """\
 # culture-nodes doctor
 
-Checks the agent-identity invariants `steward doctor` verifies:
-prompt-file-present and backend-consistency (`colleague` → `AGENTS.colleague.md`), a
-skills-present check, and a `nodes_api_reachable` check (`GET /v1alpha1/healthz`
-against the resolved API URL). Only `error`-severity checks (prompt-file-present,
-backend-consistency) can flip the exit code to 1 — `nodes_api_reachable` and
-`skills-present` are `warning`/`info` and never fail `doctor` on their own,
-since the identity verbs work with no API running at all.
+Five checks. The agent-identity invariants `steward doctor` verifies:
+`prompt_file_present` and backend-consistency (`colleague` → `AGENTS.colleague.md`);
+`skills_present` (the vendored `.claude/skills/` kit); `nodes_api_reachable`
+(`GET /v1alpha1/healthz` against the resolved API URL); `unprivileged_userns`
+(can a bwrap-backed actor sandbox start on this host at all — #63); and
+`lane_liveness` (which registered actor lanes the control plane measures as
+dead, read off `GET /v1alpha1/actors`' per-actor `liveness` fact — a spent
+refresh token behind a bridge that still answers `/healthz` 200, #308).
+
+Only the `error`-severity check (`prompt_file_present`, or
+`backend_consistency` for an unknown backend) can flip the exit code to 1 —
+the other four are `warning` and never fail `doctor` on their own, since the
+identity verbs work with no API running at all. `lane_liveness` reports a
+dead lane BY KEY AND REASON (e.g. `company/codex-orin (session_ok=false,
+reason=refresh_token_spent, mode=LOCK, ...)`); an unreachable API or an actor
+listing with no `liveness` field yet is `unmeasured`, never a verdict — a lane
+nobody measured is not a dead lane. Read it before a fan-out: a lane with
+`session_ok=false` is not in the split plan.
 
 ## Usage
 

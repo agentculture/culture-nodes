@@ -250,6 +250,83 @@ class DevagueCustodyTest(unittest.TestCase):
         create = next(c for c in calls if c["url"].endswith("/v1alpha1/runs"))
         self.assertNotIn("devague_write", json.loads(create["body"])["input"])
 
+    def _run_actors(self, items):
+        """Drive `actors` against a fake curl that answers GET /v1alpha1/actors."""
+        with tempfile.TemporaryDirectory() as directory:
+            fake_bin = Path(directory)
+            curl = fake_bin / "curl"
+            curl.write_text("#!/bin/sh\nprintf '%s\\n' \"$FAKE_ACTORS\"\n")
+            curl.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                PATH=str(fake_bin) + os.pathsep + env["PATH"],
+                NODES_API_URL="http://example.test",
+                FAKE_ACTORS=json.dumps({"items": items}),
+            )
+            return subprocess.run(
+                ["bash", str(SCRIPT), "actors"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    def test_actors_prints_liveness_columns_when_the_row_carries_the_fact(self):
+        """Issue #308 / t11: the pre-fan-out lane check reads these columns.
+        A lane with session_ok=false is not in the split plan."""
+        result = self._run_actors(
+            [
+                {
+                    "actor_key": "company/codex-orin",
+                    "revision": 2,
+                    "endpoint_ref": "http://10.0.0.2:8086",
+                    "liveness": {
+                        "session_ok": False,
+                        "reason": "refresh_token_spent",
+                        "mode": "LOCK",
+                        "checked_at": "2026-09-07T10:05:00+00:00",
+                        "locked": True,
+                    },
+                },
+                {
+                    "actor_key": "company/codex-thor",
+                    "revision": 1,
+                    "endpoint_ref": "http://10.0.0.1:8086",
+                    "liveness": {
+                        "session_ok": True,
+                        "reason": "ok",
+                        "mode": "CHECK",
+                        "checked_at": "2026-09-07T10:00:00+00:00",
+                        "locked": False,
+                    },
+                },
+            ]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 2, result.stdout)
+        orin, thor = lines
+        self.assertTrue(orin.startswith("company/codex-orin|2|http://10.0.0.2:8086|"), orin)
+        self.assertIn("session_ok=false", orin)
+        self.assertIn("reason=refresh_token_spent", orin)
+        self.assertIn("mode=LOCK", orin)
+        self.assertIn("locked=true", orin)
+        self.assertIn("session_ok=true", thor)
+        self.assertIn("locked=false", thor)
+
+    def test_actors_row_without_the_fact_is_marked_unmeasured_not_omitted(self):
+        """Until t10 attaches the field, every row reads unmeasured — the
+        honest non-answer, distinguishable from a verdict (c26)."""
+        result = self._run_actors(
+            [{"actor_key": "company/human-ops", "revision": 1, "endpoint_ref": None}]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "company/human-ops|1||session_ok=unmeasured reason=unmeasured mode=- locked=-",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

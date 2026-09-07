@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.2] - 2026-09-07
+
+### Added
+
+- spec + plan `loop-closure-claude-codex` (devague /scope, /think, /challenge, /spec-to-plan): the idea-to-shipped loop closes itself on the claude and codex lanes — work-item id, land node, cleanup node, lane liveness with LOCK/CHECK, analysis node, triage rows on open, hand-turn records, Jira stage write-back, merge-gate readiness (#308–#319; #313/#320 local-model halves parked)
+- triage rows for #321 (schedule pause/resume verb; the sweep was paused by hand for the build)
+
 ## [0.50.1] - 2026-09-05
 
 ### Changed

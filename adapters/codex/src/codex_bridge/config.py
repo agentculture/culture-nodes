@@ -38,6 +38,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from codex_bridge import liveness
+
 #: Env var naming the JSON config file to load (optional).
 ENV_CONFIG_FILE = "CODEX_BRIDGE_CONFIG"
 
@@ -56,6 +58,7 @@ _ENV_STRING_FIELDS = {
     "CODEX_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
     "CODEX_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
     "CODEX_BRIDGE_HANDOVER_REMOTE": "handover_remote",
+    "CODEX_BRIDGE_LIVENESS_MODE": "liveness_mode",
 }
 _ENV_INT_FIELDS = {
     "CODEX_BRIDGE_PORT": "port",
@@ -72,6 +75,8 @@ _ENV_FLOAT_FIELDS = {
     "CODEX_BRIDGE_SYNC_TIMEOUT_SECONDS": "sync_timeout_seconds",
     "CODEX_BRIDGE_ASYNC_WAIT_SECONDS": "async_wait_seconds",
     "CODEX_BRIDGE_WORKTREE_REAP_MIN_IDLE_SECONDS": "worktree_reap_min_idle_seconds",
+    "CODEX_BRIDGE_LIVENESS_PROBE_TIMEOUT_SECONDS": "liveness_probe_timeout_seconds",
+    "CODEX_BRIDGE_LIVENESS_CHECK_TTL_SECONDS": "liveness_check_ttl_seconds",
 }
 _ENV_BOOL_FIELDS = {
     "CODEX_BRIDGE_ALWAYS_ASYNC": "always_async",
@@ -192,6 +197,21 @@ class Config:
     #: name the shared one in a handle.
     handover_remote: str = "origin"
 
+    # --- lane liveness (issue #308, task t9) -------------------------------
+    #: `LOCK` latches `session_ok=false` on the first run whose output carries
+    #: the spent-refresh-token text and holds it until cleared; `CHECK` also
+    #: runs a dry read-only `codex exec` probe when the surface is read and
+    #: the last answer is older than `liveness_check_ttl_seconds`. LOCK by
+    #: default because it spends nothing; the operator opts a lane into CHECK.
+    liveness_mode: str = liveness.MODE_LOCK
+    #: The probe's wall-clock bound (spec c24: 20 s). A probe that runs out
+    #: reports `probe_timeout`, never a verdict.
+    liveness_probe_timeout_seconds: float = 20.0
+    #: How long a CHECK answer is served from cache before the next surface
+    #: read re-probes — the collector's interval, so each window costs one
+    #: micro-session per lane.
+    liveness_check_ttl_seconds: float = 120.0
+
     # --- worktree reaping (task t17) -------------------------------------
     #: How long a minted worktree must have gone untouched before age stops
     #: being a reason to DEFER its removal. Read by `reap.ReapPolicy`; see
@@ -298,7 +318,16 @@ class Config:
         cfg = cls(**_coerce_file_fields(data))
         _apply_env_overrides(cfg, env)
         _normalize_allowlist(cfg)
+        _validate_liveness_mode(cfg)
         return cfg
+
+
+def _validate_liveness_mode(cfg: "Config") -> None:
+    """A typo'd mode fails here, at load, not on the first surface read."""
+    try:
+        cfg.liveness_mode = liveness.parse_mode(cfg.liveness_mode)
+    except liveness.LivenessError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _read_config_file(path: str) -> dict:
@@ -337,6 +366,9 @@ _FILE_FIELDS = {
     "preserve_push": bool,
     "preserve_remote": str,
     "handover_remote": str,
+    "liveness_mode": str,
+    "liveness_probe_timeout_seconds": float,
+    "liveness_check_ttl_seconds": float,
     "worktree_reap_min_idle_seconds": float,
     "host": str,
     "port": int,

@@ -145,6 +145,8 @@ docstring has the full precedence rule).
 | `permission_mode` | `CLAUDE_CODE_BRIDGE_PERMISSION_MODE` | `"bypassPermissions"` | Forwarded as `--permission-mode`. Must be a mode that never blocks on an interactive prompt. |
 | `model` | `CLAUDE_CODE_BRIDGE_MODEL` | `""` (unset) | Default `--model`, when `input.model` is absent. |
 | `min_claude_version` | `CLAUDE_CODE_BRIDGE_MIN_CLAUDE_VERSION` | `"2.1.220"` | The version gate — see above. |
+| `liveness_mode` | `CLAUDE_CODE_BRIDGE_LIVENESS_MODE` | `"LOCK"` | The mode the `liveness` host fact reports (issue #308): `LOCK` or `CHECK`. This bridge spends nothing in either — its fact is a file read — so this is the operator's declaration of how the router should treat the lane. |
+| `credentials_path` | `CLAUDE_CODE_BRIDGE_CREDENTIALS_PATH` | `"~/.claude/.credentials.json"` | Where `claude` keeps its OAuth credential; `claudeAiOauth.expiresAt` is what the `liveness` fact is derived from. |
 | `sync_max_steps` | `CLAUDE_CODE_BRIDGE_SYNC_MAX_STEPS` | `6` | Dispatch threshold: an expected step budget above this goes async. |
 | `default_max_steps` | `CLAUDE_CODE_BRIDGE_DEFAULT_MAX_STEPS` | `6` | Assumed step budget when `input.max_steps` is absent. |
 | `always_async` | `CLAUDE_CODE_BRIDGE_ALWAYS_ASYNC` | `false` | Force every invocation asynchronous. |
@@ -243,6 +245,7 @@ The document is exactly what an actor registration carries in
 | `git_metadata_writable` | **Measured** by attempting a write under `.git` in an allowlisted checkout. A session here runs with this bridge process's own privileges, so the attempt this process makes is the attempt a dispatch makes (issue #94) |
 | `dispatch_grants` | What each `--permission-mode` grants a session — here, everything this bridge process itself has, because `claude -p` takes no sandbox flag (issue #96) |
 | `toolchains` | `uv`, `go`, `gh` and `claude` itself: where each is, how it was packaged, what version it reports, and which modes can run it |
+| `liveness` | Whether the OAuth access token `claude` holds has expired (issue #308): read from `credentials_path` at `claudeAiOauth.expiresAt` (a millisecond epoch). Past → `session_ok=false reason=credential_expired`; missing or unreadable file → `reason=unmeasured`, never a crash. `mode` is the lane's configured `liveness_mode` |
 
 `toolchains` (issue #96) is where the difference between backends becomes
 readable: the same snap-packaged `uv` that a codex dispatch cannot run under

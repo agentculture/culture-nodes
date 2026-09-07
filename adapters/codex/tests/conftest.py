@@ -41,6 +41,20 @@ def emit(obj):
 
 behavior = os.environ.get("FAKE_CODEX_BEHAVIOR", "ok")
 
+spent = os.environ.get("FAKE_CODEX_SPENT_TOKEN")
+if spent:
+    # Issue #308: the two spent-credential sentences observed live, printed
+    # the way the real CLI printed them -- to stderr, exit 1, and NOT ONE
+    # JSON event on stdout (harness-hardening wave 0, deviation d1).
+    wording = "already used" if spent == "already_used" else "revoked"
+    print(
+        "Your access token could not be refreshed because your refresh token was "
+        + wording
+        + ". Please log out and sign in again.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 if behavior == "ok":
     emit({"type": "thread.started", "thread_id": "fake-thread-ok"})
     emit({"type": "turn.started"})

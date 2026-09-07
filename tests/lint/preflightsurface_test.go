@@ -45,7 +45,7 @@ import (
 // that does not advertise the surface leaves its actor dispatching exactly as
 // before. Guard 3 below is what keeps that a choice rather than a half-done
 // job, and what lets human-inbox opt in later without editing this list.
-var advertisingAdapters = []string{"claude-code", "codex", "colleague", "notify", "pi", "qwen"}
+var advertisingAdapters = []string{"claude-code", "codex", "colleague", "jira", "notify", "pi", "qwen"}
 
 // sharedModule is the protocol file — the one guards 2, 3 and 4 read.
 const sharedModule = "preflight.py"
@@ -58,7 +58,20 @@ const sharedModule = "preflight.py"
 // without extending guard 1 would have created exactly the thing that guard
 // exists to prevent — a shared module free to diverge between four bridges —
 // so the split and this list are one change.
-var sharedModules = []string{sharedModule, "deployment.py"}
+//
+// `liveness.py` (issue #308, plan loop-closure-claude-codex t9) joined for
+// the same reason: the lane-liveness fact's shape, reason vocabulary and
+// spent-credential classifier are one contract the router reads, and
+// preflight.py had six lines of headroom left.
+var sharedModules = []string{sharedModule, "deployment.py", "liveness.py"}
+
+// livenessModule is the shared module that defines the `liveness` host fact.
+const livenessModule = "liveness.py"
+
+// livenessKeys is the fact's agreed key set, spelled the way the Python
+// module spells it. The control plane's reader (its own task) parses exactly
+// these; a fifth key here would be a second dialect.
+const livenessKeys = `LIVENESS_KEYS = ("session_ok", "reason", "checked_at", "mode")`
 
 // backendModule is the only per-bridge file in this feature.
 const backendModule = "capabilities.py"
@@ -315,6 +328,38 @@ func TestNoBridgeRedeclaresTheProtocolInItsOwnFile(t *testing.T) {
 					"this file supplies measured facts and calls preflight.host_block",
 					pkg.adapter, backendModule, needle, sharedModule)
 			}
+		}
+	}
+}
+
+// TestTheLivenessFactIsOneAgreedKeyOnTheSharedSurface is guard 5 (issue
+// #308, task t9): the `liveness` host fact is declared where every other
+// agreed key is — in the shared `HOST_KEYS` tuple — and its own shape lives
+// in the shared module, so a bridge cannot advertise a liveness fact the
+// protocol does not name, nor one with keys the router does not read.
+func TestTheLivenessFactIsOneAgreedKeyOnTheSharedSurface(t *testing.T) {
+	hostKeysRE := regexp.MustCompile(`(?s)\nHOST_KEYS = \((.*?)\n\)`)
+	for _, pkg := range discoverAdapterPackages(t) {
+		if !pkg.has(t, sharedModule) {
+			continue
+		}
+		m := hostKeysRE.FindStringSubmatch(pkg.read(t, sharedModule))
+		if m == nil {
+			t.Fatalf("adapters/%s's %s declares no HOST_KEYS tuple", pkg.adapter, sharedModule)
+		}
+		if !strings.Contains(m[1], `"liveness"`) {
+			t.Errorf("adapters/%s's %s HOST_KEYS does not name \"liveness\": the lane-liveness "+
+				"fact must be an agreed key on the shared surface, never a per-bridge extra",
+				pkg.adapter, sharedModule)
+		}
+		if !pkg.has(t, livenessModule) {
+			t.Errorf("adapters/%s advertises HOST_KEYS but ships no %s: the fact's shape is "+
+				"defined nowhere on that bridge", pkg.adapter, livenessModule)
+			continue
+		}
+		if !strings.Contains(pkg.read(t, livenessModule), livenessKeys) {
+			t.Errorf("adapters/%s's %s does not declare %s verbatim: the router reads exactly "+
+				"those four keys", pkg.adapter, livenessModule, livenessKeys)
 		}
 	}
 }

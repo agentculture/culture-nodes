@@ -174,7 +174,10 @@ Two things about that message are contracts, not styling (issue #265):
 
 An approval whose PR gets merged some other way does not sit forever: the
 sweep's `pr.merged` fact expires it with reason `pr_merged` and the run ends
-down the `expired` edge.
+down the `expired` edge. A PR closed *without* merge raises a `pr.closed`
+fact from the same closed listing (source key `github:{repo}:pr:{n}:closed`,
+watermark `closed_at`, subject = work item), which nothing consumes yet: the
+cleanup node that cancels its parked runs is task t13.
 
 ## Changing the sweep
 

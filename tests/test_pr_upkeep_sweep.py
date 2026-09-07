@@ -158,7 +158,7 @@ def _stub_sweep(
     monkeypatch.setattr(
         sweep, "fetch_open_pulls", lambda token, repository: [dict(p) for p in pulls]
     )
-    monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda token, repository: [])
+    monkeypatch.setattr(sweep, "fetch_closed_pulls", lambda token, repository: [])
     calls = {"sonar": [], "qodo": [], "checks": [], "events": []}
 
     def fake_sonar(component, pr=None):

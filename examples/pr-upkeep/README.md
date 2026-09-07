@@ -225,6 +225,15 @@ The GitHub lifecycle vocabulary is separate. A correlatable open PR raises
 watermark. A correlatable merge raises `pr.merged` with the same identity and
 `merged_at`. Both correlations prefer the head branch and then the body, and
 when `jira_project` is configured they accept only that project's keys.
+A PR closed *without* merge raises `pr.closed` instead (task t12, spec c37):
+`source=github_pr`, repository, number, `head_sha`, `closed_at`, `work_item`
+(the same `work_item_for_pull` correlation `pr-upkeep.pr` carries, so a
+ticketless PR still produces a fact) and `url` when GitHub sends one, on
+source key `github:{repo}:pr:{n}:closed` with the immutable `closed_at` as
+its watermark and the work item as its subject. A merged PR never raises
+`pr.closed`. Both lifecycle facts come from one bounded `state=closed`
+listing (`fetch_closed_pulls`). Nothing consumes `pr.closed` yet — the
+cleanup node that cancels the item's parked runs is task t13.
 
 ## Dedupe by finding id (spec c7/h6)
 

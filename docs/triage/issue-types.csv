@@ -68,3 +68,4 @@ issue,type,evidence_pointer
 319,Feature,"Wanted and does not exist: count hand-turns in the ledger — a hand-turn record kind per stage, so #118 becomes a number; opened from the 2026-09-05 loop review; closes on the issue's own 'Closes when'."
 320,Feature,Wanted and does not exist: a post-merge measurement tick — run the basic manifest per merge revision so actor quality is tracked per revision; opened from the 2026-09-05 loop review; closes on the issue's own 'Closes when'.
 321,Feature,Wanted and does not exist: an operator verb to pause/resume a repeating schedule; the API's enabled property exists and nothing exposes it; closes on the issue's own 'Closes when'.
+323,Bug,examples/pr-upkeep/sweep.py fetch_open_pulls vs pr_upkeep_emit.opened_pr_fact

@@ -445,9 +445,11 @@ class TestFetchOpenPulls:
         # Unsorted; main() sorts before capping. One request serves BOTH the
         # per-PR SonarCloud/Qodo fetches (which need the number) and the
         # check-runs fetch (which needs the head sha).
+        # `head.ref` and `body` ride along too, for the work-item correlation
+        # (tests/test_pr_upkeep_sweep_work_item.py); absent ones are empty.
         assert sweep.fetch_open_pulls(None, "agentculture/culture-nodes") == [
-            {"number": 42, "head_sha": "cafe1234"},
-            {"number": 7, "head_sha": ""},
+            {"number": 42, "head_sha": "cafe1234", "head": {"ref": ""}, "body": ""},
+            {"number": 7, "head_sha": "", "head": {"ref": ""}, "body": ""},
         ]
 
 

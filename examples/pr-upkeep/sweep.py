@@ -55,6 +55,7 @@ from pr_upkeep_emit import (
     opened_pr_fact,
     runs_query,
     undispatched_findings,
+    upkeep_pr_fact,
 )
 from pr_upkeep_jira import fetch_jira_issues, jira_api_base, jira_credentials, jira_emissions
 
@@ -562,8 +563,8 @@ def fetch_sonar_issues(component: str, pr: int | None = None) -> dict:
 
 
 def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
-    """Every currently open PR as ``{"number": int, "head_sha": str}``,
-    unfiltered. The cap lives with the caller (`main`) so the SAME swept set
+    """Every currently open PR as ``{"number", "head_sha", "head": {"ref"},
+    "body"}``, unfiltered. The cap lives with the caller (`main`) so the SAME swept set
     feeds all three per-PR queries — the SonarCloud per-PR query, the Qodo
     comment fetch, and the check-runs fetch below, one request per PR each —
     rather than independently-capped (and possibly diverging) sets.
@@ -579,7 +580,12 @@ def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
         if not isinstance(pull.get("number"), int):
             continue
         head = pull.get("head") or {}
-        open_pulls.append({"number": pull["number"], "head_sha": head.get("sha") or ""})
+        # `head.ref` + `body` ride along for the work-item correlation (branch,
+        # then body); without them every PR falls to the transient gh: form.
+        open_pulls.append(
+            {"number": pull["number"], "head_sha": head.get("sha") or ""}
+            | {"head": {"ref": head.get("ref") or ""}, "body": pull.get("body") or ""}
+        )
     return open_pulls
 
 
@@ -914,13 +920,9 @@ def main() -> int:
                 continue
             dispatched = findings[:FINDINGS_PER_EVENT]
             deferred_findings.extend(f["id"] for f in findings[FINDINGS_PER_EVENT:])
-            payload = {
-                "source": "github_pr",
-                "repository": github_repo,
-                "number": pull["number"],
-                "head_sha": pull["head_sha"],
-                "findings": dispatched,
-            }
+            # The payload carries `work_item` (Jira key, else the transient
+            # gh:owner/repo#N form) and still NO subject (#268, #310).
+            payload = upkeep_pr_fact(pull, github_repo, dispatched, repository.get("jira_project"))
             with attempting(f"emitting pr-upkeep.pr for #{pull['number']} (control plane)"):
                 emitted.append(
                     raise_event(

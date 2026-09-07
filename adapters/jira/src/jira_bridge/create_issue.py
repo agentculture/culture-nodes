@@ -22,6 +22,12 @@ from .rest import api_root
 
 VERB = "create_issue"
 _PROJECT = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# A label is a plain identifier: alphanumeric start, then alphanumerics and
+# `:._/-`, no whitespace. Jira itself refuses labels containing spaces, and
+# the orphan-ticket node (spec decision c42) needs `source:github` and
+# `repo:owner/name`-style markers, so the colon and slash are admitted while
+# anything that could smuggle a second label or a display trick is not.
+_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]*$")
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,7 @@ class CreateIssue:
     summary: str
     description: str = ""
     issue_type: str = "Task"
+    labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,11 +57,11 @@ def parse(
     if not isinstance(raw, dict):
         return None, "input must be a JSON object"
     required = {"verb", "project", "summary"}
-    allowed = required | {"description", "issue_type"}
+    allowed = required | {"description", "issue_type", "labels"}
     if not required.issubset(raw) or not set(raw).issubset(allowed):
         return None, (
             "input must contain verb, project, and summary, "
-            "plus optional description and issue_type"
+            "plus optional description, issue_type and labels"
         )
     if raw["verb"] != VERB:
         return None, f"unsupported verb; only {VERB!r} is allowed"
@@ -77,12 +84,34 @@ def parse(
         return None, (
             f"policy: issue_type must be one of the configured types {allowed_issue_types!r}"
         )
+    labels, labels_error = _parse_labels(raw.get("labels", []))
+    if labels_error:
+        return None, labels_error
     return (
         CreateIssue(
-            project=project, summary=summary, description=description, issue_type=issue_type
+            project=project,
+            summary=summary,
+            description=description,
+            issue_type=issue_type,
+            labels=labels,
         ),
         None,
     )
+
+
+def _parse_labels(raw: Any) -> tuple[tuple[str, ...], str | None]:
+    """Validate the optional ``labels`` list; every refusal names ``labels``."""
+    if not isinstance(raw, list):
+        return (), "labels must be a list of strings when supplied"
+    for label in raw:
+        if not isinstance(label, str) or not label:
+            return (), "labels must contain only non-empty strings"
+        if not _LABEL.fullmatch(label):
+            return (), (
+                f"labels must be plain identifiers without whitespace "
+                f"(letters, digits, and :._/- after an alphanumeric); got {label!r}"
+            )
+    return tuple(raw), None
 
 
 def _adf(text: str) -> dict:
@@ -113,6 +142,8 @@ def create(
     }
     if issue.description:
         fields["description"] = _adf(issue.description)
+    if issue.labels:
+        fields["labels"] = list(issue.labels)
     req = urllib.request.Request(
         f"{root}/rest/api/3/issue",
         data=json.dumps({"fields": fields}).encode(),

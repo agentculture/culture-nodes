@@ -56,7 +56,7 @@ or:
 or:
 
 ```json
-{"verb":"create_issue","project":"SCRUM","summary":"Wire the new lane","description":"Optional.","issue_type":"Task"}
+{"verb":"create_issue","project":"SCRUM","summary":"Wire the new lane","description":"Optional.","issue_type":"Task","labels":["orphan","source:github"]}
 ```
 
 or:
@@ -65,9 +65,13 @@ or:
 {"verb":"read_issue","issue":"SCRUM-17"}
 ```
 
-`description` and `issue_type` are optional (`issue_type` defaults to
-`Task`); a `project` outside the configured allowlist is refused by name at
-the bridge, before any Jira request is built. `GET /v1/capabilities`
+`description`, `issue_type` and `labels` are optional (`issue_type` defaults to
+`Task`; `labels` is a list of plain identifiers — an alphanumeric followed by
+letters, digits or `:._/-`, never whitespace — and is sent as `fields.labels`
+only when present, so an orphan ticket can carry `orphan`, `auto-created`,
+`source:github` and `repo:owner/name`); a `project` outside the configured
+allowlist, or any key beyond these, is refused by name at the bridge, before
+any Jira request is built. `GET /v1/capabilities`
 (authenticated like invocations) advertises the verb list and the non-secret
 custody configuration behind it — which transition and which creation
 projects this deployment actually allows, plus the read project prefix and

@@ -17,7 +17,8 @@ _CONFINEMENT = (
 )
 _COMMIT_POLICY = (
     "no workspace: this bridge writes no files and runs no git — there is nothing to commit, "
-    "preserve or harvest. Its effects are allowlisted Jira API mutations"
+    "preserve or harvest. Its effects are allowlisted Jira API mutations: a comment, a "
+    "transition, or a created issue carrying summary, description, issue type and labels"
 )
 
 

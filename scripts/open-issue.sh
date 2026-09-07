@@ -37,10 +37,20 @@
 #
 #   --template takes a path, or a bare name resolved inside
 #   docs/triage/issue-templates/<name>.md.
+#
+#   --disposition "bucket|text|evidence" (plan loop-closure-claude-codex, t15)
+#   also dispositions the new issue: after it is created and typed, the wrapper
+#   calls `python3 scripts/triage-rows.py <number> --type <TYPE> --disposition
+#   ...`, which appends the docs/triage/dispositions.csv and issue-types.csv
+#   rows and regenerates docs/triage/open-issues.md, so the next PR's `triage`
+#   lint step stays green with no hand-turn. ALL of that logic lives in the
+#   helper, not here: this wrapper is deleted when agentculture/agtag#19 lands,
+#   and the helper is what its replacement keeps calling. Without the flag the
+#   script behaves exactly as before.
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --type NAME --title TITLE --template PATH|NAME [--set KEY=VALUE]... [--repo OWNER/REPO]" >&2
+  echo "usage: $0 --type NAME --title TITLE --template PATH|NAME [--set KEY=VALUE]... [--repo OWNER/REPO] [--disposition 'bucket|text|evidence']" >&2
   exit 2
 }
 
@@ -48,6 +58,7 @@ repo=agentculture/culture-nodes
 type_name=
 title=
 template=
+disposition=
 subs=()
 
 while [[ $# -gt 0 ]]; do
@@ -57,6 +68,7 @@ while [[ $# -gt 0 ]]; do
     --title) [[ $# -ge 2 ]] || usage; title=$2; shift 2 ;;
     --template) [[ $# -ge 2 ]] || usage; template=$2; shift 2 ;;
     --set) [[ $# -ge 2 ]] || usage; subs+=("$2"); shift 2 ;;
+    --disposition) [[ $# -ge 2 ]] || usage; disposition=$2; shift 2 ;;
     -h|--help) usage ;;
     *) echo "open-issue: unknown flag: $1" >&2; usage ;;
   esac
@@ -124,6 +136,12 @@ if [[ -z $type_id ]]; then
   exit 2
 fi
 
+# Same principle as the type check: a malformed disposition is refused BEFORE
+# the post, so a typo cannot leave a real issue behind with no triage rows.
+if [[ -n $disposition ]]; then
+  python3 "$root/scripts/triage-rows.py" --check-only --type "$type_name" --disposition "$disposition"
+fi
+
 # From here on the issue EXISTS. Validating the type up front removes the likely
 # cause of a failure below, but not the window: agtag creates and this script
 # types, and nothing makes the pair atomic -- which is exactly what agtag#19
@@ -160,5 +178,17 @@ node_id=$(gh api graphql -f owner="$org" -f name="$name" -F number="$number" \
 gh api graphql -f id="$node_id" -f typeId="$type_id" -f query="$type_mutation" >/dev/null
 trap - ERR
 # --- end delegation --------------------------------------------------------
+
+# Disposition rows. The helper owns the CSVs and the report; this is one call.
+# It runs after the type mutation, so a failure here leaves a typed issue with
+# no triage rows -- the same "exists but incomplete" window as above, and it
+# gets the same treatment: name the issue, print the repair.
+if [[ -n $disposition ]]; then
+  python3 "$root/scripts/triage-rows.py" "$number" --type "$type_name" --disposition "$disposition" || {
+    echo "error: issue #${number} was created and typed but its triage rows were NOT written -- ${url}" >&2
+    echo "hint: repair with: python3 scripts/triage-rows.py ${number} --type '${type_name}' --disposition '${disposition}'" >&2
+    exit 1
+  }
+fi
 
 printf '%s\n' "$url"

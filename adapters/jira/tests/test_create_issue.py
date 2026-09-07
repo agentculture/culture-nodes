@@ -245,3 +245,101 @@ def test_create_parse_defaults_issue_type_to_first_configured_type():
     )
     assert error is None
     assert parsed is not None and parsed.issue_type == "Bug"
+
+
+# --- task t3 (decision c42): orphan tickets carry labels ---------------------
+
+_ORPHAN_LABELS = ["orphan", "auto-created", "source:github", "repo:agentculture/culture-nodes"]
+
+
+def test_create_with_labels_builds_fields_labels_exactly():
+    parsed, error = create_issue.parse(
+        {
+            "verb": "create_issue",
+            "project": "SCRUM",
+            "summary": "Orphan: agentculture/culture-nodes#321",
+            "labels": _ORPHAN_LABELS,
+        },
+        allowed_projects=("SCRUM",),
+    )
+    assert error is None
+    assert parsed.labels == tuple(_ORPHAN_LABELS)
+    seen = {}
+
+    def open_(request, timeout):
+        seen["body"] = json.loads(request.data)
+        return Response(201, b'{"id":"10030","key":"SCRUM-31"}')
+
+    posted = create_issue.create(
+        "team.example.com", parsed, "robot@example.com", "secret", opener=open_
+    )
+    assert posted.ok and posted.key == "SCRUM-31"
+    assert seen["body"]["fields"]["labels"] == _ORPHAN_LABELS
+
+
+def test_create_without_labels_omits_the_field_and_keeps_prior_behaviour():
+    parsed, error = create_issue.parse(
+        {"verb": "create_issue", "project": "SCRUM", "summary": "No labels"},
+        allowed_projects=("SCRUM",),
+    )
+    assert error is None
+    assert parsed.labels == ()
+    seen = {}
+
+    def open_(request, timeout):
+        seen["body"] = json.loads(request.data)
+        return Response(201, b'{"id":"10031","key":"SCRUM-32"}')
+
+    create_issue.create("team.example.com", parsed, "robot@example.com", "secret", opener=open_)
+    assert "labels" not in seen["body"]["fields"]
+
+
+def test_create_refuses_malformed_labels_by_name():
+    for bad_labels in [
+        "orphan",  # wrong type: a bare string, not a list
+        {"orphan": True},  # wrong type: an object
+        ["orphan", 7],  # non-string element
+        ["orphan", ""],  # empty element
+        ["auto created"],  # whitespace inside a label
+        [" orphan"],  # leading whitespace
+        ["orphan\n"],  # trailing newline
+        ["-leading-dash"],  # must start with an alphanumeric
+    ]:
+        parsed, error = create_issue.parse(
+            {
+                "verb": "create_issue",
+                "project": "SCRUM",
+                "summary": "A ticket",
+                "labels": bad_labels,
+            },
+            allowed_projects=("SCRUM",),
+        )
+        assert parsed is None, f"{bad_labels!r} must be refused"
+        assert error and "labels" in error, f"{bad_labels!r}: refusal must name labels: {error!r}"
+
+
+def test_create_parse_still_refuses_any_other_key_alongside_labels():
+    parsed, error = create_issue.parse(
+        {
+            "verb": "create_issue",
+            "project": "SCRUM",
+            "summary": "A ticket",
+            "labels": ["orphan"],
+            "priority": "High",
+        },
+        allowed_projects=("SCRUM",),
+    )
+    assert parsed is None and error
+    assert "labels" in error  # the closed-shape message names the optional keys
+
+
+def test_capabilities_effects_prose_names_labels():
+    from jira_bridge import capabilities
+
+    assert "labels" in capabilities._COMMIT_POLICY
+
+
+def test_server_module_stays_under_the_file_length_guard():
+    import jira_bridge.server as server_module
+
+    assert len(Path(server_module.__file__).read_text().splitlines()) < 1000

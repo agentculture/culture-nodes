@@ -62,7 +62,9 @@ jq -n --arg wi SCRUM-9 --arg actor <your-actor-id> \
   --slurpfile d examples/hand-turn-observer/definition.json \
   '$d[0] + {work_item: $wi, actor_id: $actor}' |
   curl -s -X POST "$NODES_API_URL/v1alpha1/hand-turn-definitions" \
-    -H "Authorization: Bearer $NODES_HUMAN_DECISION_TOKEN" -H 'Content-Type: application/json' -d @-
+    -H "Authorization: Bearer $DECISION_BEARER" -H 'Content-Type: application/json' -d @-
+# DECISION_BEARER is the same bearer `nodes human-tasks decide --token` takes:
+# a person's decision credential, never an agent lane's token (c45).
 nodes review create <run-id> --records <definition-id> --ledger-version N
 nodes review commit <review-id> --confirm <definition-id> --ledger-version N
 

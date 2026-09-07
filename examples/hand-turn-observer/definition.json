@@ -1,0 +1,40 @@
+{
+  "stages": ["dispatch", "land", "review", "cleanup"],
+  "human_logins": ["operator"],
+  "rules": [
+    {
+      "id": "commit_without_run",
+      "stage": "land",
+      "description": "a commit on the PR branch by a person with no run attempt in the window -- the cherry-pick of a handover ref that the land node should have pushed",
+      "kind": "commit_without_run",
+      "window_minutes": 30
+    },
+    {
+      "id": "review_fix_branch_deleted",
+      "stage": "cleanup",
+      "description": "a review-fix/* side branch deleted by hand -- the cleanup node should have removed it after pr.merged",
+      "kind": "event_match",
+      "event_type": "branch_deleted",
+      "field": "branch",
+      "pattern": "^review-fix/"
+    },
+    {
+      "id": "operator_reply",
+      "stage": "review",
+      "description": "an operator reply posted by hand on a review thread the loop fixed -- the land node should have replied and resolved it",
+      "kind": "comment_match",
+      "on_loop_fixed_thread": true,
+      "pattern": ".*",
+      "what": "reply on a loop-fixed thread"
+    },
+    {
+      "id": "ssh_checkout_reset",
+      "stage": "dispatch",
+      "description": "an ssh checkout reset noted in an issue comment before a dispatch (#286)",
+      "kind": "comment_match",
+      "pattern": "(reset|git\\s+reset|checkout\\s+-B).*(checkout|over ssh|ssh)|ssh.*(reset|checkout)",
+      "what": "checkout reset over ssh"
+    }
+  ],
+  "notes": "First definition, written from PR #307's measured hand-turns (three per the counting rule, eight review-fix branches, the a029689 cherry-pick). Iterate this record -- supersede it -- from what the observer proposes wrongly; do not edit the observer."
+}

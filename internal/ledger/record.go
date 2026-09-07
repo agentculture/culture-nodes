@@ -58,6 +58,20 @@ const (
 	// RuleAcknowledgementNeverDerived), because an acknowledgement nobody
 	// made is not an acknowledgement.
 	RecordDispatchAcknowledgement RecordType = "dispatch_acknowledgement"
+	// RecordHandTurn is one step a person performed by hand between a
+	// finished actor run and a landed change (issue #319, decision c25,
+	// task t16): {what, stage, work_item, definition_ref}. It is registered
+	// additively like RecordGrade and changes NOTHING in the authority
+	// matrix: an observing agent proposes it, a person entering one
+	// directly also lands proposed, and confirmation is the ordinary review
+	// transaction. It is a claim about what a person did, not evidence of
+	// it; stats count the confirmed subset only.
+	RecordHandTurn RecordType = "hand_turn"
+	// RecordHandTurnDefinition is the human's definition of what counts as
+	// a hand-turn and at which stage — {stages, rules} — that the observing
+	// agent recognises turns against and names in `definition_ref`. Same
+	// matrix, same review path; a correction supersedes, never edits.
+	RecordHandTurnDefinition RecordType = "hand_turn_definition"
 )
 
 // RecordTypes returns the registered record types: the PRD §10.2 MVP set in
@@ -68,6 +82,7 @@ func RecordTypes() []RecordType {
 		RecordTask, RecordDecision, RecordSuccessSignal, RecordEvidence,
 		RecordResult, RecordReview, RecordGrade,
 		RecordDispatchPreflight, RecordDispatchAcknowledgement,
+		RecordHandTurn, RecordHandTurnDefinition,
 	}
 }
 

@@ -172,6 +172,19 @@ type ActorGrades struct {
 	Confirmed ActorGradeAgg
 }
 
+// ActorHandTurnStageCount is one hand_turns_by_stage bucket (task t16,
+// decision c25): how many CONFIRMED hand_turn records -- a hand_turn whose
+// confirming review record exists -- were filed under Stage for WorkItem on
+// runs this actor attempted. Proposed and rejected turns contribute
+// nothing: the count is what a person ratified, which is the only number a
+// delivery summary may cite. WorkItem is the record's own data.work_item,
+// so the same run's turns can be told apart by the ticket they served.
+type ActorHandTurnStageCount struct {
+	Stage    string
+	WorkItem string
+	Count    int
+}
+
 // ActorCategoryStats is one per-actor stats slice: either one run category
 // (see ActorStats.Categories) or the all-categories Total. Every field is
 // independently "present but empty" or "absent" per its own doc comment --
@@ -184,6 +197,7 @@ type ActorCategoryStats struct {
 	DurationPercentiles *ActorDurationPercentiles
 	Usage               UsageRollup
 	Grades              ActorGrades
+	HandTurnsByStage    []ActorHandTurnStageCount
 }
 
 // sorted returns s with every slice field in a deterministic order --
@@ -198,6 +212,12 @@ func (s ActorCategoryStats) sorted() ActorCategoryStats {
 	})
 	sort.Slice(s.ClaimsByAuthority, func(i, j int) bool {
 		return s.ClaimsByAuthority[i].Authority < s.ClaimsByAuthority[j].Authority
+	})
+	sort.Slice(s.HandTurnsByStage, func(i, j int) bool {
+		if s.HandTurnsByStage[i].Stage != s.HandTurnsByStage[j].Stage {
+			return s.HandTurnsByStage[i].Stage < s.HandTurnsByStage[j].Stage
+		}
+		return s.HandTurnsByStage[i].WorkItem < s.HandTurnsByStage[j].WorkItem
 	})
 	return s
 }
@@ -280,6 +300,7 @@ func (eq engineQueries) ActorStats(ctx context.Context, actorID string) (ActorSt
 		eq.loadActorUsageTotals,
 		eq.loadActorUsageCostByCurrency,
 		eq.loadActorGrades,
+		eq.loadActorHandTurnsByStage,
 	}
 	for _, load := range loaders {
 		if err := load(ctx, actorID, &stats); err != nil {
@@ -631,6 +652,66 @@ func (eq engineQueries) loadActorGrades(ctx context.Context, actorID string, sta
 			case "confirmed":
 				s.Grades.Confirmed = agg
 			}
+		})
+	}
+	return rows.Err()
+}
+
+// loadActorHandTurnsByStage counts CONFIRMED hand_turn records (task t16,
+// decision c25) per (stage, work_item) on runs this actor attempted, sliced
+// by run category like every other bucket.
+//
+// "Confirmed" is structural, not a column on the hand_turn row: a hand_turn
+// is appended proposed and never rewritten (PRD §10.8), and its
+// confirmation is a separate `review` record with authority=confirmed whose
+// subject_ref names it. The EXISTS below is exactly that record. A review
+// record naming the turn with authority=rejected does not match, and a
+// turn nobody reviewed has no review record at all -- both count zero.
+//
+// Scope is "runs this actor attempted" (the runs_by_outcome join path), so
+// the number reads as how much hand-work THIS actor's runs needed to land --
+// the comparative fact the dogfooding reflex exists to collect. The
+// producer of the record (an observer agent, or the person) is deliberately
+// not the scope: attributing the turn to whoever noticed it would make the
+// observer look like the actor whose work needed help.
+func (eq engineQueries) loadActorHandTurnsByStage(ctx context.Context, actorID string, stats *ActorStats) error {
+	rows, err := eq.q.Query(ctx, `
+		SELECT
+			CASE WHEN GROUPING(COALESCE(r.category, '')) = 1 THEN NULL ELSE COALESCE(r.category, '') END,
+			COALESCE(ht.data->>'stage', ''),
+			COALESCE(ht.data->>'work_item', ''),
+			COUNT(DISTINCT ht.id)
+		FROM ledger_records ht
+		JOIN runs r ON r.id = ht.run_id
+		WHERE ht.namespace_id = $1
+		  AND ht.record_type = 'hand_turn'
+		  AND EXISTS (
+		        SELECT 1 FROM ledger_records rv
+		        WHERE rv.namespace_id = ht.namespace_id
+		          AND rv.record_type = 'review'
+		          AND rv.authority = 'confirmed'
+		          AND rv.subject_ref = ht.id)
+		  AND EXISTS (
+		        SELECT 1 FROM attempts a
+		        JOIN node_runs nr ON nr.id = a.node_run_id
+		        WHERE nr.run_id = r.id AND a.actor_id = $2)
+		GROUP BY GROUPING SETS (
+			(COALESCE(r.category, ''), COALESCE(ht.data->>'stage', ''), COALESCE(ht.data->>'work_item', '')),
+			(COALESCE(ht.data->>'stage', ''), COALESCE(ht.data->>'work_item', ''))
+		)`,
+		eq.namespaceID, actorID)
+	if err != nil {
+		return fmt.Errorf("postgres: engine: ActorStats: hand turns by stage: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var category pgtype.Text
+		var hc ActorHandTurnStageCount
+		if err := rows.Scan(&category, &hc.Stage, &hc.WorkItem, &hc.Count); err != nil {
+			return fmt.Errorf("postgres: engine: ActorStats: hand turns by stage: scan: %w", err)
+		}
+		stats.bucket(category).apply(func(s *ActorCategoryStats) {
+			s.HandTurnsByStage = append(s.HandTurnsByStage, hc)
 		})
 	}
 	return rows.Err()

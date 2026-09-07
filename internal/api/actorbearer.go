@@ -78,6 +78,12 @@ func agentMayWrite(method, path string) bool {
 	if strings.HasSuffix(path, "/suite-verdicts") || strings.HasSuffix(path, "/gate-reports") {
 		return true
 	}
+	if path == "/v1alpha1/hand-turns" {
+		// The observing agent (decision c25) writes proposed hand_turn
+		// records under its own bearer; the review that confirms them stays
+		// a human surface.
+		return true
+	}
 	return strings.Contains(path, "/tickets/") && strings.HasSuffix(path, "/frame")
 }
 

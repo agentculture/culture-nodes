@@ -473,6 +473,16 @@ func actorGradesOut(g postgres.ActorGrades) ActorGradesOut {
 	}
 }
 
+// ActorHandTurnStageCountOut is one hand_turns_by_stage entry: CONFIRMED
+// hand_turn records only (a confirming review record exists for the turn),
+// per stage and work item, on runs this actor attempted -- see
+// postgres.ActorHandTurnStageCount's doc comment (task t16, decision c25).
+type ActorHandTurnStageCountOut struct {
+	Stage    string `json:"stage"`
+	WorkItem string `json:"work_item"`
+	Count    int    `json:"count"`
+}
+
 // ActorStatsBucketOut is one stats slice's numbers — either the
 // all-categories Total or one named category (see ActorCategoryBucketOut)
 // — components.schemas.ActorStatsBucket.
@@ -483,6 +493,9 @@ type ActorStatsBucketOut struct {
 	DurationPercentiles *ActorDurationPercentilesOut `json:"duration_percentiles,omitempty"`
 	Usage               *UsageOut                    `json:"usage,omitempty"`
 	Grades              ActorGradesOut               `json:"grades"`
+	// HandTurnsByStage is always emitted, empty when nothing was confirmed:
+	// "no confirmed hand-turns" is a computed answer, never an omission.
+	HandTurnsByStage []ActorHandTurnStageCountOut `json:"hand_turns_by_stage"`
 }
 
 func actorStatsBucketOut(cs postgres.ActorCategoryStats) ActorStatsBucketOut {
@@ -500,6 +513,10 @@ func actorStatsBucketOut(cs postgres.ActorCategoryStats) ActorStatsBucketOut {
 	if claims == nil {
 		claims = []ActorLedgerAuthorityOut{}
 	}
+	handTurns := make([]ActorHandTurnStageCountOut, len(cs.HandTurnsByStage))
+	for i, hc := range cs.HandTurnsByStage {
+		handTurns[i] = ActorHandTurnStageCountOut{Stage: hc.Stage, WorkItem: hc.WorkItem, Count: hc.Count}
+	}
 	return ActorStatsBucketOut{
 		RunsByOutcome:       outcomes,
 		ClaimsByAuthority:   claims,
@@ -507,6 +524,7 @@ func actorStatsBucketOut(cs postgres.ActorCategoryStats) ActorStatsBucketOut {
 		DurationPercentiles: actorDurationPercentilesOut(cs.DurationPercentiles),
 		Usage:               usageOut(cs.Usage),
 		Grades:              actorGradesOut(cs.Grades),
+		HandTurnsByStage:    handTurns,
 	}
 }
 

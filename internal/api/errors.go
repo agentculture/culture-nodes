@@ -103,6 +103,13 @@ func classify(err error) *apiError {
 	case errors.Is(err, ledger.ErrStaleReview), errors.Is(err, ledger.ErrReviewAlreadyCommitted):
 		return conflict("re-read the current ledger version and, if still needed, submit a new review request", "%v", err)
 
+	case errors.Is(err, ledger.ErrAlreadySuperseded):
+		// A second replacement of one record (task t16's definition
+		// iteration is the first API-facing supersede): the caller is
+		// correcting a record that was already corrected, so the fix is to
+		// name the live replacement instead.
+		return conflict("the record already has a live replacement; supersede that replacement instead", "%v", err)
+
 	case errors.Is(err, engine.ErrTerminalRun), errors.Is(err, engine.ErrTerminalNodeRun):
 		return conflict("the run has already reached a terminal state", "%v", err)
 

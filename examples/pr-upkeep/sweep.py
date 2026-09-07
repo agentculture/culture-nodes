@@ -48,9 +48,10 @@ from pr_upkeep_emit import (
     FINDINGS_PER_EVENT,
     RUNS_MAX_PAGES,
     RUNS_PAGE_LIMIT,
+    closed_pull_event,
     dispatched_finding_ids,
     emission_watermark,
-    merged_pr_fact,
+    merged_pr_fact,  # noqa: F401 - main() routes via closed_pull_event; tests reach it here
     next_run_cursor,
     opened_pr_fact,
     runs_query,
@@ -593,19 +594,21 @@ MERGED_PR_LOOKBACK_DAYS = 30
 MERGED_PR_MAX_PAGES = 10
 
 
-def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
-    """Closed PRs merged inside the lookback window, across pages.
+def fetch_closed_pulls(token: str | None, repository: str) -> list[dict]:
+    """Closed PRs -- merged AND declined -- inside the lookback window, across pages.
 
     One 50-item page silently dropped every merge past it (Qodo 6 on PR
     #244). GitHub sorts closed PRs by `updated` when asked; pages are read
-    newest-first until a page ends before the window, so every merge inside
-    the window is observed and the source_key + merged_at watermark keeps
-    each one to a single fact. The window and page cap bound the read.
+    newest-first until a page ends before the window, so every closure inside
+    the window is observed and the source_key + immutable-timestamp watermark
+    keeps each one to a single fact. The window and page cap bound the read.
+    One listing feeds both lifecycle facts: `pr.merged` takes the rows with a
+    `merged_at`, `pr.closed` (t12) the rows without one.
     """
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=MERGED_PR_LOOKBACK_DAYS)
-    merged: list[dict] = []
+    closed: list[dict] = []
     for page in range(1, MERGED_PR_MAX_PAGES + 1):
         pulls = _get_json(
             f"{GITHUB_API}/repos/{repository}/pulls"
@@ -614,11 +617,16 @@ def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
         )
         if not pulls:
             break
-        merged.extend(pull for pull in pulls if pull.get("merged_at"))
+        closed.extend(pulls)
         oldest = min((pull.get("updated_at") or "9999") for pull in pulls)
         if oldest < cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") or len(pulls) < 50:
             break
-    return merged
+    return closed
+
+
+def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
+    """The merged subset of `fetch_closed_pulls` (kept for callers that only want merges)."""
+    return [pull for pull in fetch_closed_pulls(token, repository) if pull.get("merged_at")]
 
 
 def fetch_check_runs(token: str | None, repository: str, head_sha: str) -> dict:
@@ -849,28 +857,19 @@ def main() -> int:
         # emittable next one. Separate from skipped_findings so the summary
         # keeps saying WHICH reason a finding is not in flight (#268).
         deferred_findings = []
-        # Closed PRs are a separate bounded read. The immutable merged_at
-        # value is the watermark, so two passes append exactly one fact.
-        with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
-            merged_pulls = fetch_merged_pulls(token, github_repo)
-        for pull in merged_pulls:
-            fact = merged_pr_fact(pull, github_repo, repository.get("jira_project"))
-            if fact is None:
+        # Closed PRs are a separate bounded read, and one listing feeds two
+        # facts: pr.merged (merged_at set) or pr.closed (closed without
+        # merge, t12). Each watermark is an immutable timestamp, so two
+        # passes append exactly one fact; `closed_pull_event` decides which.
+        with attempting(f"listing closed PRs of {github_repo} (GitHub)"):
+            closed_pulls = fetch_closed_pulls(token, github_repo)
+        for pull in closed_pulls:
+            event = closed_pull_event(pull, github_repo, repository.get("jira_project"))
+            if event is None:
                 continue
-            # Re-emitted every pass by design: the control plane keys the
-            # fact on source_key + watermark (merged_at) and answers a repeat
-            # with duplicate=true (internal/store/postgres/signal.go), so
-            # consumers see one fact per merge, not one per sweep.
-            with attempting(f"emitting pr.merged for #{pull.get('number')} (control plane)"):
-                emitted.append(
-                    raise_event(
-                        "pr.merged",
-                        fact,
-                        f"github:{github_repo}:pr:{pull.get('number')}:merged",
-                        {"merged_at": pull["merged_at"]},
-                        subject=fact["issue_key"],
-                    )
-                )
+            name, fact, source_key, watermark, subject = event
+            with attempting(f"emitting {name} for #{pull.get('number')} (control plane)"):
+                emitted.append(raise_event(name, fact, source_key, watermark, subject=subject))
         for pull in swept:
             fact = opened_pr_fact(pull, github_repo, repository.get("jira_project"))
             if fact is None:

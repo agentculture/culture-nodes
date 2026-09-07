@@ -129,6 +129,72 @@ def upkeep_pr_fact(
     }
 
 
+def closed_pr_fact(pull: dict, repository: str, jira_project: str | None = None) -> dict | None:
+    """Build the pr.closed fact for a PR closed WITHOUT merge (t12; spec c37).
+
+    The human-inbox tracker has observed close-without-merge since #71
+    (``github_pr_closed``, tracker.py CLOSED_OBSERVATION_KIND) but nothing
+    ever turned it into a fact, so a declined PR's parked upkeep runs stayed
+    running forever. This is the fact; its consumer -- the cleanup node that
+    cancels those runs with reason ``pr_closed`` and reports the PR's refs --
+    is task t13, not this module.
+
+    Mirrors ``merged_pr_fact`` with three deliberate differences: a merged PR
+    is never closed-unmerged (``merged_at`` wins, whatever ``state`` says);
+    the correlation is ``work_item_for_pull`` rather than the bare Jira key,
+    so a ticketless PR still produces a fact (its runs are just as parked);
+    and ``closed_at`` doubles as the immutable watermark, so a PR GitHub
+    reports closed without a timestamp yields no fact rather than one with
+    no cursor. Closed pulls arrive raw from GitHub (``head.sha``), open ones
+    normalised (``head_sha``); both shapes are read.
+    """
+    if pull.get("merged_at") or pull.get("state") != "closed":
+        return None
+    closed_at = pull.get("closed_at")
+    if not closed_at:
+        return None
+    fact = {
+        "source": "github_pr",
+        "repository": repository,
+        "number": pull.get("number"),
+        "head_sha": pull.get("head_sha") or (pull.get("head") or {}).get("sha") or "",
+        "closed_at": closed_at,
+        "work_item": work_item_for_pull(pull, repository, jira_project),
+    }
+    if pull.get("html_url"):
+        fact["url"] = pull["html_url"]
+    return fact
+
+
+def closed_pull_event(
+    pull: dict, repository: str, jira_project: str | None = None
+) -> tuple[str, dict, str, dict, str] | None:
+    """One closed-listing PR -> ``(name, payload, source_key, watermark, subject)``.
+
+    GitHub's ``state=closed`` listing holds merged and declined PRs alike, and
+    exactly one lifecycle fact applies to each: ``pr.merged`` when
+    ``merged_at`` is set, ``pr.closed`` otherwise. A merged PR that
+    correlates to no ticket stays silent (the pre-t12 rule) and does NOT fall
+    through to ``pr.closed``. Both facts are re-emitted every pass by design:
+    the control plane keys on source_key + watermark and answers a repeat
+    with ``duplicate=true`` (internal/store/postgres/signal.go), and both
+    watermarks are immutable timestamps, so consumers see one fact per
+    closure, not one per sweep. Unlike ``pr-upkeep.pr``, both carry a
+    ``subject`` -- they mint no run, so the one-active-run-per-subject guard
+    #268 removed is not re-entered.
+    """
+    number = pull.get("number")
+    merged = merged_pr_fact(pull, repository, jira_project)
+    if merged is not None:
+        key = f"github:{repository}:pr:{number}:merged"
+        return "pr.merged", merged, key, {"merged_at": merged["merged_at"]}, merged["issue_key"]
+    closed = closed_pr_fact(pull, repository, jira_project)
+    if closed is not None:
+        key = f"github:{repository}:pr:{number}:closed"
+        return "pr.closed", closed, key, {"closed_at": closed["closed_at"]}, closed["work_item"]
+    return None
+
+
 #: The workflow whose runs the dedupe consults, one page and at most how many
 #: pages of it. The control plane's run listing is cursor-paginated and
 #: newest-first, capped at 500 rows a page (`parseLimit(r, 50, 500)` in

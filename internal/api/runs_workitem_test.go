@@ -125,11 +125,13 @@ func TestListRunsDoesNotFilterByCategory(t *testing.T) {
 	}
 }
 
-// TestPatchRunRefusesWorkItem is t1's first criterion: PATCH /runs/{id}
-// still accepts category and nothing else. work_item is set at creation
-// (or stamped by the trigger) and is not retaggable; a body naming it is
-// refused with a structured 400 rather than silently ignored, the same way
-// name/description are.
+// TestPatchRunRefusesWorkItem: PATCH /runs/{id} accepts category, and
+// accepts work_item for exactly one transition — the orphan intake's re-key
+// from the transient `gh:<owner>/<repo>#<n>` form to a Jira key (task t4,
+// decision c42). Everything else about work_item stays what t1 made it: a
+// run already keyed to a ticket is not retaggable, and a body naming
+// work_item alongside a run that cannot take it is refused with a structured
+// error rather than silently ignored, the same way name/description are.
 func TestPatchRunRefusesWorkItem(t *testing.T) {
 	f := newFixture(t)
 	digest := publishFixtureWorkflow(t, f)
@@ -141,14 +143,15 @@ func TestPatchRunRefusesWorkItem(t *testing.T) {
 	}
 	category, moved := "audit", "SCRUM-10"
 
+	// A run keyed to a ticket is not re-keyable: 409, the run is the conflict.
 	resp, body := doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+run.ID),
 		patchWithWorkItem{Category: &category, WorkItem: &moved}, nil)
-	requireStatus(t, resp, body, http.StatusBadRequest)
+	requireStatus(t, resp, body, http.StatusConflict)
 	decodeAPIError(t, body)
 
 	resp, body = doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+run.ID),
 		patchWithWorkItem{WorkItem: &moved}, nil)
-	requireStatus(t, resp, body, http.StatusBadRequest)
+	requireStatus(t, resp, body, http.StatusConflict)
 	decodeAPIError(t, body)
 
 	// The refused requests changed nothing; a category-only PATCH still works
@@ -159,6 +162,66 @@ func TestPatchRunRefusesWorkItem(t *testing.T) {
 	requireStatus(t, resp, body, http.StatusOK)
 	if patched.Category != "audit" || patched.WorkItem != "SCRUM-9" {
 		t.Fatalf("after PATCH: category=%q work_item=%q, want audit / SCRUM-9", patched.Category, patched.WorkItem)
+	}
+}
+
+// TestPatchRunRekeysOrphanWorkItemOnce is the API half of the orphan intake
+// (task t4): a run minted for a `gh:` work item takes exactly one PATCH to
+// its Jira key, after which the list filter finds it under the key and a
+// second re-key is refused. The target must look like a Jira key — the
+// transient form may not be replaced by another transient form or by
+// arbitrary text — and an untagged run (no work item at all) is not an
+// orphan and is refused too.
+func TestPatchRunRekeysOrphanWorkItemOnce(t *testing.T) {
+	f := newFixture(t)
+	digest := publishFixtureWorkflow(t, f)
+	orphan := createWorkItemRun(t, f, digest, "gh:agentculture/culture-nodes#307")
+	untagged := createWorkItemRun(t, f, digest, "")
+
+	type patchWorkItem struct {
+		Category *string `json:"category,omitempty"`
+		WorkItem string  `json:"work_item"`
+	}
+
+	// Not a Jira key: 400 (a request problem, not a state problem).
+	for _, bad := range []string{"gh:agentculture/culture-nodes#308", "scrum-7", "", "SCRUM-7 or so"} {
+		resp, body := doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+orphan.ID),
+			patchWorkItem{WorkItem: bad}, nil)
+		requireStatus(t, resp, body, http.StatusBadRequest)
+		decodeAPIError(t, body)
+	}
+	// An untagged run is not an orphan: 409.
+	resp, body := doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+untagged.ID),
+		patchWorkItem{WorkItem: "SCRUM-7"}, nil)
+	requireStatus(t, resp, body, http.StatusConflict)
+	decodeAPIError(t, body)
+
+	// The one allowed transition, with a category retag riding along.
+	category := "orphan-intake"
+	var patched apipkg.RunOut
+	resp, body = doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+orphan.ID),
+		patchWorkItem{Category: &category, WorkItem: "SCRUM-7"}, &patched)
+	requireStatus(t, resp, body, http.StatusOK)
+	if patched.WorkItem != "SCRUM-7" || patched.Category != "orphan-intake" {
+		t.Fatalf("after re-key: work_item=%q category=%q, want SCRUM-7 / orphan-intake", patched.WorkItem, patched.Category)
+	}
+	if got := listRunIDs(t, f, "?work_item=SCRUM-7"); len(got) != 1 || got[0] != orphan.ID {
+		t.Fatalf("work_item=SCRUM-7 listed %v, want exactly %s", got, orphan.ID)
+	}
+	if got := listRunIDs(t, f, "?work_item=gh:agentculture/culture-nodes%23307"); len(got) != 0 {
+		t.Fatalf("the gh: form still lists %v after the re-key; the transient form must not survive", got)
+	}
+
+	// Once. The second attempt finds a run that is no longer an orphan.
+	resp, body = doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+orphan.ID),
+		patchWorkItem{WorkItem: "SCRUM-8"}, nil)
+	requireStatus(t, resp, body, http.StatusConflict)
+	decodeAPIError(t, body)
+	var after apipkg.RunViewOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/runs/"+orphan.ID), nil, &after)
+	requireStatus(t, resp, body, http.StatusOK)
+	if after.Run.WorkItem != "SCRUM-7" {
+		t.Fatalf("refused second re-key changed work_item to %q", after.Run.WorkItem)
 	}
 }
 

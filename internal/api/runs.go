@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -255,28 +256,35 @@ func (s *Server) handlePatchRun(w http.ResponseWriter, r *http.Request) error {
 	}
 	// work_item (migrations/0057, decision c41) is set once, when the run is
 	// minted for its work item — by POST /v1alpha1/runs or by the trigger
-	// from the event payload — and is not a retag. Refused for the same
-	// reason name/description are: a typed decode would silently drop it.
-	if _, ok := raw["work_item"]; ok {
-		return badRequest(
-			"work_item is set at run creation only and cannot be changed afterward — remove it from the request body",
-			"PATCH /v1alpha1/runs/%s: work_item is immutable", id)
-	}
-	categoryRaw, ok := raw["category"]
-	if !ok {
-		return badRequest("send a JSON body matching PatchRunRequest: {category}", "PATCH /v1alpha1/runs/%s requires category", id)
-	}
-	var category string
-	if err := json.Unmarshal(categoryRaw, &category); err != nil {
-		return badRequest("category must be a JSON string", "decode category: %v", err)
-	}
-
+	// from the event payload — and is not a retag. The ONE exception is the
+	// orphan intake's re-key (decision c42, task t4): a run minted for the
+	// transient `gh:<owner>/<repo>#<n>` form may move to the Jira key the
+	// intake created for it, exactly once, and only to something shaped like
+	// a Jira key. rekeyWorkItem enforces that; anything else about work_item
+	// in a PATCH body is refused, not silently dropped by a typed decode.
 	ctx := r.Context()
-	if err := s.setRunCategory(ctx, id, category); err != nil {
-		if errors.Is(err, postgres.ErrNotFound) {
-			return notFound("check the run id", "no run with id %s", id)
+	workItemRaw, rekey := raw["work_item"]
+	categoryRaw, retag := raw["category"]
+	if !rekey && !retag {
+		return badRequest("send a JSON body matching PatchRunRequest: {category} and/or {work_item}",
+			"PATCH /v1alpha1/runs/%s requires category or work_item", id)
+	}
+	if rekey {
+		if apiErr := s.rekeyWorkItem(ctx, id, workItemRaw); apiErr != nil {
+			return apiErr
 		}
-		return internalError(err)
+	}
+	if retag {
+		var category string
+		if err := json.Unmarshal(categoryRaw, &category); err != nil {
+			return badRequest("category must be a JSON string", "decode category: %v", err)
+		}
+		if err := s.setRunCategory(ctx, id, category); err != nil {
+			if errors.Is(err, postgres.ErrNotFound) {
+				return notFound("check the run id", "no run with id %s", id)
+			}
+			return internalError(err)
+		}
 	}
 
 	run, err := s.engineStore.Run(ctx, id)
@@ -293,6 +301,56 @@ func (s *Server) handlePatchRun(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeJSON(w, http.StatusOK, runOut(run, usage, meta))
 	return nil
+}
+
+// jiraKeyPattern is the shape a re-keyed work item must have: a Jira issue
+// key, project prefix then a number — the same shape pr_upkeep_emit's
+// correlation reads off a branch or a PR body. It is deliberately NOT the
+// transient gh: form, and not arbitrary text: the whole point of the
+// transition is that the gh: form does not survive intake.
+var jiraKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9]+-[0-9]+$`)
+
+// orphanWorkItemPrefix marks the transient work-item form a run may be
+// re-keyed FROM (pr_upkeep_emit.work_item_for_pull).
+const orphanWorkItemPrefix = "gh:"
+
+// rekeyWorkItem performs the single allowed work_item transition: gh: form
+// -> Jira key. The state check and the write are one conditional UPDATE, so
+// two concurrent re-keys cannot both succeed; a zero-row result is then
+// disambiguated by reading the run — a missing run is 404, a run whose
+// work_item is not the gh: form (already keyed, or never keyed) is 409,
+// because the request was well-formed and the run's state is what refused it.
+func (s *Server) rekeyWorkItem(ctx context.Context, id string, raw json.RawMessage) *apiError {
+	var key string
+	if err := json.Unmarshal(raw, &key); err != nil {
+		return badRequest("work_item must be a JSON string", "decode work_item: %v", err)
+	}
+	if !jiraKeyPattern.MatchString(key) {
+		return badRequest(
+			"work_item can only be re-keyed to a Jira issue key such as SCRUM-7 (the transient gh: form never survives intake)",
+			"PATCH /v1alpha1/runs/%s: work_item %q is not a Jira issue key", id, key)
+	}
+	tag, err := s.Store.Pool().Exec(ctx,
+		`UPDATE runs SET work_item = $2, updated_at = now()
+		 WHERE id = $1 AND namespace_id = $3 AND work_item LIKE $4`,
+		id, key, s.NamespaceID, orphanWorkItemPrefix+"%",
+	)
+	if err != nil {
+		return internalError(fmt.Errorf("api: run %s: re-key work_item: %w", id, err))
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	run, err := s.engineStore.Run(ctx, id)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return notFound("check the run id", "no run with id %s", id)
+		}
+		return internalError(err)
+	}
+	return conflict(
+		"only a run minted for the transient gh:<owner>/<repo>#<n> work item can be re-keyed, and only once — this run's work_item is set at creation and is not retaggable",
+		"PATCH /v1alpha1/runs/%s: work_item %q is not the transient gh: form", id, run.WorkItem)
 }
 
 // hintCandidateKeys is deriveDisplayHint's priority-ordered list of exact

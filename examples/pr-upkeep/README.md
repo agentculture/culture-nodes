@@ -83,6 +83,10 @@ item.
       ▼
   workflow.yaml v2 (one run per matching event)
 
+  route ──keyed───────────────────────────────────────────────▶ fix
+      │                                                          │
+      └──orphan──▶ intake-orphan ──issue_created──▶ stamp-pr ──stamped──┘
+
   fix.completed ──▶ human-merges-pr ──approved/rejected/expired──▶ finish
       │
       └──no_change───────────────────────────────────────────────▶ finish
@@ -116,6 +120,25 @@ item.
   | `findings` | a one-item list: the finding this run works |
   | `work_item` | the key of the work item the PR belongs to: the correlated Jira key (head branch, then body; narrowed to `jira_project` when configured), else the transient `gh:<owner>/<repo>#<n>` form. The engine stamps the run's `work_item` column from it; it is never empty, and it is neither `subject` nor `category` (#310). |
 
+- **route** is the entry, a decision node over the fact's `work_item`: a
+  value starting `gh:` selects `orphan`, anything else `keyed`. It computes
+  nothing and calls nobody; it reads the run's own input.
+- **intake-orphan** (orphan path only) is the jira actor's `create_issue`
+  verb with the exact-key input the bridge admits: `verb`, `project` (a
+  deployment literal that must be in the bridge's `JIRA_CREATE_PROJECTS`
+  allowlist), `summary` (the `gh:` work item, which names the PR),
+  `description`, and `labels: [orphan, auto-created, source:github,
+  repo:<owner>/<repo>]`. `maxAttempts: 1` — a retried create would be a
+  second ticket. Its output `issue` is the new key.
+- **stamp-pr** (orphan path only) is the developer actor writing `Jira:
+  <key>` into the PR body, the one channel a registered actor has to the
+  place the sweep's correlation reads. That is what makes the next tick
+  idempotent: a later fact for the same PR arrives keyed and takes the
+  `keyed` edge, and the jira bridge (which has no search verb) is never asked
+  twice. The run's own `work_item` column is re-keyed separately, by
+  `PATCH /v1alpha1/runs/{id} {"work_item": "<key>"}` — the one transition the
+  endpoint admits (gh: form → Jira key, once); see
+  `docs/operations/pr-upkeep-lane.md` for why the graph does not do it.
 - **fix** is the agent node. Actor affinity selects the security developer
   when the finding on the event is a security finding and the general
   developer otherwise. The actor works that finding and either reports

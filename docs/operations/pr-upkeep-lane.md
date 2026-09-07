@@ -88,19 +88,36 @@ on the minted run's own `work_item` column (`internal/engine/trigger.go`,
 second write, and `run.category` is untouched. The value is never empty and
 has exactly two shapes:
 
-| Shape | Example | When |
-| --- | --- | --- |
-| the correlated Jira key | `SCRUM-9` | the head branch names a key, else the PR body does — the same correlation `pr.opened` / `pr.merged` already use (`pr_upkeep_emit._correlated_issue_key`), narrowed to the configured `jira_project` when the repository has one |
-| the transient GitHub form | `gh:agentculture/culture-nodes#307` | no key anywhere on the PR |
+| Shape | Example | When | What the graph does with it |
+| --- | --- | --- | --- |
+| the correlated Jira key | `SCRUM-9` | the head branch names a key, else the PR body does — the same correlation `pr.opened` / `pr.merged` already use (`pr_upkeep_emit._correlated_issue_key`), narrowed to the configured `jira_project` when the repository has one | `route` selects `keyed`; the run goes straight to `fix` |
+| the transient GitHub form | `gh:agentculture/culture-nodes#307` | no key anywhere on the PR | `route` selects `orphan`: `intake-orphan` creates the ticket, `stamp-pr` writes the key into the PR body, then `fix` |
+| the orphan ticket | `SCRUM-12`, labelled `orphan`, `auto-created`, `source:github`, `repo:agentculture/culture-nodes` | a `gh:` fact reached `intake-orphan` (task t4) | every later fact for that PR arrives keyed to it; the run that created it is re-keyed to it by `PATCH /v1alpha1/runs/{id} {"work_item": "SCRUM-12"}` — the one transition PATCH admits, once |
 
 The `gh:` form is a placeholder, and the rule is that **it never survives
-intake** (decision c42): a PR with no ticket is an *orphan*, intake creates a
-ticket for it in the configured project and re-keys the item to that ticket,
-so anything downstream that joins on the work item — handover refs, opened
-issues, the cleanup record — sees a Jira key. The sweep does not do the
-re-keying; it only emits the fact with the shape it can see. (Creating the
-orphan ticket is a graph node's write through the jira bridge, not the
-sweep's — the sweep still has no Jira write path, and
+intake** (decision c42): a PR with no ticket is an *orphan*, the graph's
+`intake-orphan` node creates a ticket for it in the configured project
+(through the jira bridge's `create_issue` verb, with the four labels above)
+and `stamp-pr` puts the key on the PR, so the next sweep correlates the PR to
+the ticket and anything downstream that joins on the work item — handover
+refs, opened issues, the cleanup record — sees a Jira key. Idempotency is the
+PR itself: the jira bridge has no search verb, so "does this PR already have
+a ticket" is answered by the stamped body on the following tick, and an
+already-keyed fact never reaches `intake-orphan`; a replayed fact (same
+source key and watermark) is deduped by the control plane before any run
+exists. `intake-orphan` runs with `maxAttempts: 1` because a retried create
+is a second ticket.
+
+The run that did the creating still carries the `gh:` key in its own
+`work_item` column — the graph cannot address its own run through the API.
+Re-keying that column is `PATCH /v1alpha1/runs/{id}` with `{"work_item":
+"<key>"}`, accepted only while the column starts with `gh:` and only to a
+Jira-shaped key (a 409 otherwise); until a control-plane step performs it,
+it is an operator turn and is counted as one. The mapping is readable before
+the PATCH regardless: the run's ledger holds the jira actor's proposed
+`create_issue` claim naming the key, beside the run input's `gh:` work item.
+The sweep does none of this; it only emits the fact with the shape it can
+see. (The sweep still has no Jira write path, and
 `tests/test_pr_upkeep_sweep_jira.py` still asserts so.)
 
 Two things `work_item` is deliberately **not**:
@@ -114,8 +131,9 @@ Two things `work_item` is deliberately **not**:
 Because `workflow.yaml`'s input contract is `additionalProperties: false`,
 admitting the field meant widening the contract (`work_item` is required, a
 non-empty string) and republishing: this is the one kind of sweep change that
-*does* need a workflow republish (see "Changing the sweep"), and the workflow
-is `2.2.0` for it. A sweep emitting `work_item` against a deployment still on
+*does* need a workflow republish (see "Changing the sweep"); the workflow
+became `2.2.0` for it and `2.3.0` when the orphan intake nodes were added. A
+sweep emitting `work_item` against a deployment still on
 the `2.1.0` contract is refused by the trigger's contract check, loudly, per
 fact — which is the right failure, not a silent drop.
 

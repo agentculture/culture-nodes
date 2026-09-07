@@ -10,7 +10,7 @@ kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.1.0
+  version: 2.2.0
   ownerRef: team/platform-ai
 
 spec:
@@ -47,10 +47,19 @@ spec:
     # former sweep report: repository, PR identity, and prioritized findings
     # are now durable event data and are queryable even when the condition
     # above declines the handler.
+    #
+    # `work_item` is the key of the work item this fact belongs to (issue
+    # #310, decision c41): the correlated Jira key, else the transient
+    # `gh:<owner>/<repo>#<n>` form that never survives intake (an orphan
+    # ticket is created and the item re-keyed, decision c42). The engine
+    # stamps the minted run's own `work_item` column from this payload field,
+    # so GET /v1alpha1/runs?work_item=KEY finds the run without a second
+    # write. It is NOT `subject` -- a pr-upkeep.pr fact still carries none
+    # (#268) -- and it is not `category`, which stays untouched.
     input:
       schema:
         type: object
-        required: [source, repository, number, head_sha, findings]
+        required: [source, repository, number, head_sha, findings, work_item]
         additionalProperties: false
         properties:
           source: {const: github_pr}
@@ -58,6 +67,7 @@ spec:
           number: {type: integer, minimum: 1}
           head_sha: {type: string, minLength: 1}
           findings: {type: array, minItems: 1}
+          work_item: {type: string, minLength: 1}
     output:
       schema: {type: object}
 

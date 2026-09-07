@@ -88,6 +88,47 @@ def merged_pr_fact(pull: dict, repository: str, jira_project: str | None = None)
     }
 
 
+def work_item_for_pull(pull: dict, repository: str, jira_project: str | None = None) -> str:
+    """The key of the work item a PR belongs to. Never empty.
+
+    Two shapes, and only two (spec c41/c42, issue #310): the correlated Jira
+    key -- head branch first, then PR body, narrowed to `jira_project` when one
+    is configured, the same correlation `pr.opened`/`pr.merged` already use --
+    or else the TRANSIENT ``gh:<owner>/<repo>#<n>`` form. The gh form is a
+    placeholder that never survives intake: a PR without a ticket gets an
+    orphan ticket created and the item re-keyed to it (t4), so anything that
+    joins on the work item downstream sees a Jira key.
+
+    Non-empty by construction because the engine stamps a minted run's
+    ``work_item`` only from a non-empty string (internal/engine/trigger.go
+    ``workItemFromPayload``): an empty value would mint a run that
+    ``GET /v1alpha1/runs?work_item=`` can never find.
+    """
+    return _correlated_issue_key(pull, jira_project) or f"gh:{repository}#{pull.get('number')}"
+
+
+def upkeep_pr_fact(
+    pull: dict, repository: str, dispatched: list[dict], jira_project: str | None = None
+) -> dict:
+    """Build the pr-upkeep.pr payload: one PR, one finding, one work item.
+
+    This is the run input verbatim (a triggered run's input IS the event
+    payload), so every key here must be admitted by workflow.yaml's input
+    contract, which is ``additionalProperties: false``. It carries
+    ``work_item`` and deliberately NO ``subject``: subject re-enters the
+    one-active-run-per-subject guard #268 removed, and no ``category`` --
+    the work item is its own run column (decision c41), not a category.
+    """
+    return {
+        "source": "github_pr",
+        "repository": repository,
+        "number": pull.get("number"),
+        "head_sha": pull.get("head_sha") or "",
+        "findings": dispatched,
+        "work_item": work_item_for_pull(pull, repository, jira_project),
+    }
+
+
 #: The workflow whose runs the dedupe consults, one page and at most how many
 #: pages of it. The control plane's run listing is cursor-paginated and
 #: newest-first, capped at 500 rows a page (`parseLimit(r, 50, 500)` in

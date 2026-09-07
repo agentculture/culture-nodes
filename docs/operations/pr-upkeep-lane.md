@@ -17,12 +17,12 @@ person-facing half, for someone who only ever sees a Jira ticket, is
 ## The loop, in one picture
 
 ```text
-schedule (interval_seconds: 1800)
+schedule (pr-upkeep-sweep-5m, interval_seconds: 300)
     │  pr-upkeep.sweep.due
     ▼
 sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.py
     │                                              + pr_upkeep_emit.py
-    │  pr-upkeep.pr          (one PR, one finding)
+    │  pr-upkeep.pr          (one PR, one finding, one work_item)
     │  pr-upkeep.jira.*      (transitions, comments)
     ▼
 workflow.yaml ── fix ──completed──▶ human-merges-pr ──approved/rejected/expired──▶ finish
@@ -33,8 +33,11 @@ Four properties make this a *repeat* process rather than a script someone
 runs:
 
 - **The clock starts it.** A durable schedule row fires
-  `pr-upkeep.sweep.due` every 30 minutes; a published workflow's trigger
-  turns that into a run. No human, no cron on somebody's laptop.
+  `pr-upkeep.sweep.due` every 5 minutes — the live row is
+  `pr-upkeep-sweep-5m` (`interval_seconds: 300`); the original 30-minute row
+  the example comment still shows is disabled, not gone — and a published
+  workflow's trigger turns that into a run. No human, no cron on somebody's
+  laptop.
 - **Facts, not calls.** The sweep only appends cursor-guarded facts. Which
   workflow consumes them is not the sweep's business, and a fact the trigger
   declines is still durable and queryable.
@@ -55,7 +58,7 @@ pr-upkeep run.
 That "one" is the load-bearing number, and it changed in 0.46.0 (issue #268).
 It has two consequences worth holding in your head when you watch the lane:
 
-- **A PR with N findings takes N ticks**, roughly N × 30 minutes, and the
+- **A PR with N findings takes N ticks**, roughly N × 5 minutes, and the
   findings are worked in priority order — SonarCloud/Qodo severities and
   failed CI checks on one shared ladder.
 - **A finding already answered at this commit is not asked again.** A run
@@ -73,6 +76,48 @@ It has two consequences worth holding in your head when you watch the lane:
   run's `input.findings`, and that run then sat parked on `human-merges-pr`
   until a human merged — so the second finding could not be dispatched until
   the first fix was merged. One fix per PR per merge, measured on PR #267.
+
+## The work item
+
+Every `pr-upkeep.pr` fact names the work item it belongs to, in its payload,
+under `work_item` (issue #310; decision c41). A triggered run's input *is* the
+payload, and the engine's trigger reads that one top-level field and stamps it
+on the minted run's own `work_item` column (`internal/engine/trigger.go`,
+`workItemFromPayload`; migration 0057) — so
+`GET /v1alpha1/runs?work_item=SCRUM-9` returns exactly a ticket's runs with no
+second write, and `run.category` is untouched. The value is never empty and
+has exactly two shapes:
+
+| Shape | Example | When |
+| --- | --- | --- |
+| the correlated Jira key | `SCRUM-9` | the head branch names a key, else the PR body does — the same correlation `pr.opened` / `pr.merged` already use (`pr_upkeep_emit._correlated_issue_key`), narrowed to the configured `jira_project` when the repository has one |
+| the transient GitHub form | `gh:agentculture/culture-nodes#307` | no key anywhere on the PR |
+
+The `gh:` form is a placeholder, and the rule is that **it never survives
+intake** (decision c42): a PR with no ticket is an *orphan*, intake creates a
+ticket for it in the configured project and re-keys the item to that ticket,
+so anything downstream that joins on the work item — handover refs, opened
+issues, the cleanup record — sees a Jira key. The sweep does not do the
+re-keying; it only emits the fact with the shape it can see. (Creating the
+orphan ticket is a graph node's write through the jira bridge, not the
+sweep's — the sweep still has no Jira write path, and
+`tests/test_pr_upkeep_sweep_jira.py` still asserts so.)
+
+Two things `work_item` is deliberately **not**:
+
+- It is not `subject`. A `pr-upkeep.pr` fact carries no subject, and still
+  does not — subject re-enters the one-active-run-per-subject guard #268
+  removed (see "What is deliberately not here").
+- It is not `category`. The work item is its own run column with its own
+  filter; `category` keeps meaning what it meant.
+
+Because `workflow.yaml`'s input contract is `additionalProperties: false`,
+admitting the field meant widening the contract (`work_item` is required, a
+non-empty string) and republishing: this is the one kind of sweep change that
+*does* need a workflow republish (see "Changing the sweep"), and the workflow
+is `2.2.0` for it. A sweep emitting `work_item` against a deployment still on
+the `2.1.0` contract is refused by the trigger's contract check, loudly, per
+fact — which is the right failure, not a silent drop.
 
 ## Reading a tick
 
@@ -185,6 +230,9 @@ The recipe for a sweep change:
 long as an emitted fact still satisfies its input contract, its trigger
 condition, and its fix instruction, the loop picks the change up on the next
 tick with nothing else to do. #268 was deliberately shaped to keep that true.
+The exception is a change to the fact's *shape*: the input contract is
+`additionalProperties: false`, so a new payload key (as `work_item` was, #310)
+widens the contract and the workflow is republished in the same change.
 
 ## What is deliberately not here
 
@@ -199,7 +247,7 @@ tick with nothing else to do. #268 was deliberately shaped to keep that true.
   and the fix node works the one finding its run names.
 
   What this does **not** promise is that only one fix session ever touches a
-  PR. If a fix outlasts the 30-minute tick, the next tick dispatches the next
+  PR. If a fix outlasts the 5-minute tick, the next tick dispatches the next
   finding while the first session is still working, and both sessions can push
   to the same branch. That is the deliberate trade of #268 — waiting for the
   first fix to *merge* was the bug — but it is a real property, not an absence
@@ -207,7 +255,10 @@ tick with nothing else to do. #268 was deliberately shaped to keep that true.
   tick across different PRs, all dispatching to the same actor, and nothing
   serializes them. The engine's one-active-run-per-subject guard does not
   apply, because a `pr-upkeep.pr` fact deliberately carries no subject —
-  giving it one would re-introduce exactly the block #268 removed. Bounding
+  giving it one would re-introduce exactly the block #268 removed. The fact
+  does carry a `work_item` (see "The work item"), and that is a different
+  thing on purpose: the engine stamps it on the run as its own column and
+  never keys any guard on it. Bounding
   same-PR overlap would mean suppressing a dispatch while an earlier run is
   still in `fix` (as opposed to parked on the approval), which is tracked
   separately.

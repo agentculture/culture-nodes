@@ -98,9 +98,24 @@ item.
 - [`workflow.yaml`](workflow.yaml) is v2 of the upkeep workflow. It starts a
   run for each `pr-upkeep.pr` event whose payload is from a GitHub PR and has
   at least one finding. The event payload is the run input, so the repository,
-  PR identity, head SHA, and the finding are durable before an actor starts.
-  One event carries **one** finding — the highest-priority one still
-  undispatched (see "One finding per fact" below).
+  PR identity, head SHA, the finding and the work item are durable before an
+  actor starts. One event carries **one** finding — the highest-priority one
+  still undispatched (see "One finding per fact" below).
+
+  What a `pr-upkeep.pr` fact carries, and where each value comes from
+  (`pr_upkeep_emit.upkeep_pr_fact`; the input contract is
+  `additionalProperties: false`, so this table and the contract are the same
+  list):
+
+  | Field | Value |
+  | --- | --- |
+  | `source` | the constant `github_pr` |
+  | `repository` | the granted `github_repo` being swept |
+  | `number` | the PR number |
+  | `head_sha` | the PR's head commit, which the check-runs read is keyed by |
+  | `findings` | a one-item list: the finding this run works |
+  | `work_item` | the key of the work item the PR belongs to: the correlated Jira key (head branch, then body; narrowed to `jira_project` when configured), else the transient `gh:<owner>/<repo>#<n>` form. The engine stamps the run's `work_item` column from it; it is never empty, and it is neither `subject` nor `category` (#310). |
+
 - **fix** is the agent node. Actor affinity selects the security developer
   when the finding on the event is a security finding and the general
   developer otherwise. The actor works that finding and either reports

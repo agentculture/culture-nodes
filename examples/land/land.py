@@ -646,14 +646,21 @@ def gate_hook(_ctx: Landing) -> dict[str, Any]:
     return {"outcome": "not_implemented", "owner": "t7", "note": "gate chain + version bump"}
 
 
-def reply_hook(_ctx: Landing) -> dict[str, Any]:
-    """t8: reply on the review thread naming the landed commit."""
-    return {"outcome": "not_implemented", "owner": "t8", "note": "thread reply"}
+def reply_hook(ctx: Landing) -> dict[str, Any]:
+    """t8: reply on each landed finding's review thread naming the landed
+    commit (sibling module land_reply.py, same directory)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from land_reply import reply_step
+
+    return reply_step(ctx, refusal=Refusal)
 
 
-def resolve_hook(_ctx: Landing) -> dict[str, Any]:
-    """t8: resolve the review thread."""
-    return {"outcome": "not_implemented", "owner": "t8", "note": "thread resolve"}
+def resolve_hook(ctx: Landing) -> dict[str, Any]:
+    """t8: resolve each landed finding's review thread (land_reply.py)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from land_reply import resolve_step
+
+    return resolve_step(ctx, refusal=Refusal)
 
 
 # -- the landing ------------------------------------------------------------

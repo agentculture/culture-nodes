@@ -69,6 +69,16 @@
 #                               culture-land's ~/.culture-nodes/bridge-push.env
 #                               (deploy/prod/lanes/land-secrets.sh). Environment
 #                               only; helpers reset on push; never in argv.
+#     LAND_REPLY_SOURCE_URL / LAND_REPLY_SOURCE_SHA256   where land_reply.py
+#                               (the reply + resolve steps, task t8) is fetched
+#                               from and its digest, verified the same way and
+#                               placed beside land.py so the hook imports it.
+#     GITHUB_TOKEN_LAND_PR      the reply/resolve credential (pull-requests:
+#                               write, nothing else), from culture-land's
+#                               ~/.culture-nodes/land-pr.env. A DIFFERENT token
+#                               from the push one on purpose: the reply step
+#                               never holds a token that could push, and no
+#                               step holds one that could merge (t8, c38).
 #     NODES_API_URL             the control plane the checkout lease reads live
 #                               attempts from. Unset it and the record says
 #                               `active_attempts: null` -- unchecked, not zero.
@@ -87,9 +97,11 @@
 # WHAT IS DELIBERATELY NOT HERE (other tasks own it)
 # ---------------------------------------------------------------------------
 #
-#  1. The gate chain and the single version bump (t7) and the thread reply +
-#     resolve (t8): land.py reaches each as a named hook point and writes a
-#     `not_implemented` record with the owning task, never a silent skip.
+#  1. The gate chain and the single version bump (t7): land.py reaches it as
+#     a named hook point and writes a `not_implemented` record with the owning
+#     task, never a silent skip. The thread reply + resolve (t8) are wired:
+#     land_reply.py posts one signed reply and one resolve per landed finding
+#     (one PR comment for findings with no thread), idempotently.
 #  2. Merging the PR. The node has no merge call (grep-asserted in
 #     tests/test_land_node.py); human-merges-pr stays the only merge path.
 #  3. Repair. A conflict or a twice-stale push is a derived routing record to
@@ -155,19 +167,25 @@ spec:
           - LAND_SOURCE_URL
           - LAND_SOURCE_SHA256
           - GITHUB_TOKEN_WORKER
+          - LAND_REPLY_SOURCE_URL
+          - LAND_REPLY_SOURCE_SHA256
+          - GITHUB_TOKEN_LAND_PR
           - NODES_API_URL
         argv:
           - python3
           - -c
           - |
             import hashlib, os, subprocess, sys, tempfile, urllib.request
-            want = os.environ["LAND_SOURCE_SHA256"]
-            body = urllib.request.urlopen(os.environ["LAND_SOURCE_URL"], timeout=60).read()
-            if hashlib.sha256(body).hexdigest() != want:
-                sys.exit("land: fetched bytes do not match the granted digest; refusing to run unverified code")
-            path = os.path.join(tempfile.mkdtemp(), "land.py")
-            open(path, "wb").write(body)
-            sys.exit(subprocess.run([sys.executable, path]).returncode)
+            root = tempfile.mkdtemp()
+            for name, url_key, sha_key in (
+                ("land.py", "LAND_SOURCE_URL", "LAND_SOURCE_SHA256"),
+                ("land_reply.py", "LAND_REPLY_SOURCE_URL", "LAND_REPLY_SOURCE_SHA256"),
+            ):
+                body = urllib.request.urlopen(os.environ[url_key], timeout=60).read()
+                if hashlib.sha256(body).hexdigest() != os.environ[sha_key]:
+                    sys.exit(f"land: fetched {name} does not match the granted digest; refusing to run unverified code")
+                open(os.path.join(root, name), "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, os.path.join(root, "land.py")]).returncode)
       input:
         bindings:
           handover_ref: /run/input/handover_ref

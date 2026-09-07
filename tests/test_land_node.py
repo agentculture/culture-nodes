@@ -63,6 +63,18 @@ def _load_land():
 land = _load_land()
 
 
+def load_land_reply():
+    """The t8 sibling, registered under the name land.py's hooks import, so a
+    test can seam its control-plane read the way `active_attempts` is."""
+    if "land_reply" in sys.modules:
+        return sys.modules["land_reply"]
+    spec = importlib.util.spec_from_file_location("land_reply", EXAMPLE_DIR / "land_reply.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 # ---------------------------------------------------------------------------
 # git helpers
 # ---------------------------------------------------------------------------
@@ -252,9 +264,12 @@ def test_a_ref_lands_as_one_commit_on_the_branch(
     assert by["rebase"]["outcome"] == "ok"
     assert by["push"]["outcome"] == "ok" and by["push"]["rounds"] == 1
     assert by["push"]["credential"] == "not_required"
-    for hook in ("gate", "reply", "resolve"):
+    for hook in ("gate",):
         assert by[hook]["outcome"] == "not_implemented"
         assert by[hook]["owner"].startswith("t"), by[hook]
+    # t8's steps are wired; with no control plane configured they say so.
+    for hook in ("reply", "resolve"):
+        assert by[hook]["outcome"] == "skipped" and by[hook]["reason"] == "no_control_plane"
     assert by["checkout_lease"]["outcome"] == "ok"
     assert by["reset"]["outcome"] == "ok"
     # Every record names the join key and both runs.
@@ -507,6 +522,9 @@ def test_a_second_active_attempt_on_the_actor_checkout_blocks_the_reset(
 
     monkeypatch.setenv("NODES_API_URL", "http://control-plane.invalid")
     monkeypatch.setattr(land, "active_attempts", busy)
+    # The t8 reply step reads the producing run from the same URL; seam it
+    # to "no PR findings" so this test stays about the checkout lease.
+    monkeypatch.setattr(load_land_reply(), "producing_run_input", lambda *_a, **_k: None)
 
     code, records = run_land(
         monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout

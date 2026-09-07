@@ -40,9 +40,18 @@ curl -s -X POST "$NODES_API_URL/v1alpha1/events" \
 | `rebase` | skip if already on the branch (ancestor or `git cherry` equivalent); route `.github/` changes; rebase in a scratch worktree | conflict → derived routing record, exit 3, no push |
 | `gate` | hook point — task t7 (gate chain + single version bump) | `not_implemented` record |
 | `push` | `git push` `<sha>:refs/heads/<target>`, helpers reset, `GIT_ASKPASS` from `bridge-push.env`; one re-fetch-and-rebase on a non-fast-forward rejection | second rejection → routing record, exit 3 |
-| `reply` / `resolve` | hook points — task t8 | `not_implemented` records |
+| `reply` | `land_reply.py`: reads the producing run's `input.findings` from the control plane; one signed reply per landed finding on its review thread (naming the landed sha and the finding id); findings with no thread share ONE PR comment; skips a reply already posted for this sha | `GITHUB_TOKEN_LAND_PR` missing → `refused` record naming it, exit 2, nothing posted |
+| `resolve` | `resolveReviewThread` per landed finding's thread; skips a thread already resolved; a finding with no thread is a recorded skip | GitHub error → exit 2 |
 | `checkout_lease` | per-checkout lock directory under the producing checkout's `.git` **and** the control plane's live attempts for that actor | `waiting`, exit 5; the reset does not run |
 | `reset` | `checkout -B <target> <tip>` + `reset --hard` in the producing checkout | exit 2 |
+
+The reply and resolve steps live in the sibling `land_reply.py` (task t8), fetched
+and digest-verified beside `land.py` by the bootstrap (`LAND_REPLY_SOURCE_URL` /
+`LAND_REPLY_SOURCE_SHA256`). They sign as `- culture-nodes (land node)` — not the
+cicd scripts' `(Claude)` signature — and use `GITHUB_TOKEN_LAND_PR` from
+`~/.culture-nodes/land-pr.env` (pull-requests:write), never the push token. The
+client has no merge endpoint (`tests/test_land_reply.py` greps for it): its GitHub
+operations are read threads, reply, resolve, read comments, comment.
 
 The routing record uses `internal/repair`'s shape (a `derived` `decision`
 selecting `human`, `dispatched: false`) with `router: land_routing` and the

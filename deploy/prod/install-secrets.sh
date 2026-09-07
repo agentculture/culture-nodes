@@ -61,6 +61,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # $UI_BASE_URL and $CALLBACK_BASE_URL from this script at call time.
 # shellcheck source=deploy/prod/lanes/deployment-settings.sh
 . "$SCRIPT_DIR/lanes/deployment-settings.sh"
+# shellcheck source=deploy/prod/lanes/land-secrets.sh
+. "$SCRIPT_DIR/lanes/land-secrets.sh" # culture-land's two tokens (t5, #315); its own file so this one stays at 999 lines
 
 THOR=${1:-thor}
 ORIN=${2:-orin}
@@ -598,10 +600,7 @@ install_pi_account_env() { # host
   install_bridge_account_env "$1" pi "${FORCE_PI:-0}"
 }
 # QWEN_PI_ACCOUNT_ENV_END
-install_qwen_account_env "$THOR"
-install_qwen_account_env "$ORIN"
-install_pi_account_env "$THOR"
-install_pi_account_env "$ORIN"
+for h in "$THOR" "$ORIN"; do install_qwen_account_env "$h"; install_pi_account_env "$h"; done
 
 # --- merge-gate actor token (login-from-anywhere t11, spec c45) ------------
 #
@@ -774,6 +773,7 @@ if [ -n "$CLAUDE_PUSH_TARGET" ]; then
     install_account_push_env "culture-claude@$CLAUDE_PUSH_TARGET"
   fi
 fi
+install_land_account_env "$THOR" # bridge-push.env + land-pr.env into culture-land (lanes/land-secrets.sh)
 
 # --- Jira Cloud read credential, relayed not minted ----------------------
 # Jira Cloud REST v3 requires the externally-issued account email AND API

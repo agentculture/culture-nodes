@@ -964,6 +964,7 @@ runs it as one command, for **one host and one engine**:
 ./cutover.sh thor pi --dry-run          # read this first — it touches nothing
 ./cutover.sh thor pi --yes              # then act
 ./cutover.sh spark colleague --yes      # the spark lane, same command
+./cutover.sh thor land --yes            # the land node's account (no bridge; see below)
 ```
 
 It prints one line per step — `step <name>: run|skip|refuse — <detail>` —
@@ -1015,6 +1016,77 @@ Two things `cutover.sh` deliberately cannot fix for you:
 The endpoint is never hardcoded: the numeric LAN IP `register-actor.sh`
 requires (c20) is derived with `getent hosts` on the target, exactly as
 `deploy.sh` derives `THOR_IP`.
+
+### The culture-land account (loop-closure t5, #315)
+
+`culture-land` is the engine account the **land node** runs as. The land
+node is deterministic code the runner executes — it fetches a handover ref
+into the account's checkout, rebases it onto the PR branch tip, runs the gate
+chain, pushes to the PR branch, replies on the review thread and resolves the
+thread — so the account is unlike the five harness accounts in three ways:
+it runs **no bridge** (nothing dispatches to it over HTTP, so there is no
+port, no `NODES_ACTOR_*_TOKEN` and no compose declaration), it installs **no
+engine binary** (`lanes/unix-user.sh` skips the engine step on engine `land`),
+and it copies **no model credential** from the login user. What it holds is
+one checkout, `~/git/culture-nodes-land`, and two git credentials.
+
+**Two tokens, two scopes, two files.** Both are fine-grained GitHub tokens
+the operator issues by hand, scoped to `agentculture/culture-nodes`, and both
+are *relayed* from the operator's shell by `install-secrets.sh`
+(`lanes/land-secrets.sh`, sourced from it) — never minted, and never in an
+ssh argv (the value rides stdin; the remote command names only the file):
+
+| file (mode 600, under `~/.culture-nodes/`) | environment variable | GitHub permission | what the land node does with it |
+|---|---|---|---|
+| `bridge-push.env` | `GITHUB_TOKEN_WORKER` | **Contents: write** (Read and write), nothing else | the push to the PR branch — the same #90 seam every engine account already carries |
+| `land-pr.env` | `GITHUB_TOKEN_LAND_PR` | **pull-requests:write** (Pull requests: Read and write), nothing else | the thread reply and the thread resolve |
+
+They are separate on purpose. A single token with both permissions is
+technically able to call the merge API; keeping the scopes apart means the
+push step never holds a token that could merge and the reply step never
+holds one that could push. **The land node never merges a PR.** That boundary
+is enforced by the node — its script contains no merge call, and its declared
+GitHub operations are push, comment and resolve-thread — and audited by the
+spec's honesty condition, not by token scope; `human-merges-pr` stays the
+only merge path, so the lane doc's "a person is always in it" property holds.
+The account inventory (`lanes/unix-user.sh`) admits exactly these two env
+files beside the usual entries and refuses anything else, and the
+post-deploy audit reads the files' modes, never their contents.
+
+Bringing it online is `cutover.sh`, with two differences from the harness
+engines:
+
+```bash
+export GITHUB_TOKEN_WORKER=...      # Contents: write
+export GITHUB_TOKEN_LAND_PR=...     # Pull requests: write
+./cutover.sh thor land --dry-run    # prints the five steps; touches nothing
+./cutover.sh thor land --yes        # secrets -> deploy -> register
+```
+
+- `compose-declares-token-key` is a **skip** (no bridge, so no key to
+  declare), and `secrets` **refuses by name** when either variable is unset
+  rather than delivering one file of two — a re-run with both files already
+  present skips instead (`FORCE_LAND=1` re-relays them).
+- `register` writes an endpoint-less row: `register-actor.sh --runner-account
+  company/land-thor --os-user culture-land` (kind `agent`, protocol `runner`,
+  no bearer) with `handover_remote=ssh://culture-land@thor/home/culture-land/git/culture-nodes-land`
+  — the same per-actor deployment fact `scripts/collect-handover.py` reads
+  for every other actor — and `repository_identity`. `--os-user` is required
+  for this shape: the account *is* the actor.
+
+`deploy.sh thor` runs the `deploy_land_account` lane (the account's checkout,
+git identity, archive copy and inventory; additive — a host with no
+`culture-land` is skipped by name). **The root bootstrap that creates the
+account stays a counted hand-turn**: `deploy/prod/bootstrap-accounts.sh thor`
+now names `land` beside `codex qwen pi`, and it is typed by the operator and
+recorded on the tracking issue per CLAUDE.md's every-hand-turn rule.
+`cutover.sh` never calls it and never calls `sudo`
+(`tests/deploy/landcutover_test.go` checks the fake-host call log for both);
+an account that does not open is refused with the command to type:
+
+```bash
+sudo bash deploy/prod/lanes/unix-user.sh bootstrap land   # on thor itself
+```
 
 ### Unbounded concurrency — placement is the containment
 

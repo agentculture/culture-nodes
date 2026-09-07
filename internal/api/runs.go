@@ -209,9 +209,21 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// handleCancelRun is POST /v1alpha1/runs/{id}/cancel.
+// handleCancelRun is POST /v1alpha1/runs/{id}/cancel. The body is optional
+// (cancelreason.go): absent, the operator cancel records no reason exactly as
+// before; present, an allowlisted reason rides the cancelRunWithReason seam
+// into runs.reason and the run.cancelled event.
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
-	run, err := s.cancelRun(r.Context(), r.PathValue("id"))
+	reason, err := readCancelReason(r)
+	if err != nil {
+		return err
+	}
+	var run engine.Run
+	if reason == "" {
+		run, err = s.cancelRun(r.Context(), r.PathValue("id"))
+	} else {
+		run, err = s.cancelRunWithReason(r.Context(), r.PathValue("id"), reason, cancelDetail(reason))
+	}
 	if err != nil {
 		return err
 	}

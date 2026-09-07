@@ -1,0 +1,207 @@
+# The CLEANUP node (plan loop-closure t13; spec c6/c15/c37, honesty h15/h9/
+# h24): the smallest possible graph -- one code node through the runner
+# boundary -- that closes a work item's loose ends once its pull request is
+# merged (`pr.merged`) or closed without merge (`pr.closed`).
+#
+# Measured before this existed (spec "Before", 2026-09-05/07): PR #307 left 8
+# review-fix branches and 26 parked approval runs behind after its merge, all
+# removed by hand. This node is the removal, keyed by the work item so the
+# record of what it removed joins the item's other records.
+#
+# What the node does, and what it deliberately does not:
+#
+#   * lists `refs/heads/review-fix/*` and `refs/culture-nodes/*` refs on the
+#     remote and attributes them to the item through its run ids (GET
+#     /v1alpha1/runs?work_item=KEY, task t1): a preserve branch is minted from
+#     the run id and a handover ref lives under refs/culture-nodes/<run-id>/;
+#   * deletes ONLY refs whose commits are reachable from the default branch
+#     (`git merge-base --is-ancestor`). An unreachable ref is the only copy of
+#     that work; it is reported as `declined: unreachable` and never deleted.
+#     On a pr.closed fact nothing was merged, so every ref is declined -- the
+#     record still lists them (h24);
+#   * cancels the item's runs still parked at the approval node through
+#     POST /v1alpha1/runs/{id}/cancel with a machine-readable reason
+#     (`pr_merged` | `pr_closed`, internal/api/cancelreason.go), so the
+#     run.cancelled event names the fact rather than an operator;
+#   * drops per-item sweep state -- there is none outside the control plane's
+#     signal watermark rows, and the record says so instead of claiming a drop;
+#   * writes ONE derived-shaped record as a single JSON line on stdout,
+#     listing every deletion, declined ref, cancelled run and failure. The
+#     runner stores the stdout as the attempt's artifact and references it
+#     from the observed evidence record it appends (`ledger.observe`).
+#
+# Two triggers, one graph: trigger matching is exact per event name
+# (internal/engine/trigger.go), so `pr.merged` and `pr.closed` each need their
+# own handler, and both route to the same node. The payload is the run input
+# verbatim; the input contract admits both shapes (pr.merged carries
+# `merged_at` + `issue_key`, pr.closed carries `closed_at` + `work_item`).
+# The node derives the reason from which timestamp is present.
+#
+# Operator worktrees under a laptop's ../.worktrees.culture-nodes are OUT of
+# scope: not a control-plane host, not this node's to touch.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
+# ---------------------------------------------------------------------------
+#
+#   RUNNER REGISTRY (id in `uses:`):
+#     runner://headspace/cleanup         a runner service on a host whose
+#                                        image profile carries git and whose
+#                                        env carries the grants below.
+#
+#   CLEANUP_SOURCE_URL                   where cleanup.py is fetched from
+#                                        (deploy.sh stamps it, as it does the
+#                                        sweep's).
+#   CLEANUP_SOURCE_SHA256                the digest the bootstrap refuses to
+#                                        run without.
+#   CLEANUP_REMOTE                       the git remote whose refs are cleaned;
+#                                        empty means https://github.com/<repository>.git
+#                                        built from the fact. Never taken from
+#                                        the fact itself beyond the repository
+#                                        slug (internal/handover's rule: a
+#                                        session must not choose the remote).
+#   CLEANUP_DEFAULT_BRANCH               the reachability root (default main).
+#   CLEANUP_PARKED_NODE                  the approval node id whose parked
+#                                        runs are cancelled (default
+#                                        human-merges-pr, examples/pr-upkeep).
+#   GITHUB_TOKEN_WORKER                  the push credential from the
+#                                        culture-land account's bridge-push.env
+#                                        (t5); environment only, read by a
+#                                        temporary GIT_ASKPASS with the
+#                                        configured helpers reset on push.
+#   NODES_API_URL                        the control plane the runs live in.
+#   NODES_API_TOKEN                      the runner principal's bearer for the
+#                                        list/view/cancel calls. Honest note:
+#                                        POST .../cancel is an
+#                                        administrator-role route on an
+#                                        Access-fronted listener
+#                                        (internal/api/principal.go
+#                                        principalPolicy); admitting an agent
+#                                        bearer to it is a policy decision
+#                                        this graph does not make.
+#   NODES_API_COOKIE                     optional Cookie header for an
+#                                        Access-fronted listener (the same
+#                                        grant the operator's dispatch uses).
+#
+# The run identity (NODES_RUN_ID, NODES_NODE_RUN_ID, NODES_ATTEMPT_ID) and the
+# resolved input (NODES_INPUT_JSON) are NOT granted by the deployment: the
+# runner boundary forwards them from the operation's own context
+# (internal/runners.ContextEnvironment).
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: cleanup
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: cleanup
+
+  triggers:
+    - onEvent: pr.merged
+      when: event.payload.source == "github_pr"
+    - onEvent: pr.closed
+      when: event.payload.source == "github_pr"
+
+  contract:
+    # The triggering fact, verbatim. Both lifecycle facts share source,
+    # repository and number; the rest is per fact, so it is optional here and
+    # the node refuses a fact carrying neither timestamp.
+    input:
+      schema:
+        type: object
+        required: [source, repository, number]
+        properties:
+          source: {const: github_pr}
+          repository: {type: string, minLength: 1}
+          number: {type: integer, minimum: 1}
+          url: {type: string}
+          head_sha: {type: string}
+          merged_at: {type: string, minLength: 1}
+          closed_at: {type: string, minLength: 1}
+          issue_key: {type: string, minLength: 1}
+          work_item: {type: string, minLength: 1}
+    output:
+      schema: {type: object}
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 4
+    maxVisitsPerNode: 1
+    maxParallelTokens: 1
+
+  ledger:
+    schemaVersion: nodes.culture.dev/ledger/v1alpha1
+    maxRecordsPerNode: 20
+
+  nodes:
+    cleanup:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/cleanup@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # `full` for the same three reasons the sweep and combining-loop give:
+        # the granted origin the program is fetched from, the git remote, and
+        # the control plane. An egress allowlist is not yet expressible (#50).
+        network: full
+        environmentRefs:
+          - CLEANUP_SOURCE_URL
+          - CLEANUP_SOURCE_SHA256
+          - CLEANUP_REMOTE
+          - CLEANUP_DEFAULT_BRANCH
+          - CLEANUP_PARKED_NODE
+          - GITHUB_TOKEN_WORKER
+          - NODES_API_URL
+          - NODES_API_TOKEN
+          - NODES_API_COOKIE
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["CLEANUP_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["CLEANUP_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("cleanup: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "cleanup.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path]).returncode)
+      input:
+        bindings:
+          fact: /run/input
+      contract:
+        # Exit 0 -> passed: every step succeeded, declined refs and skipped
+        # runs included (they are the honest answer, not a failure). A
+        # nonzero exit -> failed: an environment step failed and the record
+        # names it by step.
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 15m
+        retry:
+          maxAttempts: 1
+
+    cleaned:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/cleanup/output
+
+    cleanup-failed:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/cleanup/output
+
+  edges:
+    - from: cleanup.passed
+      to: cleaned
+    - from: cleanup.failed
+      to: cleanup-failed

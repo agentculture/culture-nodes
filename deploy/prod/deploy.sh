@@ -468,12 +468,44 @@ deploy_account_engine_bridge() { # host engine — runs on thor and orin, AS cul
 deploy_qwen_bridge() { deploy_account_engine_bridge "$1" qwen; }
 deploy_pi_bridge() { deploy_account_engine_bridge "$1" pi; }
 
+# --- the culture-land account lane (loop-closure t5, spec c13/c38, #315) ----
+# The land node is deterministic code the runner executes AS culture-land: it
+# fetches a handover ref, rebases, runs the gate chain, pushes to the PR
+# branch and replies on the thread. The account runs NO bridge and NO engine
+# binary, so this lane is account_prepare and nothing else -- the account (or
+# the named hand-turn), its ~/git/culture-nodes-land checkout, git identity,
+# archive copy and inventory. Its two credentials (bridge-push.env, Contents
+# write; land-pr.env, pull-requests:write) are install-secrets.sh's
+# (lanes/land-secrets.sh); a missing one is a printed hint, not a stopped
+# deploy. Additive like the qwen/pi lanes: a host without a culture-land
+# account is skipped by name, never failed, and the root bootstrap that
+# creates it (deploy/prod/bootstrap-accounts.sh thor) stays a hand-turn.
+# The actor row (company/land-<host>, --runner-account) is cutover.sh's
+# register step, not this lane's.
+deploy_land_account() { # host
+  local host=$1 target f
+  target=$(unix_user_target "$host" land)
+  if ! account_reachable "$target"; then
+    say "WARNING: culture-land on $host is not bootstrapped ($target does not open with the operator key) — skipping the land account lane (the root bootstrap is a counted hand-turn: deploy/prod/bootstrap-accounts.sh $host; then install-secrets.sh with GITHUB_TOKEN_WORKER and GITHUB_TOKEN_LAND_PR exported, then re-deploy). Nothing on $host was stopped"
+    return 0
+  fi
+  account_prepare "$host" land || exit 1
+  for f in bridge-push.env land-pr.env; do
+    ssh "$target" "test -f ~/.culture-nodes/$f" \
+      || say "WARNING: ~/.culture-nodes/$f missing in $target — the land node cannot push (bridge-push.env) or reply (land-pr.env) without it; run deploy/prod/install-secrets.sh with GITHUB_TOKEN_WORKER and GITHUB_TOKEN_LAND_PR exported"
+  done
+  say "culture-land prepared on $host: checkout ~/git/culture-nodes-land, no bridge, no engine binary (register with cutover.sh $host land)"
+}
+
 # Bridge lanes run for the codex hosts only; spark has no codex/qwen/pi thor
 # actor here (spark's qwen bridge is account_bridges_spark_lane's, in the case).
+# The land account lane runs on the same hosts: the runner is thor's, and the
+# land node's handover fetch is an ssh from the runner host to an account.
 if [[ "$HOST" != spark* ]]; then
   deploy_codex_bridge "$HOST"
   deploy_qwen_bridge "$HOST"
   deploy_pi_bridge "$HOST"
+  deploy_land_account "$HOST"
 fi
 
 # --- human-inbox actor bridge lane (task t34: deploy wiring for the t16

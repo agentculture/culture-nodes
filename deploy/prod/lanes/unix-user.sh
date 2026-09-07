@@ -7,7 +7,10 @@
 # culture-codex, culture-qwen and culture-pi on thor and orin (#294 added
 # the last two), culture-claude (shared by the developer, planner, verifier
 # and intake bridges), culture-qwen and culture-colleague (#298 t5) on
-# spark. The account is the
+# spark, and culture-land on the runner host (loop-closure t5, #315): the
+# account the land node runs as -- deterministic code the runner executes,
+# so it holds a checkout and two git credentials and NO engine binary and NO
+# model credential (see `land` in the cases below). The account is the
 # confinement: no sudo, no docker group, a 750 home the login user's 750
 # home cannot be read from, and only what its bridge needs inside.
 #
@@ -70,12 +73,13 @@ UNIX_USER_REPO_URL=${UNIX_USER_REPO_URL:-https://github.com/agentculture/culture
 # for the bootstrap (which does not).
 declare -F say >/dev/null 2>&1 || say() { printf '==> %s\n' "$*"; }
 
-# unix_user_engine_ok <engine> -- the four engines this lane knows. Anything
-# else is refused BEFORE it reaches a command line: the engine name is
-# spliced into useradd, ssh targets and paths.
+# unix_user_engine_ok <engine> -- the six engines this lane knows (five
+# harness engines plus `land`, the runner-executed land node's account).
+# Anything else is refused BEFORE it reaches a command line: the engine name
+# is spliced into useradd, ssh targets and paths.
 unix_user_engine_ok() {
-  case "$1" in codex|claude|qwen|pi|colleague) return 0 ;; esac
-  echo "unix-user: unknown engine '$1' (expected codex, claude, qwen, pi or colleague)" >&2
+  case "$1" in codex|claude|qwen|pi|colleague|land) return 0 ;; esac
+  echo "unix-user: unknown engine '$1' (expected codex, claude, qwen, pi, colleague or land)" >&2
   return 1
 }
 
@@ -84,7 +88,9 @@ unix_user_engine_ok() {
 # nodes-op.sh's actor table and the bridge's repo_allowlist carry); claude
 # gets one clone per bridge because four bridges share the account and a
 # worktree of the operator's checkout is unreadable from it (c25); qwen and
-# pi and colleague are one developer bridge each.
+# pi and colleague are one developer bridge each; land is the one clone the
+# land node fetches handover refs into, rebases and pushes from
+# (~/git/culture-nodes-land -- the path its registered handover_remote names).
 unix_user_roles() {
   case "$1" in
     codex) echo agent ;;
@@ -92,6 +98,7 @@ unix_user_roles() {
     qwen) echo qwen-developer ;;
     pi) echo pi-developer ;;
     colleague) echo colleague-developer ;;
+    land) echo land ;;
   esac
 }
 
@@ -148,7 +155,7 @@ fi
 [ -n "$pubkey_file" ] && [ -s "$pubkey_file" ] || { echo "unix-user bootstrap: no operator public key found ($login_home/.ssh/authorized_keys or an id_*.pub); set UNIX_USER_PUBKEY_FILE" >&2; exit 1; }
 [ $# -gt 0 ] || { echo "unix-user bootstrap: no engine named" >&2; exit 1; }
 for engine in "$@"; do
-  case "$engine" in codex|claude|qwen|pi|colleague) ;; *) echo "unix-user bootstrap: unknown engine $engine" >&2; exit 1 ;; esac
+  case "$engine" in codex|claude|qwen|pi|colleague|land) ;; *) echo "unix-user bootstrap: unknown engine $engine" >&2; exit 1 ;; esac
 done
 for engine in "$@"; do
   account=culture-$engine
@@ -177,12 +184,17 @@ for engine in "$@"; do
   # the dummy apiKey a keyless lobe wants), and the account reads its own.
   # colleague (#298 t5) is the same shape again: ~/.colleague/config.json
   # carries the `lobes` section that points a session at the gateway.
+  # land (loop-closure t5, #315) has NO model credential: the land node is
+  # deterministic code, and the account holds only the two git credentials
+  # install-secrets.sh delivers (lanes/land-secrets.sh) -- nothing is copied
+  # from the login user for it.
   case "$engine" in
     codex) cred_dir=.codex; cred_file=auth.json ;;
     claude) cred_dir=.claude; cred_file=.credentials.json ;;
     qwen) cred_dir=.qwen; cred_file=settings.json ;;
     pi) cred_dir=.pi/agent; cred_file=models.json ;;
     colleague) cred_dir=.colleague; cred_file=config.json ;;
+    land) cred_dir=""; cred_file="" ;;
   esac
   # The top-level dot directory is what the account must own outright (pi
   # writes sessions beside its models.json under ~/.pi/agent, and a root-owned
@@ -196,7 +208,10 @@ for engine in "$@"; do
   # (the credential of the login user included), and a directory some other
   # user owns is a write into the hands of that user -- so every path is checked
   # BEFORE the first write, and a refusal changes nothing (#249, finding 2).
-  for p in "$home/.ssh" "$home/.ssh/authorized_keys" "$home/$cred_top" "$home/$cred_dir" "$dst"; do
+  # An engine with no credential file checks the two ssh paths only.
+  checks=("$home/.ssh" "$home/.ssh/authorized_keys")
+  if [ -n "$cred_dir" ]; then checks+=("$home/$cred_top" "$home/$cred_dir" "$dst"); fi
+  for p in "${checks[@]}"; do
     if [ -L "$p" ]; then
       echo "unix-user bootstrap: $p is a symlink ($(readlink "$p")) — refusing to follow it as root; remove it in $account and re-run (nothing was written)" >&2
       exit 1
@@ -234,6 +249,8 @@ for engine in "$@"; do
     else
       echo "credential $src: absent on this host — $account will need its own $cred_dir/$cred_file (an $engine login, or for qwen/pi/colleague the provider config) before its bridge can start"
     fi
+  else
+    echo "credential: none for $engine — $account holds git credentials only (deploy/prod/install-secrets.sh delivers bridge-push.env and land-pr.env; nothing is copied from the login user)"
   fi
   echo "account $account: home $home mode 750, linger on, key installed, groups: $groups"
 done'
@@ -450,7 +467,9 @@ echo "checkout $repo: fast-forwarded to $upstream ($(git -C "$repo" rev-parse --
 # boundary the account exists to draw, so the lane refuses rather than
 # warns. Every env file must be 600 (umask 077 writers). The decision-token
 # grep is q5: the developer session must not carry the bearer that makes
-# human decisions.
+# human decisions. land-pr.env (loop-closure t5, #315) is culture-land's
+# separate pull-requests:write reply credential, delivered by
+# lanes/land-secrets.sh beside its bridge-push.env.
 UNIX_USER_INVENTORY_REMOTE='set -euo pipefail
 cn=$HOME/.culture-nodes
 bad=
@@ -458,11 +477,11 @@ for entry in "$cn"/* "$cn"/.[!.]*; do
   [ -e "$entry" ] || continue
   name=${entry##*/}
   case "$name" in
-    *-bridge.env|*-bridge.json|bridge-push.env|dialin|*-state|bin) ;;
+    *-bridge.env|*-bridge.json|bridge-push.env|land-pr.env|dialin|*-state|bin) ;;
     *) bad="$bad $name" ;;
   esac
 done
-[ -z "$bad" ] || { echo "refusing: $cn holds entries outside the engine-account inventory:$bad — an engine account carries its bridge env/config, bridge-push.env, dialin/, *-state/ and bin/ only (never prod.env, runner*, backups)" >&2; exit 3; }
+[ -z "$bad" ] || { echo "refusing: $cn holds entries outside the engine-account inventory:$bad — an engine account carries its bridge env/config, bridge-push.env, land-pr.env, dialin/, *-state/ and bin/ only (never prod.env, runner*, backups)" >&2; exit 3; }
 for f in "$cn"/*.env "$cn"/dialin/*.env; do
   [ -f "$f" ] || continue
   m=$(stat -c %a "$f")
@@ -496,10 +515,18 @@ unix_user_provision() {
     qwen) version=$UNIX_USER_QWEN_VERSION ;;
     pi) version=$UNIX_USER_PI_VERSION; how="node v$UNIX_USER_PI_NODE_VERSION tarball + npm inside the account under ~/.local/share/pi-node, no system node" ;;
     colleague) version=$UNIX_USER_COLLEAGUE_VERSION; how="uv tool install inside the account, no system package" ;;
+    # land (loop-closure t5, #315): no engine binary at all. The land node is
+    # deterministic code the runner executes as this account, so the provision
+    # is the guard, uv (the gate chain's pytest runs under it), the git
+    # identity, the one checkout and the inventory -- the engine-install step
+    # below is skipped on an empty version.
+    land) version=""; how="no engine binary: the land node is runner-executed code" ;;
   esac
   # Values spliced into remote commands are shapes this lane owns, checked
   # before the splice: a version is a version, a repo URL is URL characters.
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unix_user_provision: pinned $engine version '$version' is not a version" >&2; return 1; }
+  if [ -n "$version" ]; then
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unix_user_provision: pinned $engine version '$version' is not a version" >&2; return 1; }
+  fi
   [[ "$UNIX_USER_PI_NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unix_user_provision: pinned pi node version '$UNIX_USER_PI_NODE_VERSION' is not a version" >&2; return 1; }
   [[ "$UNIX_USER_REPO_URL" =~ ^[A-Za-z0-9._:/@+-]+$ ]] || { echo "unix_user_provision: UNIX_USER_REPO_URL contains characters that will not be spliced into a remote command" >&2; return 1; }
 
@@ -522,11 +549,15 @@ unix_user_provision() {
     return 1
   }
 
-  say "ensuring $engine $version in $account's ~/.local/bin (pinned; $how)"
-  ssh "$target" "ENGINE=$engine; VERSION=$version; CODEX_RELEASE_BASE=$UNIX_USER_CODEX_RELEASE_BASE; CLAUDE_INSTALLER=$UNIX_USER_CLAUDE_INSTALLER; QWEN_INSTALLER=$UNIX_USER_QWEN_INSTALLER; PI_NODE_VERSION=$UNIX_USER_PI_NODE_VERSION; PI_PACKAGE=$UNIX_USER_PI_PACKAGE; NODE_DIST_BASE=$UNIX_USER_NODE_DIST_BASE; $UNIX_USER_ENGINE_INSTALL_REMOTE" || {
-    echo "provision failed on $host: $engine $version did not install for $account (reason above)" >&2
-    return 1
-  }
+  if [ -n "$version" ]; then
+    say "ensuring $engine $version in $account's ~/.local/bin (pinned; $how)"
+    ssh "$target" "ENGINE=$engine; VERSION=$version; CODEX_RELEASE_BASE=$UNIX_USER_CODEX_RELEASE_BASE; CLAUDE_INSTALLER=$UNIX_USER_CLAUDE_INSTALLER; QWEN_INSTALLER=$UNIX_USER_QWEN_INSTALLER; PI_NODE_VERSION=$UNIX_USER_PI_NODE_VERSION; PI_PACKAGE=$UNIX_USER_PI_PACKAGE; NODE_DIST_BASE=$UNIX_USER_NODE_DIST_BASE; $UNIX_USER_ENGINE_INSTALL_REMOTE" || {
+      echo "provision failed on $host: $engine $version did not install for $account (reason above)" >&2
+      return 1
+    }
+  else
+    say "no engine binary for $engine in $account ($how)"
+  fi
 
   if [ "$engine" = pi ]; then
     # Same rule as qwen below (#294): the bootstrap copies ~/.pi/agent/models.json
@@ -583,7 +614,7 @@ unix_user_provision() {
     echo "provision refused on $host: $account's home holds more than its bridge needs (reason above) — remove the named entries; the lane never deletes" >&2
     return 1
   }
-  say "$account provisioned on $host: $engine $version, $(unix_user_roles "$engine" | wc -w | tr -d ' ') checkout(s), inventory asserted"
+  say "$account provisioned on $host: $engine ${version:-(no engine binary)}, $(unix_user_roles "$engine" | wc -w | tr -d ' ') checkout(s), inventory asserted"
 }
 
 # --- cutover guards ----------------------------------------------------------------
@@ -677,7 +708,7 @@ if [ "${BASH_SOURCE[0]:-}" = "${0:-}" ]; then
       for _engine in "$@"; do unix_user_engine_ok "$_engine" || exit 1; done
       exec bash -c "$UNIX_USER_BOOTSTRAP_ROOT_REMOTE" unix-user-bootstrap "$@" ;;
     *)
-      echo "usage: sudo bash ${0} bootstrap <codex|claude|qwen|pi|colleague>..." >&2
+      echo "usage: sudo bash ${0} bootstrap <codex|claude|qwen|pi|colleague|land>..." >&2
       exit 1 ;;
   esac
 fi

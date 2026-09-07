@@ -138,14 +138,16 @@ def test_engine_ok_accepts_colleague_and_its_role_is_colleague_developer(tmp_pat
     assert result.stdout.strip() == "colleague-developer"
     # The engine list is stated in one place for the operator too: the usage
     # line of the hand-typed bootstrap form names colleague.
-    assert "<codex|claude|qwen|pi|colleague>" in _block()
+    assert "<codex|claude|qwen|pi|colleague|land>" in _block()
 
 
-def test_engine_ok_still_refuses_an_unknown_engine_and_names_all_five(tmp_path: Path):
+def test_engine_ok_still_refuses_an_unknown_engine_and_names_all_six(tmp_path: Path):
+    # Six since loop-closure t5 (#315): the five harness engines plus `land`,
+    # the runner-executed land node's account.
     h = ColleagueHarness(tmp_path)
     result = h.run("unix_user_engine_ok gemini")
     assert result.returncode != 0
-    assert "codex, claude, qwen, pi or colleague" in result.stderr
+    assert "codex, claude, qwen, pi, colleague or land" in result.stderr
 
 
 # --- bootstrap ----------------------------------------------------------------
@@ -298,12 +300,13 @@ def test_account_session_check_sees_a_colleague_session(tmp_path: Path):
 
 
 def test_bootstrap_accounts_maps_spark_to_claude_qwen_colleague():
-    """spark's engine set gains colleague (#298 t5); thor and orin are
-    untouched. The header comment states the same map, so what the operator
-    reads is what the script runs."""
+    """spark's engine set gains colleague (#298 t5); orin is untouched and
+    thor gains only land (loop-closure t5, #315). The header comment states
+    the same map, so what the operator reads is what the script runs."""
     script = (ROOT / "deploy/prod/bootstrap-accounts.sh").read_text()
     assert re.search(r'^\s*spark\)\s+ENGINES="claude qwen colleague"', script, re.M)
-    assert re.search(r'^\s*orin\|thor\)\s+ENGINES="codex qwen pi"', script, re.M)
+    assert re.search(r'^\s*orin\)\s+ENGINES="codex qwen pi"', script, re.M)
+    assert re.search(r'^\s*thor\)\s+ENGINES="codex qwen pi land"', script, re.M)
     header = script[: script.index("set -euo pipefail")]
     assert "culture-colleague" in header
     assert "hand-turn" in header.lower()

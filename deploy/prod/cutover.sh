@@ -2,8 +2,22 @@
 # cutover.sh — take ONE harness actor on ONE host from secrets to a
 # registered actor row, in one command (plan t10, spec c9/c35, issue #298).
 #
-#   cutover.sh <thor|orin|spark> <qwen|pi|colleague> [--dry-run] [--yes]
+#   cutover.sh <thor|orin|spark> <qwen|pi|colleague|land> [--dry-run] [--yes]
 #              [--model M] [--model-endpoint URL]
+#
+# `land` (loop-closure t5, spec c13/c38, #315) is the one non-harness engine:
+# culture-land is the account the land node runs as -- deterministic code the
+# runner executes to fetch a handover ref, rebase, gate, push and reply. It
+# has no bridge, no port, no compose token key and no model, so for it the
+# five steps read: account-exists -> compose-declares-token-key (skip: no
+# bridge) -> secrets (lanes/land-secrets.sh: bridge-push.env, Contents write,
+# AND land-pr.env, pull-requests:write, both 0600, both relayed from the
+# operator's environment) -> deploy (deploy.sh's deploy_land_account: the
+# checkout, git identity and inventory) -> register (register-actor.sh
+# --runner-account company/land-<host> --os-user culture-land with
+# handover_remote metadata). The land node never merges a PR: that is enforced
+# by the node, not by the token, and human-merges-pr stays the only merge path
+# (deploy/prod/README.md, "The culture-land account").
 #
 # Before this script the sequence was four separate hand-turns, in an order
 # only the operator knew (#298):
@@ -93,6 +107,10 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$SCRIPT_DIR/lanes/unix-user.sh"
 # shellcheck source=deploy/prod/lanes/account-bridges.sh
 . "$SCRIPT_DIR/lanes/account-bridges.sh"
+# The culture-land credential lane (t5, #315): function definitions only when
+# sourced, so unlike the qwen/pi lane there is no region to lift.
+# shellcheck source=deploy/prod/lanes/land-secrets.sh
+. "$SCRIPT_DIR/lanes/land-secrets.sh"
 
 INSTALL_SECRETS="$SCRIPT_DIR/install-secrets.sh"
 SECRETS_LANE_START='# QWEN_PI_ACCOUNT_ENV_START'
@@ -123,11 +141,18 @@ source_secrets_lane() {
 
 usage() {
   cat >&2 <<'EOF'
-usage: cutover.sh <thor|orin|spark> <qwen|pi|colleague> [options]
+usage: cutover.sh <thor|orin|spark> <qwen|pi|colleague|land> [options]
 
   Brings ONE harness actor online on ONE host: the engine account's bridge
   secret, the deploy of its bridge, and the actor registration -- in that
   order, stopping at the first failure.
+
+  `land` is the land node's account (culture-land, thor or orin): no bridge,
+  so the secrets step relays TWO externally issued GitHub tokens from this
+  shell's environment instead of minting one --
+    GITHUB_TOKEN_WORKER    -> ~/.culture-nodes/bridge-push.env  (Contents: write)
+    GITHUB_TOKEN_LAND_PR   -> ~/.culture-nodes/land-pr.env      (Pull requests: write)
+  -- and the register step writes an endpoint-less --runner-account row.
 
   --dry-run              print every step it would run and exit 0; no ssh,
                          no deploy, no registration, no side effects
@@ -147,6 +172,10 @@ Env:
   FORCE_QWEN / FORCE_PI / FORCE_COLLEAGUE=1   rotate an existing bridge
                          secret instead of keeping it (install-secrets.sh's
                          own guard, mirrored here)
+  FORCE_LAND=1           re-relay both land tokens over existing files
+  GITHUB_TOKEN_WORKER, GITHUB_TOKEN_LAND_PR   the land account's two tokens
+                         (engine land only; both required for a real run
+                         that has to write them)
   CUTOVER_DEPLOY_CMD     command run for the deploy step
                          (default: deploy/prod/deploy.sh)
   BRANCH                 revision the deploy would ship (default: HEAD)
@@ -186,12 +215,15 @@ fi
 HOST=${POSITIONAL[0]}
 ENGINE=${POSITIONAL[1]}
 
-# The engines this script knows are the HARNESS engines: the three the
-# comparison measures. codex and claude are deployed by their own lanes and
-# have no per-host token key of this shape.
+# The engines this script knows are the HARNESS engines -- the three the
+# comparison measures -- plus `land`, the land node's account (t5, #315).
+# codex and claude are deployed by their own lanes and have no per-host token
+# key of this shape.
+IS_LAND=0
 case "$ENGINE" in
   qwen|pi|colleague) ;;
-  *) echo "cutover: unknown engine '$ENGINE' (expected qwen, pi or colleague)" >&2
+  land) IS_LAND=1 ;;
+  *) echo "cutover: unknown engine '$ENGINE' (expected qwen, pi, colleague or land)" >&2
      echo "hint: codex and claude are deployed by their own lanes in deploy.sh, not by a harness cutover" >&2
      usage; exit 1 ;;
 esac
@@ -212,9 +244,19 @@ if [ "$ENGINE" = colleague ] && [ "$HOST_BASE" != spark ]; then
   exit 1
 fi
 
+if [ "$IS_LAND" = 1 ] && [ "$HOST_BASE" = spark ]; then
+  echo "cutover: the land account lives on a runner host (thor, or orin) — deploy.sh's spark arm runs bridge lanes only and has no land lane" >&2
+  echo "hint: run 'cutover.sh thor land'; the land node fetches handover refs FROM spark's accounts over their handover_remote, it does not run there" >&2
+  exit 1
+fi
+
 if [ "$DRY_RUN" = 0 ] && [ "$ASSUME_YES" = 0 ]; then
   echo "cutover: refusing to act without --yes" >&2
-  echo "hint: this restarts a bridge unit, writes a secret into culture-$ENGINE on $HOST and appends an actor revision — run 'cutover.sh $HOST $ENGINE --dry-run' first, then re-run with --yes" >&2
+  if [ "$IS_LAND" = 1 ]; then
+    echo "hint: this writes two GitHub tokens into culture-land on $HOST, runs deploy.sh $HOST and appends an actor revision — run 'cutover.sh $HOST land --dry-run' first, then re-run with --yes" >&2
+  else
+    echo "hint: this restarts a bridge unit, writes a secret into culture-$ENGINE on $HOST and appends an actor revision — run 'cutover.sh $HOST $ENGINE --dry-run' first, then re-run with --yes" >&2
+  fi
   exit 1
 fi
 
@@ -231,16 +273,29 @@ FORCE_VAR="FORCE_${engine_upper}"
 FORCE=${!FORCE_VAR:-0}
 DEPLOY_CMD=${CUTOVER_DEPLOY_CMD:-$SCRIPT_DIR/deploy.sh}
 
+# The land account's facts: no port and no token key (nothing dispatches to
+# it over HTTP), and the remote the runner fetches its handover refs from --
+# the account's own checkout, named exactly as lanes/unix-user.sh clones it.
+LAND_HANDOVER_REMOTE="ssh://culture-land@${HOST_BASE}/home/culture-land/git/culture-nodes-land"
+# shellcheck disable=SC2088 # the tilde is expanded by the REMOTE shell, not here
+LAND_PUSH_ENV="~/.culture-nodes/bridge-push.env"
+# shellcheck disable=SC2088 # same: a remote path, printed and probed as-is
+LAND_PR_ENV="~/.culture-nodes/land-pr.env"
+
 # actor-placement.sh knows the thor/orin engine ports. colleague is spark's
 # only harness bridge and its port lives in its own config template (#298
 # t5), so it is read from there rather than duplicated as a literal here.
-if ! PORT=$(actor_bridge_port "$ENGINE" 2>/dev/null); then
-  PORT=$(sed -n 's/^[[:space:]]*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
-    "$SCRIPT_DIR/${ENGINE}-developer.json.template" | head -n1)
-fi
-if [ -z "${PORT:-}" ]; then
-  echo "cutover: no port for engine '$ENGINE' (neither actor_bridge_port nor ${ENGINE}-developer.json.template answered)" >&2
-  exit 2
+# land has no bridge and therefore no port to look up.
+PORT=""
+if [ "$IS_LAND" = 0 ]; then
+  if ! PORT=$(actor_bridge_port "$ENGINE" 2>/dev/null); then
+    PORT=$(sed -n 's/^[[:space:]]*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+      "$SCRIPT_DIR/${ENGINE}-developer.json.template" | head -n1)
+  fi
+  if [ -z "${PORT:-}" ]; then
+    echo "cutover: no port for engine '$ENGINE' (neither actor_bridge_port nor ${ENGINE}-developer.json.template answered)" >&2
+    exit 2
+  fi
 fi
 
 # --- step reporting -------------------------------------------------------
@@ -293,14 +348,23 @@ compose_block_declares() { # file service key
 }
 
 compose_missing=()
-for spec in "compose.thor.yml:api" "compose.thor.yml:worker" "compose.orin.yml:worker"; do
-  file=${spec%%:*}
-  service=${spec#*:}
-  compose_block_declares "$SCRIPT_DIR/$file" "$service" "$TOKEN_KEY" \
-    || compose_missing+=("$file's $service block")
-done
+if [ "$IS_LAND" = 0 ]; then
+  for spec in "compose.thor.yml:api" "compose.thor.yml:worker" "compose.orin.yml:worker"; do
+    file=${spec%%:*}
+    service=${spec#*:}
+    compose_block_declares "$SCRIPT_DIR/$file" "$service" "$TOKEN_KEY" \
+      || compose_missing+=("$file's $service block")
+  done
+fi
 
-if [ "${#compose_missing[@]}" -eq 0 ]; then
+if [ "$IS_LAND" = 1 ]; then
+  # Nothing dispatches to culture-land over HTTP -- the runner executes the
+  # land node as the account -- so there is no bearer for the worker to hold
+  # and no key for the compose files to pass through. A skip that says so,
+  # rather than a refusal over a key that must not exist.
+  TOKEN_KEY=""
+  step compose-declares-token-key skip "land runs no bridge: the runner executes it as culture-land, so there is no NODES_ACTOR_*_TOKEN to declare"
+elif [ "${#compose_missing[@]}" -eq 0 ]; then
   step compose-declares-token-key run "$TOKEN_KEY is declared in compose.thor.yml (api, worker) and compose.orin.yml (worker)"
 else
   step compose-declares-token-key refuse "$TOKEN_KEY is not declared in $(IFS=', '; echo "${compose_missing[*]}")"
@@ -321,9 +385,42 @@ fi
 # that 401s every dispatch until the next deploy. The probe below mirrors
 # that guard OUTSIDE the lane so the skip is visible as a step, and then the
 # lane is run (it re-checks on its own; the two cannot disagree).
+#
+# For land the lane is lanes/land-secrets.sh's install_land_account_env, and
+# the two files are RELAYED from this shell's environment rather than minted.
+# The lane itself skips an unset token by name (install-secrets.sh runs it
+# whole against both hosts and must not need the land tokens for a Jira
+# rotation); here, where bringing the land account online IS the job, a
+# missing token is a refusal by name before anything is written -- a cutover
+# that reported "secrets: run" having delivered one file of two is the
+# half-success shape #300 records.
 SECRETS_CMD="install-secrets.sh's install_bridge_account_env $HOST $ENGINE $FORCE (lifted from the QWEN_PI_ACCOUNT_ENV region)"
+if [ "$IS_LAND" = 1 ]; then
+  SECRETS_CMD="lanes/land-secrets.sh's install_land_account_env $HOST (relays GITHUB_TOKEN_WORKER -> $LAND_PUSH_ENV [Contents: write] and GITHUB_TOKEN_LAND_PR -> $LAND_PR_ENV [Pull requests: write], both mode 600, into $TARGET)"
+fi
 if [ "$DRY_RUN" = 1 ]; then
   step secrets run "$SECRETS_CMD"
+elif [ "$IS_LAND" = 1 ]; then
+  land_files_present=0
+  for f in "$LAND_PUSH_ENV" "$LAND_PR_ENV"; do
+    # shellcheck disable=SC2029 # the path is deliberately expanded on the far side
+    ssh -o BatchMode=yes "$TARGET" "test -e $f" >/dev/null 2>&1 && land_files_present=$((land_files_present + 1))
+  done
+  if [ "$land_files_present" = 2 ] && [ "$FORCE" != 1 ]; then
+    step secrets skip "$LAND_PUSH_ENV and $LAND_PR_ENV already exist in $TARGET (set FORCE_LAND=1 to re-relay both)"
+  else
+    land_missing=()
+    [ -n "${GITHUB_TOKEN_WORKER:-}" ] || land_missing+=(GITHUB_TOKEN_WORKER)
+    [ -n "${GITHUB_TOKEN_LAND_PR:-}" ] || land_missing+=(GITHUB_TOKEN_LAND_PR)
+    if [ "${#land_missing[@]}" -gt 0 ]; then
+      step secrets refuse "${land_missing[*]} not set in this shell — $TARGET holds $land_files_present of 2 credential files and this run would not complete it"
+      echo "cutover: both land tokens are externally issued and relayed, never minted: export GITHUB_TOKEN_WORKER (a fine-grained token with Contents: write on agentculture/culture-nodes) and GITHUB_TOKEN_LAND_PR (Pull requests: write, and nothing else) in this shell" >&2
+      echo "hint: neither token may carry the other's scope on purpose (deploy/prod/README.md, 'The culture-land account'); then re-run 'cutover.sh $HOST land --yes'" >&2
+      fail secrets "${land_missing[*]} unset" 2
+    fi
+    step secrets run "$SECRETS_CMD"
+    install_land_account_env "$HOST" || fail secrets "install_land_account_env returned non-zero"
+  fi
 else
   source_secrets_lane
   secret_present=0
@@ -367,7 +464,17 @@ except Exception:
 print((doc.get("deployment") or {}).get("revision") or "")' 2>/dev/null || true
 }
 
-if [ "$DRY_RUN" = 1 ]; then
+#
+# The land account has no bridge to ask, so its deploy step never skips: it
+# runs deploy.sh, whose deploy_land_account lane is idempotent (a clean
+# checkout fast-forwards, a dirty one refuses, the inventory is asserted).
+LAN_IP=""
+if [ "$IS_LAND" = 1 ] && [ "$DRY_RUN" = 1 ]; then
+  step deploy run "$DEPLOY_CMD $HOST (reaches deploy_land_account $HOST: the culture-land checkout ~/git/culture-nodes-land, git identity and inventory; no bridge to ask, so this step always runs)"
+elif [ "$IS_LAND" = 1 ]; then
+  step deploy run "$DEPLOY_CMD $HOST (deploy_land_account; no bridge revision to compare)"
+  "$DEPLOY_CMD" "$HOST" || fail deploy "$DEPLOY_CMD $HOST returned non-zero"
+elif [ "$DRY_RUN" = 1 ]; then
   step deploy run "$DEPLOY_CMD $HOST (reaches deploy_account_engine_bridge $HOST $ENGINE; skipped when http://<$HOST_BASE-lan-ip>:$PORT/v1/capabilities already reports this checkout's revision)"
   LAN_IP="<$HOST_BASE-lan-ip>"
 else
@@ -393,14 +500,29 @@ fi
 # more revision when they do not. It is CALLED on every run and its own
 # answer is what this step reports -- second-guessing the registry from out
 # here would be a fifth opinion about a fact the registry already holds.
-REGISTER_ARGS=(
-  "$ACTOR_KEY" "http://$LAN_IP:$PORT" "$TOKEN_KEY"
-  --os-user "$OS_USER"
-  --metadata "harness=$ENGINE"
-  --metadata "model=$MODEL"
-  --metadata "model_endpoint=$MODEL_ENDPOINT"
-  --metadata "repository_identity=agentculture/culture-nodes"
-)
+#
+# The land row is endpoint-less (--runner-account: kind agent, protocol
+# runner, no bearer), carries the account as os_user, and names the remote
+# the runner fetches handover refs from as handover_remote -- the same
+# per-actor deployment fact scripts/collect-handover.py already reads. No
+# harness/model tags: the land node is code, not a model session.
+if [ "$IS_LAND" = 1 ]; then
+  REGISTER_ARGS=(
+    --runner-account "$ACTOR_KEY"
+    --os-user "$OS_USER"
+    --metadata "handover_remote=$LAND_HANDOVER_REMOTE"
+    --metadata "repository_identity=agentculture/culture-nodes"
+  )
+else
+  REGISTER_ARGS=(
+    "$ACTOR_KEY" "http://$LAN_IP:$PORT" "$TOKEN_KEY"
+    --os-user "$OS_USER"
+    --metadata "harness=$ENGINE"
+    --metadata "model=$MODEL"
+    --metadata "model_endpoint=$MODEL_ENDPOINT"
+    --metadata "repository_identity=agentculture/culture-nodes"
+  )
+fi
 REGISTER_CMD="$SCRIPT_DIR/register-actor.sh ${REGISTER_ARGS[*]}"
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -417,5 +539,10 @@ case "$register_out" in
   *) step register run "$REGISTER_CMD" ;;
 esac
 
-printf 'cutover: %s is online on %s as %s (bridge http://%s:%s, bearer %s)\n' \
-  "$ACTOR_KEY" "$HOST_BASE" "$OS_USER" "$LAN_IP" "$PORT" "$TOKEN_KEY"
+if [ "$IS_LAND" = 1 ]; then
+  printf 'cutover: %s is online on %s as %s (no bridge — runner-executed; handover_remote %s; pushes with %s, replies with %s, never merges)\n' \
+    "$ACTOR_KEY" "$HOST_BASE" "$OS_USER" "$LAND_HANDOVER_REMOTE" "$LAND_PUSH_ENV" "$LAND_PR_ENV"
+else
+  printf 'cutover: %s is online on %s as %s (bridge http://%s:%s, bearer %s)\n' \
+    "$ACTOR_KEY" "$HOST_BASE" "$OS_USER" "$LAN_IP" "$PORT" "$TOKEN_KEY"
+fi

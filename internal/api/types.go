@@ -100,6 +100,14 @@ type RunOut struct {
 	// question this listing can actually answer, rather than one that needs
 	// a database query — see honesty condition h16.
 	Subject string `json:"subject,omitempty"`
+	// WorkItem is the key of the work item this run belongs to — a Jira
+	// issue key such as SCRUM-9 (migrations/0057, decision c41). Its own
+	// column and its own GET /v1alpha1/runs?work_item= filter, distinct
+	// from Category (a stats slicing tag, retaggable) and Subject (the
+	// one-active-run-per-subject correlation key). Set at creation — POST
+	// /v1alpha1/runs' work_item, or the trigger stamping it from the event
+	// payload — and never by PATCH. Empty when none was declared.
+	WorkItem string `json:"work_item,omitempty"`
 	// Reason is why the run is in this state, when the state was a
 	// control-plane decision rather than something an actor reported
 	// (task t17, migrations/0052). Today's one writer is the ticket
@@ -137,6 +145,7 @@ func runOut(r engine.Run, usage postgres.UsageRollup, meta runMetadata) RunOut {
 		ActorAffinity:  r.ActorAffinity,
 		Subject:        r.Subject,
 		Reason:         r.Reason,
+		WorkItem:       r.WorkItem,
 	}
 	if meta.Name == "" {
 		out.DisplayHint = deriveDisplayHint(r.Input)

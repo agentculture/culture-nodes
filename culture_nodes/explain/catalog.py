@@ -204,9 +204,10 @@ Culture Nodes control-plane API.
 ## Usage
 
     culture-nodes run create --workflow <digest> [--input <file>|--input -] \\
-        [--name TEXT] [--description TEXT] [--category TEXT]
+        [--name TEXT] [--description TEXT] [--category TEXT] [--work-item KEY]
     culture-nodes run list [--state STATE] [--updated-since RFC3339] \\
-        [--updated-until RFC3339] [--sort created_at|updated_at] [--limit N]
+        [--updated-until RFC3339] [--sort created_at|updated_at] \\
+        [--work-item KEY] [--limit N]
     culture-nodes run get <id>
     culture-nodes run cancel <id>
     culture-nodes run events <id> [--follow]
@@ -220,6 +221,21 @@ Culture Nodes control-plane API.
 and `--description` are set once, at creation, and immutable afterward —
 there is no verb to change them. `--category` is the one field retaggable
 later, via `run retag`.
+
+`--work-item KEY` (e.g. `SCRUM-9`) records which work item the run belongs
+to. It is its OWN run column and its own filter (`run list --work-item KEY`
+→ `GET /v1alpha1/runs?work_item=KEY`), deliberately not an overload of
+`--category`: category stays the stats slicing tag and keeps its meaning,
+and there is no category filter on `run list`. Set at creation only —
+`run retag` refuses it. A run minted by an event trigger carries the
+payload's `work_item` field automatically, so a sweep-emitted fact lands
+keyed without a second write.
+
+## list
+
+Filters combine: `--state`, `--updated-since`/`--updated-until`, and
+`--work-item` narrow the same listing. Text rows append `[KEY]` when the
+run carries a work item.
 
 ## retag
 

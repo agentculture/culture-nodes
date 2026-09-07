@@ -621,6 +621,16 @@ paths:
           description: Filter to runs whose persisted correlation subject matches exactly.
           schema:
             type: string
+        - name: work_item
+          in: query
+          description: >-
+            Filter to runs whose `work_item` key matches exactly (e.g.
+            `SCRUM-9`) — "which runs belong to this work item"
+            (migrations/0057, decision c41). There is deliberately no
+            `category` filter: category keeps its meaning as the stats
+            slicing tag, and a `category=` query parameter is ignored.
+          schema:
+            type: string
         - name: updated_since
           in: query
           description: >-
@@ -3610,6 +3620,18 @@ components:
             Unlike `name`/`description`, `category` alone is retaggable
             after creation via PATCH /v1alpha1/runs/{id} (frame decision
             q4).
+        work_item:
+          type: string
+          description: >-
+            Optional key of the work item this run belongs to — a Jira
+            issue key such as `SCRUM-9` (migrations/0057, plan
+            loop-closure-claude-codex t1, decision c41). Its OWN run
+            column and its own `GET /v1alpha1/runs?work_item=` filter,
+            deliberately not an overload of `category` (the stats slicing
+            tag) or `subject` (the one-active-run-per-subject correlation
+            key). Set at creation only; PATCH /v1alpha1/runs/{id} refuses
+            it. A run minted by an event trigger is stamped from the
+            triggering payload's string `work_item` field instead.
 
     AdhocRunRequest:
       type: object
@@ -3648,8 +3670,9 @@ components:
       description: >-
         The only body PATCH /v1alpha1/runs/{id} accepts. `name` and
         `description` are immutable once a run is created (frame decision
-        q4) — a request body carrying either key is refused with a
-        structured 400, not silently ignored.
+        q4), and so is `work_item` (decision c41) — a request body carrying
+        any of those keys is refused with a structured 400, not silently
+        ignored.
       properties:
         category:
           type: string
@@ -3710,6 +3733,14 @@ components:
           description: >-
             The run's flat category tag (task t3), if any. Retaggable via
             PATCH /v1alpha1/runs/{id} (frame decision q4).
+        work_item:
+          type: string
+          description: >-
+            The key of the work item this run belongs to (e.g. `SCRUM-9`;
+            migrations/0057, decision c41), if any. Its own column,
+            distinct from `category` and `subject`; set at creation (or
+            stamped by the trigger from the event payload) and never
+            changed afterward. Filter with `GET /v1alpha1/runs?work_item=`.
         display_hint:
           type: string
           description: >-

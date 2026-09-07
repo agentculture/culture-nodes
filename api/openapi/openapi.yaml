@@ -2251,13 +2251,16 @@ paths:
     patch:
       operationId: patchRun
       tags: [runs]
-      summary: Retag a run's category. name/description are immutable.
+      summary: Retag a run's category, or re-key an orphan work item once. name/description are immutable.
       description: >-
-        The only field this accepts is `category` (frame decision q4):
-        `name` and `description` are set once, at creation (POST
-        /v1alpha1/runs), and cannot be changed afterward — a request body
-        carrying either key is refused with a structured 400 rather than
-        silently ignored.
+        Accepts `category` (frame decision q4) and `work_item` for exactly
+        one transition (decision c42): a run minted for the transient
+        `gh:<owner>/<repo>#<n>` work item moves to the Jira issue key the
+        orphan intake created for it, once. `name` and `description` are set
+        at creation (POST /v1alpha1/runs) and cannot be changed afterward — a
+        request body carrying either key is refused with a structured 400
+        rather than silently ignored; a `work_item` on a run that is not the
+        gh: form is a 409.
       parameters:
         - $ref: '#/components/parameters/RunID'
       requestBody:
@@ -3791,19 +3794,31 @@ components:
 
     PatchRunRequest:
       type: object
-      required: [category]
       description: >-
-        The only body PATCH /v1alpha1/runs/{id} accepts. `name` and
-        `description` are immutable once a run is created (frame decision
-        q4), and so is `work_item` (decision c41) — a request body carrying
-        any of those keys is refused with a structured 400, not silently
-        ignored.
+        The only body PATCH /v1alpha1/runs/{id} accepts; at least one of the
+        two keys must be present. `name` and `description` are immutable once
+        a run is created (frame decision q4) — a body carrying either is
+        refused with a structured 400, not silently ignored. `work_item`
+        (decision c41) is set at creation and admits exactly ONE transition
+        (decision c42, the orphan intake): from the transient
+        `gh:<owner>/<repo>#<n>` form to a Jira issue key, once. A target that
+        is not a Jira key is a 400; a run whose work_item is not the gh: form
+        (already keyed, or never keyed) is a 409.
       properties:
         category:
           type: string
           description: >-
             The run's new category tag. An empty string clears it. See
             CreateRunRequest.category for what this field means.
+        work_item:
+          type: string
+          pattern: '^[A-Z][A-Z0-9]+-[0-9]+$'
+          description: >-
+            The Jira issue key the run's transient gh: work item is re-keyed
+            to. Accepted only while the run's current work_item starts with
+            `gh:`; afterwards the run lists under
+            `GET /v1alpha1/runs?work_item=<key>` and the gh: form no longer
+            finds it.
 
     Run:
       type: object
@@ -3864,8 +3879,10 @@ components:
             The key of the work item this run belongs to (e.g. `SCRUM-9`;
             migrations/0057, decision c41), if any. Its own column,
             distinct from `category` and `subject`; set at creation (or
-            stamped by the trigger from the event payload) and never
-            changed afterward. Filter with `GET /v1alpha1/runs?work_item=`.
+            stamped by the trigger from the event payload). The one later
+            change PATCH admits is the orphan intake's re-key from the
+            transient `gh:<owner>/<repo>#<n>` form to a Jira key, once
+            (decision c42). Filter with `GET /v1alpha1/runs?work_item=`.
         display_hint:
           type: string
           description: >-

@@ -51,7 +51,29 @@ Two things to know before anything else:
 | Description | **strongly recommended** | This is the brief. It is handed to the agent verbatim (first 4000 characters; a longer one is passed truncated and flagged as such). A ticket with an empty description gives the agent nothing but its title to work from. |
 | Status | **required — this is the trigger** | The status *change* is what starts a flow. See the table below. |
 | Issue type, priority | optional | Passed through as `kind` and `severity`; nothing branches on them today. |
-| Labels, components, assignee, story points, epics, attachments | **not read at all** | Use them for your own purposes; culture-nodes never sees them. |
+| Labels, components, assignee, story points, epics, attachments | **not read at all** | Use them for your own purposes; culture-nodes never sees them — but see the labels it *writes*, below. |
+
+### Tickets culture-nodes opens for you
+
+The PR upkeep loop sometimes finds a pull request with no ticket anywhere on
+it — no key in the branch name, none in the body. Rather than work it
+untracked, the loop opens an **orphan ticket** in the configured project and
+puts the new key at the top of the PR body (`Jira: SCRUM-12`), so everything
+that happens to that PR afterwards lands on a ticket you can see. You did not
+create it, so it is marked to say so, with four labels:
+
+| Label | Meaning |
+| --- | --- |
+| `orphan` | the ticket exists because a PR had none |
+| `auto-created` | the loop opened it, not a person |
+| `source:github` | the originating work item was a GitHub pull request |
+| `repo:<owner>/<repo>` | which repository, e.g. `repo:agentculture/culture-nodes` |
+
+The summary is the PR's transient key (`gh:<owner>/<repo>#<n>`) and the
+description says how to open the PR from it. Treat the ticket as yours from
+then on: rename it, move it, add a description — the loop only needs the key
+to stay on the PR. A second orphan ticket for the same PR is not created: the
+next sweep reads the key off the PR body and files further findings under it.
 
 Two limits worth knowing:
 

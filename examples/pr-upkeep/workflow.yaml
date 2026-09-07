@@ -2,19 +2,60 @@
 # starts from the durable pr-upkeep.pr fact and therefore needs no parked run.
 #
 # Deployment configuration: register actor://company/developer at the
-# deployment's developer bridge and group/platform-maintainers in its human
-# inbox. The event payload supplies repository identity and findings; no
-# discovery credentials or sweep process are part of this graph.
+# deployment's developer bridge, actor://company/jira-comment at its jira
+# bridge (the same narrow bridge jira-intake drives; its create_issue
+# allowlist -- JIRA_CREATE_PROJECTS -- must name the project bound at
+# `intake-orphan` below), and group/platform-maintainers in its human inbox.
+# The event payload supplies repository identity, findings and the work item;
+# no discovery credentials or sweep process are part of this graph.
+#
+# ---------------------------------------------------------------------------
+# ORPHAN INTAKE (issue #310, decisions c22/c42; plan loop-closure task t4)
+# ---------------------------------------------------------------------------
+# A fact whose `work_item` is the transient `gh:<owner>/<repo>#<n>` form is an
+# ORPHAN: a PR with no Jira ticket anywhere on it. The `route` decision node
+# at the front sends those through `intake-orphan`, which creates the ticket
+# through the jira actor's create_issue verb with the four orphan labels, and
+# `stamp-pr`, which writes the new key into the PR body so the NEXT sweep
+# correlates the PR to the ticket (pr_upkeep_emit._correlated_issue_key reads
+# the head branch, then the body) and every later fact for the PR arrives
+# keyed. Idempotency lives there, not in a lookup: the jira bridge has no
+# search verb, so "does this PR already have a ticket" is answered by the PR
+# itself on the following tick, and an already-keyed fact never reaches
+# `intake-orphan`. A REPLAYED fact (same source key and watermark) is deduped
+# by the control plane before any run exists.
+#
+# Re-keying the run's own `work_item` column (the value the trigger stamped
+# from the payload, GET /v1alpha1/runs?work_item=) is NOT done by this graph.
+# The two options were weighed (task t4): a graph step cannot address its own
+# run through the API (no /run/id pointer, and an action.http node would need
+# a deployment URL and a write credential in the graph text), and an
+# engine-native "re-key on completion" declaration would be new compiler and
+# engine vocabulary the plan did not size. What ships instead: PATCH
+# /v1alpha1/runs/{id} accepts `work_item` for exactly this one transition
+# (gh: form -> Jira key, once; internal/api/runs.go rekeyWorkItem), the
+# mapping is in the run's ledger as the jira actor's proposed create_issue
+# claim beside the run input's gh: key, and the re-key of the column is a
+# recorded operator step until a control-plane step performs it. That step is
+# counted as a hand-turn, per this repo's rule.
+#
+# Two literals below are deployment configuration this file would rather not
+# carry -- `project` and the `repo:` label -- and carries anyway, because a
+# binding is a pointer or a constant (no templating) and the bridge's
+# exact-key allowlist refuses any fifth key that could carry the repository
+# separately. Loading this graph into another deployment means editing those
+# two values; that is a recorded exception to this file's own rule, not
+# drift.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.2.0
+  version: 2.3.0
   ownerRef: team/platform-ai
 
 spec:
-  entry: fix
+  entry: route
 
   # Publishing a newer pr-upkeep version without this declaration disables
   # future starts. A delivered event remains in signal_events either way.
@@ -50,8 +91,8 @@ spec:
     #
     # `work_item` is the key of the work item this fact belongs to (issue
     # #310, decision c41): the correlated Jira key, else the transient
-    # `gh:<owner>/<repo>#<n>` form that never survives intake (an orphan
-    # ticket is created and the item re-keyed, decision c42). The engine
+    # `gh:<owner>/<repo>#<n>` form that never survives intake (`route` sends
+    # it through `intake-orphan` + `stamp-pr` above, decision c42). The engine
     # stamps the minted run's own `work_item` column from this payload field,
     # so GET /v1alpha1/runs?work_item=KEY finds the run without a second
     # write. It is NOT `subject` -- a pr-upkeep.pr fact still carries none
@@ -71,6 +112,8 @@ spec:
     output:
       schema: {type: object}
 
+  # Longest path: route -> intake-orphan -> stamp-pr -> fix -> human-merges-pr
+  # -> finish (5 transitions); 8 leaves headroom without hiding a loop.
   limits:
     maxDuration: 168h
     maxTransitions: 8
@@ -78,6 +121,116 @@ spec:
     maxParallelTokens: 1
 
   nodes:
+    # Which shape the work item has. A decision node computes nothing: its
+    # output IS its resolved input, so the ports read `output.work_item`.
+    # First match wins; the unconditional `keyed` port is declared last.
+    route:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        bindings:
+          work_item: /run/input/work_item
+      select:
+        - outcome: orphan
+          when: output.work_item.startsWith("gh:")
+        - outcome: keyed
+          when: "true"
+
+    # The orphan ticket. Exact-key input for adapters/jira create_issue.parse:
+    # {verb, project, summary} plus optional {description, issue_type, labels};
+    # any other key is refused at the bridge. `summary` is the gh: work item,
+    # which names the repository and PR number exactly; `description` is a
+    # literal because a binding cannot compose a URL (and a URL in graph text
+    # is what tests/lint's portability guard refuses), so it tells a reader
+    # how to open the PR from the summary instead of linking it.
+    #
+    # maxAttempts: 1 is load-bearing. A retried create is a second ticket:
+    # the bridge's write is not idempotent and nothing here could tell the
+    # two apart. A technical failure fails the run visibly instead.
+    intake-orphan:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: create_issue
+          project:
+            literal: SCRUM
+          summary: /run/input/work_item
+          description:
+            literal: >-
+              Auto-created by the pr-upkeep loop for a pull request that had
+              no Jira ticket. The summary names the repository and the PR
+              number as gh:<owner>/<repo>#<n>; open pull request <n> of
+              <owner>/<repo> on GitHub. The loop wrote this key into the PR
+              body so later findings on the PR arrive keyed to this ticket.
+          labels:
+            literal: [orphan, auto-created, source:github, repo:agentculture/culture-nodes]
+      contract:
+        outcomes:
+          # The name is the BRIDGE's (create_issue.result reports
+          # `issue_created`), as jira-intake learned the hard way for
+          # `issue_transitioned`.
+          issue_created:
+            schema:
+              type: object
+              required: [issue, id]
+              properties:
+                issue: {type: string, minLength: 1}
+                id: {type: string}
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # The channel that makes the next tick idempotent: the developer actor is
+    # the one registered actor with a GitHub write path, so it puts the key
+    # where the sweep's correlation reads it. One extra session per orphan
+    # PR, once in the PR's lifetime; every later fact for the PR skips both
+    # intake nodes.
+    stamp-pr:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          instruction:
+            literal: |
+              A Jira ticket was just created for the pull request described
+              by `pr` below (repository and number), because the PR had no
+              ticket. Its key is bound as `ticket`.
+
+              Add one line to the PR BODY, at the top, of exactly this form:
+
+                  Jira: <ticket>
+
+              Use the GitHub REST API (PATCH /repos/{owner}/{repo}/pulls/{n}
+              with the existing body plus the new line) or `gh pr edit
+              --body`. Do not change anything else about the PR, do not push
+              commits, do not comment. If the body already names that key,
+              change nothing and say so.
+
+              Report the PR you edited and the line you added.
+          ticket: /nodes/intake-orphan/output/issue
+          pr: /run/input
+      contract:
+        outcomes:
+          stamped:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: {type: string}
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
     fix:
       kind: agent
       ownerRef: team/developer-experience
@@ -164,6 +317,14 @@ spec:
         from: /run/input
 
   edges:
+    - from: route.orphan
+      to: intake-orphan
+    - from: route.keyed
+      to: fix
+    - from: intake-orphan.issue_created
+      to: stamp-pr
+    - from: stamp-pr.stamped
+      to: fix
     - from: fix.completed
       to: human-merges-pr
     - from: fix.no_change

@@ -436,6 +436,12 @@ type stackConfig struct {
 	// clean restart, and a nondeterministic stop point would only make that
 	// answer noisier.
 	stopAfter func() bool
+	// eventTokenSecret, when set, arms POST /v1alpha1/events on the stack's
+	// API with the bearer secret a deployment's emitter (the pr-upkeep sweep)
+	// authenticates with. Tests that start runs from a delivered fact rather
+	// than from POST /v1alpha1/runs need it; the delivery-loop tests leave it
+	// empty and the option is a no-op for "".
+	eventTokenSecret string
 }
 
 func startStack(t *testing.T, cfg stackConfig) *stack {
@@ -458,7 +464,8 @@ func startStack(t *testing.T, cfg stackConfig) *stack {
 	srv, err := api.NewServer(db, cfg.namespaceID,
 		api.WithPollInterval(50*time.Millisecond),
 		api.WithCallbackSigner(signer),
-		api.WithDecisionAuthSecret(decisionAuthSecret))
+		api.WithDecisionAuthSecret(decisionAuthSecret),
+		api.WithEventTokenSecret(cfg.eventTokenSecret))
 	if err != nil {
 		db.Close()
 		t.Fatalf("api.NewServer: %v", err)

@@ -855,7 +855,7 @@ deploy_notify() { # host
 deploy_jira() { # host
   local host=$1
   local transition_targets=${JIRA_TRANSITION_TARGETS:-In Progress,Pending,In Review,Done}
-  local transition_project_prefix=${JIRA_TRANSITION_PROJECT_PREFIX:-SCRUM-}
+  local transition_project_prefix=${JIRA_TRANSITION_PROJECT_PREFIX:-SCRUM-} create_projects=${JIRA_CREATE_PROJECTS:-SCRUM}
   # The REST base the bridge's four verbs authenticate at. Empty means the
   # site URL; a scoped Jira Cloud service-account token needs the Atlassian
   # gateway base instead, because the site URL answers 401 for it.
@@ -897,7 +897,7 @@ deploy_jira() { # host
   # ordinary deploy. Values travel over stdin and output names only.
   say "merging the deploy-managed Jira bridge keys on $host (JIRA_API_BASE included: $write_api_base)"
   {
-    printf 'JIRA_TRANSITION_TARGETS=%s\nJIRA_TRANSITION_PROJECT_PREFIX=%s\n' "$transition_targets" "$transition_project_prefix"
+    printf 'JIRA_TRANSITION_TARGETS=%s\nJIRA_TRANSITION_PROJECT_PREFIX=%s\nJIRA_CREATE_PROJECTS=%s\n' "$transition_targets" "$transition_project_prefix" "$create_projects"
     if [ "$write_api_base" = yes ]; then printf 'JIRA_API_BASE=%s\n' "$JIRA_API_BASE"; fi
   } \
     | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/jira-bridge-jira.env; chmod 600 ~/.culture-nodes/jira-bridge-jira.env; if [ -s ~/.culture-nodes/jira-bridge-jira.env ] && [ -n "$(tail -c1 ~/.culture-nodes/jira-bridge-jira.env)" ]; then echo >> ~/.culture-nodes/jira-bridge-jira.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; tmp=~/.culture-nodes/jira-bridge-jira.env.merge.$$; : > "$tmp"; chmod 600 "$tmp"; found=0; while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in "$k"=*) printf "%s\n" "$line" >> "$tmp"; found=1;; *) printf "%s\n" "$cur" >> "$tmp";; esac; done < ~/.culture-nodes/jira-bridge-jira.env; [ "$found" = 1 ] || printf "%s\n" "$line" >> "$tmp"; mv "$tmp" ~/.culture-nodes/jira-bridge-jira.env; done'

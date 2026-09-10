@@ -58,7 +58,14 @@ from pr_upkeep_emit import (
     undispatched_findings,
     upkeep_pr_fact,
 )
-from pr_upkeep_jira import fetch_jira_issues, jira_api_base, jira_credentials, jira_emissions
+from pr_upkeep_jira import (
+    fetch_jira_issues,
+    jira_api_base,
+    jira_credentials,
+    jira_emissions,
+    jira_stage_watermarks,
+    stage_already_recorded,
+)
 
 # The blast radius used to be one repo pinned in this module. That narrowing
 # existed because fetch_open_pulls enumerates EVERY open PR and then reads
@@ -857,19 +864,6 @@ def main() -> int:
         # emittable next one. Separate from skipped_findings so the summary
         # keeps saying WHICH reason a finding is not in flight (#268).
         deferred_findings = []
-        # Closed PRs are a separate bounded read, and one listing feeds two
-        # facts: pr.merged (merged_at set) or pr.closed (closed without
-        # merge, t12). Each watermark is an immutable timestamp, so two
-        # passes append exactly one fact; `closed_pull_event` decides which.
-        with attempting(f"listing closed PRs of {github_repo} (GitHub)"):
-            closed_pulls = fetch_closed_pulls(token, github_repo)
-        for pull in closed_pulls:
-            event = closed_pull_event(pull, github_repo, repository.get("jira_project"))
-            if event is None:
-                continue
-            name, fact, source_key, watermark, subject = event
-            with attempting(f"emitting {name} for #{pull.get('number')} (control plane)"):
-                emitted.append(raise_event(name, fact, source_key, watermark, subject=subject))
         for pull in swept:
             fact = opened_pr_fact(pull, github_repo, repository.get("jira_project"))
             if fact is None:
@@ -936,22 +930,40 @@ def main() -> int:
 
         # What a Jira fact IS belongs to pr_upkeep_jira (jira_emissions); this
         # loop is the sweep's half of the split -- naming the stage a failure
-        # happened at, and being the one place that writes to the control
-        # plane.
+        # happened at, and being the one control-plane writer. It still writes
+        # NOTHING to Jira: the stage comments read here are posted by graph
+        # nodes (t17), and this block sits above the closed-PR one because the
+        # stage watermarks gate those facts (the lane doc has the ordering).
+        stage_marks = {}
         if repository.get("jira_site"):
             site, project = repository["jira_site"], repository["jira_project"]
             email, jira_token = jira_credentials()
             base = jira_api_base()
+            bot_account_id = repository.get("jira_bot_account_id") or ""
             with attempting(f"reading {project} issues (Jira {site})"):
                 jira_payload = fetch_jira_issues(site, project, email, jira_token, base)
+            stage_marks = jira_stage_watermarks(jira_payload, bot_account_id)
             for fact in jira_emissions(
-                jira_payload,
-                site=site,
-                project=project,
-                bot_account_id=repository.get("jira_bot_account_id") or "",
+                jira_payload, site=site, project=project, bot_account_id=bot_account_id
             ):
                 with attempting(f"emitting {fact['name']} for {fact['subject']} (control plane)"):
                     emitted.append(raise_event(**fact))
+        # Closed PRs are a separate bounded read; one listing feeds two facts,
+        # pr.merged (merged_at set) or pr.closed (t12), `closed_pull_event`
+        # decides which, and a stage watermark already recording it (t17)
+        # means this tick emits nothing for that ticket.
+        with attempting(f"listing closed PRs of {github_repo} (GitHub)"):
+            closed_pulls = fetch_closed_pulls(token, github_repo)
+        for pull in closed_pulls:
+            event = closed_pull_event(pull, github_repo, repository.get("jira_project"))
+            if event is None:
+                continue
+            name, fact, source_key, watermark, subject = event
+            fact_at = fact.get("merged_at") or fact.get("closed_at") or ""
+            if stage_already_recorded(name, stage_marks.get(subject), fact_at):
+                continue
+            with attempting(f"emitting {name} for #{pull.get('number')} (control plane)"):
+                emitted.append(raise_event(name, fact, source_key, watermark, subject=subject))
     except SweepFailure as failure:
         # The stage is the whole point: four unrelated surfaces used to fail
         # with the same unattributable message. The cause keeps its own type

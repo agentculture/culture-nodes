@@ -41,6 +41,34 @@
 # scope: not a control-plane host, not this node's to touch.
 #
 # ---------------------------------------------------------------------------
+# STAGE WRITE-BACK (issue #311, decision c9; plan loop-closure task t17)
+# ---------------------------------------------------------------------------
+# This graph writes the last two stages of the loop's stage vocabulary
+# ({intake, spec, dispatch, pr-open, merged, cleanup}, defined once in
+# examples/pr-upkeep/pr_upkeep_jira.py `STAGES`) to the ticket, through the
+# jira actor's post_comment verb -- never from the sweep, which has no Jira
+# write path by design. Each comment's first line is machine-readable
+# (`culture-nodes:stage=<stage>`) and the sweep reads the newest such line on
+# a ticket as its stage WATERMARK: a tick whose lifecycle fact is already
+# recorded there emits nothing for it (pr_upkeep_jira.stage_already_recorded).
+#
+#   `merged`  posted BEFORE the cleanup node, on a pr.merged fact only: the
+#             work item's pull request landed. Nothing is claimed about the
+#             loose ends yet, because they have not been touched.
+#   `cleanup` posted AFTER the code node passed, on both facts: the refs,
+#             parked runs and per-item state are settled and the derived
+#             record lists exactly what happened to each.
+#
+# Two nodes post `cleanup` and not one, because a binding is a pointer and the
+# two facts name the work item in DIFFERENT fields: pr.merged carries the
+# correlated Jira key as `issue_key` (a merged PR with no ticket produces no
+# fact at all, pr_upkeep_emit.merged_pr_fact), while pr.closed carries
+# `work_item`, which may be the transient `gh:` form. `has(input.issue_key)`
+# is therefore exactly "this is the merged fact", and a `gh:`-shaped work item
+# has no ticket to comment on, so its run ends silently at `cleaned` -- the
+# cleanup still happened and its record still says so.
+#
+# ---------------------------------------------------------------------------
 # Deployment configuration — WHAT THIS GRAPH NEEDS FROM OUTSIDE THE FILE
 # ---------------------------------------------------------------------------
 #
@@ -48,6 +76,14 @@
 #     runner://headspace/cleanup         a runner service on a host whose
 #                                        image profile carries git and whose
 #                                        env carries the grants below.
+#
+#   ACTOR REGISTRY (id in `uses:`):
+#     actor://company/jira-comment       the same narrow Jira bridge
+#                                        examples/jira-intake and
+#                                        examples/pr-upkeep drive. Only its
+#                                        post_comment verb is used here; the
+#                                        stage comments need no widening of
+#                                        its allowlist.
 #
 #   CLEANUP_SOURCE_URL                   where cleanup.py is fetched from
 #                                        (deploy.sh stamps it, as it does the
@@ -92,11 +128,11 @@ kind: Workflow
 
 metadata:
   name: cleanup
-  version: 1.0.0
+  version: 1.1.0
   ownerRef: team/platform-ai
 
 spec:
-  entry: cleanup
+  entry: route
 
   triggers:
     - onEvent: pr.merged
@@ -125,9 +161,13 @@ spec:
     output:
       schema: {type: object}
 
+  # Longest path: route -> stage-merged -> cleanup -> stage-cleanup -> cleaned
+  # (5 transitions); 8 leaves headroom without hiding a loop, and there is
+  # none -- every node id is distinct and visited at most once by
+  # construction.
   limits:
     maxDuration: 1h
-    maxTransitions: 4
+    maxTransitions: 8
     maxVisitsPerNode: 1
     maxParallelTokens: 1
 
@@ -136,6 +176,56 @@ spec:
     maxRecordsPerNode: 20
 
   nodes:
+    # Which of the two lifecycle facts started this run, and therefore whether
+    # there is a `merged` stage to record. A decision node computes nothing:
+    # its output IS its resolved input, so the port reads `output.fact`. The
+    # whole input is bound rather than one field because a pointer to a key
+    # the fact does not carry has nothing to resolve -- pr.closed has no
+    # `issue_key` at all. First match wins; the unconditional port is last.
+    route:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        bindings:
+          fact: /run/input
+      select:
+        - outcome: merged
+          when: has(output.fact.issue_key)
+        - outcome: closed
+          when: "true"
+
+    # Stage `merged`, the pr.merged path only (the `merged` route is what
+    # reaches it, and it selected on the presence of the correlated key this
+    # node binds). Exact-key input for adapters/jira post_comment.parse:
+    # {verb, issue, comment} plus an optional question_id a stage comment has
+    # no use for. The bridge appends its own jira-actor marker to what it
+    # posts; this graph must never write one itself.
+    stage-merged:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/issue_key
+          comment:
+            literal: |-
+              culture-nodes:stage=merged
+              The pull request for this work item was merged; the culture-nodes cleanup node is now closing its loose ends -- landed branches, handover refs and any run still parked on the merge decision.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
     cleanup:
       kind: code
       ownerRef: team/platform-ai
@@ -188,6 +278,64 @@ spec:
         retry:
           maxAttempts: 1
 
+    # Stage `cleanup` on the merged path, bound to the same `issue_key` the
+    # `merged` comment used.
+    stage-cleanup:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/issue_key
+          comment:
+            literal: |-
+              culture-nodes:stage=cleanup
+              The culture-nodes cleanup node finished for this work item: reachable branches and handover refs were deleted, unreachable ones were kept and reported, and any run parked on the merge decision was cancelled with a machine-readable reason. The one derived record listing every removal is the node's attempt artifact in the culture-nodes control plane.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # Stage `cleanup` on the pr.closed path. Same stage, same words about the
+    # record, different pointer: a pr.closed fact names the work item in
+    # `work_item`, and its declined-everything outcome is worth saying in
+    # its own sentence rather than leaving a reader to infer it.
+    stage-cleanup-declined:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/work_item
+          comment:
+            literal: |-
+              culture-nodes:stage=cleanup
+              The pull request for this work item was closed without merging, so the culture-nodes cleanup node deleted nothing: every branch and handover ref it found is unreachable from the default branch and is the only copy of that work, so all of them were kept and reported. Any run parked on the merge decision was cancelled with a machine-readable reason. The one derived record listing each ref it declined is the node's attempt artifact in the culture-nodes control plane.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
     cleaned:
       kind: end
       ownerRef: team/platform-ai
@@ -201,7 +349,38 @@ spec:
         from: /nodes/cleanup/output
 
   edges:
+    - from: route.merged
+      to: stage-merged
+    - from: stage-merged.comment_posted
+      to: cleanup
+    # A pr.closed fact has no `merged` stage to record: nothing landed.
+    - from: route.closed
+      to: cleanup
+    # Every `cleanup.passed` edge carries a guard, and that is not redundancy.
+    # The engine selects the first eligible edge in the COMPILER's normalized
+    # order -- source, outcome, TARGET, guard text (normalizeEdges) -- not in
+    # the order this document lists them, and `cleaned` sorts before both
+    # stage nodes. An unguarded `cleaned` edge would therefore win before any
+    # stage guard was evaluated and no ticket would ever see `cleanup`.
+    #
+    # The three guards are exhaustive and mutually exclusive: `issue_key` is
+    # present on exactly the merged fact, and the remaining closed fact either
+    # names a Jira-shaped work item or does not.
+    - from: cleanup.passed
+      to: stage-cleanup
+      when: has(input.issue_key)
+    - from: cleanup.passed
+      to: stage-cleanup-declined
+      when: '!has(input.issue_key) && has(input.work_item) && !input.work_item.startsWith("gh:")'
     - from: cleanup.passed
       to: cleaned
+      when: '!has(input.issue_key) && (!has(input.work_item) || input.work_item.startsWith("gh:"))'
+    - from: stage-cleanup.comment_posted
+      to: cleaned
+    - from: stage-cleanup-declined.comment_posted
+      to: cleaned
+    # A failed cleanup posts no stage: the loose ends are NOT closed, and a
+    # comment saying they were would be the false record this graph exists to
+    # avoid. The failure is in the run and in the node's own record.
     - from: cleanup.failed
       to: cleanup-failed

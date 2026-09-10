@@ -7,6 +7,9 @@ item. It deletes the item's landed refs, cancels its parked approval runs
 with a machine-readable reason, and writes one record listing everything it
 did and everything it declined to do.
 
+Task t17 added the graph's other half: the two **stage comments** that tell
+the ticket its loop closed.
+
 Measured before it existed: PR #307 left 8 `review-fix/*` branches and 26
 parked `human-merges-pr` runs behind after its merge, all removed by hand.
 
@@ -48,6 +51,49 @@ parked `human-merges-pr` runs behind after its merge, all removed by hand.
    step failed — the record still lists the failure by step, and the graph
    routes to `cleanup-failed`.
 
+## The stage write-back (task t17, issue #311)
+
+The graph is no longer one node. `route` at the entry decides which of the two
+lifecycle facts started the run, and three agent nodes post this loop's last
+two stages to the ticket through the jira actor's `post_comment` verb — never
+the sweep, which has no Jira write path at all:
+
+```text
+  route ──merged──▶ stage-merged ──comment_posted──┐
+      │                                            ▼
+      └──closed───────────────────────────────▶ cleanup ──failed──▶ cleanup-failed
+                                                   │ passed
+             ┌─────────────────────────────────────┤
+             │ has(issue_key)                      │ closed + Jira key
+             ▼                                     ▼
+      stage-cleanup                        stage-cleanup-declined
+             └──────────────▶ cleaned ◀────────────┘  (and directly, for a gh: item)
+```
+
+- `merged` is posted **before** the code node, on a `pr.merged` fact only: the
+  pull request landed, and nothing is claimed yet about the loose ends.
+- `cleanup` is posted **after** the code node passed, on both facts: the refs,
+  parked runs and per-item state are settled and the record says what happened
+  to each. A **failed** cleanup posts nothing — a comment saying the loose ends
+  were closed when they were not is exactly the false record this graph avoids.
+
+Two nodes post `cleanup` and not one because a binding is a pointer and the
+two facts name the work item in different fields: `pr.merged` carries the
+correlated Jira key as `issue_key` (a merged PR with no ticket produces no
+fact at all), while `pr.closed` carries `work_item`, which may be the
+transient `gh:<owner>/<repo>#<n>` form. `has(input.issue_key)` is therefore
+exactly "this is the merged fact", and a `gh:`-shaped item has no ticket to
+comment on, so that run ends silently at `cleaned` — the cleanup still
+happened and the record still says so.
+
+Every `cleanup.passed` edge carries a guard on purpose. The engine picks the
+first eligible edge in the **compiler's normalized order** (source, outcome,
+target, guard text), not the order the file lists them, and `cleaned` sorts
+before both stage nodes — an unguarded `cleaned` edge would win before any
+stage guard was evaluated. The six-stage vocabulary and how the sweep reads
+these comments back as a watermark are in
+`docs/operations/pr-upkeep-lane.md`.
+
 ## Deployment configuration
 
 Everything the graph needs from outside the file is named in the
@@ -66,7 +112,12 @@ appears there). Two honest notes:
 
 ## Tests
 
-`tests/test_cleanup_node.py` runs `cleanup.py` against a scratch bare remote
+`tests/test_stage_write_back_graphs.py` covers the graph shape (which node
+posts which stage, the guards, reachability, the schema);
+`tests/e2e/stagewriteback_test.go` drives a ticket through intake → merged →
+cleanup against the real engine and a fake jira bridge and checks one comment
+per stage plus a silent replay. `tests/test_cleanup_node.py` runs `cleanup.py`
+against a scratch bare remote
 and `tests/fake_api.py`: a reachable ref is deleted, an unreachable ref is
 declined and still present, another item's reachable ref is left alone, a
 closed PR cancels with `pr_closed`, a remote that refuses the deletion is a

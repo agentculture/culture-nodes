@@ -39,6 +39,36 @@
 # recorded operator step until a control-plane step performs it. That step is
 # counted as a hand-turn, per this repo's rule.
 #
+# ---------------------------------------------------------------------------
+# STAGE WRITE-BACK (issue #311, decision c9; plan loop-closure task t17)
+# ---------------------------------------------------------------------------
+# The ticket shows where its work item is without anyone asking the operator.
+# Two `stage-*` agent nodes post one structured comment each through the jira
+# actor's post_comment verb: `stage-dispatch` when the fix is about to start
+# and `stage-pr-open` when the fix completed and a merge decision is pending.
+# The comment's first line is machine-readable -- `culture-nodes:stage=<stage>`
+# -- and the sweep reads the newest such line on a ticket as its stage
+# watermark (pr_upkeep_jira.jira_stage_watermark). The sweep itself gains no
+# Jira write; the nodes are the write path. Only a Jira-shaped work item can
+# carry a stage: the `keyed` route reaches `stage-dispatch`, and the
+# `fix.completed` edges are guarded on the work item's shape, so an orphan run
+# (gh: form; its ticket is created in this same run) skips both nodes and the
+# next, keyed fact for the PR carries its stages. A stage comment cannot name
+# the run or the PR (a binding is a pointer or a constant, never a composition,
+# and a URL in graph text fails the portability guard), so the comment names
+# the stage and the ticket it sits on is the work item.
+#
+# The enum is {intake, spec, dispatch, pr-open, merged, cleanup} and lives in
+# one place, examples/pr-upkeep/pr_upkeep_jira.py `STAGES`; the other two
+# stages this repo writes are `intake` (examples/jira-intake) and `merged` +
+# `cleanup` (examples/cleanup). `spec` is reserved for the spec-chain lane and
+# is not written by any graph yet. docs/drive-from-jira.md has the table a
+# board reader needs.
+#
+# `maxAttempts: 2` on both, unlike `intake-orphan`: a retried stage comment is
+# at worst a duplicate record (latest wins), while a failed one would stall
+# the fix behind bookkeeping.
+#
 # Two literals below are deployment configuration this file would rather not
 # carry -- `project` and the `repo:` label -- and carries anyway, because a
 # binding is a pointer or a constant (no templating) and the bridge's
@@ -51,7 +81,7 @@ kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.3.0
+  version: 2.4.0
   ownerRef: team/platform-ai
 
 spec:
@@ -112,8 +142,10 @@ spec:
     output:
       schema: {type: object}
 
-  # Longest path: route -> intake-orphan -> stamp-pr -> fix -> human-merges-pr
-  # -> finish (5 transitions); 8 leaves headroom without hiding a loop.
+  # Longest paths: route -> intake-orphan -> stamp-pr -> fix -> human-merges-pr
+  # -> finish and route -> stage-dispatch -> fix -> stage-pr-open ->
+  # human-merges-pr -> finish (5 transitions each); 8 leaves headroom without
+  # hiding a loop.
   limits:
     maxDuration: 168h
     maxTransitions: 8
@@ -231,6 +263,39 @@ spec:
         retry:
           maxAttempts: 1
 
+    # Stage `dispatch`, keyed path only (the `keyed` route is what reaches
+    # it). Exact-key input for adapters/jira post_comment.parse: {verb,
+    # issue, comment} plus optional question_id; `issue` is the work item,
+    # which on this path IS the Jira key. The bridge appends its own
+    # jira-actor marker to every comment it posts -- that marker is what the
+    # sweep's self-echo filter trusts, so this graph must never write one
+    # itself.
+    stage-dispatch:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/work_item
+          comment:
+            literal: |-
+              culture-nodes:stage=dispatch
+              The pr-upkeep loop dispatched a developer session for the highest-priority finding on this ticket's pull request; the run and its ledger are in the culture-nodes control plane under this ticket's key.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
     fix:
       kind: agent
       ownerRef: team/developer-experience
@@ -299,6 +364,35 @@ spec:
       ledger:
         propose: [claim]
 
+    # Stage `pr-open`: the fix completed and a merge decision is pending.
+    # Reached from `fix.completed` only when the work item is Jira-shaped
+    # (edge guard below); the orphan path goes straight to the approval.
+    stage-pr-open:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/work_item
+          comment:
+            literal: |-
+              culture-nodes:stage=pr-open
+              The developer session finished and its fix is on a pull request awaiting a platform maintainer's merge decision; the approval task is in the culture-nodes control plane under this ticket's key.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
     human-merges-pr:
       kind: approval
       ownerRef: team/platform-ai
@@ -319,14 +413,40 @@ spec:
   edges:
     - from: route.orphan
       to: intake-orphan
+    # The keyed route IS the shape test: `route` selected `keyed` because the
+    # work item does not start with `gh:`, so the stage node needs no second
+    # guard on the only edge that leaves that outcome.
     - from: route.keyed
+      to: stage-dispatch
+    - from: stage-dispatch.comment_posted
       to: fix
     - from: intake-orphan.issue_created
       to: stamp-pr
+    # The orphan path rejoins at `fix` and never posts a stage: its ticket was
+    # created in THIS run, so the work item in the run's input is still the
+    # gh: form and there is no key to bind. The next, keyed fact for the PR
+    # carries the stages.
     - from: stamp-pr.stamped
       to: fix
+    # Both `fix.completed` edges carry a guard, and that is not redundancy.
+    # The engine selects the first eligible edge in the COMPILER's normalized
+    # order -- source, outcome, TARGET, guard text (normalizeEdges) -- not in
+    # the order this document lists them. `human-merges-pr` sorts before
+    # `stage-pr-open`, so an unguarded approval edge would win before the
+    # stage guard was ever evaluated and no ticket would ever see `pr-open`.
+    # Two mutually exclusive guards is the only shape that does not depend on
+    # how the target nodes happen to be named.
+    - from: fix.completed
+      to: stage-pr-open
+      when: '!input.work_item.startsWith("gh:")'
     - from: fix.completed
       to: human-merges-pr
+      when: 'input.work_item.startsWith("gh:")'
+    - from: stage-pr-open.comment_posted
+      to: human-merges-pr
+    # A `no_change` outcome opened no pull request, so there is no `pr-open`
+    # to record: the honest board history is silence, not a stage comment for
+    # a merge decision that will never be pending.
     - from: fix.no_change
       to: finish
     - from: human-merges-pr.approved

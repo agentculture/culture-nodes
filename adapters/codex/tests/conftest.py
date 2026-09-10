@@ -55,6 +55,28 @@ if spent:
     )
     sys.exit(1)
 
+never_logged_in = os.environ.get("FAKE_CODEX_NOT_LOGGED_IN")
+if never_logged_in:
+    # Code-review finding 8: a codex that was NEVER logged in on this host
+    # does not print the spent-refresh-token sentence at all -- it completes
+    # a thread, then fails the turn with the API's 401. Observed live; the
+    # thread.started event is what makes this indistinguishable from an
+    # ordinary failure unless the 401 text itself is classified.
+    emit({"type": "thread.started", "thread_id": "fake-thread-not-logged-in"})
+    emit({"type": "turn.started"})
+    emit(
+        {
+            "type": "turn.failed",
+            "error": {
+                "message": (
+                    "unexpected status 401 Unauthorized: Missing bearer or basic "
+                    "authentication in header"
+                )
+            },
+        }
+    )
+    sys.exit(1)
+
 if behavior == "ok":
     emit({"type": "thread.started", "thread_id": "fake-thread-ok"})
     emit({"type": "turn.started"})

@@ -226,6 +226,13 @@ def _lane_liveness_check(base_url: str, *, timeout: float = 2.0) -> dict[str, ob
     lane is never a verdict (c26), so the field's absence passes and says so,
     while an unreachable API fails so the non-answer is visible next to
     ``nodes_api_reachable``.
+
+    A lane whose fact IS present but whose ``session_ok`` is ``null`` is the
+    third state, and it is neither of the other two: it is counted and named
+    ``unmeasured``, never folded into the all-clear (code-review finding 8 —
+    this used to tally "measured" against "dead" only, so one lane whose probe
+    returned no verdict was reported as "all live (session_ok=true, none
+    locked)", which is the very claim the three-valued fact exists to avoid).
     """
     items, detail = _fetch_actor_rows(base_url, timeout)
     if items is None:
@@ -239,6 +246,8 @@ def _lane_liveness_check(base_url: str, *, timeout: float = 2.0) -> dict[str, ob
         )
 
     dead: list[str] = []
+    unsure: list[str] = []
+    live = 0
     measured = 0
     for key, row in sorted(_newest_rows(items).items()):
         fact = row.get("liveness")
@@ -251,6 +260,13 @@ def _lane_liveness_check(base_url: str, *, timeout: float = 2.0) -> dict[str, ob
                 f"{key} ({state}, reason={fact.get('reason', 'unmeasured')}, "
                 f"mode={fact.get('mode', '-')}, checked_at={fact.get('checked_at', '-')})"
             )
+        elif fact.get("session_ok") is True:
+            live += 1
+        else:
+            unsure.append(
+                f"{key} (session_ok=null, reason={fact.get('reason', 'unmeasured')}, "
+                f"mode={fact.get('mode', '-')}, checked_at={fact.get('checked_at', '-')})"
+            )
 
     if measured == 0:
         return _liveness_check(
@@ -261,22 +277,43 @@ def _lane_liveness_check(base_url: str, *, timeout: float = 2.0) -> dict[str, ob
             ),
             remediation="",
         )
+    tally = f"{measured} lane(s) measured: {live} live, {len(unsure)} unmeasured, {len(dead)} dead"
+    if unsure:
+        # Named in the MESSAGE, not only the remediation: the check passes
+        # when nothing is dead, and the text renderer prints a hint only for a
+        # failing check, so a remediation-only note would be invisible exactly
+        # when the operator is about to fan out into the lane.
+        tally += "; unmeasured: " + "; ".join(unsure)
     if dead:
         return _liveness_check(
             passed=False,
-            message=f"{len(dead)} dead lane(s): " + "; ".join(dead),
+            message=f"{tally}; dead: " + "; ".join(dead),
             remediation=(
                 "do not put these lanes in a split plan. Restore one with an interactive "
-                "engine re-login on the bridge host as the engine account (codex: `codex login`), "
+                "engine re-login on the bridge host as the engine account (codex: `codex login`; "
+                "reason=not_logged_in means that lane never had a session on this host at all, "
+                "so the same login bootstraps it), "
                 "then re-copy the credential (deploy/prod/lanes/unix-user.sh bootstrap) and "
                 "restart the bridge so its start-up probe clears the latch. Meanwhile route to "
                 "the lane's registered fallback_actor (register-actor.sh --metadata "
                 "fallback_actor=<actor_key>) or another live actor"
             ),
         )
+    if unsure:
+        return _liveness_check(
+            passed=True,
+            message=tally,
+            remediation=(
+                "these lanes have a liveness fact but no verdict, so nothing about their "
+                "sessions is known — an unmeasured lane is never refused (c26) and never "
+                "reported live. Set the lane's bridge to CHECK mode "
+                "(CODEX_BRIDGE_LIVENESS_MODE=CHECK) so it probes before a dispatch, or read "
+                "the reason: probe_timeout/probe_failed means the probe itself could not run"
+            ),
+        )
     return _liveness_check(
         passed=True,
-        message=f"{measured} lane(s) measured, all live (session_ok=true, none locked)",
+        message=f"{tally} (session_ok=true, none locked)",
         remediation="",
     )
 

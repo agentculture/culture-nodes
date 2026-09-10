@@ -31,7 +31,8 @@ type ActorLivenessOut struct {
 	// this". It is never omitted, so a reader can tell null from absent.
 	SessionOK *bool `json:"session_ok"`
 	// Reason is the bridge's closed vocabulary (ok, unmeasured,
-	// refresh_token_spent, credential_expired, probe_timeout, probe_failed).
+	// refresh_token_spent, not_logged_in, credential_expired, probe_timeout,
+	// probe_failed).
 	Reason string `json:"reason"`
 	// Mode is LOCK or CHECK as the bridge advertised, "" when the last
 	// writer was not a bridge fact.

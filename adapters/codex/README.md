@@ -223,7 +223,7 @@ rule as `adapters/colleague`'s `config.py`: file sets the baseline,
 | `sync_timeout_seconds` | `CODEX_BRIDGE_SYNC_TIMEOUT_SECONDS` | `300.0` | Bounds one foreground `codex exec` call. On expiry: SIGTERM (never SIGKILL), then a timeout response. |
 | `async_wait_seconds` | `CODEX_BRIDGE_ASYNC_WAIT_SECONDS` | `3600.0` | Overall ceiling the async runner waits for a codex subprocess to finish before SIGTERM + reporting a timeout failure. |
 | `state_dir` | `CODEX_BRIDGE_STATE_DIR` | `.codex-bridge-state` | Where the idempotency replay store lives. |
-| `liveness_mode` | `CODEX_BRIDGE_LIVENESS_MODE` | `"LOCK"` | How this lane's `liveness` fact is derived (issue #308). `LOCK`: the first run whose output carries the spent-refresh-token text flips `session_ok=false reason=refresh_token_spent` and holds it until cleared (a restart re-probes once). `CHECK`: additionally, a dry read-only `codex exec` probe runs when `/v1/capabilities` is read and the last answer is older than the TTL, so the fact flips before a dispatch fails. |
+| `liveness_mode` | `CODEX_BRIDGE_LIVENESS_MODE` | `"LOCK"` | How this lane's `liveness` fact is derived (issue #308). `LOCK`: the first run whose output carries the spent-refresh-token text flips `session_ok=false reason=refresh_token_spent` and holds it until cleared (a restart re-probes once). `CHECK`: additionally, a dry read-only `codex exec` probe runs when `/v1/capabilities` is read and the last answer is older than the TTL, so the fact flips before a dispatch fails. A probe that sees the API's `401 Unauthorized: Missing bearer` reports `session_ok=false reason=not_logged_in` — a lane nobody ever logged in on, which the spent-token phrases do not cover. |
 | `liveness_probe_timeout_seconds` | `CODEX_BRIDGE_LIVENESS_PROBE_TIMEOUT_SECONDS` | `20.0` | Wall-clock bound on one liveness probe. A probe that runs out reports `probe_timeout`, never a verdict. |
 | `liveness_check_ttl_seconds` | `CODEX_BRIDGE_LIVENESS_CHECK_TTL_SECONDS` | `120.0` | How long a `CHECK` answer is served from cache before the next surface read re-probes — one micro-session per window per lane. |
 
@@ -314,6 +314,24 @@ The document is exactly what an actor registration carries in
 | `dispatch_grants` | What each `--sandbox` mode actually grants a session — writes, egress, the ability to start a nested confinement helper (issue #96) |
 | `toolchains` | `uv`, `go`, `gh` and `codex` itself: where each is, how it was packaged, what version it reports, and **which modes can actually run it** |
 | `liveness` | Whether the codex **session** behind this bridge can start (issue #308). Both codex lanes answered `/healthz` 200 with a spent refresh token and a wave found out by dispatching into them. `LOCK` mode latches on the spent-token sentence in a run's output (`Your access token could not be refreshed because your refresh token was revoked` / `... was already used`); `CHECK` mode also measures it with a dry `codex exec --sandbox read-only --skip-git-repo-check` bounded at 20 s. A run that hits it is answered with class `credential_spent`, distinct from `execution` and `capacity_exhausted`, so the control plane can route around the lane |
+
+The `reason` a probe reports comes from the shared closed vocabulary in
+`liveness.py`, so the same word means the same thing on every bridge:
+
+| `reason` | What the probe measured | What restores the lane |
+|---|---|---|
+| `ok` | a completed dry turn | nothing — the lane is live |
+| `refresh_token_spent` | the spent-refresh-token sentence (`... refresh token was revoked` / `... was already used` / `Your access token could not be refreshed ...`) in a probe's or a run's output | `codex login` on the bridge host as the engine account, re-copy the credential (`deploy/prod/lanes/unix-user.sh bootstrap`), restart the bridge |
+| `not_logged_in` | no completed turn and the API's own refusal (`401`, `Unauthorized`, `Missing bearer`, `not logged in`, `Please log in`) — this lane never had a session at all, so none of the spent-token phrasing appears | the same `codex login`, as a first bootstrap rather than a refresh |
+| `credential_expired` | a past `expiresAt` in a credential file (claude-code's derivation; codex does not use it) | re-login on that bridge |
+| `probe_timeout` | the probe outran `liveness_probe_timeout_seconds` | nothing — `session_ok` is `null`, not a verdict; a lease is never refused on it |
+| `probe_failed` | the probe could not run, or failed with text this vocabulary does not classify | as above — `null`, never a verdict |
+| `unmeasured` | nobody has measured this lane yet (the start-up fact, and what `clear` returns to) | as above |
+
+Only `refresh_token_spent`, `not_logged_in` and `credential_expired` are
+verdicts (`session_ok=false`). The other three are `null`: `nodes doctor`'s
+`lane_liveness` check counts and names them as *unmeasured* and never folds
+them into its all-clear.
 
 The measurement is the point. Issues #18/#63: `--sandbox workspace-write`
 was requested on three hosts whose kernel restricted unprivileged user

@@ -10,11 +10,13 @@ listing the control plane exposes (t10 attaches each actor row's
 ``liveness`` — ``{session_ok, reason, mode, checked_at, locked}``).
 
 The check is warning severity: it can never flip ``healthy`` or the exit
-code (only ``prompt_file_present`` does). Three states are asserted here —
-a measured-dead lane, an unreachable API, and an API that carries no
-liveness field yet — because the honest non-answer (``unmeasured``) must be
-distinguishable from a verdict (c26: a stale or unmeasured lane is never
-refused, only a measured-dead one).
+code (only ``prompt_file_present`` does). Four states are asserted here — a
+measured-dead lane, a lane whose fact is present but ``session_ok=null``, an
+unreachable API, and an API that carries no liveness field yet — because the
+honest non-answer (``unmeasured``) must be distinguishable from a verdict
+(c26: a stale or unmeasured lane is never refused, only a measured-dead one)
+*and* from a live lane (code-review finding 8: the all-clear line counted a
+null fact as measured and then claimed ``session_ok=true`` over it).
 """
 
 from __future__ import annotations
@@ -36,6 +38,18 @@ _DEAD = {
     "mode": "LOCK",
     "checked_at": "2026-09-07T10:05:00+00:00",
     "locked": True,
+}
+#: Code-review finding 8: a lane whose probe could not classify what it saw.
+#: `session_ok` is null, so it is neither live nor dead — and doctor used to
+#: skip it in the tally and print "all live" over it. A never-logged-in codex
+#: lands here (its 401 is now classified, but a probe that times out or dies
+#: still does).
+_UNMEASURED = {
+    "session_ok": None,
+    "reason": "probe_failed",
+    "mode": "CHECK",
+    "checked_at": "2026-09-07T10:07:00+00:00",
+    "locked": False,
 }
 
 
@@ -189,3 +203,93 @@ def test_malformed_actors_payload_is_unmeasured(fake_api, capsys) -> None:
     assert rc == 0
     assert check["passed"] is False
     assert "unmeasured" in check["message"]
+
+
+def test_a_null_fact_is_counted_unmeasured_and_never_read_as_all_live(fake_api, capsys) -> None:
+    """Code-review finding 8: `session_ok=null` is not `true`. Doctor tallied
+    only measured-vs-dead, so one lane whose probe returned no verdict was
+    reported as "all live (session_ok=true, none locked)" — the exact claim
+    the fact exists to avoid making."""
+    _serve(
+        fake_api,
+        [
+            {"actor_key": "company/codex-thor", "revision": 1, "liveness": _LIVE},
+            {"actor_key": "company/codex-orin", "revision": 1, "liveness": _UNMEASURED},
+        ],
+    )
+    rc, payload = _doctor(capsys, fake_api.base_url)
+    check = _find_check(payload, "lane_liveness")
+    assert rc == 0
+    assert payload["healthy"] is True
+    assert check["severity"] == "warning"
+    assert "all live" not in check["message"]
+    assert "session_ok=true" not in check["message"]
+    # The tally separates the three states, and the unmeasured lane is named
+    # with the reason its probe gave.
+    assert "1 live" in check["message"]
+    assert "1 unmeasured" in check["message"]
+    assert "0 dead" in check["message"]
+    assert "company/codex-orin" in check["message"]
+    assert "probe_failed" in check["message"]
+    # The live lane is not accused of being unmeasured.
+    assert "company/codex-thor" not in check["message"]
+
+
+def test_an_unmeasured_lane_alongside_a_dead_one_is_named_in_both_tallies(fake_api, capsys) -> None:
+    _serve(
+        fake_api,
+        [
+            {"actor_key": "company/codex-thor", "revision": 1, "liveness": _DEAD},
+            {"actor_key": "company/codex-orin", "revision": 1, "liveness": _UNMEASURED},
+        ],
+    )
+    rc, payload = _doctor(capsys, fake_api.base_url)
+    check = _find_check(payload, "lane_liveness")
+    assert rc == 0
+    assert check["passed"] is False
+    assert "0 live" in check["message"]
+    assert "1 unmeasured" in check["message"]
+    assert "1 dead" in check["message"]
+    assert "company/codex-thor" in check["message"]
+    assert "company/codex-orin" in check["message"]
+
+
+def test_text_mode_surfaces_an_unmeasured_lane_rather_than_calling_it_live(
+    fake_api, capsys
+) -> None:
+    """The tally has to be readable without `--json`: an operator reading the
+    text report before a fan-out must see that a lane was not measured."""
+    _serve(
+        fake_api,
+        [{"actor_key": "company/codex-orin", "revision": 1, "liveness": _UNMEASURED}],
+    )
+    rc = main(["doctor", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "culture-nodes doctor: healthy" in out
+    assert "all live" not in out
+    assert "1 unmeasured" in out
+    assert "company/codex-orin" in out
+    assert "probe_failed" in out
+
+
+def test_a_not_logged_in_lane_is_dead_and_named_with_that_reason(fake_api, capsys) -> None:
+    """The bridge-side classifier (finding 8, part a) turns a never-logged-in
+    codex into `session_ok=false reason=not_logged_in`; doctor must carry that
+    word through to the operator, since the remediation is `codex login` on
+    the bridge host rather than a re-copied credential."""
+    never = {
+        "session_ok": False,
+        "reason": "not_logged_in",
+        "mode": "CHECK",
+        "checked_at": "2026-09-07T10:08:00+00:00",
+        "locked": False,
+    }
+    _serve(fake_api, [{"actor_key": "company/codex-orin", "revision": 1, "liveness": never}])
+    rc, payload = _doctor(capsys, fake_api.base_url)
+    check = _find_check(payload, "lane_liveness")
+    assert rc == 0
+    assert check["passed"] is False
+    assert "1 dead" in check["message"]
+    assert "not_logged_in" in check["message"]
+    assert "login" in check["remediation"]

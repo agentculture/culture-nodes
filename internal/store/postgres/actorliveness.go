@@ -73,8 +73,9 @@ type ActorLiveness struct {
 	// is "nobody measured this", which is neither true nor false.
 	SessionOK *bool
 	// Reason is the bridge's closed vocabulary (ok, unmeasured,
-	// refresh_token_spent, credential_expired, probe_timeout, probe_failed)
-	// or, for a worker write, the class-derived refresh_token_spent.
+	// refresh_token_spent, not_logged_in, credential_expired, probe_timeout,
+	// probe_failed) or, for a worker write, the class-derived
+	// refresh_token_spent.
 	Reason string
 	// Mode is LOCK or CHECK for a bridge fact, "" for a worker write.
 	Mode string

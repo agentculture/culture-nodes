@@ -312,6 +312,13 @@ func stageTicketFact() map[string]any {
 		"source": "jira", "id": stageJiraKey, "project": "SCRUM",
 		"title": "A finding on the pull request", "status": "To Do",
 		"description": "The board reader should not have to ask where this is.",
+		// The sweep emits every one of these on a Jira fact (pr_upkeep_jira.py
+		// keys: source id project severity kind file line title description
+		// description_truncated status details_url) and the intake node binds
+		// them unconditionally, so a sweep-shaped fact must carry them all.
+		"description_truncated": false, "severity": "MAJOR", "kind": "CODE_SMELL",
+		"file": "examples/pr-upkeep/sweep.py", "line": 1,
+		"details_url": "https://jira.example/browse/" + stageJiraKey,
 	}
 }
 

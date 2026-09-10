@@ -146,6 +146,15 @@ func (a *orphanActors) script(req actors.InvocationRequest) (actors.InvocationRe
 			Output:      json.RawMessage(`{"summary":"wrote ` + orphanJiraKey + ` into the PR body"}`),
 			LedgerDelta: claim("company/developer", map[string]any{"statement": "PR body names " + orphanJiraKey}),
 		}, ""
+	// The stage write-back nodes (t17) post one structured comment per
+	// transition through the jira actor; this fake answers them so the keyed
+	// path reaches fix. The comment text is the graph's, not this test's concern.
+	case "stage-dispatch", "stage-pr-open":
+		return actors.InvocationResult{
+			Outcome:     "comment_posted",
+			Output:      json.RawMessage(`{"issue":"` + orphanJiraKey + `","comment_id":"20001"}`),
+			LedgerDelta: claim("company/jira-comment", map[string]any{"verb": "post_comment", "issue": orphanJiraKey}),
+		}, ""
 	case "fix":
 		return actors.InvocationResult{
 			Outcome:     "no_change",

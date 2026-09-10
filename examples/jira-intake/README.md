@@ -75,8 +75,8 @@ the longest path is five hops against a `maxTransitions: 8` ceiling that
 leaves headroom without hiding a loop — there is none; every node is visited
 at most once by construction.
 
-`stage-intake` is this graph's share of the loop's **stage write-back** (issue
-#311, decision c9): one structured comment per stage transition, posted by a
+`stage-intake` is this graph's share of the loop's **stage write-back** (issue #311,
+decision c9): one structured comment per stage transition, posted by a
 graph node through the same narrow `post_comment` verb — never by the sweep,
 which has no Jira write path at all. Its first line is machine-readable
 (`culture-nodes:stage=intake`) and the sweep reads the newest such line on a

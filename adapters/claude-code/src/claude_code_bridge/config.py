@@ -233,10 +233,16 @@ class Config:
     handover_remote: str = "origin"
 
     # --- lane liveness (issue #308, task t9) -------------------------------
-    #: The mode this lane's `liveness` fact reports. claude-code spends
-    #: nothing in either mode — its fact is a file read — so the value is
-    #: the operator's declaration of how the router should treat the lane.
-    liveness_mode: str = liveness.MODE_LOCK
+    #: The mode this lane's `liveness` fact reports, and therefore how it is
+    #: derived — the mode is a statement about the measurement, not an
+    #: operator preference about how strictly the router should read it (the
+    #: router refuses a LOCK-mode `session_ok=false` at any age and ages a
+    #: CHECK-mode one out, because only the first is a latch with a frozen
+    #: `checked_at`). CHECK is this backend's default where LOCK is codex's:
+    #: the probe here is a free file read rather than a spent micro-session,
+    #: and LOCK would report `unmeasured` forever, since nothing in this
+    #: bridge's dispatch path classifies a run's output into a latch.
+    liveness_mode: str = liveness.MODE_CHECK
     #: Where `claude` keeps its OAuth credential; `claudeAiOauth.expiresAt`
     #: (a millisecond epoch) is the field the fact is derived from. A missing
     #: or unreadable file is `unmeasured`, never a crash.

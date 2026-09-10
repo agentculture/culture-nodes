@@ -918,7 +918,7 @@ Two knobs, in two different places:
 - **`liveness_mode`** (bridge configuration, NOT registry metadata): how the
   lane derives the fact — `liveness_mode` in the bridge's config JSON or env
   `CODEX_BRIDGE_LIVENESS_MODE` in the account's `~/.culture-nodes/codex-bridge.env`.
-  `LOCK` (default) costs nothing and flips `session_ok=false
+  `LOCK` (the codex default) costs nothing and flips `session_ok=false
   reason=refresh_token_spent` on the first run whose output carries the
   spent-credential text, holding it until the bridge restarts and re-probes;
   `CHECK` additionally runs a dry read-only `codex exec` probe (bounded by
@@ -926,6 +926,16 @@ Two knobs, in two different places:
   `CODEX_BRIDGE_LIVENESS_CHECK_TTL_SECONDS`) when the surface is read, so the
   fact flips before a dispatch pays for it — one micro-session per window per
   lane. `adapters/codex/README.md` lists all three keys.
+
+  **The default is per backend, because the probe's price is.** The
+  claude-code bridge (`CLAUDE_CODE_BRIDGE_LIVENESS_MODE`) defaults to
+  `CHECK`: its probe is a read of `claudeAiOauth.expiresAt` in
+  `~/.claude/.credentials.json`, which spends no session, and it hangs no
+  latch off a run's output — so a `LOCK` claude lane reports `unmeasured`
+  and measures nothing. Do not set `LOCK` on a claude lane expecting a
+  stricter reading: the mode states how the fact was DERIVED, and the router
+  refuses a `LOCK`-mode `session_ok=false` at any age precisely because a
+  latch never re-measures.
 
 Restoring a dead lane is a hand-turn, and it clears **two** latches, not
 one: an interactive `codex login` as the **login user** on the bridge host

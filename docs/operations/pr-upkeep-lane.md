@@ -137,6 +137,113 @@ sweep emitting `work_item` against a deployment still on
 the `2.1.0` contract is refused by the trigger's contract check, loudly, per
 fact — which is the right failure, not a silent drop.
 
+## The stage watermark
+
+The board says where a work item is, and the loop reads its own writing back
+as memory. Both halves are one mechanism (issue #311, decision c9): a **stage
+comment** whose first line is machine-readable.
+
+```text
+culture-nodes:stage=dispatch
+The pr-upkeep loop dispatched a developer session for ...
+```
+
+Six stages, in this order — the order is load-bearing, because a recorded
+stage closes every transition at or before it:
+
+| Stage | Posted by | At which node | Bound key |
+| --- | --- | --- | --- |
+| `intake` | `examples/jira-intake` | `stage-intake`, after the board move to In Progress | `/run/input/id` |
+| `spec` | **nothing yet** | — | — |
+| `dispatch` | `examples/pr-upkeep` | `stage-dispatch`, on the `keyed` route before `fix` | `/run/input/work_item` |
+| `pr-open` | `examples/pr-upkeep` | `stage-pr-open`, on `fix.completed` before the approval | `/run/input/work_item` |
+| `merged` | `examples/cleanup` | `stage-merged`, on the `pr.merged` route before the code node | `/run/input/issue_key` |
+| `cleanup` | `examples/cleanup` | `stage-cleanup` / `stage-cleanup-declined`, on `cleanup.passed` | `issue_key` / `work_item` |
+
+`spec` is in the vocabulary and has no writer. Its natural home is the
+spec-chain lane (`examples/spec-chain-lane`), which this change did not touch;
+until a node there posts it, a reader will never see a `spec` comment and the
+enum entry is a reservation, not a behaviour.
+
+**A stage comment is posted by a graph node, never by the sweep.** That is not
+a stylistic preference: the sweep has no Jira write path at all
+(`pr_upkeep_jira.py` is GET-only, asserted by
+`tests/test_pr_upkeep_sweep_jira.py`), and keeping it that way is what keeps
+"a sweep change needs no workflow republish" true in one direction and "a
+board write is an allowlisted bridge verb under an actor identity" true in the
+other. Each node uses the same narrow `post_comment` verb
+`examples/jira-intake` already drove, with the bridge's exact-key input
+`{verb, issue, comment}`; the bridge appends its own jira-actor marker, and a
+graph that wrote one itself would be forging the identity the self-echo filter
+trusts.
+
+**Only a Jira-shaped work item can carry a stage.** A `gh:<owner>/<repo>#<n>`
+item has no ticket to comment on, so every edge into a stage node is gated —
+by its own CEL `when` on the item's shape, or by the decision node whose
+outcome it leaves, which tested the same thing. The orphan path
+(`intake-orphan` → `stamp-pr`) posts no stage: its ticket is created inside
+that run, so the run's input still holds the `gh:` form. The next, keyed fact
+for the pull request carries the stages.
+
+One trap is worth naming, because it is invisible in the document. The engine
+selects the first eligible edge in the **compiler's normalized order** — source
+node, outcome, target, guard text (`internal/compiler/normalize.go`,
+`normalizeEdges`) — not in the order the file lists them. A stage node's target
+name often sorts *after* the node it diverts from (`stage-pr-open` after
+`human-merges-pr`, `stage-cleanup` after `cleaned`), so an unguarded sibling
+edge would win before the stage guard was ever evaluated and no ticket would
+ever see the stage. Every outgoing edge of a diverted outcome therefore carries
+a mutually exclusive guard, and `tests/test_stage_write_back_graphs.py` pins
+that no guarded outcome has an unguarded sibling.
+
+### Reading it back as the watermark
+
+The sweep reads the **newest** stage comment on a ticket as that ticket's
+watermark (`jira_stage_watermark`), and suppresses a lifecycle fact the
+watermark already records (`stage_already_recorded`). Two conditions, both
+required: the recorded stage is at or beyond the one the fact would drive, and
+it was recorded at or after the fact arose — so a second pull request merging
+after the first one's `cleanup` is a new transition and still emits.
+
+| Fact | Stage it drives |
+| --- | --- |
+| `pr-upkeep.jira.transitioned.to-do` | `intake` |
+| `pr.merged` | `merged` |
+| `pr.closed` | `cleanup` |
+
+`pr-upkeep.pr` — the finding dispatch — is deliberately **not** on that list. A
+stage comment cannot name a head SHA or a finding, and this lane promises a
+finding is not blocked by the run before it, so finding dispatch keeps the
+run-input walk (`pr_upkeep_emit.undispatched_findings`) as its dedupe. Nothing
+about the stage watermark changes the cadence claim below.
+
+One ordering consequence is worth knowing before a Jira outage surprises
+someone. The stage watermarks come from the sweep's Jira read, and the
+closed-PR facts (`pr.merged`, `pr.closed`) are what they gate, so that read
+now happens **before** those facts are emitted. An unreachable Jira therefore
+fails the tick earlier than it used to — before the closed-PR facts go out
+rather than after. Both facts are re-emitted every tick by design (the control
+plane keys on `source_key` plus an immutable-timestamp watermark), so the next
+successful tick emits them: the cost is one interval of latency on a merge, not
+a lost fact.
+
+The stage watermark is a **second** line of defence, not the first. The control
+plane already answers a repeated fact with `duplicate=true` from its signal
+watermark row per `source_key`; what the stage adds is that the sweep does not
+send the fact at all, so a tick over an already-finished ticket is silent —
+zero runs and zero comments — rather than quietly deduplicated downstream.
+Three other properties follow from where the write lives:
+
+- a person typing `culture-nodes:stage=merged` into a comment does not move
+  the watermark: only the configured bot account id (or, absent one, the
+  bridge's own marker) makes a comment a stage record;
+- a stage comment is not itself a work item — the sweep reads it as a record
+  and never re-emits it as a `pr-upkeep.jira.comment` fact;
+- a ticket moved back to **To Do** after a stage was recorded re-fires pickup
+  by design (decision c24): a stage recorded *before* the transition cannot
+  close it, and the comparison is by position on the ticket's timeline, not by
+  clock.
+
 ## Reading a tick
 
 The tick's own report is JSON on the code node's stdout:

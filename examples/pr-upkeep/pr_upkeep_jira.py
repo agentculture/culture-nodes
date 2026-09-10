@@ -182,7 +182,9 @@ STAGES = ("intake", "spec", "dispatch", "pr-open", "merged", "cleanup")
 #: binding is a pointer or a constant and cannot compose them -- the ticket
 #: the comment sits on IS the work item.
 STAGE_LINE_PREFIX = "culture-nodes:stage="
-_STAGE_LINE_RE = re.compile(r"^culture-nodes:stage=(?P<stage>[a-z][a-z-]*)(?P<attrs>(?:[ \t]+[a-z_]+=\S+)*)")
+_STAGE_LINE_RE = re.compile(
+    r"^culture-nodes:stage=(?P<stage>[a-z][a-z-]*)(?P<attrs>(?:[ \t]+[a-z_]+=\S+)*)"
+)
 _STAGE_ATTRS = ("work_item", "ref")
 #: Which sweep fact drives which stage transition. ``pr-upkeep.pr`` is
 #: deliberately absent: a stage comment cannot name a head or a finding, and
@@ -552,7 +554,9 @@ def jira_history_facts(
             if question_id:
                 payload["originating_question_id"] = question_id
             payload["answer"] = {"comment_id": position_id, "body": jira_comment_text(entry)}
-            facts.append((position, (JIRA_COMMENT_EVENT_NAME, payload, watermark, kind, position_id)))
+            facts.append(
+                (position, (JIRA_COMMENT_EVENT_NAME, payload, watermark, kind, position_id))
+            )
             continue
 
         status_item = next(

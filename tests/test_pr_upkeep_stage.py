@@ -154,8 +154,12 @@ class TestStageAlreadyRecorded:
         return {"stage": stage, "comment_id": "1", "recorded_at": at}
 
     def test_a_stage_at_or_beyond_the_driven_one_recorded_after_the_fact_closes_it(self):
-        assert jira.stage_already_recorded("pr.merged", self._mark("merged"), "2026-09-01T00:00:00Z")
-        assert jira.stage_already_recorded("pr.merged", self._mark("cleanup"), "2026-09-01T00:00:00Z")
+        assert jira.stage_already_recorded(
+            "pr.merged", self._mark("merged"), "2026-09-01T00:00:00Z"
+        )
+        assert jira.stage_already_recorded(
+            "pr.merged", self._mark("cleanup"), "2026-09-01T00:00:00Z"
+        )
         assert jira.stage_already_recorded(
             "pr-upkeep.jira.transitioned.to-do", self._mark("pr-open"), "2026-09-01T00:00:00Z"
         )
@@ -169,16 +173,22 @@ class TestStageAlreadyRecorded:
         # A second PR for the ticket merges after the first one's cleanup was
         # recorded: the new merge is a new transition.
         assert not jira.stage_already_recorded(
-            "pr.merged", self._mark("cleanup", at="2026-09-01T00:00:00.000+0000"), "2026-09-03T00:00:00Z"
+            "pr.merged",
+            self._mark("cleanup", at="2026-09-01T00:00:00.000+0000"),
+            "2026-09-03T00:00:00Z",
         )
 
     def test_mixed_timestamp_formats_compare_as_instants_not_strings(self):
         # Jira renders +0000, GitHub renders Z; same instant either way.
         assert jira.stage_already_recorded(
-            "pr.merged", self._mark("merged", at="2026-09-02T08:00:00.000+0000"), "2026-09-02T08:00:00Z"
+            "pr.merged",
+            self._mark("merged", at="2026-09-02T08:00:00.000+0000"),
+            "2026-09-02T08:00:00Z",
         )
         assert jira.stage_already_recorded(
-            "pr.merged", self._mark("merged", at="2026-09-02T11:00:00.000+0300"), "2026-09-02T08:00:00Z"
+            "pr.merged",
+            self._mark("merged", at="2026-09-02T11:00:00.000+0300"),
+            "2026-09-02T08:00:00Z",
         )
 
     def test_no_watermark_or_an_ungated_fact_is_never_closed(self):
@@ -251,7 +261,10 @@ class TestHistoryFactsHonourTheStageWatermark:
             "2026-09-01T09:00:00.000+0000",
             [
                 _comment(
-                    "1004", "2026-09-01T10:00:00.000+0000", "culture-nodes:stage=merged?", account=HUMAN
+                    "1004",
+                    "2026-09-01T10:00:00.000+0000",
+                    "culture-nodes:stage=merged?",
+                    account=HUMAN,
                 )
             ],
         )
@@ -413,7 +426,7 @@ class TestTheSweepGainsNoJiraWrite:
 
         source = (EXAMPLE_DIR / "pr_upkeep_jira.py").read_text()
         assert "stage" in source
-        for forbidden in ['method="POST"', "/comment\"", "post_comment(", "v1alpha1/events"]:
+        for forbidden in ['method="POST"', '/comment"', "post_comment(", "v1alpha1/events"]:
             assert forbidden not in source, forbidden
 
     def test_stage_comments_are_posted_by_graph_nodes_not_the_sweep(self):

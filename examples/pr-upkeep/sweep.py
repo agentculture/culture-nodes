@@ -930,9 +930,10 @@ def main() -> int:
 
         # What a Jira fact IS belongs to pr_upkeep_jira (jira_emissions); this
         # loop is the sweep's half of the split -- naming the stage a failure
-        # happened at, and being the one place that writes to the control
-        # plane. The tickets' stage watermarks (t17) are read here for the
-        # closed-PR facts below; a Jira outage holds back only those.
+        # happened at, and being the one control-plane writer. It still writes
+        # NOTHING to Jira: the stage comments read here are posted by graph
+        # nodes (t17), and this block sits above the closed-PR one because the
+        # stage watermarks gate those facts (the lane doc has the ordering).
         stage_marks = {}
         if repository.get("jira_site"):
             site, project = repository["jira_site"], repository["jira_project"]
@@ -947,11 +948,10 @@ def main() -> int:
             ):
                 with attempting(f"emitting {fact['name']} for {fact['subject']} (control plane)"):
                     emitted.append(raise_event(**fact))
-        # Closed PRs are a separate bounded read, and one listing feeds two
-        # facts: pr.merged (merged_at set) or pr.closed (closed without
-        # merge, t12). Each watermark is an immutable timestamp, so two
-        # passes append exactly one fact; `closed_pull_event` decides which. A
-        # ticket whose stage watermark already records it gets nothing (t17).
+        # Closed PRs are a separate bounded read; one listing feeds two facts,
+        # pr.merged (merged_at set) or pr.closed (t12), `closed_pull_event`
+        # decides which, and a stage watermark already recording it (t17)
+        # means this tick emits nothing for that ticket.
         with attempting(f"listing closed PRs of {github_repo} (GitHub)"):
             closed_pulls = fetch_closed_pulls(token, github_repo)
         for pull in closed_pulls:

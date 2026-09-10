@@ -83,12 +83,15 @@ item.
       ▼
   workflow.yaml v2 (one run per matching event)
 
-  route ──keyed───────────────────────────────────────────────▶ fix
+  route ──keyed───▶ stage-dispatch ──comment_posted─────────────▶ fix
       │                                                          │
       └──orphan──▶ intake-orphan ──issue_created──▶ stamp-pr ──stamped──┘
 
-  fix.completed ──▶ human-merges-pr ──approved/rejected/expired──▶ finish
-      │
+  fix.completed ──▶ stage-pr-open ──comment_posted──▶ human-merges-pr
+      │                  (Jira-keyed work item only)        │
+      ├──completed ─────────────────────────────────────────┤ (gh: work item)
+      │                                                     ▼
+      │                             approved/rejected/expired ──▶ finish
       └──no_change───────────────────────────────────────────────▶ finish
 ```
 
@@ -144,9 +147,25 @@ item.
   developer otherwise. The actor works that finding and either reports
   `completed` after opening or updating a PR, or `no_change` when a fix would
   be inappropriate.
-- **human-merges-pr** is the approval node reached by `fix.completed`. A
-  platform maintainer decides the merge outcome; `approved`, `rejected`, and
-  `expired` are all terminal for this run.
+- **stage-dispatch** and **stage-pr-open** post this graph's two stage
+  comments to the ticket, through the jira actor's `post_comment` verb with
+  the bridge's exact-key input (`verb`, `issue`, `comment`). Each comment's
+  first line is machine-readable — `culture-nodes:stage=dispatch` /
+  `culture-nodes:stage=pr-open` — and the sweep reads the newest such line on
+  a ticket as its stage **watermark**, so a tick that finds a lifecycle fact
+  already recorded emits nothing for it. The sweep gains no Jira write: the
+  nodes are the write path (issue #311, decision c9). Only a Jira-shaped work
+  item can carry a stage, so the `keyed` route reaches `stage-dispatch` and
+  both `fix.completed` edges are guarded on the item's shape — an orphan run
+  posts neither, because its ticket was created inside that same run and the
+  run's input still holds the `gh:` form. `maxAttempts: 2`, unlike
+  `intake-orphan`: a retried comment is at worst a duplicate record (newest
+  wins), while a failed one would stall the fix behind bookkeeping. The full
+  six-stage vocabulary is in `docs/operations/pr-upkeep-lane.md`.
+- **human-merges-pr** is the approval node reached by `fix.completed` — via
+  `stage-pr-open` when the work item is a Jira key, directly when it is the
+  `gh:` form. A platform maintainer decides the merge outcome; `approved`,
+  `rejected`, and `expired` are all terminal for this run.
 - **finish** is the end node. It receives `fix.no_change` directly and every
   terminal outcome from `human-merges-pr`, then returns the original event
   payload.

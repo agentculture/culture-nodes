@@ -58,6 +58,13 @@
 # and a URL in graph text fails the portability guard), so the comment names
 # the stage and the ticket it sits on is the work item.
 #
+# The enum is {intake, spec, dispatch, pr-open, merged, cleanup} and lives in
+# one place, examples/pr-upkeep/pr_upkeep_jira.py `STAGES`; the other two
+# stages this repo writes are `intake` (examples/jira-intake) and `merged` +
+# `cleanup` (examples/cleanup). `spec` is reserved for the spec-chain lane and
+# is not written by any graph yet. docs/drive-from-jira.md has the table a
+# board reader needs.
+#
 # `maxAttempts: 2` on both, unlike `intake-orphan`: a retried stage comment is
 # at worst a duplicate record (latest wins), while a failed one would stall
 # the fix behind bookkeeping.
@@ -260,7 +267,9 @@ spec:
     # it). Exact-key input for adapters/jira post_comment.parse: {verb,
     # issue, comment} plus optional question_id; `issue` is the work item,
     # which on this path IS the Jira key. The bridge appends its own
-    # `[culture-nodes:jira-actor]` marker -- this graph must not add one.
+    # jira-actor marker to every comment it posts -- that marker is what the
+    # sweep's self-echo filter trusts, so this graph must never write one
+    # itself.
     stage-dispatch:
       kind: agent
       ownerRef: team/platform-ai
@@ -404,14 +413,40 @@ spec:
   edges:
     - from: route.orphan
       to: intake-orphan
+    # The keyed route IS the shape test: `route` selected `keyed` because the
+    # work item does not start with `gh:`, so the stage node needs no second
+    # guard on the only edge that leaves that outcome.
     - from: route.keyed
+      to: stage-dispatch
+    - from: stage-dispatch.comment_posted
       to: fix
     - from: intake-orphan.issue_created
       to: stamp-pr
+    # The orphan path rejoins at `fix` and never posts a stage: its ticket was
+    # created in THIS run, so the work item in the run's input is still the
+    # gh: form and there is no key to bind. The next, keyed fact for the PR
+    # carries the stages.
     - from: stamp-pr.stamped
       to: fix
+    # Both `fix.completed` edges carry a guard, and that is not redundancy.
+    # The engine selects the first eligible edge in the COMPILER's normalized
+    # order -- source, outcome, TARGET, guard text (normalizeEdges) -- not in
+    # the order this document lists them. `human-merges-pr` sorts before
+    # `stage-pr-open`, so an unguarded approval edge would win before the
+    # stage guard was ever evaluated and no ticket would ever see `pr-open`.
+    # Two mutually exclusive guards is the only shape that does not depend on
+    # how the target nodes happen to be named.
+    - from: fix.completed
+      to: stage-pr-open
+      when: '!input.work_item.startsWith("gh:")'
     - from: fix.completed
       to: human-merges-pr
+      when: 'input.work_item.startsWith("gh:")'
+    - from: stage-pr-open.comment_posted
+      to: human-merges-pr
+    # A `no_change` outcome opened no pull request, so there is no `pr-open`
+    # to record: the honest board history is silence, not a stage comment for
+    # a merge decision that will never be pending.
     - from: fix.no_change
       to: finish
     - from: human-merges-pr.approved

@@ -211,4 +211,5 @@ def test_the_lane_is_sourced_and_never_exits_the_caller(marker):
     caller, while an `exit` would end the deploy the caller is still running."""
     lane = LANE.read_text()
     assert marker not in lane, f"a sourced detector must not carry `{marker}`"
-    assert "return 0" in lane and "return 1" in lane
+    assert "return 0" in lane
+    assert "return 1" in lane

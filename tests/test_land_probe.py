@@ -115,7 +115,8 @@ def test_a_held_checkout_file_lock_blocks_the_reset_too(
         )
     assert code == land.EXIT_WAITING, records
     wait = steps(records)["checkout_lease"]
-    assert wait["outcome"] == "waiting" and wait["holder"]["land_run_id"] == "01M0OTHERLANDER"
+    assert wait["outcome"] == "waiting"
+    assert wait["holder"]["land_run_id"] == "01M0OTHERLANDER"
     assert wait["active_attempts"] is None, "no control plane configured: the probe says so, not 0"
     assert git(actor_checkout, "rev-parse", "HEAD") == head_before
 

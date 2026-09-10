@@ -381,7 +381,7 @@ per noun in `devague 0.24.0` — 236 of them across the committed tree at the
 time of writing — so a one-transaction bulk confirm is an upstream
 `agentculture/devague` change, not a task here (spec decision **c14**). The
 text of that ask is committed at
-[`docs/triage/devague-bulk-confirm-issue.md`](../triage/devague-bulk-confirm-issue.md);
+[`docs/triage/devague-bulk-confirm-issue.md (posted as agentculture/devague#119, https://github.com/agentculture/devague/issues/119)`](../triage/devague-bulk-confirm-issue.md);
 record the issue URL there and in the spec's non-goal once the operator posts
 it.
 

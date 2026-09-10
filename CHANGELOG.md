@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.51.0] - 2026-09-10
+
+### Added
+
+- loop-closure cycle (plan `loop-closure-claude-codex`, #308–#319): `work_item` as its own run column and filter with engine stamping from the event payload (migration 0057); the `culture-land` engine account, credentials lane, runner-account registration and cutover; the land node (`examples/land`: leases, rebase, gate chain, single bump, idempotent push, signed reply and resolve, human routing on conflict); bridge-side liveness fact with LOCK/CHECK, the codex dry-refresh probe and `credential_spent` class; persisted `actor_liveness` (migration 0058) with worker fallback routing and resume-AND-unlock; `nodes doctor` fifth check `lane_liveness` and the deploy detectors; `pr.closed` facts; the cleanup node (`examples/cleanup`) and cancel-with-reason; the analysis node, one file per fact and the bundled cadence; `open-issue.sh --disposition` + `scripts/triage-rows.py`; `hand_turn` / `hand_turn_definition` ledger kinds, hand-turn routes, confirmed-only `hand_turns_by_stage`, the observer example and `nodes hand-turn`; Jira stage write-back nodes and the stage watermark; the merge-gate readiness collector bound into `human-merges-pr` (pr-upkeep workflow 2.6.0)
+- delivery summary `docs/deliveries/2026-09-10-loop-closure-claude-codex.md`; triage rows for #323 and #324
+
+### Changed
+
+- jira bridge `create_issue` admits `labels`; `PATCH /runs/{id}` admits one gh:→Jira `work_item` re-key; `examples/pr-upkeep/driver.sh` retired; the pr-upkeep lane doc names the live 300 s schedule and the bundled cadence
+
+### Fixed
+
+- `land_gate.py` takes the caller's Refusal class (refusals escaped the handler when two copies of `land.py` were loaded); e2e fakes answer the stage and analyse nodes
+
 ## [0.50.2] - 2026-09-07
 
 ### Added

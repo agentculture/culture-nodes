@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-07T03:45:48Z",
-  "updated": "2026-09-07T05:42:31Z",
+  "updated": "2026-09-10T16:10:59Z",
   "claims": [
     {
       "id": "c1",
@@ -1064,5 +1064,159 @@
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c2",
+      "seam": "POST/GET /v1alpha1/runs + the pr-upkeep.pr fact",
+      "behavior": "a run carries work_item as its own column, GET /runs?work_item=KEY returns exactly those runs, PATCH refuses it except the one gh:->Jira re-key, and every pr-upkeep.pr fact carries a non-empty work_item",
+      "source_text": "work-item id (#310): every pr-upkeep run carries the Jira key in run.category and input.work_item, never in subject \u2014 docs/operations/pr-upkeep-lane.md:206-211 records that a pr-upkeep.pr fact deliberately has no subject because subject re-enters the one-active-run-per-subject guard #268 removed; the key is already derived for pr.opened/pr.merged by _correlated_issue_key (pr_upkeep_emit.py:44-53) and is simply not added to the pr-upkeep.pr payload (sweep.py:919-925); the workflow input contract is additionalProperties:false (workflow.yaml:50-60) so it widens and republishes; GET /v1alpha1/runs gains a category filter (listRunsParams, internal/api/queries.go:179-199, has none today)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c3",
+      "seam": "examples/land (runner code node)",
+      "behavior": "a handover ref lands as one commit via lease+rebase+push with per-step records, a conflict routes to a human, a re-run pushes nothing twice, the gate chain and one bump run before push, replies and resolves are posted once per finding",
+      "source_text": "land node (#315/#309 step 2): a deterministic code node that runs through the runner boundary after every actor run \u2014 fetch the handover ref (preserve.py names it refs/culture-nodes/`<run-id>`/`<ts>`-`<rand>`, adapters/codex/src/codex_bridge/preserve.py:399-426; it is never pushed, :592-594), rebase onto the target branch tip, run the operator's pre-push chain (target pytest, go test ./tests/lint, scripts/lint-all.sh `<job>`, file-length), push to the PR branch with the account push credential (~/.culture-nodes/bridge-push.env, GITHUB_TOKEN_WORKER, install-secrets.sh:750-774), reply on the thread naming the commit, resolve the thread; it emits the landed commit + gate results as evidence the runner may record as observed; a rebase conflict is routed to a human with the internal/repair derived decision record, never retried; force-push never",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c4",
+      "seam": "bridge liveness fact + control-plane router",
+      "behavior": "a spent/expired credential reads session_ok=false with a reason within one probe, LOCK holds until a human resume AND a healthy fact, the worker reroutes a fresh false lane to fallback_actor with a derived record, stale rows never refuse, doctor and deploy report it warning-severity",
+      "source_text": "lane liveness (#308 detector + #312 router, per decisions c23/c26): the shared preflight HOST_KEYS (preflight.py:126-140, 7 byte-identical copies, tests/lint/preflightsurface_test.go) gain a liveness fact {session_ok, reason, checked_at, mode}; per-lane mode is operator-configurable \u2014 LOCK (the first refresh-token failure sets session_ok=false reason=refresh_token_spent and the lane stays locked until a human clears it after re-login) or CHECK (an online dry-refresh probe on the collector's clock, c24); claude-code lanes read ~/.claude/.credentials.json expiresAt (never read today); the mesh collector caches the fact; the worker refuses to lease only when the observation is fresh (<5 min), session_ok=false and the actor's registration names fallback_actor, and records the fallback as a derived routing record in the internal/repair shape; deploy.sh's detector tail and nodes doctor report the fact warning-severity",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c5",
+      "seam": "examples/pr-upkeep analyse node",
+      "behavior": "per finding FIX/PUSHBACK/DUPLICATE/SKIP with a one-line reason, same-rule findings in one file bundled into one package, pushbacks surfaced in the run output, cadence doc rewritten",
+      "source_text": "analysis node (#309 step 1): a node before fix that, per finding, reads the thread's replies and resolution state, decides FIX / PUSHBACK / DUPLICATE with a one-line reason, bundles same-rule findings in one file into one package, and waits for the post-push re-scan before taking the next finding on the same file; pushbacks surface in the tick summary for the PR owner and are never attempted; lands in examples/pr-upkeep/workflow.yaml, examples/pr-upkeep/README.md and docs/operations/pr-upkeep-lane.md in the same PR (the recipe rule), and the lane doc's cadence sentence 'a PR with N findings takes N ticks' (pr-upkeep-lane.md:57-59) is rewritten to the bundled cadence",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c6",
+      "seam": "examples/cleanup + POST /runs/{id}/cancel",
+      "behavior": "after pr.merged/pr.closed only main-reachable refs are deleted, unreachable refs are declined and listed, parked runs are cancelled with a machine-readable reason, one derived record lists everything",
+      "source_text": "cleanup node (#318/#309 step 3): after pr.merged (the human-inbox tracker polls GitHub and submits github_pr_merged observations, tracker.py:49-50,:393-428; there are no webhooks) one code node deletes review-fix/* and refs/culture-nodes/* refs whose commits are reachable from main (unreachable refs are reported, never deleted), cancels the item's runs parked at human-merges-pr via POST /v1alpha1/runs/{id}/cancel using the cancelRunWithReason seam with a machine-readable reason (internal/api/runs.go:206-221, :427-570; the operator cancel records no reason today), and emits one derived record listing every removal; operator worktrees under ../.worktrees.culture-nodes are out of scope (not a control-plane host)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c7",
+      "seam": "scripts/open-issue.sh --disposition + land gate bump",
+      "behavior": "opening an issue leaves triage-report --check green in the same invocation; a landing of N fixes carries exactly one version bump naming the findings",
+      "source_text": "close what it opens (#316): scripts/open-issue.sh gains --disposition 'bucket|text|evidence' that appends the docs/triage/dispositions.csv and issue-types.csv rows and regenerates open-issues.md via scripts/triage-report.py in the same commit (today nothing writes those CSVs; triage-report.py --check returns 1 on an undispositioned open issue, :463-469, which is the lint-all root 'triage' step, lint-all.sh:160-165); the rows logic lives in a small helper because open-issue.sh is scheduled for deletion when agtag#19 lands; version bumps happen once per landing in the land node, not per fix session",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c8",
+      "seam": "internal/ledger hand_turn + /v1alpha1/hand-turns + stats + nodes hand-turn",
+      "behavior": "an agent writes hand_turn as proposed against a confirmed definition, a human cannot write observed, stats count confirmed records only, the observer proposes the #307 turns, the CLI verb writes one",
+      "source_text": "hand-turn record (#319, per decision c25): internal/ledger/record.go:28-61 gains record kind hand_turn {what, stage, work_item, definition_ref}; the human's definition of what counts as a hand-turn per stage is a confirmed record the agent observes against; an observing agent (a code node on the runner reading the work-item's runs, refs, PR events and issue comments) writes hand_turn records as origin=agent authority=proposed; the human confirms or rejects each batch through the review surface and iterates the definition; a 'nodes hand-turn' CLI verb exists for the human to write one directly (lands proposed under the agent path or confirmed under the human's identity per the existing matrix) with an explain catalog entry; actor stats gain hand_turns_by_stage counting the CONFIRMED subset per work item and per cycle; the delivery summary cites that count",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c9",
+      "seam": "stage nodes in pr-upkeep, cleanup, jira-intake + the sweep's stage watermark",
+      "behavior": "one structured stage comment per transition posted by a graph node through post_comment, the sweep reads the newest stage as watermark and a replayed tick emits nothing, the sweep itself gains no Jira write",
+      "source_text": "Jira stage write-back (#311): a stage enum {intake, spec, dispatch, pr-open, merged, cleanup} written to the ticket through the jira bridge's post_comment verb (adapters/jira/src/jira_bridge/mapping.py:9; the four allowlisted verbs are post_comment, transition_issue, create_issue, read_issue, server.py:68-72) by a graph node \u2014 not by the sweep, which has no Jira write path by design (pr_upkeep_jira.py docstring, tests/test_pr_upkeep_sweep_jira.py) \u2014 and read back as the ticket's watermark; today the sweep's only stage notion is the free-form diagnostic f-string in SweepFailure (sweep.py:786-805) and its idempotency is the control plane's signal watermark row per source_key plus the run-input walk; self-echo filtering by bot account id (pr_upkeep_jira.py:150-163) already exists",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c33",
+      "seam": "actor_liveness row (migration 0058) + mesh collector sink",
+      "behavior": "the worker refuses from the persisted row after an API restart between probe and lease",
+      "source_text": "liveness observations are persisted where the worker can read them: the mesh collector caches observations in the API process's memory (internal/mesh/collector.go:47-53, cache map[string]Observation behind a sync.RWMutex; constructed only via api.WithMeshCollector, server.go:196) and prod-worker-1 is a separate container, so 'the worker reads the collector's cached observation' (c23) needs a persisted liveness row (or an API read) the worker consults at lease time; the row carries {actor_id, session_ok, reason, mode, checked_at}",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c35",
+      "seam": "land node per-checkout lease",
+      "behavior": "with a second active attempt on the producing checkout the reset does not run and a wait record is written",
+      "source_text": "the land node's pre-dispatch reset is guarded by a per-checkout lease: the sweep's fix node and an assigned developer package have already run in the SAME engine-account checkout at the same time on PR #307 (recorded in .devague/plans/presentable-floor-before-oauth.json, 'same engine-account checkout ... HEAD moved under the session'), so a reset that lands while another run is active destroys that run's work; the reset happens only when no active attempt holds the checkout, otherwise the land node waits or routes",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c37",
+      "seam": "pr.closed fact + cleanup on close",
+      "behavior": "a closed-unmerged PR emits one pr.closed fact and never pr.merged; its parked runs are cancelled with reason pr_closed and its refs are declined",
+      "source_text": "cleanup also runs when a PR is CLOSED without merge: the human-inbox tracker already observes github_pr_closed (mapping.py:53, tracker README required field 'reference') but no pr.closed fact or consumer exists in examples/ or internal/; on close the item's parked runs are cancelled with reason pr_closed and its refs are reported (unreachable from main, so never deleted) in the cleanup record",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c38",
+      "seam": "culture-land account tokens + land_reply",
+      "behavior": "the land node's client has no merge endpoint and the two token scopes are documented",
+      "source_text": "the culture-land account's tokens can push and reply but the land node never merges a PR: a fine-grained token with contents:write plus pull-requests:write is technically able to call the merge API, so the boundary is enforced by the node (no merge call) and audited by the honesty condition, keeping the lane doc's 'a person is always in it' property (pr-upkeep-lane.md:32-46) and human-merges-pr as the only merge path",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c39",
+      "seam": "land node per-target-branch lease",
+      "behavior": "two refs on one branch land in sequence with the second waiting on the lease; a stale rebase re-fetches once then routes",
+      "source_text": "one land at a time per target branch: two land nodes for two runs on the same PR branch would race (the second rebase goes stale when the first pushes, and its push is non-fast-forward \u2014 the exact failure that produced the review-fix side branches); the land node takes a lease keyed by target branch, and a stale rebase re-fetches and rebases again before pushing, bounded to two rounds before routing to a human",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c40",
+      "seam": "land node step records + idempotent re-run",
+      "behavior": "one record per step reached; a re-run after push adds no second commit and posts no second reply",
+      "source_text": "every land attempt is a stepwise record: the land node writes one record per step reached (fetch, rebase, gate, push, reply, resolve) with outcome, so a partial landing (pushed but not replied, replied but not resolved) is visible in the ledger and the node is idempotent on re-run \u2014 it detects a commit already on the branch, a reply already posted and a thread already resolved and skips them rather than pushing or replying twice",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c13",
+      "seam": "runner boundary for land and cleanup",
+      "behavior": "neither node runs in the control-plane process; both are fetched-by-digest code nodes under an engine account",
+      "source_text": "land and cleanup nodes execute only through the headspace-cli runner boundary (PRD: never a shell, script or Docker socket in the control-plane process); they use the engine account's own credentials (bridge-push.env for git, the jira bridge for Jira, devex for PR replies) and never the operator's Access cookie (#314's principle) \u2014 a dial-in bearer for an AGENT actor is admitted to exactly three write routes today (agentMayWrite, internal/api/actorbearer.go:76-85) so any new record these nodes write lands via the runner's observed path or needs that write set widened",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o16",
+      "claim_id": "c16",
+      "seam": "sweep write surface",
+      "behavior": "sweep.py's only control-plane write is POST /v1alpha1/events, it has no Jira write, and pr-upkeep.pr carries no subject",
+      "source_text": "the sweep stays the sole event emitter with no control-plane write path beyond POST /v1alpha1/events and no Jira write path; pr-upkeep.pr keeps no subject (#268); vendored skill bodies are not edited and the assign-to-workforce worktree/branch conventions are overridden per CLAUDE.md",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o17",
+      "claim_id": "c10",
+      "seam": "examples/pr-upkeep readiness code node + human-merges-pr context_refs",
+      "behavior": "the merge approval's context resolves to a collector output carrying ci, sonar, threads, devague-proposed and failing-evidence fields, and the approval is reachable only after the collector completed",
+      "source_text": "merge-gate readiness (#317, gate half): the human-merges-pr approval binds a deterministic collector node's output (CI checks, SonarCloud count, unresolved threads, proposed devague records, failing evidence) through context_refs so the human surface resolves it \u2014 presentation metadata is lifted out of the executable spec by the compiler (compile_test.go:174-206) and never reaches a human task payload (humantask.go:106-142 carries pointers, not values), so 'the approval presents readiness' means a collector node plus a binding, not a presentation field; the collector reuses .claude/skills/cicd/scripts/pr-status.sh (Sonar gate, issues, hotspots, unresolved tally) and devex pr read for checks",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }

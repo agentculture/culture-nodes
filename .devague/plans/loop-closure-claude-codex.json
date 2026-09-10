@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-07T05:30:10Z",
-  "updated": "2026-09-07T05:44:41Z",
+  "updated": "2026-09-07T09:37:50Z",
   "targets": [
     {
       "id": "c1",
@@ -814,6 +814,14 @@
     {
       "id": "r8",
       "text": "the pr-upkeep sweep schedule (01M0B29RF8ZTBHF9NQWB0MZNP1, 300 s) is PAUSED for the build by a hand-typed PATCH (counted hand-turn on #321, user decision for r4 revised 2026-09-07); it must be resumed at delivery (t19) and the lane doc's 'interval_seconds: 1800' is stale \u2014 the live row fires every 300 s",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "session-window fact (risk r5 realised): at ~11:00 IDT on 2026-09-07 the shared subscription window hit its limit with five local subagents building in parallel (t7, t10, t17 cut off mid-gate; t8, t11 had just reported); the limit reset at 11:30 and the three agents were resumed in place at 12:37 with their context intact and no work lost (worktrees held the uncommitted edits) \u2014 the local-subagent lane is not free of the meter, and after the codex lanes died every wave ran on it",
       "kind": "follow_up",
       "task_id": null,
       "resolved": false,

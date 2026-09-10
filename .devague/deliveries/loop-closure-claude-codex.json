@@ -1,0 +1,434 @@
+{
+  "plan_slug": "loop-closure-claude-codex",
+  "schema_version": 2,
+  "created": "2026-09-07T05:51:17Z",
+  "updated": "2026-09-10T16:10:59Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "wave 0 routing: t9 (bridge liveness) and t3 (jira labels) re-routed from codex-thor/codex-orin to local subagents in isolated worktrees; wave 0 is now five local sessions in the operator window and zero codex sessions; codex re-login on both hosts stays an owed hand-turn before any later wave routes to codex",
+      "task_ref": "t9",
+      "reason": "both codex lanes failed at execution with 'refresh token was revoked' (runs 01M1X6JM5BNQX7JXAJ1QJBSXBV thor, 01M1X6JV9P5GD5WRYA6N6D5TJN orin) minutes after 'codex login status' reported logged in on both hosts; plan risk r3 prescribed re-routing by hand and counting the turn; #303 updated with the evidence",
+      "affects": [
+        "t9",
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t4 orphan intake: the run-column re-key from gh:owner/repo#N to the created Jira key is an OPERATOR turn (countable hand-turn) until a control-plane step performs it; also two deployment literals (project SCRUM, label repo:agentculture/culture-nodes) ride in examples/pr-upkeep/workflow.yaml because bindings are pointer-or-constant and the jira verb's exact-key allowlist has no repository field \u2014 recorded in the workflow header as an exception; and the intake spends one developer session per orphan PR to stamp the Jira key into the PR body (the idempotency channel)",
+      "task_ref": "t4",
+      "reason": "the graph cannot address its own run (no /run/id pointer; an action.http node would need a deployment URL and a write credential in graph text, which the portability guard refuses) and an engine-native re-key-on-completion is new compiler/engine vocabulary the plan did not size; the API side (PATCH /runs/{id} {work_item} admitted once for gh:->Jira) is built and e2e-tested, and the mapping is readable before the PATCH from the jira actor's proposed create_issue claim",
+      "affects": [
+        "t4",
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "t13 cleanup node: in production its run cancels need either the operator's Access cookie granted to the node (against boundary c13's spirit) or a bounded policy widening that admits the runner/cleanup principal to POST /runs/{id}/cancel with a reason \u2014 a decision for the owner before the node is deployed; until then the cleanup of the 26 parked #307 runs and 8 branches stays an operator turn",
+      "task_ref": "t13",
+      "reason": "principalPolicy makes POST /v1alpha1/runs/{id}/cancel a namespace-administrator route and agentMayWrite (internal/api/actorbearer.go) does not admit agent bearers to it; admitting an agent principal to cancel runs is a policy decision the plan did not make, so t13 left the policy untouched and exposed NODES_API_TOKEN / NODES_API_COOKIE seams instead; also refs from runs that predate the work_item column are listed as unattributed and never deleted, so the first live run reports rather than removes the 8 existing review-fix/pr307-* branches",
+      "affects": [
+        "t13",
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "t7 (land gate + bump) re-routed to actor company/developer and t17 (Jira stage write-back) to actor company/planner, each in its own culture-claude checkout on spark, dispatched through nodes assign with --handover; the sweep is paused so the c35 checkout collision does not apply; the codex lanes stay out of every later wave until a re-login is proven by a dispatch",
+      "task_ref": "t7",
+      "reason": "2026-09-10: both codex lanes failed at execution with 'refresh token was revoked' (runs 01M25T4X4WFKVGF1MC645Z58EW thor, 01M25T4Z7A5WK9V7BFR6SMS1RK orin) \u2014 no interactive re-login has happened since d1; user direction is Culture Nodes actors with claude and codex, so the fallback is the claude bridge actors on spark, not local subagents",
+      "affects": [
+        "t7",
+        "t17"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 4
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "internal/api/runs_workitem_test.go (TestCreateRunWorkItemPersistsAndFilters, TestPatchRunRekeysOrphanWorkItemOnce, TestListRunsDoesNotFilterByCategory); internal/engine/trigger_workitem_test.go; tests/test_pr_upkeep_sweep_work_item.py (13)",
+      "behavior_text": "work_item persists, filters, is stamped from the event payload, and the sweep emits SCRUM-9 or gh:owner/repo#307",
+      "contract_text": "c2 work-item id",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_land_node.py (23); tests/test_land_gate.py (20); tests/test_land_reply.py (20) -- serial and xdist",
+      "behavior_text": "land core, gate+single bump, reply/resolve behave per acceptance; grep-asserted no --force and no merge call",
+      "contract_text": "c3 land node",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "adapters/codex/tests/test_liveness.py (36); adapters/claude-code/tests/test_liveness.py (10); internal/worker liveness tests (7, live Postgres); internal/api Liveness/Lock/Resume tests; tests/test_doctor_lane_liveness.py (8); tests/test_deploy_liveness_detector.py (7)",
+      "behavior_text": "CHECK/LOCK semantics, fallback routing record, resume AND-unlock, doctor fifth check, deploy detector",
+      "contract_text": "c4 lane liveness",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_pr_upkeep_analysis.py (50); tests/e2e orphanintake+stagewriteback fakes answer analyse",
+      "behavior_text": "verdicts, bundling, one file per fact, pushbacks in output",
+      "contract_text": "c5 analysis node",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_cleanup_node.py (7, scratch bare remotes + fake API); internal/api/cancelreason_test.go (3)",
+      "behavior_text": "reachability guard, decline listing, cancel reason in run.cancelled, bodiless operator cancel unchanged",
+      "contract_text": "c6 cleanup node",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_open_issue_disposition.py (18); tests/test_land_gate.py bump tests; live: issues #323 and #324 opened through --disposition with the check green",
+      "behavior_text": "rows appended + report regenerated; one bump per landing",
+      "contract_text": "c7 close what it opens",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "internal/ledger/handturn_test.go (8); internal/api/handturns_test.go (6, live Postgres); tests/test_hand_turn_observer.py (11); tests/test_hand_turn_cli.py (6)",
+      "behavior_text": "authority matrix unchanged, confirmed-only stats, observer proposes 13 turns on the #307 fixture",
+      "contract_text": "c8 hand-turn record",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_pr_upkeep_stage.py; tests/test_stage_write_back_graphs.py; tests/e2e/stagewriteback_test.go (TestATicketDrivenEndToEndShowsOneCommentPerStage); tests/test_pr_upkeep_sweep_jira.py (no write path)",
+      "behavior_text": "one comment per stage, watermark read, replay emits zero, sweep GET-only",
+      "contract_text": "c9 Jira stage write-back",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "internal/worker TestAWorkerStartedAfterTheRowWasWrittenStillRefusesFromIt; internal/store/postgres actorliveness tests (3); internal/mesh collector tests",
+      "behavior_text": "persisted liveness survives a restart; collector write never clears a lock",
+      "contract_text": "c33 persisted liveness",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_land_node.py::test_a_second_active_attempt_on_the_actor_checkout_blocks_the_reset and ::test_a_held_checkout_file_lock_blocks_the_reset_too",
+      "behavior_text": "reset blocked by control-plane probe or file lock; wait record",
+      "contract_text": "c35 checkout lease",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_pr_upkeep_sweep_closed.py (18); tests/test_cleanup_node.py::test_closed_pr_cancels_parked_runs_with_reason_pr_closed_and_declines_its_refs",
+      "behavior_text": "closed fact shape, watermark, cancel reason pr_closed",
+      "contract_text": "c37 cleanup on close",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_land_node.py::test_the_script_makes_no_merge_api_call; tests/test_land_reply.py merge-endpoint grep test; tests/deploy TestReadmeDocumentsTheLandAccountTokenScopesAndTheNoMergeRule",
+      "behavior_text": "no merge call in land.py or land_reply.py; README states the scopes and the human-only merge",
+      "contract_text": "c38 never merges",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "tests/test_land_node.py::test_two_refs_on_one_branch_land_in_sequence_with_the_second_waiting; ::test_a_stale_rebase_refetches_once_then_lands; ::test_a_rebase_stale_twice_routes_to_a_human_and_pushes_nothing",
+      "behavior_text": "branch lease serialises landings; bounded re-fetch then human routing",
+      "contract_text": "c39 one land per branch",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "tests/test_land_node.py::test_a_rerun_after_push_adds_no_second_commit; ::test_a_rerun_detects_an_equivalent_rewritten_commit; tests/test_land_reply.py idempotency tests",
+      "behavior_text": "per-step records; idempotent push, reply, resolve",
+      "contract_text": "c40 stepwise idempotent landing",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "tests/lint TestEveryExampleWorkflowCompiles + portability/credential guards over examples/land and examples/cleanup; tests/deploy land cutover tests",
+      "behavior_text": "code nodes through the runner with digest-verified bootstrap; land account registered as runner-account",
+      "contract_text": "c13 runner boundary",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o16",
+      "test_ref": "tests/test_pr_upkeep_sweep_jira.py::test_it_has_no_write_path_of_its_own; tests/test_pr_upkeep_sweep_work_item.py::TestUpkeepPrFact::test_carries_work_item_and_no_subject",
+      "behavior_text": "sweep stays the sole event emitter, GET-only Jira, no subject",
+      "contract_text": "c16 sweep boundary",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit cb4a89c on the merged build branch, outcome recorded verbatim",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T15:52:00Z",
+        "commit": "cb4a89c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o17",
+      "test_ref": "tests/test_pr_upkeep_readiness.py (31, fake GitHub + Sonar + temp .devague); tests/e2e/stagewriteback_test.go (pending merge task's context_refs carries the readiness pointer); tests/e2e/orphanintake_test.go (no_change never visits the collector)",
+      "behavior_text": "readiness block with the five fields resolves from the human task's binding; approval reachable only from readiness.collected; Sonar/thread queries match pr-status.sh",
+      "contract_text": "c10 merge-gate readiness",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran agent-side at commit f08ea40 on the merged build branch after the t18 merge",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T16:15:00Z",
+        "commit": "f08ea40"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 21
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "land_gate.py resolved the land module by sys.modules name, so with two copies of land.py loaded in one process its refusals escaped land.py's handler as crashes instead of refusal records; amended to take the caller's Refusal class explicitly (t8's pattern). Found by the validate-delivery serial run (three test_land_gate failures after test_land_node), invisible under xdist ordering",
+      "caused_by": [
+        "c3"
+      ],
+      "evidence_refs": [
+        "e2"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "the orphan-ticket run re-key from gh:owner/repo#N to the Jira key is admitted by PATCH /runs/{id} once, but no graph step performs it: it is an operator turn until a control-plane step does it (deviation d2)",
+      "caused_by": [
+        "c2"
+      ],
+      "evidence_refs": [
+        "e1"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "the cleanup node's run cancels need a principal the cancel route admits; agent bearers are not admitted today, so in production the node needs the operator cookie or a bounded policy widening (deviation d3)",
+      "caused_by": [
+        "c6"
+      ],
+      "evidence_refs": [
+        "e5"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

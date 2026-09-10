@@ -595,7 +595,9 @@ def test_an_unreadable_source_is_null_with_a_named_failure(github, sonar, devagu
     assert block["sonar"] is None
     assert [f["source"] for f in block["failures"]] == ["sonar"]
     # ... and the other four fields were still collected.
-    assert block["ci"] and block["threads"] and block["devague"] is not None
+    assert block["ci"]
+    assert block["threads"]
+    assert block["devague"] is not None
 
 
 def test_an_unreadable_github_leaves_ci_and_threads_null(github, sonar, devague):

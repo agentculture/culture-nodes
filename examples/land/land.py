@@ -437,6 +437,12 @@ class Checkout:
         return self.ssh(["git", "-C", self.path, *args], check=check)
 
     def ssh(self, argv: list[str], check: bool = True) -> subprocess.CompletedProcess:
+        # The `--` goes AFTER the destination, which is where ssh consumes it:
+        # it ends local option parsing and is not sent as the first word of the
+        # remote command. Measured against a live sshd (OpenSSH 9.6p1) with this
+        # exact argv: SSH_ORIGINAL_COMMAND is `remote_cmd` alone. It is what
+        # stops a remote_cmd starting with `-` from being read as a local flag;
+        # the destination itself is operator config (cutover.sh), not run input.
         remote_cmd = " ".join(shlex.quote(a) for a in argv)
         options = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
         proc = subprocess.run(  # nosec B603 B607 - fixed binary on PATH, argv list

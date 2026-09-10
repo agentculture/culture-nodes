@@ -90,3 +90,57 @@ func TestCallbackWithoutALaneLockerCommitsAndLocksNothing(t *testing.T) {
 		t.Fatalf("ActorLiveness = (found=%v, %v), want no row without a locker", ok, err)
 	}
 }
+
+// The shape the fix closes (Qodo High, PR #326). A production async lane is
+// the one whose deadline is most likely to fire first: the scheduler
+// reclaims the work item and records a `timed_out` attempt, and only then
+// does the bridge's `failed`/credential_spent event arrive — to a stale
+// claim. §13.4 still refuses that completion, and must. But the refusal is
+// about the ATTEMPT, and a spent refresh token is a fact about the LANE.
+// Locking only after a successful re-lease meant this path returned through
+// late() without ever touching actor_liveness, so the dead lane was leased
+// again as soon as the collector's fact aged out and its fallback_actor was
+// never taken — exactly the failure lanelock.go exists to end, surviving in
+// the one ordering that matters most.
+func TestLateCallbackFailedCredentialSpentStillLocksTheLane(t *testing.T) {
+	f := newAsyncFixtureForActor(t)
+	f.deps.LaneLocker = f.callbacks
+
+	f.deadlineExpiry()
+
+	result := f.handle(failedEvent("ev-late-spent", actors.ClassCredentialSpent))
+	if result.Disposition != actors.DispositionLate {
+		t.Fatalf("disposition = %s (%s), want late: the work item was reclaimed, so §13.4 refuses the completion",
+			result.Disposition, result.Diagnostic)
+	}
+	if result.Completion != nil {
+		t.Error("a late completion committed a result; §13.4 forbids it")
+	}
+
+	row, ok, err := f.store.ActorLiveness(f.ctx, f.ns.ID, parkedActorKey)
+	if err != nil || !ok {
+		t.Fatalf("ActorLiveness = (found=%v, %v), want the locked row for %s: a credential reported late is still spent",
+			ok, err, parkedActorKey)
+	}
+	if !row.Locked || row.SessionOK == nil || *row.SessionOK {
+		t.Fatalf("row = %+v, want locked session_ok=false", row)
+	}
+	if row.Reason != actors.LivenessLockReason || row.Source != storepg.LivenessSourceWorker {
+		t.Errorf("reason/source = %s/%s, want %s/%s: a late lock reads the same as a committed one",
+			row.Reason, row.Source, actors.LivenessLockReason, storepg.LivenessSourceWorker)
+	}
+	if row.LockedByRunID != f.run.ID || row.LockedByAttemptID != f.attemptID {
+		t.Errorf("lock provenance = run %q attempt %q, want run %q attempt %q",
+			row.LockedByRunID, row.LockedByAttemptID, f.run.ID, f.attemptID)
+	}
+	if row.Live(time.Now().UTC()) {
+		t.Error("a freshly locked row reads live")
+	}
+	if !f.hasEvent(actors.TypeLaneLocked) {
+		t.Errorf("run events %v carry no %s", f.eventTypes(), actors.TypeLaneLocked)
+	}
+	if !f.hasEvent(actors.TypeCallbackLate) {
+		t.Errorf("run events %v carry no %s; the lock must not replace the §13.4 refusal record",
+			f.eventTypes(), actors.TypeCallbackLate)
+	}
+}

@@ -759,6 +759,16 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 
 	if err := deps.Store.ResumeWaitingWork(ctx, inv, deps.resumeLease()); err != nil {
 		if errors.Is(err, engine.ErrStaleClaim) {
+			// Lock before the refusal, for the same reason the committed
+			// path locks after it: a spent credential is a fact about the
+			// LANE, and a report that lost the race for its work item is no
+			// less a report that the lane's session is gone. Locking only
+			// after a successful re-lease left the commonest async shape
+			// unlocked — the deadline fires, the item is reclaimed, and the
+			// bridge's credential_spent event arrives to a stale claim — so
+			// the dead lane was leased again as soon as the collector's fact
+			// aged out, which is the failure lanelock.go exists to end.
+			deps.lockLaneIfCredentialSpent(ctx, inv, ev)
 			return deps.late(ctx, inv, ev, req,
 				fmt.Sprintf("attempt %s is no longer parked under fencing token %d attempt %d; the work was reclaimed, cancelled, or already completed",
 					inv.AttemptID, inv.FencingToken, inv.Attempt))
@@ -770,9 +780,10 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 
 	completion, err := deps.Engine.CompleteAttempt(ctx, req)
 	// A spent session credential locks the lane whatever the engine decided
-	// about THIS completion: the fact is about the lane, not the attempt,
-	// and the sync path (internal/worker/dispatch.go) locks after its own
-	// completion the same way. Best-effort — see lanelock.go.
+	// about THIS completion — committed, or refused as late below: the fact
+	// is about the lane, not the attempt, and the sync path
+	// (internal/worker/dispatch.go) locks after its own completion the same
+	// way. Best-effort — see lanelock.go.
 	deps.lockLaneIfCredentialSpent(ctx, inv, ev)
 	if err != nil {
 		// The item is leased to a completion that did not happen, and no

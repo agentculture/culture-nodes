@@ -242,7 +242,8 @@ class TestTheOrphanIdempotencyLimitIsDocumented:
     @pytest.mark.parametrize("doc", DOCS, ids=lambda path: path.name)
     def test_the_doc_names_the_case_that_opens_a_second_ticket(self, doc):
         text = doc.read_text(encoding="utf-8").lower()
-        assert "second" in text and "orphan" in text, doc.name
+        assert "second" in text, doc.name
+        assert "orphan" in text, doc.name
         # What the reader needs is the CAUSE: the key is not on the PR body,
         # either because the write failed or because it was edited away.
         assert "edited out" in text or "edits out" in text, doc.name

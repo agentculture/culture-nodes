@@ -476,7 +476,8 @@ def test_an_unknown_lint_job_is_refused_before_the_chain_starts(
     assert len(named) == 1
     assert named[0]["job"] == "roott"
     assert named[0]["known"] == list(land_gate.LINT_ALL_JOBS)
-    assert named[0]["work_item"] == WORK_ITEM and named[0]["land_run_id"] == LAND_RUN
+    assert named[0]["work_item"] == WORK_ITEM
+    assert named[0]["land_run_id"] == LAND_RUN
     gate = steps(records)["gate"]
     assert gate["outcome"] == "refused" and gate["reason"] == "lint_job_unknown"
     assert gate_log(tmp_path) == [], "the chain ran on a job the script does not have"

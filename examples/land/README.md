@@ -63,7 +63,9 @@ missing toolchain refuses by name before the first step (`toolchain_missing`),
 which is how "Go is not on thor" reads in the ledger. The deploy reports the
 same fact per binary for `culture-land`
 (`deploy/prod/lanes/land-toolchain.sh`, called at the end of `deploy.sh thor`
-and `deploy.sh orin`).
+and `deploy.sh orin`): the check itself fails naming the missing binaries, and
+the call site guards it, because installing one is a counted hand-turn a
+deploy cannot type.
 
 ## What it never does
 

@@ -340,8 +340,9 @@ def refuse_missing(ctx: Any, land: Any, missing: list[str]) -> None:
     )
     raise land.Refusal(
         f"gate toolchain missing on this host: {', '.join(missing)}",
-        "install it on the runner host for the culture-land account (deploy.sh's land_toolchain_check "
-        "reports the same fact per binary); installing is a counted hand-turn",
+        "install it on the runner host for the culture-land account (deploy.sh's "
+        "land_toolchain_check reports the same fact per binary); installing is a "
+        "counted hand-turn",
         land.EXIT_ENVIRONMENT,
     )
 

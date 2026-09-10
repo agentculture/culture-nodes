@@ -945,7 +945,7 @@ case "$HOST" in
     # lane this deploy shipped.
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
-    land_toolchain_check "$HOST"   # third detector (t7): the land gate's go/uv/node/markdownlint, per binary
+    land_toolchain_check "$HOST" || true   # third detector (t7): the land gate's go/uv/node/markdownlint, per binary; guarded because installing one is a hand-turn a deploy cannot type
     account_bridges_summary "$HOST"
     deploy_summary thor
     ;;
@@ -976,7 +976,7 @@ case "$HOST" in
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
-    land_toolchain_check "$HOST"   # same detector as the thor arm (t7)
+    land_toolchain_check "$HOST" || true   # same guarded detector as the thor arm (t7)
     account_bridges_summary "$HOST"
     deploy_summary orin
     ;;

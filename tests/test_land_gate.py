@@ -33,22 +33,18 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_land_node import (  # noqa: F401 - fixtures are collected by name
-    ACTOR_ID,
+from tests.test_land_node import (
     EXAMPLE_DIR,
     LAND_RUN,
     PRODUCING_RUN,
     TARGET,
     WORK_ITEM,
     WORKFLOW,
-    actor_checkout,
     code_only,
     commit_file,
     git,
     land,
-    land_ws,
     log_subjects,
-    mint_handover,
     result,
     run_land,
     steps,
@@ -89,7 +85,8 @@ echo "$name: ok"
 _LINT_ALL_STUB = """#!/usr/bin/env bash
 printf 'lint-all %s\\n' "$*" >> "$FAKE_GATE_LOG"
 if [ "${FAKE_GATE_FAIL:-}" = lint-all ]; then
-  echo "<<< FAILED flake8 (fake)"
+  echo "<<< FAILED flake8 -- fake failure line 1"
+  echo "lint-all: fake failure line 2 -- the tail the human reads" >&2
   exit 1
 fi
 echo "lint-all: every job green (fake)"
@@ -144,6 +141,25 @@ def origin(tmp_path: Path) -> Path:
     bare = tmp_path / "origin.git"
     git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
     return bare
+
+
+@pytest.fixture
+def land_ws(tmp_path: Path, origin: Path) -> Path:
+    """The culture-land account's checkout: NODES_WORKSPACE for the node.
+    Declared here rather than imported so it clones the GATE-shaped origin
+    above -- the one carrying pyproject, CHANGELOG, lint-all and bump.py."""
+    ws = tmp_path / "culture-nodes-land"
+    git(tmp_path, "clone", "-q", "-b", TARGET, str(origin), str(ws))
+    return ws
+
+
+@pytest.fixture
+def actor_checkout(tmp_path: Path, origin: Path) -> Path:
+    """The producing actor's checkout, where the handover ref is minted; its
+    path doubles as the actor's `handover_remote`."""
+    co = tmp_path / "culture-nodes-developer"
+    git(tmp_path, "clone", "-q", "-b", TARGET, str(origin), str(co))
+    return co
 
 
 @pytest.fixture(autouse=True)
@@ -483,6 +499,60 @@ def test_a_missing_toolchain_refuses_by_name_before_running_anything(
     assert gate["outcome"] == "refused" and gate["reason"] == "toolchain_missing"
     assert gate["missing"] == ["go"]
     assert gate_log(tmp_path) == [], "the chain started although a toolchain was missing"
+    assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before
+    assert "push" not in steps(records)
+
+
+def test_a_malformed_findings_override_refuses_before_the_chain_starts(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    """LAND_FINDINGS_JSON is operator configuration. Bad configuration is an
+    environment refusal naming the variable -- not a landing that quietly
+    falls back to the commit subjects, and not a red gate blamed on a step."""
+    before = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["fix a"])
+    monkeypatch.setenv("LAND_FINDINGS_JSON", '{"not": "a list"}')
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_ENVIRONMENT, records
+    res = result(records)
+    assert res["outcome"] == "environment"
+    assert "LAND_FINDINGS_JSON" in res["error"]
+    assert gate_log(tmp_path) == [], "the chain ran on configuration the gate could not read"
+    assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before
+    assert "push" not in steps(records)
+    assert not routing_records(records), "bad configuration is not a human routing decision"
+
+
+def test_a_tree_without_bump_py_refuses_after_a_green_chain_and_pushes_nothing(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    """One bump per landing needs the bumper. A tree that does not carry
+    .claude/skills/version-bump/scripts/bump.py cannot be landed silently
+    unbumped -- the gate refuses, and the branch does not move."""
+    before = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    original = git(actor_checkout, "rev-parse", "--abbrev-ref", "HEAD")
+    git(actor_checkout, "checkout", "-q", "--detach")
+    git(actor_checkout, "rm", "-q", "-r", "--", ".claude")
+    git(actor_checkout, "commit", "-q", "-m", "drop the version-bump skill")
+    sha = commit_file(actor_checkout, "src/a.py", "a = 1\n", "fix a")
+    ref = f"refs/culture-nodes/{PRODUCING_RUN}/20260907T000000Z-nobump"
+    git(actor_checkout, "update-ref", ref, sha)
+    git(actor_checkout, "checkout", "-q", original)
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_ENVIRONMENT, records
+    res = result(records)
+    assert res["outcome"] == "environment"
+    assert land_gate.BUMP_SCRIPT in res["error"]
+    # The chain itself was green: the refusal is about the bump, not a step.
+    assert [line.split()[0] for line in gate_log(tmp_path)] == ["uv", "go", "lint-all"]
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before
     assert "push" not in steps(records)
 

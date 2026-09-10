@@ -14,7 +14,10 @@ stack half-shipped for a fact it can only report.
 Run under tests/test_deploy_unix_user.py's fake-host harness (the ssh shim
 maps culture-land@thor-fake to a fake home and runs the remote command
 there, inheriting the test's PATH), so which binaries are "present" is
-exactly what this test puts on PATH -- never the developer's machine.
+exactly what this test puts on PATH -- never the developer's machine. The
+harness runs the lane under `set -e`, which is how these tests can tell the
+difference between a check that FAILS by name and a deploy that aborts: the
+check returns 1, and the deploy's own call site guards it.
 """
 
 from __future__ import annotations
@@ -26,7 +29,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_deploy_unix_user import _SSH_SHIM, THOR, _block, _write_exec
+# The deploy-shaped ssh shim, not the lane-shaped one: this lane's
+# reachability probe passes `-o BatchMode=yes -o ConnectTimeout=15` ahead of
+# the target, which only the account-bridges variant strips.
+from tests.test_deploy_account_bridges import _SSH_SHIM
+from tests.test_deploy_unix_user import THOR, _block, _write_exec
 
 ROOT = Path(__file__).resolve().parents[1]
 LANE = ROOT / "deploy/prod/lanes/land-toolchain.sh"
@@ -102,10 +109,10 @@ def test_the_check_prints_one_line_per_binary_and_names_the_missing_one(tmp_path
     fleet.bootstrap_land()
     fleet.install("uv", "node", "markdownlint-cli2")  # the thor shape: no go
 
-    proc = fleet.run('land_toolchain_check "$HOST"; echo "rc=$?"')
+    proc = fleet.run('land_toolchain_check "$HOST" || echo "rc=$?"')
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    assert "rc=0" in proc.stdout, "a detector never changes the deploy's exit code"
+    assert "rc=1" in proc.stdout, "a missing binary must make the CHECK fail, by name"
     for name in ("uv", "node", "markdownlint-cli2"):
         present = lines(proc, f"land toolchain: {name} present")
         assert len(present) == 1, (name, proc.stdout)
@@ -131,6 +138,7 @@ def test_every_binary_present_is_said_so_and_nothing_warns(tmp_path):
     proc = fleet.run('land_toolchain_check "$HOST"; echo "rc=$?"')
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "rc=0" in proc.stdout
     for name in BINARIES:
         assert len(lines(proc, f"land toolchain: {name} present")) == 1, proc.stdout
     assert not lines(proc, "MISSING")
@@ -161,8 +169,11 @@ def test_the_binary_list_is_the_gate_declaration(tmp_path):
     fleet = Fleet(tmp_path)
     fleet.bootstrap_land()
     fleet.install("uv")
-    proc = fleet.run('land_toolchain_check "$HOST"', LAND_TOOLCHAIN_BINARIES="uv shellcheck")
+    proc = fleet.run(
+        'land_toolchain_check "$HOST" || echo "rc=$?"', LAND_TOOLCHAIN_BINARIES="uv shellcheck"
+    )
     assert proc.returncode == 0, proc.stderr
+    assert "rc=1" in proc.stdout
     assert lines(proc, "uv present") and lines(proc, "shellcheck MISSING")
     assert not lines(proc, "go ")
 
@@ -173,23 +184,31 @@ def test_deploy_wires_the_detector_into_both_runner_arms_under_the_line_limit():
     script = DEPLOY.read_text()
     assert 'source "$SCRIPT_DIR/lanes/land-toolchain.sh"' in script
     assert script.count('land_toolchain_check "$HOST"') == 2, "thor and orin arms, once each"
+    assert (
+        script.count('land_toolchain_check "$HOST" || true') == 2
+    ), "the check may fail by name; the deploy may not abort on it"
     assert len(script.splitlines()) <= 1000
     # After the doctor, before the summary, in each arm: a detector that
-    # speaks once the stack is up, like audit-credentials.sh.
+    # speaks once the stack is up, like audit-credentials.sh. `thor*)` also
+    # names arms inside helper functions, so the dispatch is read from the
+    # one `case "$HOST" in` at the tail of the script.
+    dispatch = script.split('case "$HOST" in')[-1]
     for arm in ("thor*)", "orin*)"):
-        body = script.split(arm, 1)[1].split(";;", 1)[0]
+        body = dispatch.split(arm, 1)[1].split(";;", 1)[0]
         assert (
             body.index("nodes doctor")
             < body.index("land_toolchain_check")
             < body.index("account_bridges_summary")
         ), arm
     # The spark arm runs bridge lanes only and has no land account to probe.
-    spark = script.split("spark*)", 1)[1].split(";;", 1)[0]
+    spark = dispatch.split("spark*)", 1)[1].split(";;", 1)[0]
     assert "land_toolchain_check" not in spark
 
 
 @pytest.mark.parametrize("marker", ["set -e", "exit 1"])
 def test_the_lane_is_sourced_and_never_exits_the_caller(marker):
+    """A sourced lane RETURNS -- `return 1` reports a failed check to its
+    caller, while an `exit` would end the deploy the caller is still running."""
     lane = LANE.read_text()
     assert marker not in lane, f"a sourced detector must not carry `{marker}`"
-    assert "return 0" in lane
+    assert "return 0" in lane and "return 1" in lane

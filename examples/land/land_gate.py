@@ -47,6 +47,21 @@ to a defect nobody found, on a chain whose every measured step was green,
 would make every production landing red for a fact about the host. Exit 1
 still routes, and so does exit 2 from any other step.
 
+# The two host preconditions, declared and refused by name
+
+This module owns both facts about the HOST that a landing cannot proceed
+without, and land.py reaches the first of them BEFORE its fetch rather than
+at the gate: `check_workspace` measures that the job started IN culture-land's
+CHECKOUT (a git repository with an `origin`). That is a deployment fact and
+not a graph field -- `operation.workspaceRef` is a JSON Pointer into the run's
+own surfaces and no node upstream of `land` produces the checkout as an
+artifact, while a container-backed runner's workspace is a copy it destroys on
+the way out, which cannot hold a branch lease that has to outlive the job
+(examples/land/workflow.yaml, "THE CHECKOUT THIS NODE RUNS IN"). So a runner
+that started this job in an empty directory is `workspace_not_a_checkout`
+naming the path, exit 2 -- not `fatal: not a git repository` three git calls
+into the fetch.
+
 # Toolchains, declared and refused by name
 
 REQUIRED_TOOLCHAINS names the four binaries the chain needs and what each is
@@ -428,6 +443,56 @@ def refuse_missing(ctx: Any, land: Any, missing: list[str]) -> None:
         "counted hand-turn",
         land.EXIT_ENVIRONMENT,
     )
+
+
+#: The remediation lines the two workspace refusals carry. Both name the
+#: DEPLOYMENT, because neither is anything a graph or a re-run can fix.
+WORKSPACE_HINT = (
+    "deploy the land runner service so its jobs run IN culture-land's checkout and hand that "
+    "path to the operation as NODES_WORKSPACE (examples/land/workflow.yaml, 'THE CHECKOUT THIS "
+    "NODE RUNS IN'); a code node cannot declare it"
+)
+ORIGIN_HINT = (
+    "point the land checkout's `origin` at the repository this node pushes to -- it is the "
+    "remote the credential is scoped to and the one the branch tip is read from"
+)
+
+
+def refuse_workspace(ctx: Any, land: Any, reason: str, message: str, hint: str) -> None:
+    ctx.records.step("workspace", "refused", reason=reason, workspace=str(ctx.workspace))
+    raise refusal_class(ctx)(message, hint, land.EXIT_ENVIRONMENT)
+
+
+def check_workspace(ctx: Any, refusal: type[Exception] | None = None) -> dict[str, Any]:
+    """land.py's `workspace` step -- the host precondition it reaches BEFORE
+    the fetch. Returns the step's fields; refuses by name when the job did not
+    start in a checkout (see this module's docstring for why that can only be
+    measured, never declared)."""
+    global _REFUSAL
+    _REFUSAL = refusal
+    land = land_module(ctx)
+    ws = ctx.workspace
+    common = ("rev-parse", "--path-format=absolute", "--git-common-dir")
+    git_dir = land.git(ws, *common, check=False)
+    if git_dir.returncode != 0:
+        refuse_workspace(
+            ctx, land, "workspace_not_a_checkout", f"{ws} is not a git checkout", WORKSPACE_HINT
+        )
+    origin = land.git(ws, "remote", "get-url", land.PUSH_REMOTE, check=False)
+    if origin.returncode != 0:
+        refuse_workspace(
+            ctx,
+            land,
+            "origin_not_configured",
+            f"{ws} has no {land.PUSH_REMOTE} remote",
+            ORIGIN_HINT,
+        )
+    return {
+        "outcome": "ok",
+        "workspace": str(ws),
+        "git_dir": git_dir.stdout.strip(),
+        "origin": land.redact(origin.stdout.strip()),
+    }
 
 
 def route_red(ctx: Any, land: Any, failed: StepResult, done: list[StepResult]) -> None:

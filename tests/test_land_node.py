@@ -715,6 +715,62 @@ def test_the_handover_ref_fence(monkeypatch, capsys, land_ws, actor_checkout):
     ), "a ref minted under another run's id is not this run's handover"
 
 
+# ---------------------------------------------------------------------------
+# the checkout the job started in (the deployment precondition, measured)
+# ---------------------------------------------------------------------------
+
+
+def test_a_workspace_that_is_not_a_checkout_is_refused_by_name(
+    monkeypatch, capsys, tmp_path, actor_checkout
+):
+    """A runner that started this job in an empty directory -- the shape a
+    container-backed runner with an ephemeral workspace gives -- is a named
+    deployment refusal, not `fatal: not a git repository` inside the fetch."""
+    empty = tmp_path / "empty-workspace"
+    empty.mkdir()
+    ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a\n", "x")
+    code, records = run_land(
+        monkeypatch, capsys, workspace=empty, handover_ref=ref, handover_remote=actor_checkout
+    )
+    assert code == land.EXIT_ENVIRONMENT
+    step = steps(records)["workspace"]
+    assert step["outcome"] == "refused"
+    assert step["reason"] == "workspace_not_a_checkout"
+    assert step["workspace"] == str(empty.resolve())
+    # Nothing past the precondition ran: no fetch, no lease, no push.
+    assert set(steps(records)) == {"workspace"}
+    res = result(records)
+    assert res["outcome"] == "environment"
+    assert "NODES_WORKSPACE" in res["hint"]
+
+
+def test_a_checkout_without_an_origin_is_refused_by_name(
+    monkeypatch, capsys, land_ws, actor_checkout
+):
+    git(land_ws, "remote", "remove", "origin")
+    ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a\n", "x")
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+    assert code == land.EXIT_ENVIRONMENT
+    step = steps(records)["workspace"]
+    assert step["outcome"] == "refused" and step["reason"] == "origin_not_configured"
+    assert set(steps(records)) == {"workspace"}
+
+
+def test_a_real_checkout_records_the_workspace_it_measured(
+    monkeypatch, capsys, land_ws, actor_checkout
+):
+    ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a\n", "x")
+    _, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+    step = steps(records)["workspace"]
+    assert step["outcome"] == "ok"
+    assert step["workspace"] == str(land_ws.resolve())
+    assert step["git_dir"].endswith(".git")
+
+
 def test_an_option_shaped_remote_is_refused(monkeypatch, capsys, land_ws, actor_checkout):
     ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a\n", "x")
     code, _ = run_land(
@@ -831,6 +887,7 @@ def test_workflow_declares_the_inputs_and_routes_every_exit_code():
 
 
 def test_workflow_prose_names_every_granted_value():
+    yaml = pytest.importorskip("yaml")
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "Deployment configuration" in text
     for name in (
@@ -842,3 +899,9 @@ def test_workflow_prose_names_every_granted_value():
         "runner://headspace/land",
     ):
         assert name in text
+    # The checkout is a DEPLOYMENT grant like the rest: workspaceRef cannot
+    # carry it, so the prose has to, and the node has to measure it.
+    assert "THE CHECKOUT THIS NODE RUNS IN" in text
+    assert "NODES_WORKSPACE" in text
+    assert "workspace_not_a_checkout" in text
+    assert "workspaceRef" not in yaml.safe_load(text)["spec"]["nodes"]["land"]["operation"]

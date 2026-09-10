@@ -35,6 +35,7 @@ curl -s -X POST "$NODES_API_URL/v1alpha1/events" \
 
 | step | what it does | on trouble |
 |---|---|---|
+| `workspace` | the deployment precondition, measured before the first git call: `NODES_WORKSPACE` (else the job's cwd) is a git checkout and has an `origin` | `workspace_not_a_checkout` / `origin_not_configured` record naming the path, exit 2 |
 | `fetch` | fetch `handover_ref` from `handover_remote`; refuse a ref outside `refs/culture-nodes/<run_id>/` | exit 4 |
 | `lease` | per-target-branch lock directory under the land checkout's `.git` | `waiting`, exit 5 |
 | `rebase` | skip if already on the branch (ancestor or `git cherry` equivalent); route `.github/` changes; rebase in a scratch worktree | conflict → derived routing record, exit 3, no push |
@@ -57,6 +58,31 @@ The routing record uses `internal/repair`'s shape (a `derived` `decision`
 selecting `human`, `dispatched: false`) with `router: land_routing` and the
 reasons `rebase_conflict`, `stale_after_retry`, `gate_failed` or the inherited
 `out_of_workflow_scope`.
+
+## The checkout the node runs in
+
+The runner service registered as `runner://headspace/land` must be deployed so
+its jobs start **in culture-land's checkout** on that host
+(`/home/culture-land/git/culture-nodes-land`, the path `cutover.sh`'s
+`LAND_HANDOVER_REMOTE` names), and that path must reach the operation as
+`NODES_WORKSPACE`. The node cannot declare it: `operation.workspaceRef` is a
+JSON Pointer into the run's own surfaces
+(`internal/compiler/contract.go`, `checkWorkspaceRef`) and nothing upstream of
+`land` produces the checkout as an artifact — the same choice
+`examples/development-loop` records for its gate. Staging a copy would not do
+either: a container-backed runner destroys its workspace on the way out
+(`internal/runners/headspace/doc.go`), while the branch lease is a lock
+directory under this `.git` that has to **outlive the job** for the next
+landing to serialise on it, `origin` is the remote the push credential is
+scoped to, and the gate runs `go`/`uv`/`node` off the land account's PATH.
+
+So it is a deployment fact, and what the node can do is measure it. The
+`workspace` step runs before the fetch and refuses by name —
+`workspace_not_a_checkout` or `origin_not_configured`, exit 2, naming the path
+— instead of failing three git calls deep with `fatal: not a git repository`.
+It lives in `land_gate.py` (`check_workspace`), which owns the other host
+precondition too and refuses it the same way (`toolchain_missing`); `land.py`
+reaches it before the fetch rather than at the gate.
 
 ## The gate and the single bump (task t7)
 

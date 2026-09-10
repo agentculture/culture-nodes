@@ -59,6 +59,36 @@
 #                               account and its checkout (deploy/prod/cutover.sh
 #                               `<host> land`; actor company/land-<host>).
 #
+#   THE CHECKOUT THIS NODE RUNS IN -- a deployment fact, and NOT a field of
+#   this graph:
+#     runner://headspace/land must be deployed so every job it runs starts in
+#     culture-land's own checkout on that host
+#     (/home/culture-land/git/culture-nodes-land, the path cutover.sh's
+#     LAND_HANDOVER_REMOTE names), and so that path is what reaches the
+#     operation as NODES_WORKSPACE. land.py resolves its repository from
+#     NODES_WORKSPACE, else the job's working directory, and MEASURES it
+#     before the first fetch: a job that started somewhere with no git
+#     repository, or with no `origin`, is a `workspace` step refused BY NAME
+#     (`workspace_not_a_checkout` / `origin_not_configured`, exit 2) rather
+#     than `fatal: not a git repository` three git calls deep -- the same
+#     shape land_gate.py's `toolchain_missing` gives the other host
+#     precondition.
+#
+#     `operation.workspaceRef` is deliberately ABSENT and could not carry
+#     this (examples/development-loop records the same choice for its gate).
+#     It is a JSON Pointer into this run's own surfaces
+#     (internal/compiler/contract.go, checkWorkspaceRef), and no node upstream
+#     of `land` produces the checkout as an artifact. Nor would staging one
+#     help: a container-backed runner copies the source into an ephemeral
+#     workspace and destroys it on the way out
+#     (internal/runners/headspace/doc.go), while this node needs the checkout
+#     to PERSIST -- the branch lease is a lock directory under its `.git` that
+#     must outlive the job for the next landing to serialise on it (h26),
+#     `origin` is the remote the push credential is scoped to, and the gate
+#     runs go/uv/node/markdownlint-cli2 off the land account's PATH (below).
+#     So a stock container bridge cannot execute this node: the service
+#     registered under this id is one deployed against that checkout.
+#
 #   GRANTED ENVIRONMENT VALUES (environmentRefs; the runner boundary refuses
 #   the operation by name when one is unset):
 #     LAND_SOURCE_URL / LAND_SOURCE_SHA256   where land.py is fetched from and

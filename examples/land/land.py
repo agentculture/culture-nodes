@@ -18,9 +18,9 @@ target_branch, work_item (the join key, c2), and the PRODUCING actor_id/run_id.
 
 # The steps -- one `land_step` JSON line on stdout each (the runner stores
 # stdout as attempt evidence, #189), then one `land_result` line:
-#   fetch  lease  rebase  gate  push  reply  resolve  checkout_lease  reset
+#   workspace fetch lease rebase gate push reply resolve checkout_lease reset
 
-README.md carries the same nine with what each does on trouble. The one
+README.md carries the same ten with what each does on trouble. The one
 easiest to get wrong is the push: a rejection is CLASSIFIED, not assumed. A
 STALE rejection (the branch moved under us) re-fetches and rebases ONCE more
 (MAX_LAND_ROUNDS = 2), then routes to a human. A POLICY rejection -- branch
@@ -61,8 +61,8 @@ push token comes from the environment or ~/.culture-nodes/bridge-push.env
 (LAND_PUSH_ENV_FILE), never from the input, never in argv; diagnostics are
 redacted. This run's identity comes from the runner boundary (NODES_RUN_ID /
 NODES_NODE_RUN_ID / NODES_ATTEMPT_ID), the checkout from NODES_WORKSPACE
-(default cwd), the routing record's producer from LAND_ACTOR_ID (default
-company/land).
+(default cwd, and MEASURED before the fetch), the routing record's producer
+from LAND_ACTOR_ID (default company/land).
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ EXIT_WAITING = 5
 
 #: The steps in order: a landing writes one record per name, a run that
 #: stopped early writes the prefix it reached.
-STEPS = ("fetch", "lease", "rebase", "gate", "push", "reply", "resolve", "checkout_lease", "reset")
+STEPS = tuple("workspace fetch lease rebase gate push reply resolve checkout_lease reset".split())
 
 #: One re-fetch-and-rebase after a non-fast-forward rejection, then a human
 #: (spec: "bounded to two rounds", mirroring internal/repair.MaxAttempts).
@@ -942,6 +942,7 @@ class Landing:
         self.held.clear()
 
     def run(self) -> None:
+        self.records.step("workspace", **sibling("land_gate", "check_workspace")(self, Refusal))
         self.fetch()
         self.resolve_credential()
         self.lease_branch()

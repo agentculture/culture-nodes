@@ -310,3 +310,46 @@ func TestCreateHandTurnDefinitionIteratesBySuperseding(t *testing.T) {
 		map[string]any{"stages": []string{}, "rules": []any{}, "work_item": "SCRUM-15", "actor_id": human}, nil)
 	requireStatus(t, resp, raw, http.StatusBadRequest)
 }
+
+// TestCreateHandTurnDefinitionRefusesSupersedingANonDefinition: `supersedes`
+// is what removes a record from every projection, so the route may only
+// point it at another definition. A definition naming the run's hand_turn
+// would otherwise be accepted -- the ledger only checks the target exists,
+// is unreplaced, and shares the run -- and would silently drop that turn
+// from the confirmed hand_turns_by_stage count a delivery summary cites.
+func TestCreateHandTurnDefinitionRefusesSupersedingANonDefinition(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	run, _ := createHandTurnRun(t, f, "SCRUM-16", "")
+	human := f.insertActorKind("ori", "human")
+	turn, _ := postHandTurn(t, f, createHandTurnReq{
+		What: "rebased the branch by hand", Stage: "land", WorkItem: "SCRUM-16", ActorID: human,
+	}, http.StatusCreated)
+
+	definition := func(supersedes string) map[string]any {
+		return map[string]any{
+			"stages":    []string{"land"},
+			"rules":     []map[string]any{{"id": "r1", "stage": "land", "description": "d"}},
+			"work_item": "SCRUM-16", "actor_id": human, "supersedes": supersedes,
+		}
+	}
+	resp, raw := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/hand-turn-definitions"), decisionAuthSecret, definition(turn.ID), nil)
+	requireStatus(t, resp, raw, http.StatusBadRequest)
+	if !strings.Contains(string(raw), string(ledger.RecordHandTurn)) {
+		t.Fatalf("refusal = %s, want it to name the kind of record %s actually is", raw, turn.ID)
+	}
+	// An id that names no record at all is a 404, not a 400.
+	resp, raw = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/hand-turn-definitions"), decisionAuthSecret,
+		definition("ledger_DOESNOTEXIST0000000000001"), nil)
+	requireStatus(t, resp, raw, http.StatusNotFound)
+
+	// The turn is still live: nothing names it, so it is still on the run's
+	// ledger and still countable.
+	var records apipkg.LedgerRecordsOut
+	resp, raw = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/runs/"+run.ID+"/ledger"), nil, &records)
+	requireStatus(t, resp, raw, http.StatusOK)
+	for _, r := range records.Items {
+		if r.Supersedes.String() == turn.ID {
+			t.Fatalf("record %s supersedes the hand-turn %s; the refusal did not hold", r.ID, turn.ID)
+		}
+	}
+}

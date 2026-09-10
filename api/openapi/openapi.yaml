@@ -2968,7 +2968,10 @@ paths:
         ledger shows the definition was ratified, not merely typed. An
         iteration names the record it replaces in `supersedes`; the old
         record is untouched and leaves every projection, and a second
-        replacement of the same record is refused (409).
+        replacement of the same record is refused (409). That record must
+        itself be a `hand_turn_definition` — naming a record of any other
+        kind is refused (400) rather than dropping it from every
+        projection.
       requestBody:
         required: true
         content:
@@ -2983,7 +2986,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/LedgerRecord'
         '400':
-          description: stages or rules is empty, a core field is missing, or the ledger refused the record.
+          description: stages or rules is empty, a core field is missing, `supersedes` names a record that is not a hand_turn_definition, or the ledger refused the record.
           content:
             application/json:
               schema:

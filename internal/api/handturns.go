@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -192,7 +193,9 @@ type createHandTurnDefinitionRequest struct {
 // was ratified rather than merely typed. An iteration names the record it
 // replaces in `supersedes` and is appended through AppendSuperseding, which
 // is what removes the old definition from every projection without touching
-// it.
+// it -- and that record must itself be a hand_turn_definition
+// (requireSupersededDefinition), because "removes it from every projection"
+// is just as true of a record this route has no business replacing.
 func (s *Server) handleCreateHandTurnDefinition(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireDecisionAuth(r); err != nil {
 		return err
@@ -259,6 +262,9 @@ func (s *Server) handleCreateHandTurnDefinition(w http.ResponseWriter, r *http.R
 	}
 	var appended ledger.Record
 	if req.SupersedesID != "" {
+		if err := s.requireSupersededDefinition(ctx, req.SupersedesID); err != nil {
+			return err
+		}
 		appended, err = s.Ledger.AppendSuperseding(ctx, rec, req.SupersedesID)
 	} else {
 		appended, err = s.Ledger.Append(ctx, rec)
@@ -267,5 +273,33 @@ func (s *Server) handleCreateHandTurnDefinition(w http.ResponseWriter, r *http.R
 		return classify(err)
 	}
 	writeJSONWithWarning(w, http.StatusCreated, appended, warning)
+	return nil
+}
+
+// requireSupersededDefinition refuses a `supersedes` that names anything
+// other than another hand_turn_definition.
+//
+// The ledger checks what it can see: the target exists, it has no live
+// replacement, and it belongs to the same run. Within one run it takes the
+// caller's word for WHAT is being replaced -- so without this check, a
+// definition naming a `hand_turn` (or an `evidence` record, or a `review`)
+// on that run would be appended happily, and naming a record is exactly
+// what removes it from every projection. A typo'd id would silently drop a
+// confirmed hand-turn from the `hand_turns_by_stage` count a delivery
+// summary cites, leaving a ledger where nothing was edited and a number
+// that no longer matches it. An iteration replaces a definition; a mistaken
+// record of any other kind is corrected by its own writer, through its own
+// route.
+func (s *Server) requireSupersededDefinition(ctx context.Context, supersedesID string) error {
+	target, err := s.Ledger.Record(ctx, supersedesID)
+	if err != nil {
+		return classify(err)
+	}
+	if target.RecordType != ledger.RecordHandTurnDefinition {
+		return badRequest(
+			"name the hand_turn_definition this one iterates, or omit supersedes to file a first definition",
+			"record %s is a %s record, and a definition may only replace another %s",
+			supersedesID, target.RecordType, ledger.RecordHandTurnDefinition)
+	}
 	return nil
 }

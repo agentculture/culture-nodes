@@ -5102,7 +5102,7 @@
     },
     "/v1alpha1/hand-turn-definitions": {
       "post": {
-        "description": "Appends a hand_turn_definition ledger record (schemas/ledger/hand_turn_definition.schema.json; decision c25, honesty h17): the stages a hand-turn may be filed under and the rules the observing agent recognises turns by. Filed against the newest run carrying `work_item` (or `run_id`) exactly like POST /v1alpha1/hand-turns, written `proposed` under `actor_id`'s registered kind, and confirmed through the review surface — so the ledger shows the definition was ratified, not merely typed. An iteration names the record it replaces in `supersedes`; the old record is untouched and leaves every projection, and a second replacement of the same record is refused (409).",
+        "description": "Appends a hand_turn_definition ledger record (schemas/ledger/hand_turn_definition.schema.json; decision c25, honesty h17): the stages a hand-turn may be filed under and the rules the observing agent recognises turns by. Filed against the newest run carrying `work_item` (or `run_id`) exactly like POST /v1alpha1/hand-turns, written `proposed` under `actor_id`'s registered kind, and confirmed through the review surface — so the ledger shows the definition was ratified, not merely typed. An iteration names the record it replaces in `supersedes`; the old record is untouched and leaves every projection, and a second replacement of the same record is refused (409). That record must itself be a `hand_turn_definition` — naming a record of any other kind is refused (400) rather than dropping it from every projection.",
         "operationId": "createHandTurnDefinition",
         "requestBody": {
           "content": {
@@ -5133,7 +5133,7 @@
                 }
               }
             },
-            "description": "stages or rules is empty, a core field is missing, or the ledger refused the record."
+            "description": "stages or rules is empty, a core field is missing, `supersedes` names a record that is not a hand_turn_definition, or the ledger refused the record."
           },
           "401": {
             "content": {

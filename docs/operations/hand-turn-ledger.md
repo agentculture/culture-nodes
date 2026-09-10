@@ -66,7 +66,10 @@ if it were. Proposed-but-unreviewed turns are reported separately, as
 ```bash
 # 1. the definition (once per iteration): write it proposed, then confirm it.
 #    POST /v1alpha1/hand-turn-definitions files it against the work item's
-#    newest run; an iteration names the record it replaces in "supersedes".
+#    newest run; an iteration names the record it replaces in "supersedes"
+#    -- another hand_turn_definition, never a hand_turn or any other record
+#    (naming one is refused 400, because it would drop that record from
+#    every projection, including the confirmed count above).
 jq -n --arg wi SCRUM-9 --arg actor <your-actor-id> \
   --slurpfile d examples/hand-turn-observer/definition.json \
   '$d[0] + {work_item: $wi, actor_id: $actor}' |

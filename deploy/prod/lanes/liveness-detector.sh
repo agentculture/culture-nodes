@@ -58,10 +58,16 @@ try:
     doc = json.load(sys.stdin)
 except ValueError:
     print("session_ok=unmeasured reason=unmeasured (bridge answered non-JSON)"); sys.exit(0)
-host = doc.get("host") if isinstance(doc, dict) else None
+# Every bridge serves /v1/capabilities as preflight.capability_block:
+# {"preflight": {"protocol_version": "1.0", "host": {..., "liveness": {...}}}}
+# (adapters/*/src/*/preflight.py). No bridge emits a flat {"host": ...}
+# document, so the wrapped host block is the only shape read.
+# NOTE: single quotes are shell delimiters here -- keep this block apostrophe-free.
+preflight = doc.get("preflight") if isinstance(doc, dict) else None
+host = preflight.get("host") if isinstance(preflight, dict) else None
 fact = host.get("liveness") if isinstance(host, dict) else None
 if not isinstance(fact, dict):
-    print("session_ok=unmeasured reason=unmeasured (bridge advertises no liveness fact -- predates t9; redeploy the bridge)"); sys.exit(0)
+    print("session_ok=unmeasured reason=unmeasured (no liveness fact on the preflight host block -- predates t9; redeploy the bridge)"); sys.exit(0)
 ok = fact.get("session_ok")
 ok_s = "unmeasured" if ok is None else str(bool(ok)).lower()
 out = "session_ok=%s reason=%s mode=%s checked_at=%s" % (ok_s, fact.get("reason", "unmeasured"), fact.get("mode", "-"), fact.get("checked_at", "-"))

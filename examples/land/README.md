@@ -121,11 +121,37 @@ made. `LAND_PRODUCING_ACTOR_KEY` declares the key and saves a read;
 `NODES_API_URL` unset is `not_configured` (the checkout's lock is then the
 only lease).
 
+## The lease model
+
+Both leases are **lock directories** — `mkdir` is atomic everywhere git runs,
+locally and over ssh — holding a `holder.json` (land run, pid, host). The
+**branch** lease lives in the land checkout's `.git`, the one place every
+lander of a deployment shares, so two landers serialise without a control-plane
+round trip. The **checkout** lease lives in the producing checkout's `.git`,
+reached through the same transport the fetch used (a local path, or
+`ssh://user@host/path`), and is paired with the fact a file cannot know —
+whether the engine has a LIVE attempt on that actor's key (`land_probe.py`
+carries that half, above, including why a probe that could not MEASURE waits
+rather than resets). A stale local lock (same host, pid dead) is reclaimed and
+the record says so; a lock this node cannot judge is honoured. Nothing is
+written to the control plane: an `agent` actor's bearer cannot write a lease
+row. Waiting is non-blocking (`LAND_LEASE_WAIT_SECONDS=0`): the graph parks and
+re-enters.
+
 ## What it never does
 
 No `--force`, no force refspec, no merge API call, no PR merge, no read of the
 operator's Access cookie — all grep-asserted in `tests/test_land_node.py`,
 which drives the node against scratch bare remotes with no network.
+
+`human-merges-pr` is the only merge path (c15/c38), and `land.py` itself opens
+no URL — the only HTTP in the node is the siblings'. The push token comes from
+the environment or `~/.culture-nodes/bridge-push.env` (`LAND_PUSH_ENV_FILE`),
+never from the input and never in argv; diagnostics are redacted. This run's
+identity comes from the runner boundary (`NODES_RUN_ID` / `NODES_NODE_RUN_ID` /
+`NODES_ATTEMPT_ID`), the checkout from `NODES_WORKSPACE` (default cwd, and
+measured before the fetch), and the routing record's producer from
+`LAND_ACTOR_ID` (default `company/land`).
 
 The workflow header documents the deployment grants (`LAND_SOURCE_URL`,
 `LAND_SOURCE_SHA256`, the same pair for each of `land_gate.py`,

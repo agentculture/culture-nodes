@@ -20,14 +20,6 @@ target_branch, work_item (the join key, c2), and the PRODUCING actor_id/run_id.
 # stdout as attempt evidence, #189), then one `land_result` line:
 #   workspace fetch lease rebase gate push reply resolve checkout_lease reset
 
-README.md carries the same ten with what each does on trouble. The one
-easiest to get wrong is the push: a rejection is CLASSIFIED, not assumed. A
-STALE rejection (the branch moved under us) re-fetches and rebases ONCE more
-(MAX_LAND_ROUNDS = 2), then routes to a human. A POLICY rejection -- branch
-protection, a pre-receive hook, the token's permissions -- is a refusal
-naming what the remote SAID: another round earns the same answer, and "the
-branch moved twice" is a sentence nobody can act on.
-
 # Exit codes (the graph routes on them through a decision node)
 
     0 landed   2 environment   3 routed_human   4 refused   5 waiting
@@ -36,33 +28,19 @@ A code node's outcomes are only passed/failed to the worker
 (internal/worker/code.go); workflow.yaml routes `failed` on `output.exit_code`
 -- the development-loop / combining-loop idiom.
 
-# The lease model (the plan asked for the choice to be recorded)
-
-Both leases are LOCK DIRECTORIES -- mkdir is atomic everywhere git runs,
-locally and over ssh -- holding a holder.json (land run, pid, host): the
-branch lease in the land checkout's .git, the one place every lander of a
-deployment shares, so two landers serialise without a control-plane round
-trip; the checkout lease in the producing checkout's .git, reached through
-the same transport the fetch used (a local path, or ssh://user@host/path)
-and paired with the fact a file cannot know -- whether the engine has a LIVE
-attempt on that actor's KEY (land_probe.py carries that half, including why
-a probe that could not MEASURE waits rather than resets). A stale local lock
-(same host, pid dead) is reclaimed and the record says so; a lock this node
-cannot judge is honoured. Nothing is written to the control plane: an AGENT
-actor's bearer cannot write a lease row. Waiting is non-blocking
-(LAND_LEASE_WAIT_SECONDS=0): the graph parks and re-enters.
-
-# What this never does
-
-No `--force`, no force refspec, no merge API call, no PR merge
-(human-merges-pr is the only merge path, c15/c38), no operator Access cookie,
-and no URL opened by land.py itself -- the only HTTP is the siblings'. The
-push token comes from the environment or ~/.culture-nodes/bridge-push.env
-(LAND_PUSH_ENV_FILE), never from the input, never in argv; diagnostics are
-redacted. This run's identity comes from the runner boundary (NODES_RUN_ID /
-NODES_NODE_RUN_ID / NODES_ATTEMPT_ID), the checkout from NODES_WORKSPACE
-(default cwd, and MEASURED before the fetch), the routing record's producer
-from LAND_ACTOR_ID (default company/land).
+README.md beside this file carries the long form, and this file is under a
+1000-line hard limit (tests/lint/filelength_test.go) that a fifth sibling
+cannot cheaply relieve -- every module the bootstrap fetches costs a granted
+URL/digest pair on every host -- so prose that a reader can find there lives
+there. It documents: what each of the ten steps does on trouble; the lease
+model and why BOTH leases are lock directories (the choice the plan asked to
+have recorded); why a push rejection is CLASSIFIED rather than assumed
+(push_once below states the same rule at the code); and what this node never
+does, including where the push token comes from (the environment or
+~/.culture-nodes/bridge-push.env, LAND_PUSH_ENV_FILE -- never the input, never
+argv) and where this run's identity comes from (the runner boundary:
+NODES_RUN_ID / NODES_NODE_RUN_ID / NODES_ATTEMPT_ID, the checkout from
+NODES_WORKSPACE, the routing record's producer from LAND_ACTOR_ID).
 """
 
 from __future__ import annotations

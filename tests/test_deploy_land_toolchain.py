@@ -156,7 +156,8 @@ def test_an_unbootstrapped_land_account_is_skipped_by_name(tmp_path):
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "rc=0" in proc.stdout
     skipped = lines(proc, "not bootstrapped")
-    assert len(skipped) == 1 and "culture-land" in skipped[0], proc.stdout
+    assert len(skipped) == 1, proc.stdout
+    assert "culture-land" in skipped[0], proc.stdout
     assert not lines(proc, "present") and not lines(proc, "MISSING")
 
 

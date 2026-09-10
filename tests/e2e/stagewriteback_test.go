@@ -53,6 +53,11 @@ const (
 	stageMergedAt    = "2026-09-04T11:00:00Z"
 	jiraIntakePath   = "../../examples/jira-intake/workflow.yaml"
 	cleanupGraphPath = "../../examples/cleanup/workflow.yaml"
+
+	// ticketSourceKey is the sweep's source key for the ticket's status fact.
+	// Phase 1 delivers it and phase 4 delivers it again verbatim, which is
+	// what makes the replay a duplicate -- so the two must be the same string.
+	ticketSourceKey = "jira:team.example.com:" + stageJiraKey + ":status"
 )
 
 // stageActorKeys are every registry key the three graphs' `uses:` references
@@ -375,7 +380,35 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	s.publishWorkflowAt(t, cleanupGraphPath)
 
 	// ---- 1. intake: the ticket moved to To Do and was picked up ----------
-	const ticketSourceKey = "jira:team.example.com:" + stageJiraKey + ":status"
+	intakeRun := s.assertIntakeStage(t, fakes, intakeDigest)
+	// The stage record is the actor's proposed claim, not evidence.
+	assertStageClaimInLedger(t, db, ns.ID, intakeRun, fakes.actorIDs["company/jira-comment"], "intake")
+
+	// ---- 2. dispatch + pr-open: one finding worked on the ticket's PR ----
+	s.assertDispatchAndPROpenStages(t, fakes)
+
+	// ---- 3. merged + cleanup: the PR landed and the loose ends closed ----
+	s.assertMergedAndCleanupStages(t, fakes)
+
+	// ---- The whole point: one comment per stage, in order ----------------
+	assertOneCommentPerStage(t, fakes)
+
+	// ---- 4. A replayed tick creates zero runs and zero comments ----------
+	s.assertReplayedTickCreatesNothing(t, fakes)
+
+	// ---- 5. A gh:-keyed item posts no stage ------------------------------
+	s.assertOrphanItemPostsNoStage(t, fakes)
+
+	if errs := s.errors(); len(errs) > 0 {
+		t.Fatalf("stack errors: %v", errs)
+	}
+}
+
+// assertIntakeStage delivers the ticket's To Do transition, waits for the run
+// it mints, and pins that the run completed on the intake graph with exactly
+// one `intake` stage comment on the ticket. Returns the run id.
+func (s *stack) assertIntakeStage(t *testing.T, fakes *stageActors, intakeDigest string) string {
+	t.Helper()
 	intakeRun := oneTriggeredRun(t, "the To Do transition", s.deliverFact(t,
 		"pr-upkeep.jira.transitioned.to-do", ticketSourceKey, stageJiraKey,
 		map[string]any{"status": "To Do"}, stageTicketFact()))
@@ -394,10 +427,14 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	if got, want := fakes.stagesFor(stageJiraKey), []string{"intake"}; !equalStrings(got, want) {
 		t.Fatalf("after intake the ticket shows stages %v, want %v", got, want)
 	}
-	// The stage record is the actor's proposed claim, not evidence.
-	assertStageClaimInLedger(t, db, ns.ID, intakeRun, fakes.actorIDs["company/jira-comment"], "intake")
+	return intakeRun
+}
 
-	// ---- 2. dispatch + pr-open: one finding worked on the ticket's PR ----
+// assertDispatchAndPROpenStages drives one keyed finding through pr-upkeep to
+// the merge approval -- which is where `pr-open` means something: a decision is
+// pending -- and pins every node outcome along that path.
+func (s *stack) assertDispatchAndPROpenStages(t *testing.T, fakes *stageActors) {
+	t.Helper()
 	upkeepRun := oneTriggeredRun(t, "the keyed finding fact", s.deliverUpkeepFact(t,
 		"github:"+stageRepository+":pr:307:qodo-1", upkeepFact(stageJiraKey, "pr307-qodo-1")))
 
@@ -429,30 +466,35 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	if got, want := fakes.stagesFor(stageJiraKey), []string{"intake", "dispatch", "pr-open"}; !equalStrings(got, want) {
 		t.Fatalf("after the fix the ticket shows stages %v, want %v", got, want)
 	}
+}
 
-	// ---- 3. merged + cleanup: the PR landed and the loose ends closed ----
-	//
-	// The fact is delivered WITHOUT a subject, and that is a deliberate
-	// isolation this test has to state rather than hide.
-	//
-	// The sweep's real pr.merged fact carries `subject = issue_key`
-	// (pr_upkeep_emit.closed_pull_event returns it, sweep.py passes it), and
-	// a triggered run inherits the event's subject (internal/engine/
-	// trigger.go:375). The same delivery then applies the ticket freeze
-	// (internal/api/signalevents.go:210 -> freezeTicketRuns), whose walk
-	// matches `runs.subject = <issue_key>` over every non-terminal run --
-	// which now includes the cleanup run that delivery JUST minted, so the
-	// cleanup node is parked with reason `ticket_frozen` before it can run.
-	// That interaction predates this task: it is the cleanup graph's (t13)
-	// against the ticket freeze, `closed_pull_event`'s own comment still says
-	// these facts "mint no run", and nothing drove that graph through the
-	// control plane until this test. It is reported, not fixed here -- fixing
-	// it is a control-plane or fact-shape change t17 does not own.
-	//
-	// Delivered subject-less, the freeze's walk matches only runs whose input
-	// carries `id` (the jira work-item contract), so it reaches this test's
-	// already-completed intake run and nothing else, and what remains under
-	// test is exactly the stage write-back.
+// assertMergedAndCleanupStages delivers the pr.merged fact, waits for the
+// cleanup run, and pins the two stages it writes plus the declined-path node
+// it must not visit.
+//
+// The fact is delivered WITHOUT a subject, and that is a deliberate
+// isolation this test has to state rather than hide.
+//
+// The sweep's real pr.merged fact carries `subject = issue_key`
+// (pr_upkeep_emit.closed_pull_event returns it, sweep.py passes it), and
+// a triggered run inherits the event's subject (internal/engine/
+// trigger.go:375). The same delivery then applies the ticket freeze
+// (internal/api/signalevents.go:210 -> freezeTicketRuns), whose walk
+// matches `runs.subject = <issue_key>` over every non-terminal run --
+// which now includes the cleanup run that delivery JUST minted, so the
+// cleanup node is parked with reason `ticket_frozen` before it can run.
+// That interaction predates this task: it is the cleanup graph's (t13)
+// against the ticket freeze, `closed_pull_event`'s own comment still says
+// these facts "mint no run", and nothing drove that graph through the
+// control plane until this test. It is reported, not fixed here -- fixing
+// it is a control-plane or fact-shape change t17 does not own.
+//
+// Delivered subject-less, the freeze's walk matches only runs whose input
+// carries `id` (the jira work-item contract), so it reaches this test's
+// already-completed intake run and nothing else, and what remains under
+// test is exactly the stage write-back.
+func (s *stack) assertMergedAndCleanupStages(t *testing.T, fakes *stageActors) {
+	t.Helper()
 	cleanupRun := oneTriggeredRun(t, "the pr.merged fact", s.deliverFact(t,
 		"pr.merged", "github:"+stageRepository+":pr:307:merged", "",
 		map[string]any{"merged_at": stageMergedAt}, stageMergedFact()))
@@ -476,8 +518,12 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	if got := nodeOutcome(cleanupView, "stage-cleanup-declined"); got != "<not visited>" {
 		t.Errorf("a merged fact visited stage-cleanup-declined (outcome %q)", got)
 	}
+}
 
-	// ---- The whole point: one comment per stage, in order ----------------
+// assertOneCommentPerStage is the whole point: the driven ticket carries every
+// stage exactly once, in order, and no stage no graph writes yet.
+func assertOneCommentPerStage(t *testing.T, fakes *stageActors) {
+	t.Helper()
 	if got := fakes.stagesFor(stageJiraKey); !equalStrings(got, wantStageOrder) {
 		t.Fatalf("the driven ticket shows stages %v, want exactly %v (one per stage, in order)", got, wantStageOrder)
 	}
@@ -493,8 +539,13 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	if _, ok := seen["spec"]; ok {
 		t.Error("a graph posted the `spec` stage; no graph writes it yet (its writer is the spec-chain lane)")
 	}
+}
 
-	// ---- 4. A replayed tick creates zero runs and zero comments ----------
+// assertReplayedTickCreatesNothing re-delivers all three facts verbatim (same
+// source keys, same watermarks): every one is a duplicate, and the tick mints
+// no run and posts no comment.
+func (s *stack) assertReplayedTickCreatesNothing(t *testing.T, fakes *stageActors) {
+	t.Helper()
 	runsBefore, commentsBefore := s.countRuns(t), fakes.commentCount()
 	replays := []struct {
 		name, sourceKey, subject string
@@ -525,8 +576,13 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	if got := fakes.commentCount(); got != commentsBefore {
 		t.Fatalf("the replayed tick posted comments: %d -> %d", commentsBefore, got)
 	}
+}
 
-	// ---- 5. A gh:-keyed item posts no stage ------------------------------
+// assertOrphanItemPostsNoStage drives a gh:-keyed finding: its edge guards
+// divert past both pr-upkeep stage nodes, because an orphan has no ticket to
+// comment on -- and the driven ticket's stages are untouched by it.
+func (s *stack) assertOrphanItemPostsNoStage(t *testing.T, fakes *stageActors) {
+	t.Helper()
 	orphanFact := upkeepFact("gh:"+stageRepository+"#411", "pr411-qodo-1")
 	orphanFact["number"] = 411
 	orphanRun := oneTriggeredRun(t, "the orphan finding fact", s.deliverUpkeepFact(t,
@@ -546,9 +602,6 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	}
 	if got := fakes.stagesFor(stageJiraKey); !equalStrings(got, wantStageOrder) {
 		t.Fatalf("the orphan run changed the driven ticket's stages: %v", got)
-	}
-	if errs := s.errors(); len(errs) > 0 {
-		t.Fatalf("stack errors: %v", errs)
 	}
 }
 

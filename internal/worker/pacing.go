@@ -169,13 +169,13 @@ func (p PacingOptions) requests(actorKey string) []postgres.RateRequest {
 // the new failure mode. An installation that would rather stall than overspend
 // can say so by declaring a rate the provider itself enforces -- t9's breaker
 // is the backstop either way.
-func (w *Worker) consumeDispatchSlot(ctx context.Context, node *nodeSpec) (postgres.DispatchRateDecision, bool) {
+func (w *Worker) consumeDispatchSlot(ctx context.Context, ref string) (postgres.DispatchRateDecision, bool) {
 	if !w.opts.Pacing.Enabled() {
 		return postgres.DispatchRateDecision{Allowed: true}, true
 	}
-	decision, err := w.db.ConsumeDispatchSlots(ctx, w.opts.NamespaceID, w.opts.Pacing.requests(actorKeyOf(node.Uses)))
+	decision, err := w.db.ConsumeDispatchSlots(ctx, w.opts.NamespaceID, w.opts.Pacing.requests(actorKeyOf(ref)))
 	if err != nil {
-		w.report(fmt.Errorf("worker: consult the dispatch rate for node %q: %w", node.ID, err))
+		w.report(fmt.Errorf("worker: consult the dispatch rate for actor %q: %w", ref, err))
 		return postgres.DispatchRateDecision{Allowed: true}, true
 	}
 	return decision, decision.Allowed
@@ -214,7 +214,7 @@ func (w *Worker) deferForPacing(
 		"node_run_id":    dc.NodeRunID,
 		"node_id":        node.ID,
 		"work_id":        claimed.ID,
-		"actor_ref":      node.Uses,
+		"actor_ref":      dc.ActorRef,
 		"scope":          decision.Scope,
 		"reason":         decision.Reason,
 		"retry_at":       decision.RetryAt.UTC().Format(time.RFC3339Nano),
@@ -227,9 +227,10 @@ func (w *Worker) deferForPacing(
 	if decision.ScopeKey != "" {
 		data["scope_key"] = decision.ScopeKey
 	}
-	if actorKey := actorKeyOf(node.Uses); actorKey != "" {
+	if actorKey := actorKeyOf(dc.ActorRef); actorKey != "" {
 		data["actor_key"] = actorKey
 	}
+	routedFrom(data, node, dc)
 	if err := w.callbacks.AppendRunEvent(ctx, w.opts.NamespaceID, dc.RunID, TypeDispatchPaced, data); err != nil {
 		w.report(fmt.Errorf("worker: append %s event for work %s: %w", TypeDispatchPaced, claimed.ID, err))
 	}

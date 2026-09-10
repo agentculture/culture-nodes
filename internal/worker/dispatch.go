@@ -43,6 +43,9 @@ func (w *Worker) dispatchActor(
 		telemetry.ActorID(node.Uses),
 	)
 	defer func() { op.End(ctx, err == nil) }()
+	// Until the lane is decided below, the dispatch targets what the author
+	// wrote; every refusal or deferral before that point names it.
+	dc.ActorRef = node.Uses
 
 	// The dispatch budget is checked before anything else this function can
 	// do — before the registry lookup, before a pre_run hook, and certainly
@@ -62,6 +65,20 @@ func (w *Worker) dispatchActor(
 	// dispatch is REFUSED and routed on the edge the author declared. See
 	// budget.go's second half.
 	session := w.planSession(ctx, node, dc)
+
+	// Lane liveness (plan loop-closure t10, decision c43; code-review fix
+	// D) is DECIDED here, before the budget and before every per-actor gate
+	// below, so the breaker, the concurrency ceiling, the clarify gate and
+	// pacing all judge the lane that will actually be invoked — a paused or
+	// rate-limited FALLBACK is deferred like any other paused actor, not
+	// dispatched because the primary was clear — and the session charged is
+	// the one that will open. The decision is RECORDED later, immediately
+	// before the endpoint is resolved (recordLaneDecision), so a deferral
+	// does not leave a routing record for a dispatch that never happened.
+	// See liveness.go.
+	lane := w.decideLane(ctx, node, dc, session)
+	session, dc.ActorRef = lane.session, lane.target
+
 	unfunded, err := w.unfunded(ctx, spec, node, dc, session)
 	if err != nil {
 		// The budget could not be read. Neither spending nor refusing is
@@ -77,7 +94,7 @@ func (w *Worker) dispatchActor(
 	// control plane has been touched yet. Unlike the budget it DEFERS rather
 	// than fails — a paused actor is a statement about the provider, not a
 	// verdict on this work. See breaker.go for the whole argument.
-	if pause, paused := w.activePauseFor(ctx, node); paused {
+	if pause, paused := w.activePauseFor(ctx, dc.ActorRef); paused {
 		return w.deferForPause(ctx, claimed, node, dc, pause)
 	}
 
@@ -89,7 +106,7 @@ func (w *Worker) dispatchActor(
 	// inherits from the durable fact (actor_invocations) it is built on.
 	// session.ActorRowID is already resolved above; this never re-resolves
 	// it.
-	if limit, inFlight, atCapacity := w.atActorCapacity(ctx, node, session.ActorRowID); atCapacity {
+	if limit, inFlight, atCapacity := w.atActorCapacity(ctx, dc.ActorRef, session.ActorRowID); atCapacity {
 		return w.deferForCapacity(ctx, claimed, node, dc, session.ActorRowID, limit, inFlight)
 	}
 
@@ -113,7 +130,7 @@ func (w *Worker) dispatchActor(
 	// declared rate is a statement about the clock rather than a verdict on
 	// the work, and why the slot is consumed here rather than immediately
 	// before the invocation.
-	if decision, allowed := w.consumeDispatchSlot(ctx, node); !allowed {
+	if decision, allowed := w.consumeDispatchSlot(ctx, dc.ActorRef); !allowed {
 		return w.deferForPacing(ctx, claimed, node, dc, decision)
 	}
 
@@ -122,17 +139,15 @@ func (w *Worker) dispatchActor(
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
 	}
 
-	// Lane liveness (plan loop-closure t10, decision c43), checked before
-	// the pre_run hook and before the endpoint is resolved: a hook executes
-	// real code on a real host, and a lane whose session cannot start must
-	// not be paid for by it. The gate reads the persisted actor_liveness
-	// row and, when the lane is not live and the registration names a
-	// fallback_actor, substitutes the target and the session plan; a stale
-	// or missing row changes nothing. See liveness.go.
-	target, session, proceed, err := w.livenessGate(ctx, claimed, node, dc, session)
-	if err != nil || !proceed {
+	// The lane decision taken above is recorded here, before the pre_run
+	// hook and before the endpoint is resolved: a hook executes real code
+	// on a real host, and a reroute that cannot be recorded must not be
+	// paid for by it. A decision that proceeded on a live lane records
+	// nothing. See liveness.go.
+	if proceed, err := w.recordLaneDecision(ctx, claimed, node, dc, lane); err != nil || !proceed {
 		return err
 	}
+	target := dc.ActorRef
 
 	// Task t14, spec claim c37, honesty condition h32: a pre-run hook
 	// executes through the runner boundary BEFORE the actor is dispatched.
@@ -580,7 +595,7 @@ func (w *Worker) park(
 		TokenID:               dc.TokenID,
 		NodeID:                node.ID,
 		AttemptID:             dc.AttemptID,
-		ActorRef:              node.Uses,
+		ActorRef:              dc.ActorRef,
 		ActorID:               dc.ActorRowID,
 		InvocationID:          accepted.InvocationID,
 		HeartbeatAfterSeconds: accepted.HeartbeatAfterSeconds,

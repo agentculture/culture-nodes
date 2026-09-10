@@ -157,6 +157,9 @@ func newClockedHarness(t *testing.T, now func() time.Time, actorHandler func(h *
 		Engine:   eng,
 		Signer:   signer,
 		Handover: workerOpts.Handover,
+		// The async half of decision c43's OR rule, wired the way
+		// internal/api/server.go wires it.
+		LaneLocker: callbacks,
 	}))
 	t.Cleanup(h.callbackServer.Close)
 

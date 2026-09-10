@@ -147,7 +147,7 @@ func (c ConcurrencyOptions) forActor(actorKey string) int {
 	return c.ActorDefault
 }
 
-// atActorCapacity reports whether node's resolved actor is at or over its
+// atActorCapacity reports whether the actor ref names (dc.ActorRef) is at or over its
 // configured concurrency ceiling, and how many invocations are in flight
 // against it.
 //
@@ -164,11 +164,11 @@ func (c ConcurrencyOptions) forActor(actorKey string) int {
 // optimization over an already-bounded system, and refusing to dispatch
 // because the count could not be read would make the optimization the new
 // failure mode.
-func (w *Worker) atActorCapacity(ctx context.Context, node *nodeSpec, actorRowID string) (limit, inFlight int, atCapacity bool) {
+func (w *Worker) atActorCapacity(ctx context.Context, ref string, actorRowID string) (limit, inFlight int, atCapacity bool) {
 	if !w.opts.Concurrency.Enabled() || actorRowID == "" {
 		return 0, 0, false
 	}
-	limit = w.opts.Concurrency.forActor(actorKeyOf(node.Uses))
+	limit = w.opts.Concurrency.forActor(actorKeyOf(ref))
 	if limit <= 0 {
 		return 0, 0, false
 	}
@@ -205,15 +205,16 @@ func (w *Worker) deferForCapacity(
 		"node_run_id":  dc.NodeRunID,
 		"node_id":      node.ID,
 		"work_id":      claimed.ID,
-		"actor_ref":    node.Uses,
+		"actor_ref":    dc.ActorRef,
 		"actor_id":     actorRowID,
 		"limit":        limit,
 		"in_flight":    inFlight,
 		"available_at": availableAt.UTC().Format(time.RFC3339Nano),
 	}
-	if actorKey := actorKeyOf(node.Uses); actorKey != "" {
+	if actorKey := actorKeyOf(dc.ActorRef); actorKey != "" {
 		data["actor_key"] = actorKey
 	}
+	routedFrom(data, node, dc)
 	if err := w.callbacks.AppendRunEvent(ctx, w.opts.NamespaceID, dc.RunID, TypeDispatchAtCapacity, data); err != nil {
 		w.report(fmt.Errorf("worker: append %s event for work %s: %w", TypeDispatchAtCapacity, claimed.ID, err))
 	}

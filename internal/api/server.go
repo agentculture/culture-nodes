@@ -599,6 +599,12 @@ func (s *Server) routes() http.Handler {
 			// configured a remote (WithHandoverObserver), in which case
 			// nothing is fetched and nothing is recorded.
 			Handover: s.handoverObserver,
+			// The async half of decision c43's OR rule: a `failed` event
+			// carrying class credential_spent locks the lane it was
+			// dispatched to, exactly as the worker does for a synchronous
+			// failure (internal/actors/lanelock.go). Production codex is
+			// async, so without this the lock never landed (fix D).
+			LaneLocker: s.callbackStore,
 		})))
 		mux.HandleFunc("POST "+runnerCallbackRoutePattern, s.handleRunnerOperationEvent)
 	}

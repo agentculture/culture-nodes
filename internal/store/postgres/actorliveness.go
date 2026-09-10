@@ -3,9 +3,12 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/agentculture/culture-nodes/internal/actors"
 )
 
 // The actor liveness row (migration 0058; plan loop-closure t10, spec
@@ -32,11 +35,28 @@ import (
 // Like actor_availability the row is keyed by actor_key: a credential
 // belongs to the identity, not to one append-only registration revision.
 
-// LivenessFreshness is how long a session_ok=false fact keeps refusing
-// leases (plan t10's "< 5 min" constant). It is declared beside the row so
-// the dispatch site (internal/worker/liveness.go) and the read surface
-// (internal/api/liveness.go) cannot disagree about the window.
+// LivenessFreshness is how long a CHECK-mode session_ok=false fact keeps
+// refusing leases (plan t10's "< 5 min" constant). It is declared beside
+// the row so the dispatch site (internal/worker/liveness.go) and the read
+// surface (internal/api/liveness.go) cannot disagree about the window. A
+// LOCK-mode false fact is not subject to it — see Live.
 const LivenessFreshness = 5 * time.Minute
+
+// The bridge's liveness detection modes, as the shared preflight host block
+// advertises them (adapters/*/liveness.py: MODE_LOCK, MODE_CHECK). Compared
+// case-insensitively, because the fact crosses two serialisers before it
+// lands here.
+const (
+	// LivenessModeLock: the bridge LATCHES on the first spent-credential
+	// classification and keeps reporting the same fact, with the same
+	// checked_at, until an operator resumes it. The age of such a fact is
+	// the age of the latch, not evidence the lane recovered.
+	LivenessModeLock = "LOCK"
+	// LivenessModeCheck: the bridge re-measures on every probe, so a fact
+	// that has not been refreshed inside LivenessFreshness is one nobody
+	// re-measured.
+	LivenessModeCheck = "CHECK"
+)
 
 // Liveness write sources, the CHECK-constrained `source` column's vocabulary.
 const (
@@ -70,20 +90,34 @@ type ActorLiveness struct {
 	UpdatedAt         time.Time
 }
 
-// Live is the one routing rule: a row is NOT live when it is locked (any
-// age — a lock does not expire by time) or when it says session_ok=false and
-// was checked inside LivenessFreshness. Everything else — unmeasured, true,
-// or a stale false — is live, because refusing on a stale fact would make the
-// safety net the new failure mode. A missing row is live by construction:
-// there is no row to call this on.
+// Live is the one routing rule. A row is NOT live when:
+//
+//   - it is locked (any age — a lock does not expire by time);
+//   - it says session_ok=false and the bridge is in LOCK mode (any age —
+//     the bridge latched with a fixed checked_at that the collector
+//     re-persists verbatim, so "stale" would only ever mean "latched more
+//     than five minutes ago", which is exactly the row a dead production
+//     codex lane carries at T+5m01s; code-review fix D, decision c43);
+//   - it says session_ok=false, the mode is CHECK (or unrecorded), and it
+//     was checked inside LivenessFreshness.
+//
+// Everything else — unmeasured, true, or a stale CHECK-mode false — is
+// live, because refusing on a fact a re-measuring bridge has not repeated
+// would make the safety net the new failure mode. A LOCK-mode false row
+// reopens only when a later healthy write replaces the fact (and, if the
+// control plane locked it too, resume has cleared that lock: c43's AND). A
+// missing row is live by construction: there is no row to call this on.
 func (l ActorLiveness) Live(now time.Time) bool {
 	if l.Locked {
 		return false
 	}
-	if l.SessionOK != nil && !*l.SessionOK && now.Sub(l.CheckedAt) < LivenessFreshness {
+	if l.SessionOK == nil || *l.SessionOK {
+		return true
+	}
+	if strings.EqualFold(l.Mode, LivenessModeLock) {
 		return false
 	}
-	return true
+	return now.Sub(l.CheckedAt) >= LivenessFreshness
 }
 
 // RecordActorLivenessInput is the collector's write: the bridge fact,
@@ -191,6 +225,30 @@ func (s *Store) LockActorLiveness(ctx context.Context, in LockActorLivenessInput
 		return ActorLiveness{}, fmt.Errorf("postgres: LockActorLiveness: %w", err)
 	}
 	return row, nil
+}
+
+// LockLane is actors.LaneLocker over this namespace's store: the write the
+// shared helper actors.LockLaneOnCredentialSpent makes from BOTH the
+// synchronous dispatch path (internal/worker) and the asynchronous callback
+// ingest (internal/actors/callback.go), so the two halves of decision c43's
+// OR rule cannot write different rows. A lock addressed to another
+// namespace is refused rather than silently rewritten.
+func (cs *CallbackStore) LockLane(ctx context.Context, lock actors.LaneLock) (actors.LaneLockResult, error) {
+	if lock.NamespaceID != "" && lock.NamespaceID != cs.namespaceID {
+		return actors.LaneLockResult{}, fmt.Errorf("postgres: LockLane: namespace %q is not this store's %q", lock.NamespaceID, cs.namespaceID)
+	}
+	row, err := cs.store.LockActorLiveness(ctx, LockActorLivenessInput{
+		NamespaceID: cs.namespaceID,
+		ActorKey:    lock.ActorKey,
+		Reason:      lock.Reason,
+		CheckedAt:   lock.CheckedAt,
+		RunID:       lock.RunID,
+		AttemptID:   lock.AttemptID,
+	})
+	if err != nil {
+		return actors.LaneLockResult{}, err
+	}
+	return actors.LaneLockResult{Reason: row.Reason, Locked: row.Locked}, nil
 }
 
 // ActorLiveness returns the row for one actor key. Absence is (zero, false,

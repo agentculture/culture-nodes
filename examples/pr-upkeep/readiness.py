@@ -33,6 +33,17 @@ exists to prevent, and folding it into a failure would strand a merge
 decision that is a human's to make (PRD 10.4). Exit is nonzero only when
 there is no block to write at all -- a refused input.
 
+**An unreadable source is not only a connection that failed.** A source that
+answers HTTP 200 with a body missing the field the question was about is
+equally unread, and it is the more dangerous half: a transport error raises,
+while `body.get("total", 0)` returns a number that looks measured. GitHub
+GraphQL in particular answers a partial failure with `data: null` and a 200,
+which a chain of `or {}` reads as a PR with zero unresolved threads. So every
+field this program derives is REQUIRED of the response
+(`_require_object` / `_require_list` / `_require_count`), and a body that
+lacks it raises `MalformedResponse` into the same `failures` entry a refused
+connection produces.
+
 # The shapes it reuses
 
 The Sonar and thread halves are the same three SonarCloud queries and the
@@ -165,6 +176,52 @@ class Refusal(Exception):
         self.code = code
 
 
+class MalformedResponse(RuntimeError):
+    """A source answered, and what it said is not the shape its API promises.
+
+    Raised so `attempt()` records the source as unread -- a `null` field and a
+    named `failures` entry -- rather than letting a `.get(field, default)`
+    turn an error-shaped 200 into a clean measurement. A body with no `total`
+    is a source that did not answer the question; reporting it as `0` open
+    issues is the false green this whole block exists to prevent.
+
+    `pr-status.sh` does coerce (`jq '.total // 0'`), and that is the one place
+    the reuse stops: the shell script prints a line for an operator who can
+    see the whole terminal, while this block is the entire fact a merge
+    decision turns on. The queries are the same; the fallbacks are not.
+    """
+
+
+def _require_object(payload: Any, source: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise MalformedResponse(f"{source}: expected a JSON object, got {type(payload).__name__}")
+    return payload
+
+
+def _require_list(payload: Any, field: str, source: str) -> list[Any]:
+    """A required collection, absent-or-mistyped rather than empty.
+
+    `[]` and "the key is missing" are different facts: the first is a commit
+    with no check runs, the second is a body that is not a check-runs
+    response at all.
+    """
+    body = _require_object(payload, source)
+    if field not in body:
+        raise MalformedResponse(f"{source}: response carries no {field!r}")
+    value = body[field]
+    if not isinstance(value, list):
+        raise MalformedResponse(f"{source}: {field!r} is {type(value).__name__}, not a list")
+    return value
+
+
+def _require_count(value: Any, field: str, source: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise MalformedResponse(
+            f"{source}: {field} is {type(value).__name__}, not an integer count"
+        )
+    return value
+
+
 # ---------------------------------------------------------------------------
 # input
 # ---------------------------------------------------------------------------
@@ -280,7 +337,11 @@ def collect_ci(repository: str, head_sha: str) -> list[dict[str, str]]:
     merges: the check-runs API and the combined commit-status API. SonarCloud
     and Cloudflare report through the latter on this repository, so a
     collector reading only check runs would leave them out of the block a
-    person merges on."""
+    person merges on.
+
+    Both collections are REQUIRED, not defaulted: a body with no `check_runs`
+    key is an error-shaped response, and reading it as an empty list would
+    report a commit with no CI as a commit whose CI is fine."""
     api, token = _github_api(), _github_token()
     checks = _get_json(
         f"{api}/repos/{repository}/commits/{urllib.parse.quote(head_sha)}/check-runs?per_page=100",
@@ -291,12 +352,18 @@ def collect_ci(repository: str, head_sha: str) -> list[dict[str, str]]:
         token=token,
     )
     entries = [
-        {"name": check.get("name") or "", "state": check_state(check)}
-        for check in checks.get("check_runs", [])
+        {
+            "name": _require_object(check, "github check-runs").get("name") or "",
+            "state": check_state(check),
+        }
+        for check in _require_list(checks, "check_runs", "github check-runs")
     ]
     entries += [
-        {"name": status.get("context") or "", "state": status_state(status)}
-        for status in combined.get("statuses", [])
+        {
+            "name": _require_object(status, "github commit-status").get("context") or "",
+            "state": status_state(status),
+        }
+        for status in _require_list(combined, "statuses", "github commit-status")
     ]
     return entries
 
@@ -316,10 +383,29 @@ def sonar_component(repository: str) -> str:
     return f"{owner}_{name}"
 
 
+def _sonar_total(payload: Any, source: str) -> int:
+    """A SonarCloud search total, from whichever of the two places that API
+    puts it: top level on `issues/search`, under `paging` on
+    `hotspots/search`. Neither present is a response that did not answer --
+    `MalformedResponse`, never `0`."""
+    body = _require_object(payload, source)
+    if "total" in body:
+        return _require_count(body["total"], "`total`", source)
+    paging = body.get("paging")
+    if isinstance(paging, dict) and "total" in paging:
+        return _require_count(paging["total"], "`paging.total`", source)
+    raise MalformedResponse(f"{source}: response carries neither `total` nor `paging.total`")
+
+
 def collect_sonar(repository: str, number: int) -> dict[str, Any]:
     """The same three queries pr-status.sh issues, with the same filters:
     the PR's quality gate, its OPEN/CONFIRMED issue total, and its TO_REVIEW
-    hotspot total."""
+    hotspot total.
+
+    Where it deliberately parts company with the shell script: pr-status.sh
+    falls back to `UNKNOWN` and `0` when a field is missing, and this raises.
+    An operator reading a terminal can see the rest of the screen; a merge
+    gate reading `open_issues: 0` cannot tell that from an answered query."""
     api = _sonar_api()
     component = sonar_component(repository)
     token = os.environ.get("SONAR_TOKEN") or None
@@ -349,10 +435,19 @@ def collect_sonar(repository: str, number: int) -> dict[str, Any]:
         ),
         basic=basic,
     )
+    project_status = _require_object(
+        _require_object(gate, "sonar qualitygates/project_status").get("projectStatus"),
+        "sonar qualitygates/project_status: `projectStatus`",
+    )
+    status = project_status.get("status")
+    if not isinstance(status, str) or not status:
+        raise MalformedResponse(
+            "sonar qualitygates/project_status: `projectStatus.status` is not a gate status"
+        )
     return {
-        "gate": (gate.get("projectStatus") or {}).get("status") or "UNKNOWN",
-        "open_issues": int(issues.get("total") or 0),
-        "hotspots": int((hotspots.get("paging") or {}).get("total") or 0),
+        "gate": status,
+        "open_issues": _sonar_total(issues, "sonar issues/search"),
+        "hotspots": _sonar_total(hotspots, "sonar hotspots/search"),
     }
 
 
@@ -367,6 +462,7 @@ def collect_threads(repository: str, number: int) -> dict[str, Any]:
     owner, _, name = repository.partition("/")
     url = f"{_github_api()}/graphql"
     token = _github_token()
+    source = "github graphql reviewThreads"
     total = unresolved = 0
     cursor: str | None = None
     truncated = False
@@ -375,19 +471,32 @@ def collect_threads(repository: str, number: int) -> dict[str, Any]:
             "query": THREADS_QUERY,
             "variables": {"owner": owner, "name": name, "number": number, "after": cursor},
         }
-        payload = _post_json(url, body, token=token)
+        payload = _require_object(_post_json(url, body, token=token), source)
         if payload.get("errors"):
             raise RuntimeError(f"graphql reviewThreads: {payload['errors']!r}"[:400])
-        threads = (
-            ((payload.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
-        ).get("reviewThreads") or {}
-        nodes = threads.get("nodes") or []
-        total += len(nodes)
-        unresolved += sum(1 for node in nodes if not node.get("isResolved"))
-        info = threads.get("pageInfo") or {}
+        # Walked with a required step at every level. GraphQL answers a
+        # partial failure with `data: null` and HTTP 200, and a chain of
+        # `or {}` reads that as a PR with no review threads -- an unresolved
+        # thread count of zero, which is the shape of a clean PR.
+        threads: dict[str, Any] = payload
+        for step in ("data", "repository", "pullRequest", "reviewThreads"):
+            threads = _require_object(threads.get(step), f"{source}: `{step}`")
+        nodes = _require_list(threads, "nodes", source)
+        for node in nodes:
+            resolved = _require_object(node, f"{source}: a thread").get("isResolved")
+            if not isinstance(resolved, bool):
+                raise MalformedResponse(f"{source}: a thread carries no boolean `isResolved`")
+            total += 1
+            unresolved += 0 if resolved else 1
+        info = _require_object(threads.get("pageInfo"), f"{source}: `pageInfo`")
         if not info.get("hasNextPage"):
             break
         cursor = info.get("endCursor")
+        if not isinstance(cursor, str) or not cursor:
+            # Another page exists and the response did not say where it
+            # starts. Re-sending `after: null` would re-read page one and
+            # count it twice, which is a tally, not the tally.
+            raise MalformedResponse(f"{source}: `hasNextPage` with no `endCursor` to follow")
         truncated = page == _MAX_THREAD_PAGES - 1
     tally: dict[str, Any] = {"unresolved": unresolved, "total": total}
     if truncated:
@@ -475,11 +584,13 @@ def collect(fact: dict[str, Any]) -> dict[str, Any]:
     def attempt(source: str, call):
         try:
             return call()
-        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError, AttributeError) as exc:
             # urllib.error.URLError (and HTTPError under it) is an OSError.
-            # The rest are what a response shaped differently than expected
-            # raises: a source that answered nonsense is an unread source,
-            # which is a `null` field and a named failure -- never a zero.
+            # MalformedResponse is the RuntimeError the collectors raise when
+            # a source answered 200 with a body that is not the shape its API
+            # promises. The rest are the belt to that braces. Either way a
+            # source that answered nonsense is an unread source, which is a
+            # `null` field and a named failure -- never a zero.
             failures.append({"source": source, "detail": f"{type(exc).__name__}: {exc}"[:400]})
             return None
 

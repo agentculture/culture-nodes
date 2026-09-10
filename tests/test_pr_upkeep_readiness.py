@@ -314,16 +314,24 @@ REVIEW_THREADS = {
 def github():
     fake = FakeNodesAPI()
     fake.graphql_queries = []  # type: ignore[attr-defined]
+    # Mutable so a test can hand one endpoint an error-shaped 200 without
+    # re-registering a route (the fake matches routes in registration order,
+    # so the body is the only overridable half).
+    fake.bodies = {  # type: ignore[attr-defined]
+        "check-runs": CHECK_RUNS,
+        "status": COMMIT_STATUS,
+        "graphql": REVIEW_THREADS,
+    }
 
     def check_runs(handler, _match, _query, _body):
-        handler.send_json(200, CHECK_RUNS)
+        handler.send_json(200, fake.bodies["check-runs"])  # type: ignore[attr-defined]
 
     def commit_status(handler, _match, _query, _body):
-        handler.send_json(200, COMMIT_STATUS)
+        handler.send_json(200, fake.bodies["status"])  # type: ignore[attr-defined]
 
     def graphql(handler, _match, _query, body):
         fake.graphql_queries.append(json.loads(body))  # type: ignore[attr-defined]
-        handler.send_json(200, REVIEW_THREADS)
+        handler.send_json(200, fake.bodies["graphql"])  # type: ignore[attr-defined]
 
     fake.route("GET", r"^/repos/[^/]+/[^/]+/commits/[^/]+/check-runs$", check_runs)
     fake.route("GET", r"^/repos/[^/]+/[^/]+/commits/[^/]+/status$", commit_status)
@@ -337,18 +345,23 @@ def github():
 def sonar():
     fake = FakeNodesAPI()
     fake.seen = []  # type: ignore[attr-defined]
+    fake.bodies = {  # type: ignore[attr-defined]
+        "gate": {"projectStatus": {"status": "ERROR"}},
+        "issues": {"total": 4, "issues": []},
+        "hotspots": {"paging": {"total": 2}},
+    }
 
     def gate(handler, _match, query, _body):
         fake.seen.append(("gate", query))  # type: ignore[attr-defined]
-        handler.send_json(200, {"projectStatus": {"status": "ERROR"}})
+        handler.send_json(200, fake.bodies["gate"])  # type: ignore[attr-defined]
 
     def issues(handler, _match, query, _body):
         fake.seen.append(("issues", query))  # type: ignore[attr-defined]
-        handler.send_json(200, {"total": 4, "issues": []})
+        handler.send_json(200, fake.bodies["issues"])  # type: ignore[attr-defined]
 
     def hotspots(handler, _match, query, _body):
         fake.seen.append(("hotspots", query))  # type: ignore[attr-defined]
-        handler.send_json(200, {"paging": {"total": 2}})
+        handler.send_json(200, fake.bodies["hotspots"])  # type: ignore[attr-defined]
 
     fake.route("GET", r"^/api/qualitygates/project_status$", gate)
     fake.route("GET", r"^/api/issues/search$", issues)
@@ -591,6 +604,137 @@ def test_an_unreadable_github_leaves_ci_and_threads_null(github, sonar, devague)
     assert block["ci"] is None and block["threads"] is None
     assert sorted(f["source"] for f in block["failures"]) == ["github-checks", "github-threads"]
     assert block["sonar"] == {"gate": "ERROR", "open_issues": 4, "hotspots": 2}
+
+
+# --- an error-shaped 200 is an unread source, not a clean measurement -------
+#
+# Qodo read this file on PR #326 and named the half the tests above missed:
+# every "could not read" case they cover is a TRANSPORT failure -- a port that
+# refuses the connection, a directory that is not there. A source that answers
+# 200 with a body missing the field the question was about took a different
+# path entirely, through `body.get(field, default)`, and arrived at the
+# approval as a number. Those are the sharpest false greens this block can
+# produce: `open_issues: 0` and `unresolved: 0` are what a mergeable PR looks
+# like.
+
+
+def test_an_error_shaped_check_runs_response_is_not_a_commit_with_no_ci(github, sonar, devague):
+    """GitHub answering `{"message": "Not Found"}` is not a green commit.
+
+    Read as `check_runs: []` the block says the head commit has no CI at all,
+    which reads to an approver as nothing failing.
+    """
+    github.bodies["check-runs"] = {"message": "Not Found", "status": "404"}
+    proc, block = run_readiness(github, sonar, devague, fact())
+    assert proc.returncode == 0, proc.stderr
+    assert block["ci"] is None
+    assert [f["source"] for f in block["failures"]] == ["github-checks"]
+    assert "check_runs" in block["failures"][0]["detail"]
+    # ... and the sources that DID answer are still measured.
+    assert block["sonar"] == {"gate": "ERROR", "open_issues": 4, "hotspots": 2}
+    assert block["threads"] == {"unresolved": 2, "total": 5}
+
+
+def test_a_commit_status_body_without_statuses_leaves_ci_null(github, sonar, devague):
+    """The check-runs half answering does not license reporting the block as
+    complete: SonarCloud and Cloudflare report through this surface, so half a
+    CI read is not a CI read."""
+    github.bodies["status"] = {"state": "success"}
+    _, block = run_readiness(github, sonar, devague, fact())
+    assert block["ci"] is None
+    assert [f["source"] for f in block["failures"]] == ["github-checks"]
+
+
+def test_a_sonar_issue_search_with_no_total_is_never_zero_open_issues(github, sonar, devague):
+    """The exact false green the module docstring promises not to produce."""
+    sonar.bodies["issues"] = {"errors": [{"msg": "Component key not found"}]}
+    proc, block = run_readiness(github, sonar, devague, fact())
+    assert proc.returncode == 0, proc.stderr
+    assert block["sonar"] is None, "an unanswered issue search was reported as a count"
+    assert [f["source"] for f in block["failures"]] == ["sonar"]
+
+
+def test_a_sonar_gate_body_without_a_status_leaves_the_whole_block_null(github, sonar, devague):
+    sonar.bodies["gate"] = {"errors": [{"msg": "Project not found"}]}
+    _, block = run_readiness(github, sonar, devague, fact())
+    assert block["sonar"] is None
+    assert [f["source"] for f in block["failures"]] == ["sonar"]
+
+
+def test_the_hotspot_total_is_read_from_either_place_sonar_puts_it(github, sonar, devague):
+    """`issues/search` carries `total` at the top level and `hotspots/search`
+    under `paging`; the collector accepts either and refuses neither-present.
+    Pinned so the strictness added above cannot become brittleness."""
+    sonar.bodies["hotspots"] = {"total": 7}
+    _, block = run_readiness(github, sonar, devague, fact())
+    assert block["sonar"]["hotspots"] == 7
+
+
+def test_a_graphql_data_null_is_not_a_pr_with_no_unresolved_threads(github, sonar, devague):
+    """GitHub answers a partial GraphQL failure with HTTP 200 and `data: null`
+    -- and no `errors` key when the failure is an empty result rather than a
+    query error. Walked with `or {}` that is `unresolved: 0`, which is the
+    single field an approver is most likely to merge on."""
+    github.bodies["graphql"] = {"data": None}
+    proc, block = run_readiness(github, sonar, devague, fact())
+    assert proc.returncode == 0, proc.stderr
+    assert block["threads"] is None
+    assert [f["source"] for f in block["failures"]] == ["github-threads"]
+
+
+def test_a_next_page_with_no_cursor_is_refused_rather_than_counted_twice(github, sonar, devague):
+    """`hasNextPage` with a null `endCursor` says another page exists and does
+    not say where it starts. Following it means re-sending `after: null` and
+    counting page one again -- a tally, but not the tally."""
+    github.bodies["graphql"] = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": None},
+                        "nodes": [{"id": "t1", "isResolved": False}],
+                    }
+                }
+            }
+        }
+    }
+    _, block = run_readiness(github, sonar, devague, fact())
+    assert block["threads"] is None
+    assert [f["source"] for f in block["failures"]] == ["github-threads"]
+    assert len(github.graphql_queries) == 1, "the cursorless page was re-read"
+
+
+def test_a_thread_without_isresolved_is_not_counted_as_resolved(github, sonar, devague):
+    """`not node.get("isResolved")` would have called a missing field
+    unresolved; a truthiness read of an absent field is a guess either way."""
+    github.bodies["graphql"] = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"id": "t1"}],
+                    }
+                }
+            }
+        }
+    }
+    _, block = run_readiness(github, sonar, devague, fact())
+    assert block["threads"] is None
+    assert [f["source"] for f in block["failures"]] == ["github-threads"]
+
+
+def test_a_source_answering_a_json_array_is_a_failure_not_a_traceback(github, sonar, devague):
+    """A non-object body used to reach `.get` and raise AttributeError, which
+    `attempt()` did not catch -- so ONE malformed source cost the whole block
+    and every approver got the failed path. It is a named failure now."""
+    github.bodies["check-runs"] = ["not", "an", "object"]
+    proc, block = run_readiness(github, sonar, devague, fact())
+    assert proc.returncode == 0, proc.stderr
+    assert block is not None, proc.stdout + proc.stderr
+    assert block["ci"] is None
+    assert [f["source"] for f in block["failures"]] == ["github-checks"]
+    assert "Traceback" not in proc.stderr
 
 
 def test_a_refused_input_exits_nonzero_and_writes_no_block(github, sonar, devague):

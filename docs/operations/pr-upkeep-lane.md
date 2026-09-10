@@ -376,6 +376,14 @@ Two things to read correctly when a block looks thin:
   `null` plus a named entry in `failures`. "SonarCloud did not answer" and
   "SonarCloud reports no open issues" are different facts and the block never
   merges them.
+- **"Could not read" includes a source that answered.** A body that arrives
+  HTTP 200 without the field the question was about is unread too, and it is
+  the half that used to slip through: a connection failure raises, while
+  `.get("total", 0)` returns a number that looks measured. Every field the
+  collector derives is required of the response, so an error-shaped 200 —
+  GitHub's `{"message": "Not Found"}`, a GraphQL `data: null`, a Sonar search
+  with no total — lands in `failures` beside a refused connection rather than
+  reporting zero open issues or zero unresolved threads.
 - **A `readiness.failed` outcome still reaches you.** A collector that
   produced no block at all routes to the approval anyway: the merge authority
   is a human (PRD §10.4), and ending the run instead would turn a missing

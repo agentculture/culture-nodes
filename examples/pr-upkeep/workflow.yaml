@@ -116,12 +116,108 @@
 # of three positions; the whole-PR fact (#268) and the one-finding fact both
 # have their own defect, and pr_upkeep_emit.FINDING_PACKAGE_KEY carries the
 # argument.
+# ---------------------------------------------------------------------------
+# MERGE-GATE READINESS (issue #317, claim c10, honesty h19; plan loop-closure
+# task t18)
+# ---------------------------------------------------------------------------
+# The merge decision used to arrive carrying two unresolved pointers, and the
+# readiness behind it -- CI, SonarCloud, review threads, un-confirmed devague
+# records -- was assembled by an operator running `workflow.sh status` by hand
+# beside the task. That is a hand-turn per merge, and it is the one the
+# approver most needs not to be doing.
+#
+# It could not be fixed with a `presentation` field. The compiler LIFTS
+# presentation metadata out of the executable spec (internal/compiler), so it
+# never reaches a run, and `internal/engine/humantask.go` writes a task's
+# `context_refs` as POINTERS -- the node's input binding exactly as authored,
+# never a payload the engine resolved. A readiness block therefore has to be
+# some node's OUTPUT.
+#
+# `readiness` is that node: a deterministic code node, stdlib Python
+# (examples/pr-upkeep/readiness.py), fetched by digest like every other code
+# node here, sitting between the fix (or its `pr-open` stage comment) and the
+# approval. It assembles five fields -- CI check states, the SonarCloud gate
+# and its open-issue and hotspot counts, the unresolved/total review-thread
+# tally, the proposed devague records in the checkout, and the failing
+# evidence records -- and `human-merges-pr` binds them as
+# `readiness: /nodes/readiness/output`.
+#
+# Two consequences worth stating because they are the whole point:
+#
+# 1. The approval is reachable from `readiness` AND FROM NOWHERE ELSE. "The
+#    task is not presented before the collector completed" is therefore a
+#    property of the edges, checked by the compiler, rather than a habit
+#    somebody keeps. Both former routes into the approval -- the keyed path's
+#    `stage-pr-open.comment_posted` and the orphan path's guarded
+#    `fix.completed` -- now land on `readiness` instead, with the SAME two
+#    mutually exclusive guards for the same normalized-edge-order reason.
+# 2. BOTH of the collector's outcomes reach the person. A collector that
+#    could not produce a block at all still routes to `human-merges-pr`,
+#    because the merge authority is a human (PRD 10.4) and a run that ended
+#    instead would have turned a missing measurement into a dropped decision.
+#    Which of the two happened is recorded as the node run's outcome, and an
+#    unread SOURCE (rather than an unrunnable node) is `null` plus a named
+#    entry in the block's `failures` -- never a fabricated zero. That is the
+#    merge gate's `measurement_incomplete` doctrine one node earlier.
+#
+# The program calls the GitHub and SonarCloud HTTP APIs directly. It reuses
+# the SHAPE of `.claude/skills/cicd/scripts/pr-status.sh` -- the same three
+# Sonar queries with the same filters, the same `reviewThreads`/`isResolved`
+# read -- and none of its shell: `gh` and `devex` are operator tools on an
+# operator's PATH, and this runs in a runner image.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration for the readiness node -- what it needs from
+# outside this file. Loading this example elsewhere means supplying these; it
+# never means editing the graph.
+#
+#   RUNNER REGISTRY (id in `uses:`):
+#     runner://headspace/pr-upkeep-readiness
+#                                         a runner service whose image can
+#                                         reach GitHub and SonarCloud and
+#                                         whose workspace carries the
+#                                         checkout the devague records live
+#                                         in.
+#
+#   PR_UPKEEP_READINESS_SOURCE_URL        where readiness.py is fetched from.
+#   PR_UPKEEP_READINESS_SOURCE_SHA256     the digest the bootstrap refuses to
+#                                         run without.
+#
+#   Honest note on those two: unlike the sweep's, they are NOT yet stamped by
+#   deploy/prod/lanes/runner-env-write.sh, and the runner boundary refuses an
+#   operation whose granted value is unset -- so this node cannot run on this
+#   deployment until they are granted. That is the same state the cleanup
+#   node's CLEANUP_SOURCE_URL/SHA256 have been in since task t13; wiring both
+#   (and widening grant-check.sh's allowlist) is a deploy-lane change, not a
+#   graph one, and is deliberately not folded in here.
+#   PR_UPKEEP_READINESS_GITHUB_API        the GitHub REST base; empty means
+#                                         the public API. The GraphQL
+#                                         endpoint is `<base>/graphql`.
+#   PR_UPKEEP_READINESS_SONAR_API         the SonarCloud base; empty means the
+#                                         public one.
+#   PR_UPKEEP_READINESS_SONAR_COMPONENT   the Sonar project key; empty means
+#                                         the `<owner>_<repo>` convention
+#                                         pr-status.sh derives.
+#   PR_UPKEEP_READINESS_DEVAGUE_ROOT      the checkout's `.devague` directory;
+#                                         empty means `.devague` under the
+#                                         working directory.
+#   PR_UPKEEP_READINESS_DEVAGUE_SLUG      optional: read only the documents
+#                                         with this slug. Empty reads every
+#                                         document and the block says so.
+#   GITHUB_TOKEN                          the read credential. The REST reads
+#                                         degrade to anonymous without it; the
+#                                         GraphQL thread read does not work at
+#                                         all without one, and says so rather
+#                                         than reporting zero threads.
+#   SONAR_TOKEN                           optional; taken as the BASIC
+#                                         username with an empty password.
+#
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.5.0
+  version: 2.6.0
   ownerRef: team/platform-ai
 
 spec:
@@ -182,13 +278,26 @@ spec:
     output:
       schema: {type: object}
 
-  # Longest paths: route -> intake-orphan -> stamp-pr -> analyse -> fix ->
-  # human-merges-pr -> finish and route -> analyse -> stage-dispatch -> fix ->
-  # stage-pr-open -> human-merges-pr -> finish (6 transitions each); 8 leaves
-  # headroom without hiding a loop.
+  # Two numbers, and they are different on purpose.
+  #
+  # The longest paths a run can actually TAKE are seven transitions each:
+  # route -> intake-orphan -> stamp-pr -> analyse -> fix -> readiness ->
+  # human-merges-pr -> finish, and route -> analyse -> stage-dispatch -> fix ->
+  # stage-pr-open -> readiness -> human-merges-pr -> finish. Both are one
+  # longer than 2.5.0's, since every route into the approval now passes the
+  # readiness collector.
+  #
+  # The bound has to cover the longest path through the EDGE SET with the
+  # guards ignored, which is nine: the orphan intake pair followed by both
+  # stage nodes. No run takes it -- an orphan run's work item starts with
+  # `gh:`, so `analyse.packaged` sends it past `stage-dispatch`, and the
+  # guards are mutually exclusive -- but a budget that assumes a guard is what
+  # keeps a run inside it is a budget the engine cannot check. 9 is that
+  # bound, and it still hides no loop: every node id is distinct and
+  # maxVisitsPerNode is 1.
   limits:
     maxDuration: 168h
-    maxTransitions: 8
+    maxTransitions: 9
     maxVisitsPerNode: 1
     maxParallelTokens: 1
 
@@ -569,6 +678,84 @@ spec:
         retry:
           maxAttempts: 2
 
+    # The readiness block the merge decision is made on (issue #317, claim
+    # c10). Deterministic and stdlib-only, because a readiness block an LLM
+    # composed is a proposed claim, and what an approver needs here is a
+    # measurement.
+    #
+    # `pr` is the whole run input: the repository and number the CI checks,
+    # the Sonar analysis and the review threads all key on, and the head sha
+    # the check-runs endpoint is keyed by. No binding composes a URL and no
+    # key names one (the portability guard); every endpoint is a granted
+    # environment value with a public default.
+    #
+    # maxAttempts: 2, for the same reason `analyse` gets two: the node writes
+    # nothing anywhere, so a retry costs a few HTTP reads, and a merge
+    # decision arriving without its block because one API blinked is the
+    # outcome this node exists to remove.
+    readiness:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/pr-upkeep-readiness@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # `full` for the same reason the sweep and the cleanup node give: the
+        # granted origin the program is fetched from, plus the two APIs it
+        # reads. An egress allowlist is not yet expressible (#50).
+        network: full
+        environmentRefs:
+          - PR_UPKEEP_READINESS_SOURCE_URL
+          - PR_UPKEEP_READINESS_SOURCE_SHA256
+          - PR_UPKEEP_READINESS_GITHUB_API
+          - PR_UPKEEP_READINESS_SONAR_API
+          - PR_UPKEEP_READINESS_SONAR_COMPONENT
+          - PR_UPKEEP_READINESS_DEVAGUE_ROOT
+          - PR_UPKEEP_READINESS_DEVAGUE_SLUG
+          - GITHUB_TOKEN
+          - SONAR_TOKEN
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["PR_UPKEEP_READINESS_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["PR_UPKEEP_READINESS_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("readiness: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "readiness.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path]).returncode)
+      input:
+        bindings:
+          pr: /run/input
+      contract:
+        # `passed` / `failed` are the names internal/worker/code.go's
+        # conventional resolver recognises; a node whose ports it cannot map
+        # is refused before the runner is invoked. Exit 0 -> passed: the block
+        # was written, INCLUDING when a source could not be read (that is a
+        # null field and a named `failures` entry, which is the honest answer
+        # rather than a fabricated zero). Nonzero -> failed: there was no
+        # block to write at all, and the approver is told that instead.
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # Reachable from `readiness` and from nowhere else, which is what makes
+    # "no merge decision is presented without its readiness block" a
+    # compiler-checked property of this graph rather than a habit.
+    #
+    # `readiness` is a POINTER, like the other two: `context_refs` on a human
+    # task carries the binding as authored, and the surface presenting the
+    # task resolves it. What it points at is the code node's output document,
+    # whose `artifacts.stdout_ref` is the block itself.
     human-merges-pr:
       kind: approval
       ownerRef: team/platform-ai
@@ -579,6 +766,7 @@ spec:
         bindings:
           finding: /run/input
           fix: /nodes/fix/output
+          readiness: /nodes/readiness/output
 
     # The run's output IS the analysis document (task t14). An end node's
     # output is a single pointer, and of the two candidates the analysis is
@@ -633,18 +821,28 @@ spec:
     # Both `fix.completed` edges carry a guard, and that is not redundancy.
     # The engine selects the first eligible edge in the COMPILER's normalized
     # order -- source, outcome, TARGET, guard text (normalizeEdges) -- not in
-    # the order this document lists them. `human-merges-pr` sorts before
-    # `stage-pr-open`, so an unguarded approval edge would win before the
-    # stage guard was ever evaluated and no ticket would ever see `pr-open`.
-    # Two mutually exclusive guards is the only shape that does not depend on
-    # how the target nodes happen to be named.
+    # the order this document lists them. `readiness` sorts before
+    # `stage-pr-open`, so an unguarded edge to the collector would win before
+    # the stage guard was ever evaluated and no ticket would ever see
+    # `pr-open`. Two mutually exclusive guards is the only shape that does not
+    # depend on how the target nodes happen to be named.
     - from: fix.completed
       to: stage-pr-open
       when: '!input.work_item.startsWith("gh:")'
     - from: fix.completed
-      to: human-merges-pr
+      to: readiness
       when: 'input.work_item.startsWith("gh:")'
     - from: stage-pr-open.comment_posted
+      to: readiness
+    # Both of the collector's outcomes reach the person (task t18). A run that
+    # ended on a collector failure would have turned a missing measurement
+    # into a dropped merge decision, and the decision is a human's to make
+    # (PRD 10.4). Which of the two happened is the node run's own outcome, and
+    # a source the collector could not read is a `null` field plus a named
+    # entry in the block -- never a zero nobody measured.
+    - from: readiness.passed
+      to: human-merges-pr
+    - from: readiness.failed
       to: human-merges-pr
     # A `no_change` outcome opened no pull request, so there is no `pr-open`
     # to record: the honest board history is silence, not a stage comment for

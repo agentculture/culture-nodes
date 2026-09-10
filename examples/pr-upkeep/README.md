@@ -27,6 +27,14 @@ means supplying these — it never means editing `workflow.yaml`.
 | `actor://company/human-ops` | **Actor registry.** The `kind=human` inbox bridge. |
 | `actor://company/notify-discord` | **Actor registry.** The notify adapter (issue #68). |
 | `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
+| `runner://headspace/pr-upkeep-readiness` | **Runner registry.** The code-node runner boundary the `readiness` collector dispatches through. Its image must be able to reach GitHub and SonarCloud, and its workspace must carry the checkout whose `.devague` records the block counts. |
+| `PR_UPKEEP_READINESS_SOURCE_URL` | **Granted environment value** on the readiness operation. Where `readiness.py` is fetched from at dispatch time. |
+| `PR_UPKEEP_READINESS_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
+| `PR_UPKEEP_READINESS_GITHUB_API` | **Granted environment value**, optional. The GitHub REST base the collector reads; empty means the public API, and the GraphQL endpoint is always `<base>/graphql`. |
+| `PR_UPKEEP_READINESS_SONAR_API` | **Granted environment value**, optional. The SonarCloud base; empty means the public one. |
+| `PR_UPKEEP_READINESS_SONAR_COMPONENT` | **Granted environment value**, optional. The Sonar project key; empty means the `<owner>_<repo>` convention `pr-status.sh` derives. |
+| `PR_UPKEEP_READINESS_DEVAGUE_ROOT` | **Granted environment value**, optional. The checkout's `.devague` directory; empty means `.devague` under the working directory. |
+| `PR_UPKEEP_READINESS_DEVAGUE_SLUG` | **Granted environment value**, optional. Read only the documents with this slug; empty reads every document and the block records which scope it used. |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
 | `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_jira.py` read/replay module is fetched from. |
@@ -60,6 +68,14 @@ environment — see [`deploy/prod/README.md`](../../deploy/prod/README.md)'s
 "Granted environment values" for where they live on this deployment and how
 `deploy.sh` re-grants them.
 
+The readiness collector's `PR_UPKEEP_READINESS_SOURCE_URL` /
+`PR_UPKEEP_READINESS_SOURCE_SHA256` work the same way and are **not yet
+stamped** by `deploy/prod/lanes/runner-env-write.sh`. The runner boundary
+refuses an operation whose granted value is unset, so that node cannot run on
+this deployment until they are granted — the same state the cleanup node's
+`CLEANUP_SOURCE_URL`/`CLEANUP_SOURCE_SHA256` have been in since task t13.
+Wiring both is a deploy-lane change, not a graph one.
+
 A digest mismatch, or either value unset, exits nonzero, which is the
 sweep node's technical-failure path: `sweep.failed` routes to the
 `sweep-failed` end node and the run says so. The `0` / `10` / other
@@ -88,12 +104,14 @@ item.
       │                                                                      │
       └──orphan──▶ intake-orphan ──issue_created──▶ stamp-pr ──stamped──▶ analyse
 
-  fix.completed ──▶ stage-pr-open ──comment_posted──▶ human-merges-pr
+  fix.completed ──▶ stage-pr-open ──comment_posted──▶ readiness
       │                  (Jira-keyed work item only)        │
       ├──completed ─────────────────────────────────────────┤ (gh: work item)
-      │                                                     ▼
-      │                             approved/rejected/expired ──▶ finish
-      └──no_change───────────────────────────────────────────────▶ finish
+      │                                                     │
+      │                           readiness.passed/failed ──▶ human-merges-pr
+      │                                                            │
+      │                                    approved/rejected/expired ──▶ finish
+      └──no_change───────────────────────────────────────────────────────▶ finish
 ```
 
 - [`sweep-cycle.workflow.yaml`](sweep-cycle.workflow.yaml) is triggered by
@@ -179,10 +197,52 @@ item.
   `intake-orphan`: a retried comment is at worst a duplicate record (newest
   wins), while a failed one would stall the fix behind bookkeeping. The full
   six-stage vocabulary is in `docs/operations/pr-upkeep-lane.md`.
-- **human-merges-pr** is the approval node reached by `fix.completed` — via
-  `stage-pr-open` when the work item is a Jira key, directly when it is the
-  `gh:` form. A platform maintainer decides the merge outcome; `approved`,
-  `rejected`, and `expired` are all terminal for this run.
+- **readiness** is the deterministic code node that assembles the block the
+  merge decision is made on (issue #317, claim c10, task t18). It runs
+  [`readiness.py`](readiness.py) through the runner boundary — fetched by
+  granted URL and digest, like every other code node here — and writes one
+  JSON document with five fields: `ci` (every check on the head commit as
+  `{name, state}`, merging check runs **and** commit statuses, because that
+  is what `gh pr checks` reports), `sonar` (`gate`, `open_issues`,
+  `hotspots`), `threads` (`unresolved`, `total`), `devague` (the proposed
+  records in the checkout's `.devague` tree) and `evidence` (the devague
+  evidence records whose outcome is not a pass). A source it could not read
+  is `null` plus a named entry in the block's `failures` list — never a
+  fabricated zero, which is the merge gate's `measurement_incomplete`
+  doctrine one node earlier. `maxAttempts: 2`: the node writes nothing
+  anywhere, so a retry costs a few HTTP reads.
+
+  It reuses the **shape** of
+  [`.claude/skills/cicd/scripts/pr-status.sh`](../../.claude/skills/cicd/scripts/pr-status.sh)
+  — the same three SonarCloud queries with the same filters, the same
+  `reviewThreads`/`isResolved` read — and none of its shell: `gh` and `devex`
+  are operator tools on an operator's PATH, and this runs in a runner image,
+  so the program calls the HTTP APIs directly and spawns no subprocess at
+  all.
+- **human-merges-pr** is the approval node, and it is reachable from
+  `readiness` and from **nowhere else**. That is what makes "no merge
+  decision is presented without its readiness block" a compiler-checked
+  property of the graph rather than a habit: both former routes into it — the
+  keyed path's `stage-pr-open.comment_posted` and the orphan path's guarded
+  `fix.completed` — now land on `readiness` instead. It binds
+  `readiness: /nodes/readiness/output` beside the 2.5.0 `finding` and `fix`
+  pointers.
+
+  Why a binding and not a presentation field: `presentation` metadata is
+  lifted out of the executable spec by the compiler and never reaches a run,
+  and `internal/engine/humantask.go` writes a task's `context_refs` as
+  **pointers** — the binding exactly as authored, never a payload the engine
+  resolved. So a readiness block has to be some node's output. What the
+  pointer resolves to is the code node's output document, whose
+  `artifacts.stdout_ref` is the block itself.
+
+  Both of the collector's outcomes route here. A collector that could not
+  produce a block at all still reaches the approver, because the merge
+  authority is a human (PRD §10.4) and a run that ended instead would have
+  turned a missing measurement into a dropped decision; which of the two
+  happened is the node run's own outcome. A platform maintainer decides the
+  merge; `approved`, `rejected`, and `expired` are all terminal for this
+  run.
 - **finish** is the end node. It receives `analyse.no_fix` and `fix.no_change`
   directly and every terminal outcome from `human-merges-pr`, then returns the
   **analysis document** — verdicts, reasons and packages. An end node's output

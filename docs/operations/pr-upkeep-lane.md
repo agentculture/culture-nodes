@@ -25,8 +25,8 @@ sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.
     │  pr-upkeep.pr          (one PR, one finding, one work_item)
     │  pr-upkeep.jira.*      (transitions, comments)
     ▼
-workflow.yaml ── analyse ──packaged──▶ fix ──completed──▶ human-merges-pr ──▶ finish
-                    └─────no_fix──────────────────────────────────────────────▶ finish
+workflow.yaml ── analyse ──packaged──▶ fix ──completed──▶ readiness ──▶ human-merges-pr ──▶ finish
+                    └─────no_fix─────────────────────────────────────────────────────────────▶ finish
 ```
 
 Four properties make this a *repeat* process rather than a script someone
@@ -337,6 +337,56 @@ down the `expired` edge. A PR closed *without* merge raises a `pr.closed`
 fact from the same closed listing (source key `github:{repo}:pr:{n}:closed`,
 watermark `closed_at`, subject = work item), which nothing consumes yet: the
 cleanup node that cancels its parked runs is task t13.
+
+### The readiness block
+
+Before task t18 the approver got two unresolved pointers and assembled the
+rest by hand — `workflow.sh status` beside the task, which shells out to
+`pr-status.sh`. That was a hand-turn per merge, and it was the one the
+approver most needed not to be doing.
+
+It is now a node. `readiness` (`examples/pr-upkeep/readiness.py`) sits between
+the fix and the approval and writes one JSON document:
+
+| Field | What it is | Read from |
+| --- | --- | --- |
+| `ci` | every check on the head commit as `{name, state}` | GitHub check-runs **and** the combined commit-status API — the two surfaces `gh pr checks` merges |
+| `sonar` | `gate`, `open_issues`, `hotspots` | the same three SonarCloud queries `pr-status.sh` issues, with the same filters |
+| `threads` | `unresolved`, `total` | the GraphQL `reviewThreads` / `isResolved` read `pr-status.sh` performs |
+| `devague` | the `proposed` record ids in the checkout, and the `scope` of documents read | the checkout's `.devague` tree |
+| `evidence` | the evidence record ids whose outcome is not `pass` | the same tree |
+
+`human-merges-pr` binds it as `readiness: /nodes/readiness/output` and is
+reachable from `readiness` and from nowhere else, so **the task is not created
+until the collector completed** — a property of the edges, not a habit. The
+binding is a pointer: `context_refs` on a human task carries the binding as
+authored (`internal/engine/humantask.go`), so what the surface resolves is the
+code node's output document, whose `artifacts.stdout_ref` is the block.
+
+Two things to read correctly when a block looks thin:
+
+- **A `null` field is not a zero.** A source the collector could not read is
+  `null` plus a named entry in `failures`. "SonarCloud did not answer" and
+  "SonarCloud reports no open issues" are different facts and the block never
+  merges them.
+- **A `readiness.failed` outcome still reaches you.** A collector that
+  produced no block at all routes to the approval anyway: the merge authority
+  is a human (PRD §10.4), and ending the run instead would turn a missing
+  measurement into a dropped decision. The node run's outcome is what says
+  which of the two happened.
+
+The `devague` field is also a measurement of something this repo cannot fix
+itself. Confirming a plan's proposed records is one CLI invocation per record
+per noun in `devague 0.24.0` — 236 of them across the committed tree at the
+time of writing — so a one-transaction bulk confirm is an upstream
+`agentculture/devague` change, not a task here (spec decision **c14**). The
+text of that ask is committed at
+[`docs/triage/devague-bulk-confirm-issue.md`](../triage/devague-bulk-confirm-issue.md);
+record the issue URL there and in the spec's non-goal once the operator posts
+it.
+
+To change the block, change `readiness.py` and re-grant its digest — the same
+recipe as the sweep, below.
 
 ## Changing the sweep
 

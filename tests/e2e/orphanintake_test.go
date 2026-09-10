@@ -400,7 +400,7 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 		// pr-upkeep's `readiness` collector is the graph's only code node, and
 		// no path in THIS test reaches it (both runs end on `fix.no_change`),
 		// so the runner is registered but never invoked -- which is exactly
-		// what the `<not visited>` assertion below pins.
+		// what the `<not visited>` assertion in assertOrphanFactMintsRun pins.
 		runner: &scriptedRunner{}, runnerName: "headspace/pr-upkeep-readiness",
 		runnerActorID:    registerOrphanRunner(t, db, ns.ID),
 		eventTokenSecret: orphanEventSecret,
@@ -409,6 +409,31 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	digest := s.publishWorkflowAt(t, orphanWorkflowPath)
 
 	// ---- 1. A gh:-keyed fact creates exactly one ticket, then fixes ----
+	runID := s.assertOrphanFactMintsRun(t, fakes, digest)
+	assertOrphanCreateIssueInput(t, fakes)
+
+	// ---- 2. The mapping is in the ledger, and the run is re-keyable once ----
+	assertOrphanMappingInLedger(t, db, ns.ID, runID, fakes.actorIDs["company/jira-comment"])
+	s.assertRunRekeyableOnce(t, runID)
+
+	// ---- 3. A replayed fact creates nothing ----
+	s.assertReplayedFactCreatesNothing(t, fakes)
+
+	// ---- 4. The next tick's fact already carries the key: keyed path ----
+	s.assertKeyedFactSkipsIntake(t, fakes)
+
+	if n := len(fakes.invocationsOf("intake-orphan")); n != 1 {
+		t.Fatalf("across both facts create_issue was invoked %d times, want exactly 1", n)
+	}
+	if errs := s.errors(); len(errs) > 0 {
+		t.Fatalf("stack errors: %v", errs)
+	}
+}
+
+// assertOrphanFactMintsRun delivers the gh:-keyed fact, waits for the run it
+// mints, and pins every node outcome along the orphan path. Returns the run id.
+func (s *stack) assertOrphanFactMintsRun(t *testing.T, fakes *orphanActors, digest string) string {
+	t.Helper()
 	delivery := s.deliverUpkeepFact(t, "github:agentculture/culture-nodes:pr:307:qodo-1", upkeepFact(orphanGhWorkItem, "pr307-qodo-1"))
 	if len(delivery.Triggered) != 1 || delivery.Triggered[0].Attached {
 		t.Fatalf("first fact: want exactly one NEW triggered run, got %+v", delivery)
@@ -438,7 +463,13 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	if got := nodeOutcome(view, "readiness"); got != "<not visited>" {
 		t.Errorf("a no_change fix visited the readiness collector (outcome %q)", got)
 	}
+	return runID
+}
 
+// assertOrphanCreateIssueInput pins that the jira actor's create_issue verb was
+// invoked exactly once, with the four orphan labels and a summary naming the PR.
+func assertOrphanCreateIssueInput(t *testing.T, fakes *orphanActors) {
+	t.Helper()
 	creates := fakes.invocationsOf("intake-orphan")
 	if len(creates) != 1 {
 		t.Fatalf("create_issue was invoked %d times, want exactly 1", len(creates))
@@ -459,10 +490,12 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	if createInput.Verb != "create_issue" || createInput.Project == "" || createInput.Summary != orphanGhWorkItem {
 		t.Fatalf("create_issue input = %+v: want verb create_issue, a project, and the summary naming the PR (%s)", createInput, orphanGhWorkItem)
 	}
+}
 
-	// ---- 2. The mapping is in the ledger, and the run is re-keyable once ----
-	assertOrphanMappingInLedger(t, db, ns.ID, runID, fakes.actorIDs["company/jira-comment"])
-
+// assertRunRekeyableOnce walks the narrow PATCH allowance: gh: -> Jira key
+// once (after which the run is findable by that key), and a second re-key 409s.
+func (s *stack) assertRunRekeyableOnce(t *testing.T, runID string) {
+	t.Helper()
 	var patched struct {
 		WorkItem string `json:"work_item"`
 	}
@@ -485,8 +518,12 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	if status != http.StatusConflict {
 		t.Fatalf("second re-key of an already keyed run: status %d body %s, want 409", status, body)
 	}
+}
 
-	// ---- 3. A replayed fact creates nothing ----
+// assertReplayedFactCreatesNothing re-delivers the first fact verbatim (same
+// source key, same watermark): a duplicate, no run minted, no second ticket.
+func (s *stack) assertReplayedFactCreatesNothing(t *testing.T, fakes *orphanActors) {
+	t.Helper()
 	runsBefore := s.countRuns(t)
 	replay := s.deliverUpkeepFact(t, "github:agentculture/culture-nodes:pr:307:qodo-1", upkeepFact(orphanGhWorkItem, "pr307-qodo-1"))
 	if len(replay.Triggered) != 0 || !replay.Duplicate {
@@ -498,8 +535,13 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	if n := len(fakes.invocationsOf("intake-orphan")); n != 1 {
 		t.Fatalf("replayed fact created a ticket: create_issue invoked %d times", n)
 	}
+}
 
-	// ---- 4. The next tick's fact already carries the key: keyed path ----
+// assertKeyedFactSkipsIntake delivers the next tick's fact, which already
+// carries the Jira key: it routes `keyed`, takes its work_item from the
+// payload, and never reaches the ticket-creating node.
+func (s *stack) assertKeyedFactSkipsIntake(t *testing.T, fakes *orphanActors) {
+	t.Helper()
 	keyed := s.deliverUpkeepFact(t, "github:agentculture/culture-nodes:pr:307:qodo-2", upkeepFact(orphanJiraKey, "pr307-qodo-2"))
 	if len(keyed.Triggered) != 1 || keyed.Triggered[0].Attached {
 		t.Fatalf("keyed fact: want exactly one NEW triggered run, got %+v", keyed)
@@ -517,12 +559,6 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	}
 	if got := s.runWorkItem(t, keyedRun); got != orphanJiraKey {
 		t.Fatalf("keyed run work_item = %q, want %q from the payload", got, orphanJiraKey)
-	}
-	if n := len(fakes.invocationsOf("intake-orphan")); n != 1 {
-		t.Fatalf("across both facts create_issue was invoked %d times, want exactly 1", n)
-	}
-	if errs := s.errors(); len(errs) > 0 {
-		t.Fatalf("stack errors: %v", errs)
 	}
 }
 

@@ -619,7 +619,8 @@ def test_a_red_gate_routes_to_a_human_and_leaves_the_branch_untouched(
     assert len(routing) == 1
     data = routing[0]["data"]
     assert data["reason"] == "gate_failed"
-    assert data["selected"] == "human" and data["dispatched"] is False
+    assert data["selected"] == "human", data
+    assert data["dispatched"] is False, data
     assert data["router"] == land.ROUTER_COLLECTION_METHOD == "land_routing"
     assert data["failing_step"] == failing_step
     assert failing_step in data["rationale"]

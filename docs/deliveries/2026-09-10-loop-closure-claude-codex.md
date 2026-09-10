@@ -133,6 +133,24 @@ run), 2026-09-10:
 | the merge approval carries a readiness block and is reachable only after the collector | high (tests) / unverified (live) | `e17` · `tests/test_pr_upkeep_readiness.py` · e2e context_refs assertion |
 | the loop's hand-turn count this cycle comes from the ledger | unverified | not met: counted in prose below, exactly as before this cycle |
 
+## Code Review Round (2026-09-10)
+
+`/code-review medium` over the build branch confirmed 18 findings. The eight
+ranked ones were fixed as four packages and merged behind the same gate:
+
+| Findings | Merge | Lane |
+|---|---|---|
+| 1 checkout lease misses live attempts; 2 lint-all exit 2 read as red; push rejections misclassified | `31954e9` | developer actor run `01M267E2QD42BQD42KN2R375V4` |
+| 3 stage watermark suppressed `pr.merged`/`pr.closed`; 6 observer had no input binding; facts behind the Sonar loop; work-item URL encoding | `f03cf26` | planner actor run `01M267E5EHR6KE635WNV8RHZ64` |
+| 4 LOCK expired after five minutes on async lanes; liveness gate ran after the per-actor gates | `feb9e59` + `84d6541` | local subagent (Go) |
+| 5 deploy detector read the wrong document shape; 7 `JIRA_CREATE_PROJECTS` never written | `1cc5d69` + `1227f14` | qwen-developer actor run `01M268NAJ90JA6SD7S0ESMXS92` (first dispatch refused `yolo`; this bridge takes `auto-edit`) |
+| 8 never-logged-in lane read as live; doctor all-clear over null facts | `c69226e` | developer actor run `01M26B4ZASPNEDDREXVERDM7S1` |
+
+Findings 4 and 5 contradicted confirmed claims (LOCK holds; the detector shows
+a dead lane) and are corrections to what this summary's Delivery Claims table
+asserted at test strength; the tests now assert the corrected behaviour. The
+five below-cap findings are issue #325.
+
 ## Remaining Work / Follow-up
 
 - **Owner confirmations**: `devague plan confirm t4 t7 t19`, then `devague plan export` (the plan-md re-export into PR #322); `devague evidence`/`delta` confirms for `e1`–`e17`, `b1`–`b3` — 20 single confirms today, which is agentculture/devague#119's point.

@@ -71,9 +71,18 @@ create it, so it is marked to say so, with four labels:
 
 The summary is the PR's transient key (`gh:<owner>/<repo>#<n>`) and the
 description says how to open the PR from it. Treat the ticket as yours from
-then on: rename it, move it, add a description — the loop only needs the key
-to stay on the PR. A second orphan ticket for the same PR is not created: the
-next sweep reads the key off the PR body and files further findings under it.
+then on: rename it, move it, add a description — the loop only needs the
+`Jira:` line to stay in the PR body.
+
+That line is the only thing standing between the PR and a **second** orphan
+ticket. The loop cannot ask Jira whether it has already opened one, so on the
+next sweep it asks the pull request instead: a PR that still carries the key
+is read as keyed and its later findings are filed under the existing ticket. A
+PR that does not — because the line was edited out, or because the step that
+writes it failed after the ticket had already been created — looks orphaned
+again, and gets another orphan ticket. If you ever see two, the PR body is
+where to look: put one key back on its own line at the top, and close the
+spare ticket.
 
 Two limits worth knowing:
 

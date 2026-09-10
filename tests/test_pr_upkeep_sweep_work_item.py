@@ -37,6 +37,7 @@ from tests.test_pr_upkeep_sweep import (  # noqa: F401
 emit = importlib.import_module("pr_upkeep_emit")
 
 REPOSITORY = "agentculture/culture-nodes"
+DOCS_DIR = EXAMPLE_DIR.parents[1] / "docs"
 
 
 @pytest.fixture(autouse=True)
@@ -207,3 +208,42 @@ class TestWorkflowInputContractAdmitsWorkItem:
             [{"id": "pr9-qodo-1"}],
         )
         assert set(fact) == set(schema["required"]) == set(schema["properties"])
+
+
+class TestTheOrphanIdempotencyLimitIsDocumented:
+    """The `gh:` form never surviving intake is a claim about the GRAPH, not a
+    guarantee about the board: the ticket is created before the body is
+    stamped, so a run whose `intake-orphan` succeeded and whose `stamp-pr`
+    did not leaves a ticket that exists and a PR that still reads as orphaned
+    — and the next fact for that PR opens a second one. Both docs used to
+    state the idempotency flatly; a person on the board who then found two
+    tickets had nothing to read that explained it (Qodo High, PR #326)."""
+
+    DOCS = (
+        DOCS_DIR / "drive-from-jira.md",
+        DOCS_DIR / "operations" / "pr-upkeep-lane.md",
+    )
+
+    def test_the_ticket_is_created_before_the_body_is_stamped(self):
+        document = yaml.safe_load((EXAMPLE_DIR / "workflow.yaml").read_text())
+        spec = document["spec"]
+        assert {"from": "intake-orphan.issue_created", "to": "stamp-pr"} in spec["edges"]
+        # Neither node may retry: a retried create is a second ticket, and a
+        # retried stamp is a second PATCH. So a failed stamp is terminal for
+        # the run, and the ticket it left behind is not withdrawn.
+        assert spec["nodes"]["intake-orphan"]["policy"]["retry"]["maxAttempts"] == 1
+        assert spec["nodes"]["stamp-pr"]["policy"]["retry"]["maxAttempts"] == 1
+
+    @pytest.mark.parametrize("doc", DOCS, ids=lambda path: path.name)
+    def test_the_doc_does_not_claim_a_second_ticket_is_impossible(self, doc):
+        text = doc.read_text(encoding="utf-8")
+        assert "second orphan ticket for the same PR is not created" not in text, doc.name
+
+    @pytest.mark.parametrize("doc", DOCS, ids=lambda path: path.name)
+    def test_the_doc_names_the_case_that_opens_a_second_ticket(self, doc):
+        text = doc.read_text(encoding="utf-8").lower()
+        assert "second" in text and "orphan" in text, doc.name
+        # What the reader needs is the CAUSE: the key is not on the PR body,
+        # either because the write failed or because it was edited away.
+        assert "edited out" in text or "edits out" in text, doc.name
+        assert "failed" in text, doc.name

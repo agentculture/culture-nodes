@@ -127,6 +127,18 @@ source key and watermark) is deduped by the control plane before any run
 exists. `intake-orphan` runs with `maxAttempts: 1` because a retried create
 is a second ticket.
 
+Which is also the shape of this idempotency's one hole, and it is worth
+knowing rather than papering over: the ticket is created BEFORE the body is
+stamped, and `stamp-pr` also runs with `maxAttempts: 1`. A run whose
+`intake-orphan` succeeded and whose `stamp-pr` did not leaves a ticket that
+exists and a PR that still reads as orphaned, so the next fact for that PR
+takes the `orphan` route again and opens a second ticket — as does a PR whose
+`Jira:` line a person later edits out. Nothing downstream detects it, because
+the only thing that could is the body itself. Reading a red `stamp-pr` is
+therefore an operator turn: put the key on the PR by hand (and count the
+hand-turn, per CLAUDE.md) before the next sweep runs. `docs/drive-from-jira.md`
+states the same limit for the person on the board.
+
 The run that did the creating still carries the `gh:` key in its own
 `work_item` column — the graph cannot address its own run through the API.
 Re-keying that column is `PATCH /v1alpha1/runs/{id}` with `{"work_item":

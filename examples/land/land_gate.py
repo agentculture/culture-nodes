@@ -10,7 +10,9 @@ from CLAUDE.md, in that worktree, in this order:
     tests        the target pytest selection      LAND_GATE_TESTS
                                                   (default `uv run pytest -n auto -q`)
     go_lint      go test ./tests/lint/...          (the Go guards, file-length included)
-    lint_all     scripts/lint-all.sh <job>         LAND_GATE_JOB (default `root`)
+    lint_all     scripts/lint-all.sh <job>         LAND_GATE_JOB (default `root`),
+                 run with LINT_ALL_SKIP=triage (LAND_LINT_ALL_SKIP): that step
+                 needs an authenticated `gh`, which culture-land has not got
     file_length  the 1000-line hard limit over tracked source, in-process
                  (tests/lint/filelength_test.go's rule, so a host whose Go
                  guard is misconfigured still cannot land a 1400-line file)
@@ -34,6 +36,16 @@ tail in the rationale), the step is recorded as `routed`, and land.py stops:
 nothing is pushed and the branch is exactly where it was. A step that hangs
 past LAND_GATE_STEP_TIMEOUT_SECONDS (default 600) is the same red gate with
 `timed_out: true` -- a hung suite is a person's problem, not the lander's.
+
+RED is a MEASURED failure, and only lint-all may say anything else. Its own
+exit-code policy is 1 for "I measured a finding" and 2 for "I could not
+measure that step" (an unauthenticated `gh`, an unreachable GitHub -- the
+same code merge-gate.py uses for measurement_incomplete). Exit 2 makes the
+gate's outcome `measurement_incomplete`, naming the steps the script's own
+summary reported as UNRUNNABLE, and the landing PROCEEDS: routing a person
+to a defect nobody found, on a chain whose every measured step was green,
+would make every production landing red for a fact about the host. Exit 1
+still routes, and so does exit 2 from any other step.
 
 # Toolchains, declared and refused by name
 
@@ -67,12 +79,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess  # noqa: S404 # nosec B404 - fixed binaries, argv lists, no shell
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -95,6 +108,29 @@ BUMP_TIMEOUT_SECONDS = 60.0
 GO_LINT_ARGV = ("go", "test", "./tests/lint/...")
 LINT_ALL_SCRIPT = "scripts/lint-all.sh"
 BUMP_SCRIPT = ".claude/skills/version-bump/scripts/bump.py"
+
+#: scripts/lint-all.sh's own exit-code policy: 1 is "I measured a finding",
+#: 2 is "I could not measure that step" -- the same code merge-gate.py uses
+#: for measurement_incomplete and _errors.py reserves for an environment
+#: error. Only lint_all is granted it here: a pytest run or a Go build that
+#: exits 2 is a failure like any other.
+MEASUREMENT_INCOMPLETE_EXIT = 2
+OUTCOME_MEASUREMENT_INCOMPLETE = "measurement_incomplete"
+
+#: The lint-all steps the gate waives before it starts, as LINT_ALL_SKIP.
+#: `triage` needs an authenticated `gh` and a reachable GitHub, which the
+#: culture-land account has NEITHER of -- unwaived it exits 2 on every
+#: production landing. LAND_LINT_ALL_SKIP overrides it; an empty value
+#: waives nothing (and lint-all then reports triage as UNRUNNABLE, which is
+#: recorded rather than red).
+DEFAULT_LINT_ALL_SKIP = "triage"
+
+#: The step names scripts/lint-all.sh's own output says could not run --
+#: per step (`<<< UNRUNNABLE <name> (exit 2 ...`) and in its summary
+#: (`UNRUNNABLE: a b`). Parsed rather than assumed, so the record names what
+#: the script named.
+UNRUNNABLE_STEP_LINE = re.compile(r"^<<< UNRUNNABLE (\S+)", re.MULTILINE)
+UNRUNNABLE_SUMMARY_LINE = re.compile(r"^UNRUNNABLE:\s*(.+)$", re.MULTILINE)
 
 #: The land-specific routing reason this module adds to land.py's vocabulary.
 REASON_GATE_FAILED = "gate_failed"
@@ -159,6 +195,7 @@ class GateConfig:
     bump_part: str
     step_timeout: float
     findings_override: tuple[str, ...] | None
+    lint_all_skip: str
 
 
 def gate_config(env: dict[str, str] | None = None) -> GateConfig:
@@ -179,6 +216,7 @@ def gate_config(env: dict[str, str] | None = None) -> GateConfig:
             env.get("LAND_GATE_STEP_TIMEOUT_SECONDS") or DEFAULT_STEP_TIMEOUT_SECONDS
         ),
         findings_override=override,
+        lint_all_skip=env.get("LAND_LINT_ALL_SKIP", DEFAULT_LINT_ALL_SKIP).strip(),
     )
 
 
@@ -198,14 +236,42 @@ class StepResult:
     duration_s: float
     tail: str
     timed_out: bool = False
+    #: The step answered "I could not measure" rather than "this is wrong"
+    #: (see MEASUREMENT_INCOMPLETE_EXIT), with the names it could not run.
+    incomplete: bool = False
+    unrunnable: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
 
+    @property
+    def red(self) -> bool:
+        """A measured failure -- the only thing that routes a landing. An
+        unmeasured step is recorded and named, never routed: routing
+        `gate_failed` on it would send a person to look at a defect that was
+        never found, on a landing whose every measured step was green."""
+        return not self.ok and not self.incomplete
+
+
+def unrunnable_steps(text: str) -> list[str]:
+    """The step names scripts/lint-all.sh said this environment could not
+    run, from the script's own per-step lines and its summary."""
+    names = set(UNRUNNABLE_STEP_LINE.findall(text))
+    for line in UNRUNNABLE_SUMMARY_LINE.findall(text):
+        names.update(line.split())
+    return sorted(names)
+
 
 def run_step(
-    name: str, argv: tuple[str, ...], cwd: Path, timeout: float, redact: Callable[[str], str]
+    name: str,
+    argv: tuple[str, ...],
+    cwd: Path,
+    timeout: float,
+    redact: Callable[[str], str],
+    *,
+    env: dict[str, str] | None = None,
+    incomplete_exit: int | None = None,
 ) -> StepResult:
     started = time.monotonic()
     try:
@@ -217,6 +283,7 @@ def run_step(
             timeout=timeout,
             check=False,
             stdin=subprocess.DEVNULL,
+            env={**os.environ, **env} if env else None,
         )
     except subprocess.TimeoutExpired as exc:
         text = (
@@ -228,12 +295,16 @@ def run_step(
         return StepResult(
             name, list(argv), None, time.monotonic() - started, tail(text + note, redact), True
         )
+    text = proc.stdout + proc.stderr
+    incomplete = incomplete_exit is not None and proc.returncode == incomplete_exit
     return StepResult(
         name,
         list(argv),
         proc.returncode,
         time.monotonic() - started,
-        tail(proc.stdout + proc.stderr, redact),
+        tail(text, redact),
+        incomplete=incomplete,
+        unrunnable=unrunnable_steps(text) if incomplete else [],
     )
 
 
@@ -401,20 +472,23 @@ def run_gate(ctx: Any, *, refusal: type[Exception] | None = None) -> dict[str, A
         refuse_missing(ctx, land, missing)
 
     wt: Path = ctx.worktree
-    chain: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("tests", cfg.tests_argv),
-        ("go_lint", GO_LINT_ARGV),
-        ("lint_all", ("bash", LINT_ALL_SCRIPT, cfg.job)),
+    lint_env = {"LINT_ALL_SKIP": cfg.lint_all_skip} if cfg.lint_all_skip else {}
+    chain: tuple[tuple[str, tuple[str, ...], dict[str, str], int | None], ...] = (
+        ("tests", cfg.tests_argv, {}, None),
+        ("go_lint", GO_LINT_ARGV, {}, None),
+        ("lint_all", ("bash", LINT_ALL_SCRIPT, cfg.job), lint_env, MEASUREMENT_INCOMPLETE_EXIT),
     )
     done: list[StepResult] = []
-    for name, argv in chain:
-        res = run_step(name, argv, wt, cfg.step_timeout, land.redact)
+    for name, argv, env, incomplete_exit in chain:
+        res = run_step(
+            name, argv, wt, cfg.step_timeout, land.redact, env=env, incomplete_exit=incomplete_exit
+        )
         done.append(res)
-        if not res.ok:
+        if res.red:
             route_red(ctx, land, res, done)
     res = file_length_step(land.git, wt)
     done.append(res)
-    if not res.ok:
+    if res.red:
         route_red(ctx, land, res, done)
 
     base = ctx.target_tip
@@ -453,10 +527,20 @@ def run_gate(ctx: Any, *, refusal: type[Exception] | None = None) -> dict[str, A
         }
 
     toolchains = {name: shutil.which(name) for name in REQUIRED_TOOLCHAINS}
+    # A step that could not measure is named in the record and does not route:
+    # the landing proceeds knowing exactly which check nobody ran, rather than
+    # reading "green" for a chain that partly did not happen (#146's shape).
+    incomplete = [
+        {"step": s.name, "exit_code": s.exit_code, "unrunnable": s.unrunnable}
+        for s in done
+        if s.incomplete
+    ]
     return {
-        "outcome": "ok",
+        "outcome": OUTCOME_MEASUREMENT_INCOMPLETE if incomplete else "ok",
         "steps": [asdict(s) for s in done],
         "bump": bump,
         "landed_commit": ctx.landed_commit,
         "toolchains": toolchains,
+        "measurement_incomplete": incomplete,
+        "lint_all_skip": cfg.lint_all_skip,
     }

@@ -27,7 +27,12 @@ parked `human-merges-pr` runs behind after its merge, all removed by hand.
    remote and the remote is re-read to confirm. An unreachable ref is the
    only copy of that work: it is listed as `declined: unreachable` and never
    touched. On a `pr.closed` fact nothing was merged, so every ref is declined
-   and the record still names them (h24).
+   and the record still names them (h24). The deletion carries the tested
+   commit as a lease (`git push --force-with-lease=<ref>:<sha> --delete`), so
+   the ref it removes is the ref it measured: another worker's push landing in
+   the window between the fetch and the deletion is refused by git and
+   recorded as `declined: moved`, because that new tip is work no reachability
+   test here ever looked at.
 3. **Cancel the parked runs with a reason, and only while they are still
    parked.** Each of the item's non-terminal runs is read; one whose
    `human-merges-pr` node run is still live is cancelled through
@@ -145,7 +150,9 @@ against a scratch bare remote
 and `tests/fake_api.py`: a reachable ref is deleted, an unreachable ref is
 declined and still present, another item's reachable ref is left alone, a
 closed PR cancels with `pr_closed`, a remote that refuses the deletion is a
-recorded failure rather than a claimed removal, and a `412` from the control
+recorded failure rather than a claimed removal, a ref a concurrent worker
+moves after the fetch (a `git` shim on `PATH` makes that race deterministic)
+keeps its new tip and is `declined: moved`, and a `412` from the control
 plane leaves the run running with `advanced_past_human-merges-pr` rather than
 claiming a cancellation. `internal/api/cancelreason_test.go` covers the API
 half: a body reason reaches the event, an unknown reason is a 400 that cancels

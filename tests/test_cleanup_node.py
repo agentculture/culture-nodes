@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -405,6 +406,70 @@ def test_a_remote_that_refuses_the_deletion_is_a_recorded_failure_not_a_claimed_
     assert remote_refs(bare) == before
     # And the item's parked runs were still cancelled with the reason.
     assert {run_id for run_id, _ in api.cancels} == {RUN_PARKED_REACHABLE, RUN_PARKED_UNREACHABLE}
+
+
+def test_a_ref_that_moved_after_it_was_measured_is_declined_not_deleted(remote, api, tmp_path):
+    """A concurrent worker pushes new work onto one of the item's reachable
+    branches AFTER this node fetched and tested it -- the window between the
+    read and the deletion, which is exactly as wide as a fetch plus a
+    reachability walk. The commit now on that branch was never tested for
+    reachability and may be the only copy of it, so the deletion must not
+    take it: the lease refuses, the ref keeps its new tip, nothing is claimed
+    as deleted, and the run still exits 0 because a decline is the honest
+    answer rather than an environment failure.
+
+    The race is made deterministic with a `git` shim on PATH that moves the
+    remote ref once, immediately after the node's fetch returns."""
+    bare, before = remote
+    reachable_branch = f"refs/heads/review-fix/{RUN_PARKED_REACHABLE}-fix-20260907T000000Z-abc123"
+    reachable_handover = f"refs/culture-nodes/{RUN_PARKED_REACHABLE}/20260907T000000Z-abc123"
+    # `side` is in the bare repo (the unreachable refs hold it) and is not an
+    # ancestor of main -- i.e. new work this node has no reachability claim about.
+    new_tip = before[f"refs/culture-nodes/{RUN_PARKED_UNREACHABLE}/20260907T000001Z-def456"]
+
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = fetch ] && [ ! -e "$RACE_MARKER" ]; then\n'
+        '  "$REAL_GIT" "$@" || exit $?\n'
+        '  "$REAL_GIT" --git-dir="$RACE_BARE" update-ref "$RACE_REF" "$RACE_SHA"\n'
+        '  : > "$RACE_MARKER"\n'
+        "  exit 0\n"
+        "fi\n"
+        'exec "$REAL_GIT" "$@"\n'
+    )
+    shim.chmod(0o755)
+
+    proc, record = run_cleanup(
+        bare,
+        api,
+        merged_fact(),
+        tmp_path,
+        PATH=f"{shim_dir}:{os.environ['PATH']}",
+        REAL_GIT=shutil.which("git") or "git",
+        RACE_BARE=str(bare),
+        RACE_REF=reachable_branch,
+        RACE_SHA=new_tip,
+        RACE_MARKER=str(tmp_path / "raced"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert record is not None
+
+    # The raced branch still exists, still holding the concurrent worker's commit.
+    after = remote_refs(bare)
+    assert after[reachable_branch] == new_tip
+    # It is declined, naming the commit that WAS measured -- not the new tip.
+    declined = {entry["ref"]: entry for entry in record["declined"]}
+    assert declined[reachable_branch]["why"] == "moved"
+    assert declined[reachable_branch]["commit"] == before[reachable_branch]
+    # Nothing claims it was removed ...
+    assert reachable_branch not in {entry["ref"] for entry in record["deleted"]}
+    assert record["failures"] == []
+    # ... and the ref that did NOT move was still cleaned up as usual.
+    assert reachable_handover not in after
+    assert reachable_handover in {entry["ref"] for entry in record["deleted"]}
 
 
 def test_a_run_that_advanced_past_the_approval_node_is_left_running_not_cancelled(

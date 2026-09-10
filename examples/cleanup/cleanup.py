@@ -10,7 +10,12 @@ without merge (`pr.closed`). Given the fact payload it:
   2. deletes ONLY the refs whose commits are reachable from the default branch
      (`git merge-base --is-ancestor`) and reports every other ref as
      `declined: unreachable` — never deleting it, because an unreachable ref
-     is the only copy of that work;
+     is the only copy of that work. The deletion carries the tested commit as
+     a lease (`--force-with-lease=<ref>:<sha>`), so a ref another worker moved
+     between this node's fetch and its push is refused by git and recorded as
+     `declined: moved` — the tip that would have been deleted is not the tip
+     reachability was measured on, and it may be the only copy of the work
+     that landed on it since;
   3. cancels the item's runs still parked at the merge approval node through
      `POST /v1alpha1/runs/{id}/cancel` WITH a machine-readable reason
      (`pr_merged` | `pr_closed`), so the run.cancelled event says which fact
@@ -82,6 +87,13 @@ EXIT_ENVIRONMENT = 2
 
 REASON_MERGED = "pr_merged"
 REASON_CLOSED = "pr_closed"
+
+#: What one attempted deletion did. `MOVED` is not a failure: git refused the
+#: lease because the ref no longer points at the commit this node tested, and
+#: declining is the only honest answer for a tip nothing measured.
+DELETED = "deleted"
+MOVED = "moved"
+FAILED = "failed"
 
 REVIEW_FIX_PREFIX = "refs/heads/review-fix/"
 HANDOVER_PREFIX = "refs/culture-nodes/"
@@ -385,6 +397,20 @@ def fetch_for_reachability(repo: Path, default_branch: str, refs: dict[str, str]
     return local
 
 
+def fetched_commit(repo: Path, local_ref: str) -> str:
+    """The commit the fetch above actually brought back.
+
+    The ls-remote listing and the fetch are two reads of a remote that other
+    workers write, so they can disagree; everything downstream — the
+    reachability test, the recorded commit, and the lease the deletion carries
+    — is stated about THIS commit, the one that is here to be tested."""
+    proc = _git(repo, "rev-parse", "--verify", "--quiet", local_ref + "^{commit}")
+    sha = proc.stdout.strip()
+    if proc.returncode != 0 or not sha:
+        raise RuntimeError(f"git rev-parse {local_ref}: {proc.stderr.strip()}"[:500])
+    return sha
+
+
 def reachable_from_default(repo: Path, local_ref: str) -> bool:
     proc = _git(repo, "merge-base", "--is-ancestor", local_ref, "refs/cleanup/default")
     if proc.returncode not in (0, 1):
@@ -392,20 +418,48 @@ def reachable_from_default(repo: Path, local_ref: str) -> bool:
     return proc.returncode == 0
 
 
-def delete_remote_ref(repo: Path, ref: str, push_env: dict[str, str]) -> str | None:
-    """Delete `ref` on origin and re-read the remote to confirm it is gone.
-    Returns None on success, else the failure detail."""
+def delete_remote_ref(
+    repo: Path, ref: str, expected: str, push_env: dict[str, str]
+) -> tuple[str, str]:
+    """Delete `ref` on origin ONLY while it still points at `expected`, then
+    re-read the remote to confirm it is gone. Returns `(outcome, detail)`.
+
+    The lease is what makes the deletion decidable. Everything this node knows
+    about the ref — that its commit is reachable from the default branch, so
+    deleting it destroys no work — was measured on `expected`, one fetch ago;
+    a plain `push --delete` would delete whatever the ref points at NOW, and
+    the whole window between the two is when another worker's push lands. So
+    the deletion names the commit it is allowed to remove, git compares it
+    against the remote's own advertisement inside the push, and a mismatch is
+    `MOVED`: nothing was deleted, and the new tip is unexamined work this node
+    has no reachability claim about."""
     proc = _git(
-        repo, *RESET_ARGS, "push", "--porcelain", "--quiet", "origin", "--delete", ref, env=push_env
+        repo,
+        *RESET_ARGS,
+        "push",
+        "--porcelain",
+        "--quiet",
+        f"--force-with-lease={ref}:{expected}",
+        "origin",
+        "--delete",
+        ref,
+        env=push_env,
     )
     if proc.returncode != 0:
-        return (proc.stderr.strip() or proc.stdout.strip() or "push --delete rejected")[:500]
+        # git's word for a refused lease, on stdout under --porcelain:
+        # `! (delete):<ref> [rejected] (stale info)`.
+        if "stale info" in (proc.stdout + proc.stderr):
+            return MOVED, f"the remote ref no longer points at {expected}; nothing was deleted"
+        return (
+            FAILED,
+            (proc.stderr.strip() or proc.stdout.strip() or "push --delete rejected")[:500],
+        )
     check = _git(repo, "ls-remote", "--refs", "origin", ref)
     if check.returncode != 0:
-        return f"post-delete ls-remote failed: {check.stderr.strip()}"[:500]
+        return FAILED, f"post-delete ls-remote failed: {check.stderr.strip()}"[:500]
     if check.stdout.strip():
-        return "the remote still lists the ref after an accepted delete"
-    return None
+        return FAILED, "the remote still lists the ref after an accepted delete"
+    return DELETED, ""
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +484,8 @@ def clean_refs(record: Record, run_ids: list[str], remote: str) -> None:
         local = fetch_for_reachability(workdir, record.default_branch, ours)
 
         reachable: dict[str, str] = {}
-        for ref, sha in ours.items():
+        for ref in ours:
+            sha = fetched_commit(workdir, local[ref])
             if reachable_from_default(workdir, local[ref]):
                 reachable[ref] = sha
             else:
@@ -453,9 +508,17 @@ def clean_refs(record: Record, run_ids: list[str], remote: str) -> None:
         askpass.chmod(0o700)
         push_env = {**os.environ, "GIT_ASKPASS": str(askpass)}
         for ref, sha in reachable.items():
-            detail = delete_remote_ref(workdir, ref, push_env)
-            if detail is None:
+            outcome, detail = delete_remote_ref(workdir, ref, sha, push_env)
+            if outcome == DELETED:
                 record.deleted.append({"ref": ref, "commit": sha})
+            elif outcome == MOVED:
+                # Another worker wrote the ref after this node measured it.
+                # The ref keeps whatever it now holds -- a decline, like an
+                # unreachable ref, not a failure: refusing to delete work
+                # nothing examined is the answer, not an accident.
+                record.declined.append(
+                    {"ref": ref, "commit": sha, "why": "moved", "detail": detail}
+                )
             else:
                 record.fail("delete", detail, ref=ref, commit=sha)
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:

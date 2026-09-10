@@ -156,7 +156,7 @@ sweep emitting `work_item` against a deployment still on
 the `2.1.0` contract is refused by the trigger's contract check, loudly, per
 fact — which is the right failure, not a silent drop.
 
-## The stage watermark
+## The stage record
 
 The board says where a work item is, and the loop reads its own writing back
 as memory. Both halves are one mechanism (issue #311, decision c9): a **stage
@@ -215,47 +215,54 @@ ever see the stage. Every outgoing edge of a diverted outcome therefore carries
 a mutually exclusive guard, and `tests/test_stage_write_back_graphs.py` pins
 that no guarded outcome has an unguarded sibling.
 
-### Reading it back as the watermark
+### Reading it back as a record
 
-The sweep reads the **newest** stage comment on a ticket as that ticket's
-watermark (`jira_stage_watermark`), and suppresses a lifecycle fact the
-watermark already records (`stage_already_recorded`). Two conditions, both
-required: the recorded stage is at or beyond the one the fact would drive, and
-it was recorded at or after the fact arose — so a second pull request merging
-after the first one's `cleanup` is a new transition and still emits.
+The sweep reads a stage comment as a stage **record** (`jira_stage_record`):
+the stage it names, when it was posted, and where it sits on the ticket's
+timeline. A record closes exactly one transition — the ticket's pickup —
+`STAGE_DRIVEN_BY`, in full:
 
-| Fact | Stage it drives |
+| Fact | Stage it closes |
 | --- | --- |
 | `pr-upkeep.jira.transitioned.to-do` | `intake` |
-| `pr.merged` | `merged` |
-| `pr.closed` | `cleanup` |
 
-`pr-upkeep.pr` — the finding dispatch — is deliberately **not** on that list. A
-stage comment cannot name a head SHA or a finding, and this lane promises a
-finding is not blocked by the run before it, so finding dispatch keeps the
-run-input walk (`pr_upkeep_emit.undispatched_findings`) as its dedupe. Nothing
-about the stage watermark changes the cadence claim above.
+**What is not on that list is the load-bearing half.** `pr.merged` and
+`pr.closed` were on it until the two-PR case was measured, and were removed. A
+stage comment names a **ticket** and cannot name the pull request it was posted
+for: the jira actor's `post_comment` takes exactly
+`{verb, issue, comment, question_id}`, and a graph binding is a pointer *or* a
+literal, never a composition — so no node can write `pr=<number>` into the
+first line. Two pull requests citing one ticket is an admitted case (the
+`intake-orphan` path above), and the failure was total rather than partial: PR
+A merges at 11:00, cleanup records `merged` at 12:00, PR B merged at 11:30 and
+is listed on a later tick, and B's `pr.merged` is then suppressed for the whole
+30-day closed lookback. A fact the sweep never sends cannot be deduplicated
+downstream — only lost — so B's refs are never cleaned and nothing says why.
+Per-pull-request identity exists in the `source_key`, which is where the
+dedupe now happens, alone.
 
-One ordering consequence is worth knowing before a Jira outage surprises
-someone. The stage watermarks come from the sweep's Jira read, and the
-closed-PR facts (`pr.merged`, `pr.closed`) are what they gate, so that read
-now happens **before** those facts are emitted. An unreachable Jira therefore
-fails the tick earlier than it used to — before the closed-PR facts go out
-rather than after. Both facts are re-emitted every tick by design (the control
-plane keys on `source_key` plus an immutable-timestamp watermark), so the next
-successful tick emits them: the cost is one interval of latency on a merge, not
-a lost fact.
+`pr-upkeep.pr` — the finding dispatch — was never on the list either. A stage
+comment cannot name a head SHA or a finding, and this lane promises a finding
+is not blocked by the run before it, so finding dispatch keeps the run-input
+walk (`pr_upkeep_emit.undispatched_findings`) as its dedupe. Nothing about the
+stage record changes the cadence claim above.
 
-The stage watermark is a **second** line of defence, not the first. The control
-plane already answers a repeated fact with `duplicate=true` from its signal
-watermark row per `source_key`; what the stage adds is that the sweep does not
-send the fact at all, so a tick over an already-finished ticket is silent —
-zero runs and zero comments — rather than quietly deduplicated downstream.
-Three other properties follow from where the write lives:
+One ordering consequence is worth knowing before an outage surprises someone.
+Because no lifecycle fact is gated any more, the closed-PR listing is read and
+emitted **early** — after the `pr.opened` facts and *before* both the per-PR
+finding loop and the Jira read. A broken SonarCloud, an unreadable check-runs
+endpoint or an unreachable Jira still fails the tick, but the merge that
+already happened has gone out first: a `pr.merged` is not held hostage by a
+finding surface it has nothing to do with. Both facts are re-emitted every tick
+by design (the control plane keys on `source_key` plus an immutable-timestamp
+watermark and answers a repeat with `duplicate=true`), so a tick over an
+already-finished ticket costs one deduplicated signal and mints no run.
 
-- a person typing `culture-nodes:stage=merged` into a comment does not move
-  the watermark: only the configured bot account id (or, absent one, the
-  bridge's own marker) makes a comment a stage record;
+Three properties follow from where the write lives:
+
+- a person typing `culture-nodes:stage=merged` into a comment does not make a
+  record: only the configured bot account id (or, absent one, the bridge's own
+  marker) makes a comment a stage record;
 - a stage comment is not itself a work item — the sweep reads it as a record
   and never re-emits it as a `pr-upkeep.jira.comment` fact;
 - a ticket moved back to **To Do** after a stage was recorded re-fires pickup

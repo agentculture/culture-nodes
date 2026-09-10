@@ -47,8 +47,8 @@
 # actor's post_comment verb: `stage-dispatch` when the fix is about to start
 # and `stage-pr-open` when the fix completed and a merge decision is pending.
 # The comment's first line is machine-readable -- `culture-nodes:stage=<stage>`
-# -- and the sweep reads the newest such line on a ticket as its stage
-# watermark (pr_upkeep_jira.jira_stage_watermark). The sweep itself gains no
+# -- and the sweep reads such a line as a stage RECORD
+# (pr_upkeep_jira.jira_stage_record). The sweep itself gains no
 # Jira write; the nodes are the write path. Only a Jira-shaped work item can
 # carry a stage: the `keyed` route reaches `stage-dispatch`, and the
 # `fix.completed` edges are guarded on the work item's shape, so an orphan run

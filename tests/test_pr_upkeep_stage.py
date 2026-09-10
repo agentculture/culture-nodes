@@ -1,14 +1,21 @@
-"""The Jira stage watermark (plan loop-closure-claude-codex task t17; spec c9,
+"""The Jira stage record (plan loop-closure-claude-codex task t17; spec c9,
 c16, c42; honesty h18/h10).
 
 A stage comment is posted on the ticket BY A GRAPH NODE through the jira
 actor's ``post_comment`` verb (never by the sweep), with a machine-readable
-first line ``culture-nodes:stage=<stage>``. The sweep READS the latest such
-comment as the ticket's stage watermark and emits nothing for a transition
-that watermark already records. ``pr_upkeep_jira.py`` stays GET-only.
+first line ``culture-nodes:stage=<stage>``. The sweep READS those comments as
+stage RECORDS: a record later on the ticket's timeline closes the To Do
+transition it records, so pickup does not re-fire every tick.
+
+It closes nothing else. A stage comment names a TICKET and cannot name the
+pull request it was posted for, and two pull requests citing one ticket is an
+admitted case, so ``pr.merged`` / ``pr.closed`` are emitted unconditionally
+and deduplicated by the control plane on their own source key.
+``pr_upkeep_jira.py`` stays GET-only.
 """
 
 import json
+import urllib.error
 
 import pytest
 
@@ -109,95 +116,26 @@ class TestStageRecordParsing:
         assert jira.jira_stage_record(unmarked, "") is None
 
 
-class TestStageWatermark:
-    def test_latest_stage_comment_wins_and_non_stage_comments_are_ignored(self, stage_comments):
-        mark = jira.jira_stage_watermark(stage_comments, BOT)
-        assert mark["stage"] == "pr-open"
-        assert mark["comment_id"] == "1005"
+class TestStageDrivenBy:
+    """Which sweep fact a stage record may close -- and which it may not."""
 
-    def test_order_of_arrival_does_not_matter(self, stage_comments):
-        mark = jira.jira_stage_watermark(list(reversed(stage_comments)), BOT)
-        assert mark["comment_id"] == "1005"
+    def test_the_only_driven_fact_is_the_pickup_transition(self):
+        assert jira.STAGE_DRIVEN_BY == {"pr-upkeep.jira.transitioned.to-do": "intake"}
 
-    def test_a_ticket_with_no_stage_comment_has_no_watermark(self, stage_comments):
-        assert jira.jira_stage_watermark(stage_comments[:1], BOT) is None
-        assert jira.jira_stage_watermark([], BOT) is None
+    def test_no_pull_request_keyed_fact_is_stage_gated(self):
+        # A stage comment names a TICKET; the jira actor's post_comment takes
+        # exactly {verb, issue, comment, question_id} and a graph binding is a
+        # pointer OR a literal, so no node can write `pr=<number>` into the
+        # first line. Two PRs on one ticket is admitted, so a record about PR
+        # A must never answer for PR B's merge.
+        for name in ("pr.merged", "pr.closed", "pr.opened", "pr-upkeep.pr"):
+            assert name not in jira.STAGE_DRIVEN_BY, name
 
-    def test_watermarks_are_read_per_ticket_from_the_search_payload(self, stage_comments):
-        payload = {
-            "issues": [
-                {"key": "SCRUM-9", "fields": {"comment": {"comments": stage_comments}}},
-                {"key": "SCRUM-10", "fields": {"comment": {"comments": stage_comments[:1]}}},
-            ]
-        }
-        marks = jira.jira_stage_watermarks(payload, BOT)
-        assert set(marks) == {"SCRUM-9"}
-        assert marks["SCRUM-9"]["stage"] == "pr-open"
-
-
-class TestStageAlreadyRecorded:
-    """Which sweep fact drives which stage, and when the record closes it."""
-
-    def test_the_driving_facts_are_the_ticket_lifecycle_facts(self):
-        assert jira.STAGE_DRIVEN_BY == {
-            "pr-upkeep.jira.transitioned.to-do": "intake",
-            "pr.merged": "merged",
-            "pr.closed": "cleanup",
-        }
-        # Finding dispatch is deliberately NOT stage-gated: a stage comment
-        # cannot name a head or a finding, and the lane promises a finding is
-        # not blocked by the run before it (docs/operations/pr-upkeep-lane.md).
-        assert "pr-upkeep.pr" not in jira.STAGE_DRIVEN_BY
-
-    @staticmethod
-    def _mark(stage, at="2026-09-02T08:00:00.000+0000"):
-        return {"stage": stage, "comment_id": "1", "recorded_at": at}
-
-    def test_a_stage_at_or_beyond_the_driven_one_recorded_after_the_fact_closes_it(self):
-        assert jira.stage_already_recorded(
-            "pr.merged", self._mark("merged"), "2026-09-01T00:00:00Z"
-        )
-        assert jira.stage_already_recorded(
-            "pr.merged", self._mark("cleanup"), "2026-09-01T00:00:00Z"
-        )
-        assert jira.stage_already_recorded(
-            "pr-upkeep.jira.transitioned.to-do", self._mark("pr-open"), "2026-09-01T00:00:00Z"
-        )
-
-    def test_an_earlier_stage_does_not_close_a_later_transition(self):
-        assert not jira.stage_already_recorded(
-            "pr.merged", self._mark("pr-open"), "2026-09-01T00:00:00Z"
-        )
-
-    def test_a_record_older_than_the_fact_does_not_close_it(self):
-        # A second PR for the ticket merges after the first one's cleanup was
-        # recorded: the new merge is a new transition.
-        assert not jira.stage_already_recorded(
-            "pr.merged",
-            self._mark("cleanup", at="2026-09-01T00:00:00.000+0000"),
-            "2026-09-03T00:00:00Z",
-        )
-
-    def test_mixed_timestamp_formats_compare_as_instants_not_strings(self):
-        # Jira renders +0000, GitHub renders Z; same instant either way.
-        assert jira.stage_already_recorded(
-            "pr.merged",
-            self._mark("merged", at="2026-09-02T08:00:00.000+0000"),
-            "2026-09-02T08:00:00Z",
-        )
-        assert jira.stage_already_recorded(
-            "pr.merged",
-            self._mark("merged", at="2026-09-02T11:00:00.000+0300"),
-            "2026-09-02T08:00:00Z",
-        )
-
-    def test_no_watermark_or_an_ungated_fact_is_never_closed(self):
-        assert not jira.stage_already_recorded("pr.merged", None, "2026-09-01T00:00:00Z")
-        assert not jira.stage_already_recorded("pr-upkeep.pr", self._mark("pr-open"), "")
-        assert not jira.stage_already_recorded("pr.opened", self._mark("cleanup"), "")
-
-    def test_an_unreadable_fact_time_falls_back_to_the_stage_alone(self):
-        assert jira.stage_already_recorded("pr.merged", self._mark("merged"), "")
+    def test_the_gate_helpers_the_lifecycle_facts_used_are_gone(self):
+        # Not merely unused: absent, so no caller can re-introduce the
+        # suppression the two-PR case measured.
+        for gone in ("stage_already_recorded", "jira_stage_watermark", "jira_stage_watermarks"):
+            assert not hasattr(jira, gone), gone
 
 
 def _issue(key, created, comments, histories=()):
@@ -316,9 +254,12 @@ def _tick(monkeypatch, *, pulls, closed, issues, sonar_pr=None):
 
 
 class TestATickAgainstARecordedStage:
-    def test_a_merged_pr_whose_ticket_already_records_cleanup_emits_no_pr_merged(
+    def test_a_merged_pr_whose_ticket_already_records_cleanup_still_emits_pr_merged(
         self, monkeypatch, capsys
     ):
+        """A recorded `cleanup` says something about A ticket, not about THIS
+        pull request, so it cannot answer for the merge. The fact goes out on
+        its own source_key and the control plane deduplicates it."""
         issue = _issue(
             "SCRUM-9",
             "2026-09-01T09:00:00.000+0000",
@@ -336,7 +277,7 @@ class TestATickAgainstARecordedStage:
         )
         assert sweep.main() == 0
         capsys.readouterr()
-        assert [event[0] for event in calls["events"]] == []
+        assert [event[0] for event in calls["events"]] == ["pr.merged"]
 
     def test_a_ticket_at_pr_open_emits_nothing_for_its_intake_transition(self, monkeypatch, capsys):
         issue = _issue(
@@ -399,7 +340,14 @@ class TestATickAgainstARecordedStage:
         upkeep = [event for event in calls["events"] if event[0] == "pr-upkeep.pr"]
         assert len(upkeep) == 1 and upkeep[0][1]["work_item"] == "SCRUM-9"
 
-    def test_a_replayed_tick_emits_nothing_new(self, monkeypatch, capsys):
+    def test_a_replayed_tick_re_emits_the_same_source_key_and_watermark(self, monkeypatch, capsys):
+        """What makes a replay a no-op is the control plane, not the sweep.
+
+        Both lifecycle facts are re-emitted every tick by design: identical
+        `source_key` and an immutable timestamp watermark, which the signal
+        watermark row answers with `duplicate=true`. The ticket's Jira facts
+        stay silent -- there the stage record IS a position on the same
+        timeline, so it can close the transition it records."""
         issue = _issue(
             "SCRUM-9",
             "2026-09-01T09:00:00.000+0000",
@@ -417,7 +365,10 @@ class TestATickAgainstARecordedStage:
         assert sweep.main() == 0
         assert sweep.main() == 0
         capsys.readouterr()
-        assert calls["events"] == []
+        assert [event[0] for event in calls["events"]] == ["pr.merged", "pr.merged"]
+        first, second = calls["events"]
+        assert first[2] == second[2] == "github:owner.example/repo:pr:41:merged"
+        assert first[3] == second[3] == {"merged_at": "2026-09-04T11:00:00Z"}
 
 
 class TestTheSweepGainsNoJiraWrite:
@@ -436,3 +387,80 @@ class TestTheSweepGainsNoJiraWrite:
         for graph in ("pr-upkeep", "cleanup", "jira-intake"):
             text = (EXAMPLE_DIR.parent / graph / "workflow.yaml").read_text()
             assert "culture-nodes:stage=" in text, graph
+
+
+class TestLifecycleFactsAreNeverStageGated:
+    """A stage comment names a TICKET, never a pull request.
+
+    The jira bridge's ``post_comment`` takes exactly
+    ``{verb, issue, comment, question_id}`` and a graph binding is a pointer
+    OR a literal — never a composition — so no node can write ``pr=<number>``
+    into the structured first line. Two pull requests citing one ticket is an
+    admitted case (docs/operations/pr-upkeep-lane.md), so a stage record can
+    never be allowed to answer for a ``pr.merged`` / ``pr.closed`` fact it may
+    not be about. Both facts carry their own ``source_key`` plus an immutable
+    timestamp watermark and are deduplicated by the control plane.
+    """
+
+    def test_a_pr_merged_before_another_prs_stage_comment_still_emits(self, monkeypatch, capsys):
+        # PR #41 merged 11:00 and the cleanup node posted `merged` at 12:00.
+        # PR #42 merged 11:30 on the SAME ticket but was only listed later.
+        # Its merge is a fact about a different pull request; the watermark
+        # left by #41 must not suppress it for the whole closed lookback.
+        issue = _issue(
+            "SCRUM-9",
+            "2026-09-01T09:00:00.000+0000",
+            [_comment("1010", "2026-09-04T12:00:00.000+0000", _stage_text("merged"))],
+        )
+        calls = _tick(
+            monkeypatch,
+            pulls=[],
+            closed=[_merged_pull(42, "SCRUM-9", "2026-09-04T11:30:00Z")],
+            issues=[issue],
+        )
+        assert sweep.main() == 0
+        capsys.readouterr()
+        merged = [event for event in calls["events"] if event[0] == "pr.merged"]
+        assert [event[1]["number"] for event in merged] == [42]
+        assert merged[0][2] == "github:owner.example/repo:pr:42:merged"
+
+    def test_a_declined_pr_is_not_suppressed_by_another_prs_cleanup_stage(
+        self, monkeypatch, capsys
+    ):
+        issue = _issue(
+            "SCRUM-9",
+            "2026-09-01T09:00:00.000+0000",
+            [_comment("1011", "2026-09-04T12:01:00.000+0000", _stage_text("cleanup"))],
+        )
+        closed = dict(_merged_pull(43, "SCRUM-9", "2026-09-04T11:30:00Z"), merged_at=None)
+        calls = _tick(monkeypatch, pulls=[], closed=[closed], issues=[issue])
+        assert sweep.main() == 0
+        capsys.readouterr()
+        assert [event[0] for event in calls["events"]] == ["pr.closed"]
+
+    def test_a_failing_sonar_surface_does_not_hold_back_a_merge_fact(self, monkeypatch, capsys):
+        # The lifecycle facts are read from their own listing and emitted
+        # before the per-PR finding loop: a broken finding surface fails the
+        # tick, but the merge that already happened still reaches the loop.
+        calls = _tick(
+            monkeypatch,
+            pulls=[
+                {
+                    "number": 7,
+                    "head_sha": "a" * 40,
+                    "head": {"ref": "SCRUM-9/fix"},
+                    "body": "",
+                    "created_at": "2026-09-03T09:00:00Z",
+                }
+            ],
+            closed=[_merged_pull(41, "SCRUM-9", "2026-09-04T11:00:00Z")],
+            issues=[],
+        )
+
+        def unreachable_sonar(component, pr=None):
+            raise urllib.error.URLError("sonarcloud.io unreachable")
+
+        monkeypatch.setattr(sweep, "fetch_sonar_issues", unreachable_sonar)
+        assert sweep.main() == 1
+        assert "sweep failed while" in capsys.readouterr().err
+        assert [event[0] for event in calls["events"]] == ["pr.opened", "pr.merged"]

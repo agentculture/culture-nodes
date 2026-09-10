@@ -186,9 +186,9 @@ item.
   comments to the ticket, through the jira actor's `post_comment` verb with
   the bridge's exact-key input (`verb`, `issue`, `comment`). Each comment's
   first line is machine-readable — `culture-nodes:stage=dispatch` /
-  `culture-nodes:stage=pr-open` — and the sweep reads the newest such line on
-  a ticket as its stage **watermark**, so a tick that finds a lifecycle fact
-  already recorded emits nothing for it. The sweep gains no Jira write: the
+  `culture-nodes:stage=pr-open` — and the sweep reads such a line as a stage
+  **record**, which closes an earlier pickup transition on the same timeline
+  and nothing else. The sweep gains no Jira write: the
   nodes are the write path (issue #311, decision c9). Only a Jira-shaped work
   item can carry a stage, so the `keyed` route reaches `stage-dispatch` and
   both `fix.completed` edges are guarded on the item's shape — an orphan run

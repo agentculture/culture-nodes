@@ -54,6 +54,7 @@ import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote, urlencode
 
 USER_AGENT = "culture-nodes-hand-turn-observer/1.0"
 
@@ -81,12 +82,20 @@ def http_json(method: str, url: str, body: Any = None, token: str | None = None)
 
 
 def fetch_runs(base_url: str, work_item: str) -> list[dict[str, Any]]:
-    """The item's runs with their node runs (``GET /runs?work_item=`` + run views)."""
+    """The item's runs with their node runs (``GET /runs?work_item=`` + run views).
+
+    The key is escaped, not interpolated: a work item is often the transient
+    ``gh:<owner>/<repo>#<n>`` form a PR with no ticket carries, and pasted raw
+    into a URL everything from the ``#`` becomes a fragment the server never
+    sees -- so the control plane would be asked about ``gh:owner/repo`` and
+    answer, wrongly and silently, that the item has no runs.
+    """
     base = base_url.rstrip("/")
-    listing = http_json("GET", f"{base}/v1alpha1/runs?work_item={work_item}&limit=100") or {}
+    query = urlencode({"work_item": work_item, "limit": 100})
+    listing = http_json("GET", f"{base}/v1alpha1/runs?{query}") or {}
     runs = []
     for item in listing.get("items") or []:
-        view = http_json("GET", f"{base}/v1alpha1/runs/{item['id']}") or {}
+        view = http_json("GET", f"{base}/v1alpha1/runs/{quote(str(item['id']), safe='')}") or {}
         run = dict(view.get("run") or item)
         run["node_runs"] = view.get("node_runs") or []
         runs.append(run)
@@ -284,13 +293,36 @@ def _load_json(path: str) -> Any:
         return json.load(handle)
 
 
+#: The `observe` node's input binding name (workflow.yaml).
+INPUT_BINDING = "item"
+
+
+def bound_input(payload: Any) -> Any:
+    """The work-item document inside a code node's resolved input.
+
+    NODES_INPUT_JSON carries the node's resolved input DOCUMENT -- one key per
+    declared binding -- so ``item: /run/input`` arrives as ``{"item": {...}}``
+    rather than as the run input itself. A hand run (``--inputs pr.json``)
+    passes the document directly. Both are accepted: unwrap only when the
+    wrapper is the binding's name and the payload carries no ``work_item`` of
+    its own, so a genuinely bare input is never mistaken for a wrapper.
+    """
+    if isinstance(payload, dict) and "work_item" not in payload:
+        inner = payload.get(INPUT_BINDING)
+        if isinstance(inner, dict):
+            return inner
+    return payload
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Propose hand_turn records for one work item.")
     parser.add_argument(
         "--inputs",
         help=(
             "Pre-fetched inputs JSON (work_item, runs, handover_refs, pr_events, "
-            "issue_comments). Default: $NODES_INPUT_JSON."
+            "issue_comments). Default: $NODES_INPUT_JSON, the code node's "
+            "resolved input, where the same document sits under the `item` "
+            "binding."
         ),
     )
     parser.add_argument(
@@ -317,13 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.inputs:
-        inputs = _load_json(args.inputs)
+        inputs = bound_input(_load_json(args.inputs))
     else:
         raw = os.environ.get("NODES_INPUT_JSON")
         if not raw:
             print("observer: pass --inputs or set NODES_INPUT_JSON", file=sys.stderr)
             return 2
-        inputs = json.loads(raw)
+        inputs = bound_input(json.loads(raw))
     definition = _load_json(args.definition)
 
     if args.fetch_runs:

@@ -48,9 +48,11 @@
 # examples/pr-upkeep/pr_upkeep_jira.py `STAGES`) to the ticket, through the
 # jira actor's post_comment verb -- never from the sweep, which has no Jira
 # write path by design. Each comment's first line is machine-readable
-# (`culture-nodes:stage=<stage>`) and the sweep reads the newest such line on
-# a ticket as its stage WATERMARK: a tick whose lifecycle fact is already
-# recorded there emits nothing for it (pr_upkeep_jira.stage_already_recorded).
+# (`culture-nodes:stage=<stage>`) and the sweep reads such a line as a stage
+# RECORD (pr_upkeep_jira.jira_stage_record). The record is for the board and
+# for the pickup transition; it does NOT hold back this loop's own pr.merged
+# or pr.closed fact, because the comment names the ticket and cannot name the
+# pull request it was posted for, and one ticket may carry two of them.
 #
 #   `merged`  posted BEFORE the cleanup node, on a pr.merged fact only: the
 #             work item's pull request landed. Nothing is claimed about the

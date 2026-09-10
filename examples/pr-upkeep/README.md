@@ -69,12 +69,20 @@ environment — see [`deploy/prod/README.md`](../../deploy/prod/README.md)'s
 `deploy.sh` re-grants them.
 
 The readiness collector's `PR_UPKEEP_READINESS_SOURCE_URL` /
-`PR_UPKEEP_READINESS_SOURCE_SHA256` work the same way and are **not yet
-stamped** by `deploy/prod/lanes/runner-env-write.sh`. The runner boundary
-refuses an operation whose granted value is unset, so that node cannot run on
-this deployment until they are granted — the same state the cleanup node's
-`CLEANUP_SOURCE_URL`/`CLEANUP_SOURCE_SHA256` have been in since task t13.
-Wiring both is a deploy-lane change, not a graph one.
+`PR_UPKEEP_READINESS_SOURCE_SHA256` work the same way and are stamped by
+`deploy/prod/lanes/runner-env-write.sh` from the same shipped revision. So are
+the collector's five endpoint values — **empty, but granted**, because "empty
+means the documented default" describes `readiness.py`, while the runner
+boundary asks whether the name is *set* and refuses the operation by name when
+it is not. Granting the two source values alone would leave the node refused
+for the other five.
+
+That the readiness node is granted at all, and the cleanup node's
+`CLEANUP_SOURCE_URL`/`CLEANUP_SOURCE_SHA256` still are not, is one difference:
+this collector is the only path into `human-merges-pr`, so an ungranted
+readiness is not a node that quietly does not run — it is every merge decision
+here presented without the block. `tests/test_pr_upkeep_readiness.py` diffs the
+node's `environmentRefs` against the lane, so the two cannot drift apart again.
 
 A digest mismatch, or either value unset, exits nonzero, which is the
 sweep node's technical-failure path: `sweep.failed` routes to the

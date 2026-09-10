@@ -183,13 +183,16 @@
 #   PR_UPKEEP_READINESS_SOURCE_SHA256     the digest the bootstrap refuses to
 #                                         run without.
 #
-#   Honest note on those two: unlike the sweep's, they are NOT yet stamped by
-#   deploy/prod/lanes/runner-env-write.sh, and the runner boundary refuses an
-#   operation whose granted value is unset -- so this node cannot run on this
-#   deployment until they are granted. That is the same state the cleanup
-#   node's CLEANUP_SOURCE_URL/SHA256 have been in since task t13; wiring both
-#   (and widening grant-check.sh's allowlist) is a deploy-lane change, not a
-#   graph one, and is deliberately not folded in here.
+#   Stamped by deploy/prod/lanes/runner-env-write.sh, from the same shipped
+#   revision as the sweep's, and named in grant-check.sh's allowlist so the
+#   deploy that first grants them is not refused by its own preflight. They
+#   were NOT, for one review round: the node was published on the only path
+#   into `human-merges-pr` while nothing granted it, and the runner boundary
+#   refuses an operation whose ref is unset -- which is a merge decision
+#   presented without the block this node exists to carry, not a node that
+#   quietly does not run. Qodo named that on PR #326 and it is wired now. The
+#   cleanup example's CLEANUP_SOURCE_URL/SHA256 remain in the older state:
+#   that node is not on any approval's only path.
 #   PR_UPKEEP_READINESS_GITHUB_API        the GitHub REST base; empty means
 #                                         the public API. The GraphQL
 #                                         endpoint is `<base>/graphql`.
@@ -204,6 +207,11 @@
 #   PR_UPKEEP_READINESS_DEVAGUE_SLUG      optional: read only the documents
 #                                         with this slug. Empty reads every
 #                                         document and the block says so.
+#
+#   "Empty means the default" on those five is a statement about readiness.py,
+#   not about the runner: `resolveEnv` asks os.LookupEnv, so an EMPTY grant
+#   resolves and an UNSET one refuses the whole operation by name. The lane
+#   therefore grants all five, empty, rather than omitting them.
 #   GITHUB_TOKEN                          the read credential. The REST reads
 #                                         degrade to anonymous without it; the
 #                                         GraphQL thread read does not work at

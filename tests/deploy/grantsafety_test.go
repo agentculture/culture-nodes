@@ -259,7 +259,9 @@ func runSnippet(t *testing.T, c *fakeCluster, snippet string, extraEnv ...string
 }
 
 // runnerEnvLaneEnv is what deploy.sh has in scope by the time it sources the
-// runner.env lane: a revision, the sweep source grant, and a control-plane URL.
+// runner.env lane: a revision, the sweep and readiness source grants, and a
+// control-plane URL. The source grants are supplied rather than derived
+// because REVISION here is a fake sha with no `git show` behind it.
 func runnerEnvLaneEnv() []string {
 	return []string{
 		"REVISION=0123456789abcdef0123456789abcdef01234567",
@@ -270,6 +272,8 @@ func runnerEnvLaneEnv() []string {
 		"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=" + strings.Repeat("b", 64),
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=https://example.invalid/emit.py",
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=" + strings.Repeat("c", 64),
+		"PR_UPKEEP_READINESS_SOURCE_URL=https://example.invalid/readiness.py",
+		"PR_UPKEEP_READINESS_SOURCE_SHA256=" + strings.Repeat("d", 64),
 	}
 }
 

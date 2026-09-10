@@ -378,16 +378,32 @@ deployment decides *whose*. Leave them unset on a host that does not run the
 pr-upkeep loop — the sweep is then refused there by name, which is the
 correct answer and not a silent fallback to someone else's code.
 
+`PR_UPKEEP_READINESS_SOURCE_URL` / `_SHA256` are the same thing for the merge
+gate's readiness collector, and are overridden the same way. Unset, they
+default to `readiness.py` at the revision this deploy shipped.
+
+The collector's five endpoint values — `PR_UPKEEP_READINESS_GITHUB_API`,
+`_SONAR_API`, `_SONAR_COMPONENT`, `_DEVAGUE_ROOT`, `_DEVAGUE_SLUG` — are
+granted **empty** rather than omitted, and the distinction is the sentence at
+the top of this section. `readiness.py` treats each as "empty means the
+documented default", but the runner resolves refs with `os.LookupEnv`: an
+empty grant resolves, an absent one refuses the whole operation by name. Since
+that node is the only path into the pr-upkeep merge approval, a refusal there
+is a merge decision presented with no readiness block at all. Export any of
+the five on a deploy to point the collector somewhere other than the public
+APIs and the working directory.
+
 ### Runner grants: what lives where, and how to put it back
 
-Five grants keep the pr-upkeep loop running, and they live in **two files**
+The grants that keep the pr-upkeep loop running live in **two files**
 on each runner host, for one reason: `deploy.sh` rewrites `runner.env` on
 every deploy, so anything that must survive a deploy without being retyped
 belongs in the other file.
 
 | Grant | File | Who writes it |
 | --- | --- | --- |
-| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `PR_UPKEEP_READINESS_SOURCE_URL` / `_SHA256`, and `PR_UPKEEP_READINESS_GITHUB_API` / `_SONAR_API` / `_SONAR_COMPONENT` / `_DEVAGUE_ROOT` / `_DEVAGUE_SLUG` | `~/.culture-nodes/runner.env` | the same lane, same deploy. The two source values default to the shipped revision's `readiness.py`; the other five are granted **empty** — see below |
 | `JIRA_ACCOUNT_EMAIL` + `JIRA_API_TOKEN` | `~/.culture-nodes/runner-secrets.env` | `install-secrets.sh`'s Jira lane, **merged** — it replaces these two keys and no other |
 | `GITHUB_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
 | `SONAR_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |

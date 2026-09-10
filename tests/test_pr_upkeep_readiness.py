@@ -54,6 +54,9 @@ README = EXAMPLE / "README.md"
 LANE_DOC = ROOT / "docs" / "operations" / "pr-upkeep-lane.md"
 ISSUE_DRAFT = ROOT / "docs" / "triage" / "devague-bulk-confirm-issue.md"
 PR_STATUS = ROOT / ".claude" / "skills" / "cicd" / "scripts" / "pr-status.sh"
+RUNNER_ENV_LANE = ROOT / "deploy" / "prod" / "lanes" / "runner-env-write.sh"
+GRANT_CHECK_LANE = ROOT / "deploy" / "prod" / "lanes" / "grant-check.sh"
+DEPLOY_README = ROOT / "deploy" / "prod" / "README.md"
 
 READINESS_NODE = "readiness"
 APPROVAL_NODE = "human-merges-pr"
@@ -149,6 +152,45 @@ def test_readiness_fetches_its_program_by_granted_url_and_digest(nodes):
         assert want in refs, f"{want} is not granted to the readiness operation"
         assert want in argv, f"granting {want} changes nothing: argv never reads it"
     assert "http://" not in argv and "https://" not in argv
+
+
+def test_every_readiness_grant_is_stamped_by_the_deploy_lane(nodes):
+    """A readiness node nothing granted is a merge decision with no block.
+
+    Qodo read the 2.6.0 graph on PR #326 and named the consequence exactly:
+    the collector sits on the ONLY path into `human-merges-pr`, so a ref this
+    deployment does not grant is not a node that quietly does not run — the
+    runner refuses the operation by name and every approver gets the failed
+    path instead of the block. The five endpoint refs matter as much as the
+    two source ones: `resolveEnv` asks `os.LookupEnv`, so *unset* is refused
+    where *empty* resolves, and "optional to readiness.py" is not "optional
+    to the runner". Two grant files, because that is where they live.
+    """
+    payload = RUNNER_ENV_LANE.read_text()
+    payload = payload[payload.index("{ printf '%s\\n' \\") : payload.index("\n\t} | ssh")]
+    stamped = {
+        line.strip().strip("\\ \t\"'").split("=", 1)[0]
+        for line in payload.splitlines()
+        if "=" in line
+    }
+    by_hand = DEPLOY_README.read_text()
+    for ref in nodes[READINESS_NODE]["operation"]["environmentRefs"]:
+        if ref.startswith("PR_UPKEEP_READINESS_"):
+            assert ref in stamped, (
+                f"{ref} is declared by the readiness node and written by no deploy lane; "
+                "the runner refuses the operation by name and the approval is presented "
+                "without its block"
+            )
+            assert ref in GRANT_CHECK_LANE.read_text(), (
+                f"{ref} is written by lanes/runner-env-write.sh but missing from "
+                "grant-check.sh's GRANT_CHECK_DEPLOY_GRANTS; the deploy that first "
+                "grants it would be refused by its own preflight"
+            )
+        else:
+            assert f"`{ref}`" in by_hand, (
+                f"{ref} is granted by no lane, so deploy/prod/README.md has to say who "
+                "puts it on the host"
+            )
 
 
 def test_readiness_declares_the_two_conventional_code_outcomes(nodes):

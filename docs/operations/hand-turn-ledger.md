@@ -42,6 +42,15 @@ zero. The scope is the actor whose *work* needed the turn, not whoever
 noticed it, so the number reads as "how much hand-work did this actor's runs
 need to land" — the comparative fact the dogfooding reflex collects.
 
+That count is only as good as the ledger having one record per turn, which
+is why the observer de-duplicates before it posts: it re-recognises a work
+item's whole history on every tick and the create route appends without an
+idempotency key, so an un-guarded rerun would put two records under one turn
+and a person confirming both would double the number above. The guard is
+read-then-write (`examples/hand-turn-observer/README.md` states what it does
+not cover), so **one observation of a work item at a time** is an operating
+rule, not a detail.
+
 When `/summarize-delivery` writes a cycle's summary, the hand-turn count it
 reports is that confirmed count, read from the work item's ledger
 (`nodes ledger records <run-id>` filtered to confirmed `hand_turn` records,
@@ -68,7 +77,11 @@ jq -n --arg wi SCRUM-9 --arg actor <your-actor-id> \
 nodes review create <run-id> --records <definition-id> --ledger-version N
 nodes review commit <review-id> --confirm <definition-id> --ledger-version N
 
-# 2. observe one work item (offline core; --post to append as the observer)
+# 2. observe one work item (offline core; --post to append as the observer).
+#    Re-runnable: --post reads the item's existing hand_turn records first and
+#    skips the turns already filed, so a second tick -- or a retry after a
+#    batch failed halfway -- does not file a second copy. The output reports
+#    `proposed` (recognised), `posted` (appended) and `already_recorded`.
 python3 examples/hand-turn-observer/observer.py --inputs pr.json \
   --definition examples/hand-turn-observer/definition.json --definition-ref <definition-id>
 

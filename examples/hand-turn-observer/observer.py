@@ -20,9 +20,22 @@ recognition rules can be tested against a recorded fixture
 ``review-fix/*`` branches, the cherry-pick ``a029689``, operator replies on
 threads the loop fixed, an ssh checkout reset noted in an issue). The network
 lives in exactly one helper, :func:`http_json`, used by :func:`fetch_runs`
-(the nodes API) and :func:`post_proposals`; PR events and comments arrive as
-pre-fetched JSON (``gh api`` output -- see README.md), because this node
-holds no GitHub credential and should not.
+and :func:`recorded_identities` (the nodes API) and :func:`post_proposals`;
+PR events and comments arrive as pre-fetched JSON (``gh api`` output -- see
+README.md), because this node holds no GitHub credential and should not.
+
+Determinism is also why ``--post`` reads before it writes. The recogniser
+looks at a work item's WHOLE history, so every rerun re-recognises every turn
+it recognised last time, and ``POST /v1alpha1/hand-turns`` appends -- it has
+no idempotency key and no existing-record check. Left alone, a second tick on
+the same item, or a retry after a partial batch failed halfway, files a second
+copy of turns already on the ledger, and two copies confirmed separately are
+two hand-turns in ``hand_turns_by_stage`` -- the number a delivery summary
+cites (docs/operations/hand-turn-ledger.md) inflated by the observer running
+twice. So :func:`recorded_identities` reads the item's existing ``hand_turn``
+records first and :func:`unrecorded` drops the proposals that repeat one. See
+that function for what "the same turn" means, and README.md for the residual
+this does not close.
 
 Rules live in the DEFINITION, not here. A rule is ``{id, stage, description}``
 (what the schema pins) plus a matcher the observer understands:
@@ -60,7 +73,7 @@ USER_AGENT = "culture-nodes-hand-turn-observer/1.0"
 
 
 # ---------------------------------------------------------------------------
-# The one network helper, and its two callers
+# The one network helper, and its callers
 # ---------------------------------------------------------------------------
 
 
@@ -81,8 +94,8 @@ def http_json(method: str, url: str, body: Any = None, token: str | None = None)
     return json.loads(raw) if raw else None
 
 
-def fetch_runs(base_url: str, work_item: str) -> list[dict[str, Any]]:
-    """The item's runs with their node runs (``GET /runs?work_item=`` + run views).
+def list_runs(base_url: str, work_item: str) -> list[dict[str, Any]]:
+    """The item's runs as ``GET /runs?work_item=`` lists them, newest first.
 
     The key is escaped, not interpolated: a work item is often the transient
     ``gh:<owner>/<repo>#<n>`` form a PR with no ticket carries, and pasted raw
@@ -93,13 +106,48 @@ def fetch_runs(base_url: str, work_item: str) -> list[dict[str, Any]]:
     base = base_url.rstrip("/")
     query = urlencode({"work_item": work_item, "limit": 100})
     listing = http_json("GET", f"{base}/v1alpha1/runs?{query}") or {}
+    return list(listing.get("items") or [])
+
+
+def fetch_runs(base_url: str, work_item: str) -> list[dict[str, Any]]:
+    """The item's runs with their node runs (the listing + each run's view)."""
+    base = base_url.rstrip("/")
     runs = []
-    for item in listing.get("items") or []:
+    for item in list_runs(base, work_item):
         view = http_json("GET", f"{base}/v1alpha1/runs/{quote(str(item['id']), safe='')}") or {}
         run = dict(view.get("run") or item)
         run["node_runs"] = view.get("node_runs") or []
         runs.append(run)
     return runs
+
+
+def recorded_identities(base_url: str, work_item: str) -> set[tuple[str, str, str, tuple]]:
+    """The identities of ``hand_turn`` records already on the item's ledger.
+
+    Read across ALL of the item's runs, not just the newest one, because that
+    is the scope the count is read over: ``hand_turns_by_stage`` sums the
+    confirmed records on every run the actor attempted, so a copy filed
+    against an earlier run of the same item is a copy in the number. The read
+    is unauthenticated (``GET /runs/{id}/ledger``, like the runs listing) --
+    the observer's own bearer opens ``POST /v1alpha1/hand-turns`` and nothing
+    else, and this fix must not need a wider grant to work.
+
+    Every existing record counts, whatever its authority: a turn a person
+    already REJECTED is one they have ruled on, and re-proposing it each tick
+    is noise in the review surface. The fix for a wrong rejection is a new
+    definition, not a resubmission.
+    """
+    base = base_url.rstrip("/")
+    seen: set[tuple[str, str, str, tuple]] = set()
+    for item in list_runs(base, work_item):
+        run_id = item.get("id")
+        if not run_id:
+            continue
+        path = f"{base}/v1alpha1/runs/{quote(str(run_id), safe='')}/ledger"
+        for record in (http_json("GET", path) or {}).get("items") or []:
+            if record.get("record_type") == "hand_turn":
+                seen.add(hand_turn_identity(record.get("data") or {}))
+    return seen
 
 
 def post_proposals(
@@ -274,6 +322,63 @@ def propose(
     return proposals
 
 
+def hand_turn_identity(turn: dict[str, Any]) -> tuple[str, str, str, tuple]:
+    """What makes two hand-turns THE SAME turn, for a proposal or a record.
+
+    Both shapes carry the same field names -- a proposal is the request body
+    and the appended record's ``data`` is that body minus ``actor_id`` -- so
+    one function reads either.
+
+    The identity is the work item, the rule that fired, when the turn was
+    observed, and the evidence the rule matched. Two fields are deliberately
+    OUT of it:
+
+    ``what``
+        generated prose. It moves when a rule's wording or the slack window
+        changes, and the person still performed one step. Including it would
+        re-file every turn on the next tick after a cosmetic edit.
+    ``definition_ref``
+        iterating the definition is exactly the loop this node is built for
+        (the person changes the rules from what the observer got wrong).
+        Including it would make every iteration re-file the turns the old
+        definition already found, which is the inflation this guards against
+        wearing a different hat.
+
+    ``observed_at`` is in it because a rule's evidence is not always unique on
+    its own: ``event_match`` falls back to the matched field value, so the
+    same branch created and deleted twice is one evidence string and two
+    turns. It is the source event's own timestamp, not a clock read here, so
+    it is stable across reruns.
+    """
+    return (
+        str(turn.get("work_item") or ""),
+        str(turn.get("rule") or ""),
+        str(turn.get("observed_at") or ""),
+        tuple(str(ref) for ref in turn.get("evidence_refs") or []),
+    )
+
+
+def unrecorded(
+    proposals: list[dict[str, Any]], already: set[tuple[str, str, str, tuple]]
+) -> list[dict[str, Any]]:
+    """``proposals`` minus the turns already on the ledger, and minus repeats.
+
+    ``already`` is what :func:`recorded_identities` read. The batch is also
+    de-duplicated against itself as it goes, so a source list that names the
+    same commit or comment twice -- one ``gh api`` page fetched twice by the
+    operator lane -- files one turn, not two.
+    """
+    seen = set(already)
+    fresh = []
+    for proposal in proposals:
+        identity = hand_turn_identity(proposal)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        fresh.append(proposal)
+    return fresh
+
+
 def to_request(proposal: dict[str, Any], actor_id: str) -> dict[str, Any]:
     """A proposal as the ``CreateHandTurnRequest`` body this observer posts."""
     body = dict(proposal)
@@ -343,7 +448,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "POST the proposals to $NODES_API_URL as $NODES_OBSERVER_ACTOR_ID "
-            "with $NODES_HAND_TURN_TOKEN."
+            "with $NODES_HAND_TURN_TOKEN, skipping the turns already on the "
+            "item's ledger."
         ),
     )
     args = parser.parse_args(argv)
@@ -368,13 +474,19 @@ def main(argv: list[str] | None = None) -> int:
         "proposed": len(proposals),
     }
     if args.post and proposals:
+        api_url = os.environ["NODES_API_URL"]
+        # Read before writing: the recogniser re-recognises the item's whole
+        # history every tick, and the create route appends unconditionally.
+        fresh = unrecorded(proposals, recorded_identities(api_url, inputs["work_item"]))
         records = post_proposals(
-            os.environ["NODES_API_URL"],
+            api_url,
             os.environ["NODES_HAND_TURN_TOKEN"],
             os.environ["NODES_OBSERVER_ACTOR_ID"],
-            proposals,
+            fresh,
         )
         result["record_ids"] = [r.get("id") for r in records]
+        result["posted"] = len(records)
+        result["already_recorded"] = len(proposals) - len(fresh)
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0

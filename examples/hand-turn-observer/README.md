@@ -15,7 +15,7 @@ number a delivery summary cites (`docs/operations/hand-turn-ledger.md`).
 
 | File | What it is |
 |------|------------|
-| `observer.py` | Stdlib-only node program. `propose(inputs, definition)` is the deterministic core; `http_json` is the one network helper (`fetch_runs`, `post_proposals`). |
+| `observer.py` | Stdlib-only node program. `propose(inputs, definition)` is the deterministic core; `http_json` is the one network helper (`list_runs`, `fetch_runs`, `recorded_identities`, `post_proposals`). |
 | `definition.json` | The first definition's `data` — four rules read off PR #307. The ledger record is the authority; this is its published copy for the bootstrap to fetch by digest. |
 | `workflow.yaml` | One code node (`observe`) that fetches the observer and definition by digest, reads the item's runs, proposes, and posts; then an approval node where the graph waits for the review. Its `input.bindings` (`item: /run/input`) is what makes the engine forward the run input as `NODES_INPUT_JSON` — a code node without one is dispatched with nothing. |
 | `../../tests/fixtures/hand-turn-observer/pr-307.json` | PR #307's shape as neutral placeholders: two runs, two handover refs, eight `review-fix/*` branches created and deleted, the `a029689` cherry-pick, three operator replies on loop-fixed threads, one ssh checkout reset noted on #286 — plus the near-misses the rules must not match. |
@@ -37,6 +37,42 @@ run gets the same document from `$NODES_INPUT_JSON` instead, under the node's
 append each proposal through `POST /v1alpha1/hand-turns` as
 `$NODES_OBSERVER_ACTOR_ID` with `$NODES_HAND_TURN_TOKEN` (the observer actor's
 own bearer — it opens that route and nothing else).
+
+## Why `--post` reads before it writes
+
+The recogniser reads a work item's **whole** history, so every rerun
+re-recognises every turn it recognised last time — and
+`POST /v1alpha1/hand-turns` appends, with no idempotency key and no
+existing-record check. Left alone, a second tick on the same item, or a retry
+after a batch failed halfway through, would file a second copy of turns
+already on the ledger; two copies confirmed separately are **two** hand-turns
+in `hand_turns_by_stage`, which is the number a delivery summary cites
+(`docs/operations/hand-turn-ledger.md`). The observer running twice would
+inflate the count of how much hand-work the loop cost.
+
+So `--post` first reads the item's existing `hand_turn` records across all of
+its runs (`GET /v1alpha1/runs/{id}/ledger`, unauthenticated like the runs
+listing — this needs no wider grant than the observer already has) and skips
+the proposals that repeat one. The output says so: `proposed` is the whole
+recognised batch, `posted` is what was appended, `already_recorded` is the
+difference.
+
+Two hand-turns are **the same turn** when the work item, the rule that fired,
+the `observed_at` of the source event and the matched `evidence_refs` all
+match. `what` is out of that identity because it is generated prose that moves
+when a rule's wording does; `definition_ref` is out because iterating the
+definition is the loop this node exists for, and an iteration must not re-file
+what the previous definition already found. Rejected records count as recorded
+too: a turn a person ruled on is not re-proposed each tick — the fix for a
+wrong rejection is a new definition.
+
+**The residual.** This is read-then-write, not an idempotency key, so it does
+not close the window between two observer runs on the same item overlapping —
+both can read before either writes. The graph runs the node once per dispatch
+(`maxVisitsPerNode: 1`, `retry.maxAttempts: 1`), so the shapes that actually
+occur are covered; do not schedule concurrent observations of one work item.
+Closing the race needs an idempotency identity enforced inside the append
+transaction, which is a control-plane change rather than a node one.
 
 ## Collecting the inputs
 

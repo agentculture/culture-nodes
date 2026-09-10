@@ -70,6 +70,16 @@
 #  2. PR events and comments are pre-fetched, not read by the node. The
 #     rules that need them (branch deletes, replies, the ssh reset note) are
 #     only as complete as the operator's `gh api` pull.
+#  3. The duplicate guard is read-then-write, not an idempotency key. The
+#     observer reads the item's existing `hand_turn` records and skips the
+#     turns already filed, which makes a rerun and a retry-after-partial-
+#     failure safe -- the shapes that actually occur, since this graph runs
+#     once per dispatch (`maxVisitsPerNode: 1`, `retry.maxAttempts: 1`). It
+#     does NOT close the window between two observer runs on the SAME item
+#     overlapping: both can read before either writes. Closing that needs an
+#     idempotency identity on `POST /v1alpha1/hand-turns` enforced inside the
+#     append transaction, which is a control-plane change, not a node one.
+#     Until then, do not schedule concurrent observations of one work item.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
@@ -170,7 +180,19 @@ spec:
             schema:
               type: object
               properties:
+                # What the recogniser found this tick, over the item's whole
+                # history -- so on tick two it is at least what tick one
+                # found. `posted` is the subset actually appended: the
+                # observer reads the item's existing hand_turn records first
+                # and skips the turns already on the ledger, because the
+                # create route appends without an idempotency key and two
+                # copies confirmed separately are two hand-turns in the count
+                # a delivery summary cites.
                 proposed:
+                  type: integer
+                posted:
+                  type: integer
+                already_recorded:
                   type: integer
                 record_ids:
                   type: array

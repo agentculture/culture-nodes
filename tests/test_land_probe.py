@@ -96,7 +96,8 @@ def test_a_second_active_attempt_on_the_actor_checkout_blocks_the_reset(
     assert code == land.EXIT_LANDED, records
     by = steps(records)
     assert by["push"]["outcome"] == "skipped"
-    assert by["checkout_lease"]["outcome"] == "ok" and by["checkout_lease"]["active_attempts"] == 0
+    assert by["checkout_lease"]["outcome"] == "ok"
+    assert by["checkout_lease"]["active_attempts"] == 0
     assert by["reset"]["outcome"] == "ok"
     assert git(actor_checkout, "rev-parse", "HEAD") == tip
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == tip

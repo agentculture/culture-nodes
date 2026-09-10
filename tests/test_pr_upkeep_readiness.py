@@ -524,7 +524,8 @@ def test_the_thread_query_reads_resolution_the_way_pr_status_sh_does(github, son
     run_readiness(github, sonar, devague, fact())
     assert len(github.graphql_queries) == 1
     body = github.graphql_queries[0]
-    assert "reviewThreads" in body["query"] and "isResolved" in body["query"]
+    assert "reviewThreads" in body["query"]
+    assert "isResolved" in body["query"]
     # The PR is a query VARIABLE, not string-interpolated into the document --
     # pr-status.sh interpolates because it is a shell heredoc; a program with a
     # JSON encoder has no excuse to.

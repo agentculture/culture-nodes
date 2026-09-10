@@ -363,7 +363,8 @@ def test_a_closed_pr_still_deletes_a_ref_an_earlier_merge_landed(remote, api, tm
         landed_handover: before[landed_handover],
     }
     after = remote_refs(bare)
-    assert landed_branch not in after and landed_handover not in after
+    assert landed_branch not in after
+    assert landed_handover not in after
     # And the unreachable ones are untouched on the same run: the close did
     # not turn the reachability test off, it just did not change its answer.
     unreachable_branch = (

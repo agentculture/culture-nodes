@@ -50,6 +50,7 @@ _DEAD = (
     '"checked_at": "2026-09-07T10:05:00+00:00", "mode": "LOCK"}'
 )
 
+
 # The shared preflight module, loaded off the file: it is stdlib-only and
 # imports nothing from its own package (that is what makes the
 # byte-identical rule cheap to hold), so the detector's fixture can derive

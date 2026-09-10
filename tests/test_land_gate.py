@@ -470,7 +470,8 @@ def test_an_unknown_lint_job_is_refused_before_the_chain_starts(
 
     assert code == land.EXIT_ENVIRONMENT, records
     res = result(records)
-    assert res["outcome"] == "environment" and "roott" in res["error"]
+    assert res["outcome"] == "environment"
+    assert "roott" in res["error"]
     named = [r for r in records if r.get("record") == land_gate.REASON_LINT_JOB_UNKNOWN]
     assert len(named) == 1
     assert named[0]["job"] == "roott" and named[0]["known"] == list(land_gate.LINT_ALL_JOBS)

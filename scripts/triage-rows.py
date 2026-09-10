@@ -22,6 +22,14 @@ is refused BY NAME with exit 2 and NOTHING is written. `--check-only` runs
 exactly that validation without a number, so the wrapper can refuse before it
 posts rather than leave an issue behind with no rows.
 
+The same "nothing written" promise covers the write itself, and it has to: the
+three writes (two appends and the report) are not one operation, so a failure
+on the second commits the first. The retry the wrapper prints then refuses the
+number it already wrote -- the issue is stranded with half its triage and no
+command that repairs it. So the writes are taken all-or-nothing: the three
+files are snapshotted first and any that changed are put back if a later write
+fails. A retry of the identical command is therefore always the repair.
+
 What the regenerated report does and does not refresh: the disposition table
 (everything `triage-report.py --check` verifies) is rebuilt from the appended
 CSV; the `## Issue types` section is preserved verbatim, because refreshing it
@@ -163,6 +171,33 @@ def append_row(path: Path, fields: list[str]) -> None:
     path.write_text(current + prefix + buffer.getvalue(), encoding="utf-8")
 
 
+def snapshot(paths: list[Path]) -> dict[Path, str | None]:
+    """The tables as they stand, so a failed write can be undone. None = absent."""
+    return {path: path.read_text(encoding="utf-8") if path.exists() else None for path in paths}
+
+
+def restore(before: dict[Path, str | None]) -> list[Path]:
+    """Put back every file that changed; return the ones that could not be put back.
+
+    Untouched files are left alone, so the common failure -- the very first
+    write refused by a read-only table -- reports nothing to repair rather than
+    a phantom partial write.
+    """
+    unrestored = []
+    for path, original in before.items():
+        try:
+            current = path.read_text(encoding="utf-8") if path.exists() else None
+            if current == original:
+                continue
+            if original is None:
+                path.unlink()
+            else:
+                path.write_text(original, encoding="utf-8")
+        except OSError:
+            unrestored.append(path)
+    return unrestored
+
+
 def regenerate(report, triage: Path, numbers: list[int]) -> None:
     """Rebuild the disposition table; keep the type section as it stands."""
     output = triage / "open-issues.md"
@@ -223,6 +258,19 @@ def main(argv=None) -> int:
     # The issue was just created: it is open whether or not the list has caught up.
     numbers = sorted(set(numbers) | {args.number})
 
+    # All three writes or none: a failure on the second must not leave the first
+    # on disk, or the retry refuses the number it already wrote.
+    targets = [
+        args.triage_dir / "dispositions.csv",
+        args.triage_dir / "issue-types.csv",
+        args.triage_dir / "open-issues.md",
+    ]
+    try:
+        before = snapshot(targets)
+    except OSError as exc:
+        print(f"triage-rows: could not read the triage tables: {exc}", file=sys.stderr)
+        return 2
+
     try:
         append_row(args.triage_dir / "dispositions.csv", [str(args.number), bucket, text, evidence])
         append_row(
@@ -232,6 +280,16 @@ def main(argv=None) -> int:
         regenerate(report, args.triage_dir, numbers)
     except (OSError, report.DispositionTableError) as exc:
         print(f"triage-rows: writing the triage rows failed: {exc}", file=sys.stderr)
+        unrestored = restore(before)
+        if unrestored:
+            print(
+                "triage-rows: and these tables could not be put back, so they may hold a "
+                f"partial write: {', '.join(str(path) for path in unrestored)}; read "
+                "`git diff docs/triage` before retrying",
+                file=sys.stderr,
+            )
+        else:
+            print("triage-rows: nothing was written; retry the same command", file=sys.stderr)
         return 2
 
     print(

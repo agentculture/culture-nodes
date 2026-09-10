@@ -350,6 +350,36 @@ def test_check_only_validates_without_a_number_and_writes_nothing(tmp_path):
     assert snapshot(triage) == before
 
 
+def test_a_failure_after_the_first_row_is_rolled_back_and_the_retry_repairs_it(tmp_path):
+    """Three writes, one command: a late failure may not commit the early one.
+
+    Without the rollback the disposition row is on disk when the type row
+    fails, and the retry the wrapper prints refuses that number before it can
+    write the missing row or refresh the report -- the issue is stranded with
+    half its triage and no command that repairs it.
+    """
+    triage, issues = synthetic_triage(tmp_path)
+    before = snapshot(triage)
+    types_csv = triage / "issue-types.csv"
+    types_csv.chmod(0o444)
+    if os.access(types_csv, os.W_OK):
+        pytest.skip("running as a user that ignores file modes")
+
+    failed = run_helper(triage, issues, "--type", "Bug", "--disposition", GOOD)
+    assert failed.returncode == 2
+    assert snapshot(triage) == before, "the disposition row was rolled back"
+    assert "nothing was written" in failed.stderr
+
+    types_csv.chmod(0o644)
+    retry = run_helper(triage, issues, "--type", "Bug", "--disposition", GOOD)
+    assert retry.returncode == 0, retry.stderr
+    assert rows(triage / "dispositions.csv")[-1]["issue"] == str(NEW)
+    assert rows(types_csv)[-1]["issue"] == str(NEW)
+    add_open_issue(issues, NEW)
+    check = run_check(triage, issues)
+    assert check.returncode == 0, check.stderr + check.stdout
+
+
 # --- AC3: the wrapper gains --disposition and stays thin ---------------------
 
 

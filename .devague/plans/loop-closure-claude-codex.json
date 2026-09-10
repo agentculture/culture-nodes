@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-07T05:30:10Z",
-  "updated": "2026-09-07T05:44:41Z",
+  "updated": "2026-09-10T16:24:44Z",
   "targets": [
     {
       "id": "c1",
@@ -417,12 +417,13 @@
     },
     {
       "id": "t4",
-      "summary": "orphan-ticket intake node: for a pr-upkeep.pr fact whose work_item is the gh form, a graph step creates the orphan Jira ticket through the jira actor (create_issue with labels orphan, auto-created, source:github, `repo:<repo>`), re-keys the run's work_item to the new Jira key (PATCH gains work_item for this one transition, or the run is re-created keyed), and records the mapping; a second tick for the same PR finds the key on the ticket and creates nothing",
+      "summary": "orphan-ticket intake node: for a pr-upkeep.pr fact whose work_item is the gh form, a graph step creates the orphan Jira ticket through the jira actor (create_issue with labels orphan, auto-created, source:github, `repo:<repo>`) and then STAMPS THE NEW KEY BACK ONTO THE PULL REQUEST \u2014 the one place the sweep already correlates from (`_correlated_issue_key` reads the head branch, then the body) \u2014 so the next fact for that PR arrives keyed and is routed past the intake step; the jira bridge has no search verb, so the PR itself is the lookup and no separate mapping store is introduced, and neither the create nor the stamp may retry. Re-keying the run own work_item column is a SEPARATE, one-time step (PATCH /v1alpha1/runs/{id} accepts work_item for exactly the gh:->Jira transition) and the gh:->key mapping is readable in the run ledger as the jira actor proposed create_issue claim beside the run input gh: key; a run whose column is not re-keyed changes no dedup outcome, because dedup is answered by the PR, not by the run",
       "origin": "llm",
       "status": "proposed",
       "acceptance_criteria": [
-        "e2e (fake jira bridge): a PR with no key produces exactly one create_issue call with the four labels and the run ends keyed SCRUM-N; a replayed fact creates zero tickets",
-        "the lane doc's status table gains the orphan row and docs/drive-from-jira.md names the labels"
+        "e2e (fake jira bridge): a PR with no key produces exactly one create_issue call with the four labels AND one write-back of that key onto the PR; a second fact for the same PR \u2014 now carrying the stamped key \u2014 routes past the intake step and produces zero create_issue calls; a replayed identical fact (same source key and watermark) mints no run at all",
+        "the lane doc's status table gains the orphan row and docs/drive-from-jira.md names the labels",
+        "the orphan path is unreachable for an already-keyed work item (the route decision guards on the gh: shape), so idempotency never depends on the run work_item column having been re-keyed"
       ],
       "deps": [
         "t2",

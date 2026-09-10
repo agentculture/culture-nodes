@@ -40,13 +40,19 @@
 #
 #   --disposition "bucket|text|evidence" (plan loop-closure-claude-codex, t15)
 #   also dispositions the new issue: after it is created and typed, the wrapper
-#   calls `python3 scripts/triage-rows.py <number> --type <TYPE> --disposition
-#   ...`, which appends the docs/triage/dispositions.csv and issue-types.csv
-#   rows and regenerates docs/triage/open-issues.md, so the next PR's `triage`
-#   lint step stays green with no hand-turn. ALL of that logic lives in the
-#   helper, not here: this wrapper is deleted when agentculture/agtag#19 lands,
-#   and the helper is what its replacement keeps calling. Without the flag the
-#   script behaves exactly as before.
+#   calls `python3 scripts/triage-rows.py <number> --repo <REPO> --type <TYPE>
+#   --disposition ...`, which appends the docs/triage/dispositions.csv and
+#   issue-types.csv rows and regenerates docs/triage/open-issues.md, so the next
+#   PR's `triage` lint step stays green with no hand-turn. ALL of that logic
+#   lives in the helper, not here: this wrapper is deleted when
+#   agentculture/agtag#19 lands, and the helper is what its replacement keeps
+#   calling. Without the flag the script behaves exactly as before.
+#
+#   `--repo` is forwarded rather than defaulted because the two flags interact:
+#   this checkout's docs/triage tables describe THIS repository's open issues,
+#   so dispositioning an issue opened in another one would write a number the
+#   `triage` lint step can never see open again. The helper refuses that pair
+#   at --check-only time, i.e. before the issue is posted.
 set -euo pipefail
 
 usage() {
@@ -139,7 +145,7 @@ fi
 # Same principle as the type check: a malformed disposition is refused BEFORE
 # the post, so a typo cannot leave a real issue behind with no triage rows.
 if [[ -n $disposition ]]; then
-  python3 "$root/scripts/triage-rows.py" --check-only --type "$type_name" --disposition "$disposition"
+  python3 "$root/scripts/triage-rows.py" --check-only --repo "$repo" --type "$type_name" --disposition "$disposition"
 fi
 
 # From here on the issue EXISTS. Validating the type up front removes the likely
@@ -184,9 +190,9 @@ trap - ERR
 # no triage rows -- the same "exists but incomplete" window as above, and it
 # gets the same treatment: name the issue, print the repair.
 if [[ -n $disposition ]]; then
-  python3 "$root/scripts/triage-rows.py" "$number" --type "$type_name" --disposition "$disposition" || {
+  python3 "$root/scripts/triage-rows.py" "$number" --repo "$repo" --type "$type_name" --disposition "$disposition" || {
     echo "error: issue #${number} was created and typed but its triage rows were NOT written -- ${url}" >&2
-    echo "hint: repair with: python3 scripts/triage-rows.py ${number} --type '${type_name}' --disposition '${disposition}'" >&2
+    echo "hint: repair with: python3 scripts/triage-rows.py ${number} --repo '${repo}' --type '${type_name}' --disposition '${disposition}'" >&2
     exit 1
   }
 fi

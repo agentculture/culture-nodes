@@ -58,6 +58,30 @@ class Refused(ValueError):
     """Malformed input. Named, exit 2, nothing written."""
 
 
+def check_repo_owns_the_tables(repo: str, triage: Path) -> None:
+    """The tables describe ONE repository; refuse a number from another one.
+
+    `open-issues.md` is regenerated from `gh issue list --repo <repo>` and
+    `triage-report.py --check` re-reads it against DEFAULT_REPO. So an issue
+    opened elsewhere is wrong in the table twice over: the row names a number
+    this repo will never see open, and the report around it would be rebuilt
+    from a foreign open set -- turning the `triage` lint step red on a tree
+    nobody touched by hand. `open-issue.sh --repo OTHER --disposition ...` is
+    the way in, so the refusal has to happen at `--check-only` time, before
+    the issue exists.
+
+    A caller that brings its own `--triage-dir` is dispositioning some other
+    tree's tables and is none of this script's business.
+    """
+    if repo == DEFAULT_REPO or triage.resolve() != DEFAULT_TRIAGE.resolve():
+        return
+    raise Refused(
+        f"{DEFAULT_TRIAGE} carries {DEFAULT_REPO}'s triage tables, not {repo}'s; "
+        f"refusing to disposition an issue opened in {repo}. Open it without "
+        "--disposition, or pass --triage-dir for that repository's own tables."
+    )
+
+
 def load_report_module():
     """triage-report.py is the reader and renderer of record; borrow, do not copy."""
     path = Path(__file__).resolve().with_name("triage-report.py")
@@ -99,8 +123,10 @@ def validate(
     number: int | None,
     type_name: str,
     raw_disposition: str,
+    repo: str = DEFAULT_REPO,
 ) -> tuple[tuple[str, str, str], dict[int, dict[str, str]]]:
     """Everything that can be refused, refused before anything is written."""
+    check_repo_owns_the_tables(repo, triage)
     bucket, text, evidence = parse_disposition(raw_disposition)
 
     try:
@@ -160,7 +186,11 @@ def main(argv=None) -> int:
         help="evidence_pointer for the issue-types.csv row (default: the disposition's evidence)",
     )
     parser.add_argument("--check-only", action="store_true", help="validate, write nothing")
-    parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument(
+        "--repo",
+        default=DEFAULT_REPO,
+        help="the repository the issue lives in; must be the one --triage-dir describes",
+    )
     parser.add_argument("--triage-dir", type=Path, default=DEFAULT_TRIAGE)
     parser.add_argument("--issues-json", type=Path, help="offline open-issue fixture")
     parser.add_argument("--backoff-seconds", type=float, default=None)
@@ -169,7 +199,7 @@ def main(argv=None) -> int:
     report = load_report_module()
     try:
         (bucket, text, evidence), _existing = validate(
-            report, args.triage_dir, args.number, args.type_name, args.disposition
+            report, args.triage_dir, args.number, args.type_name, args.disposition, args.repo
         )
     except (Refused, OSError) as exc:
         print(f"triage-rows: {exc}", file=sys.stderr)

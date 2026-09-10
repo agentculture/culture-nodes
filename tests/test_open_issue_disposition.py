@@ -520,3 +520,76 @@ def test_helper_is_stdlib_only_and_under_the_file_length_guard():
     assert len(text.splitlines()) < 1000
     forbidden = ("import requests", "import yaml", "import click", "import typer")
     assert not any(token in text for token in forbidden)
+
+
+# --- AC4: the tables describe ONE repository ---------------------------------
+#
+# `--repo` and `--disposition` interact. docs/triage/open-issues.md is
+# regenerated from `gh issue list --repo <repo>` and re-read by
+# `triage-report.py --check` against agentculture/culture-nodes, so an issue
+# opened elsewhere is wrong in these tables twice over: the appended row names
+# a number this repo will never see open, and the report around it would be
+# rebuilt from a foreign open set -- turning the `triage` lint step red on a
+# tree nobody touched by hand. The pair is refused where every other malformed
+# input is: at --check-only time, BEFORE the issue is posted.
+
+OTHER_REPO = "agentculture/some-other-repo"
+
+
+def run_helper_in(repo: Path, *args: str):
+    """The copied tree's helper on ITS OWN default triage dir (no --triage-dir)."""
+    return subprocess.run(  # nosec B603 - fixed argv, no shell
+        [sys.executable, str(repo / "scripts" / "triage-rows.py"), *args],
+        cwd=str(repo),
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def test_helper_refuses_a_foreign_repo_against_this_checkouts_tables(wrapper_repo):
+    repo, _env, _agtag_log = wrapper_repo
+    triage = repo / "docs" / "triage"
+    before = snapshot(triage)
+    result = run_helper_in(
+        repo, "--check-only", "--repo", OTHER_REPO, "--type", "Task", "--disposition", GOOD
+    )
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    assert OTHER_REPO in result.stderr, "the repository that does not own the tables is named"
+    assert "agentculture/culture-nodes" in result.stderr, "the one that does is named too"
+    assert snapshot(triage) == before, "a refusal writes nothing"
+
+
+def test_helper_allows_a_foreign_repo_that_brings_its_own_tables(tmp_path):
+    """Another tree's tables are that tree's business; only the default pair is refused."""
+    triage, issues = synthetic_triage(tmp_path)
+    result = run_helper(
+        triage, issues, "--repo", OTHER_REPO, "--type", "Bug", "--disposition", GOOD
+    )
+    assert result.returncode == 0, result.stderr
+    assert rows(triage / "dispositions.csv")[-1]["issue"] == str(NEW)
+
+
+def test_wrapper_refuses_to_disposition_an_issue_opened_in_another_repo(wrapper_repo):
+    repo, env, agtag_log = wrapper_repo
+    triage = repo / "docs" / "triage"
+    before = snapshot(triage)
+    result = run_wrapper(
+        repo, env, "--repo", OTHER_REPO, "--type", "Task", "--title", "T", "--disposition", GOOD
+    )
+    assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+    assert OTHER_REPO in result.stderr
+    assert not agtag_log.exists(), "the refusal lands before the post, so no issue is left behind"
+    assert snapshot(triage) == before
+
+
+def test_wrapper_still_opens_in_another_repo_without_a_disposition(wrapper_repo):
+    """The guard is about the triage rows only; --repo on its own is untouched."""
+    repo, env, agtag_log = wrapper_repo
+    triage = repo / "docs" / "triage"
+    before = snapshot(triage)
+    result = run_wrapper(repo, env, "--repo", OTHER_REPO, "--type", "Task", "--title", "T")
+    assert result.returncode == 0, result.stderr
+    posted = json.loads(agtag_log.read_text().splitlines()[0])["argv"]
+    assert OTHER_REPO in posted, posted
+    assert snapshot(triage) == before

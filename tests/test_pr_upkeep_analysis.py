@@ -118,7 +118,12 @@ def _bindings(node: dict) -> dict:
 
 
 def test_the_workflow_declares_the_analysis_version(document):
-    assert document["metadata"]["version"] == "2.5.0"
+    # The analysis node shipped in 2.5.0 and the graph has moved on since --
+    # 2.6.0 added the `readiness` collector (task t18). A published workflow is
+    # immutable and pinned by digest, so a successor task bumping this pin is
+    # the version rule holding, not breaking; what this file still owns is
+    # that the analysis node is present and shaped the way t14 declared it.
+    assert document["metadata"]["version"] == "2.6.0"
 
 
 def test_every_node_the_previous_version_shipped_is_still_here(nodes):

@@ -41,6 +41,11 @@ import (
 //  5. A `gh:`-keyed work item posts no stage at all: its edge guards divert
 //     past both pr-upkeep stage nodes, because an orphan has no ticket to
 //     comment on until the run it is in creates one.
+//  6. The merge approval is not created until the `readiness` collector
+//     completed (task t18, honesty h19): the approval is reachable from that
+//     node and from nowhere else, so a PENDING human task is itself the
+//     proof, and the task's `context_refs` carries the collector's output
+//     pointer for the surface presenting it to resolve.
 
 const (
 	stageJiraKey     = "SCRUM-9"
@@ -285,9 +290,12 @@ func registerStageActors(t *testing.T, db *postgres.Store, namespaceID string, a
 		}
 		a.actorIDs[key] = id
 	}
-	// The cleanup graph's code node runs through the runner boundary, and its
-	// observed evidence needs a registered producer identity to be attributed
-	// to (worker.Options.CodeRunnerActorID).
+	// The cleanup graph's code node and pr-upkeep's `readiness` collector both
+	// run through the runner boundary, and their observed evidence needs a
+	// registered producer identity to be attributed to
+	// (worker.Options.CodeRunnerActorID). A stack carries exactly one, so both
+	// nodes are attributed to this row here -- a harness limitation, not a
+	// property of the graphs, which name different runner registry ids.
 	runnerID := "actor_" + idstore.NewULID()
 	if _, err := db.Pool().Exec(context.Background(), `
 		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
@@ -395,19 +403,26 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 
 	// The run parks on the merge approval, which is where `pr-open` means
 	// something: a decision is pending. That is the state to assert from.
-	s.awaitPendingHumanTask(t, upkeepRun, 60*time.Second)
+	//
+	// Reaching that state at all is task t18's acceptance criterion in its
+	// strongest form: the approval is reachable only from `readiness`, so a
+	// pending human task is proof the collector completed first. The scripted
+	// runner answers the code node the way the real runner boundary does
+	// (exit 0 -> the `passed` port).
+	task := s.awaitPendingHumanTask(t, upkeepRun, 60*time.Second)
 	if failures := fakes.refusals(); len(failures) > 0 {
 		t.Fatalf("the fake bridges refused an invocation: %v", failures)
 	}
 	upkeepView := s.runView(t, upkeepRun)
 	for node, want := range map[string]string{
 		"route": "keyed", "analyse": "packaged", "stage-dispatch": "comment_posted",
-		"fix": "completed", "stage-pr-open": "comment_posted",
+		"fix": "completed", "stage-pr-open": "comment_posted", "readiness": "passed",
 	} {
 		if got := nodeOutcome(upkeepView, node); got != want {
 			t.Errorf("pr-upkeep node %s outcome = %q, want %q", node, got, want)
 		}
 	}
+	assertReadinessContextRef(t, task)
 	if got := nodeOutcome(upkeepView, "intake-orphan"); got != "<not visited>" {
 		t.Errorf("a keyed run visited intake-orphan (outcome %q)", got)
 	}
@@ -565,4 +580,33 @@ func assertStageClaimInLedger(t *testing.T, db *postgres.Store, namespaceID, run
 	}
 	t.Fatalf("no proposed post_comment claim for stage %q by actor %s in run %s's ledger (%d records)",
 		stage, jiraActorID, runID, len(records))
+}
+
+// assertReadinessContextRef reads the merge task the way a presenting surface
+// does: `context_refs` carries the approval's input bindings as AUTHORED (
+// internal/engine/humantask.go writes pointers, never resolved values), so the
+// readiness block reaches a person as `/nodes/readiness/output` -- the code
+// node's output document, whose `artifacts.stdout_ref` is the block.
+func assertReadinessContextRef(t *testing.T, task humanTaskOut) {
+	t.Helper()
+	var request struct {
+		ContextRefs struct {
+			Bindings map[string]json.RawMessage `json:"bindings"`
+		} `json:"context_refs"`
+	}
+	if err := json.Unmarshal(task.Request, &request); err != nil {
+		t.Fatalf("decode human task request: %v", err)
+	}
+	raw, ok := request.ContextRefs.Bindings["readiness"]
+	if !ok {
+		t.Fatalf("the merge task carries no `readiness` context ref (bindings: %v)",
+			request.ContextRefs.Bindings)
+	}
+	var pointer string
+	if err := json.Unmarshal(raw, &pointer); err != nil {
+		t.Fatalf("the `readiness` context ref is not a pointer string: %s", raw)
+	}
+	if pointer != "/nodes/readiness/output" {
+		t.Fatalf("the `readiness` context ref = %q, want /nodes/readiness/output", pointer)
+	}
 }

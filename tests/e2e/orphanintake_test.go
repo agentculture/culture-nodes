@@ -254,6 +254,23 @@ func registerOrphanActors(t *testing.T, db *postgres.Store, namespaceID string, 
 	}
 }
 
+// registerOrphanRunner registers the producer identity a code node's observed
+// evidence is attributed to (worker.Options.CodeRunnerActorID). pr-upkeep's
+// only code node is the `readiness` collector, which no path in this test
+// reaches -- the row exists so the stack is honestly configured rather than
+// relying on the node never running.
+func registerOrphanRunner(t *testing.T, db *postgres.Store, namespaceID string) string {
+	t.Helper()
+	id := "actor_" + idstore.NewULID()
+	if _, err := db.Pool().Exec(context.Background(), `
+		INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol)
+		VALUES ($1, $2, $3, 1, 'runner', 'internal')
+	`, id, namespaceID, "headspace/pr-upkeep-readiness"); err != nil {
+		t.Fatalf("register readiness runner actor: %v", err)
+	}
+	return id
+}
+
 // publishWorkflowAt publishes any workflow file, returning its digest.
 func (s *stack) publishWorkflowAt(t *testing.T, path string) string {
 	t.Helper()
@@ -380,7 +397,12 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	registerOrphanActors(t, db, ns.ID, fakes)
 	s := startStack(t, stackConfig{
 		namespaceID: ns.ID, agentsURL: fakes.server.URL,
-		runner: &scriptedRunner{}, runnerName: "headspace/docker", runnerActorID: "actor_unused",
+		// pr-upkeep's `readiness` collector is the graph's only code node, and
+		// no path in THIS test reaches it (both runs end on `fix.no_change`),
+		// so the runner is registered but never invoked -- which is exactly
+		// what the `<not visited>` assertion below pins.
+		runner: &scriptedRunner{}, runnerName: "headspace/pr-upkeep-readiness",
+		runnerActorID: registerOrphanRunner(t, db, ns.ID),
 		eventTokenSecret: orphanEventSecret,
 	})
 	defer s.stop()
@@ -407,6 +429,14 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 		if got := nodeOutcome(view, node); got != want {
 			t.Errorf("node %s outcome = %q, want %q", node, got, want)
 		}
+	}
+	// A `no_change` fix opened no pull request, so there is nothing to decide
+	// and nothing to assemble a readiness block FOR: the run ends at `finish`
+	// without visiting the collector (task t18). Asserted rather than assumed,
+	// because `readiness` is the only way into the merge approval and a run
+	// that reached it here would be buying a merge decision nobody needs.
+	if got := nodeOutcome(view, "readiness"); got != "<not visited>" {
+		t.Errorf("a no_change fix visited the readiness collector (outcome %q)", got)
 	}
 
 	creates := fakes.invocationsOf("intake-orphan")

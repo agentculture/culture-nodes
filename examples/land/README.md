@@ -38,7 +38,7 @@ curl -s -X POST "$NODES_API_URL/v1alpha1/events" \
 | `fetch` | fetch `handover_ref` from `handover_remote`; refuse a ref outside `refs/culture-nodes/<run_id>/` | exit 4 |
 | `lease` | per-target-branch lock directory under the land checkout's `.git` | `waiting`, exit 5 |
 | `rebase` | skip if already on the branch (ancestor or `git cherry` equivalent); route `.github/` changes; rebase in a scratch worktree | conflict → derived routing record, exit 3, no push |
-| `gate` | hook point — task t7 (gate chain + single version bump) | `not_implemented` record |
+| `gate` | `land_gate.py`: the pre-push chain in the rebased worktree — target pytest (`LAND_GATE_TESTS`, default `uv run pytest -n auto -q`), `go test ./tests/lint/...`, `scripts/lint-all.sh <job>` (`LAND_GATE_JOB`, default `root`), the 1000-line file-length guard — then **one** version bump for the landing (`bump.py` fed a JSON changelog on stdin naming the findings; one commit on top of the handover commits, never a rewrite); toolchains `go`, `uv`, `node`, `markdownlint-cli2` are checked first | missing toolchain → `toolchain_missing` record + `refused`, exit 2, nothing ran; red step → routing record `gate_failed` naming the step and its tail, exit 3, no push |
 | `push` | `git push` `<sha>:refs/heads/<target>`, helpers reset, `GIT_ASKPASS` from `bridge-push.env`; one re-fetch-and-rebase on a non-fast-forward rejection | second rejection → routing record, exit 3 |
 | `reply` | `land_reply.py`: reads the producing run's `input.findings` from the control plane; one signed reply per landed finding on its review thread (naming the landed sha and the finding id); findings with no thread share ONE PR comment; skips a reply already posted for this sha | `GITHUB_TOKEN_LAND_PR` missing → `refused` record naming it, exit 2, nothing posted |
 | `resolve` | `resolveReviewThread` per landed finding's thread; skips a thread already resolved; a finding with no thread is a recorded skip | GitHub error → exit 2 |
@@ -55,8 +55,26 @@ operations are read threads, reply, resolve, read comments, comment.
 
 The routing record uses `internal/repair`'s shape (a `derived` `decision`
 selecting `human`, `dispatched: false`) with `router: land_routing` and the
-reasons `rebase_conflict`, `stale_after_retry` or the inherited
+reasons `rebase_conflict`, `stale_after_retry`, `gate_failed` or the inherited
 `out_of_workflow_scope`.
+
+## The gate and the single bump (task t7)
+
+`land_gate.py` is fetched beside `land.py` (`LAND_GATE_SOURCE_URL` /
+`LAND_GATE_SOURCE_SHA256`) and runs the operator's pre-push chain in the
+scratch worktree after the rebase. A landing of N fixes carries **exactly one**
+`pyproject.toml` bump and one `CHANGELOG.md` entry listing the N findings
+(`LAND_FINDINGS_JSON`, else the landed commits' subjects); a handover that
+already bumps the version is landed as it is (`bump: {skipped:
+handover_already_bumps}`), and a re-run of a landed ref skips the gate with
+the rebase. A red step routes to a human (`gate_failed`) and pushes nothing; a
+missing toolchain refuses by name before the first step (`toolchain_missing`),
+which is how "Go is not on thor" reads in the ledger. The deploy reports the
+same fact per binary for `culture-land`
+(`deploy/prod/lanes/land-toolchain.sh`, called at the end of `deploy.sh thor`
+and `deploy.sh orin`): the check itself fails naming the missing binaries, and
+the call site guards it, because installing one is a counted hand-turn a
+deploy cannot type.
 
 ## What it never does
 

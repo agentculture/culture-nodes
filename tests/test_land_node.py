@@ -180,6 +180,13 @@ def _quiet_env(monkeypatch: pytest.MonkeyPatch):
     # The probe is a seam: default to "no control plane configured" so a
     # test that does not care never reaches the network.
     monkeypatch.setattr(land, "active_attempts", lambda *_a, **_k: None)
+    # The gate chain (t7, land_gate.py) needs a toolchain and a repository
+    # shaped like this one; tests/test_land_gate.py runs it for real against
+    # such an origin. Here the scratch remotes carry neither, so the hook is
+    # a recorded stub -- a test-side seam, not a production knob.
+    monkeypatch.setattr(
+        land, "gate_hook", lambda _ctx: {"outcome": "stubbed", "by": "tests/test_land_gate.py"}
+    )
 
 
 def run_land(
@@ -264,9 +271,7 @@ def test_a_ref_lands_as_one_commit_on_the_branch(
     assert by["rebase"]["outcome"] == "ok"
     assert by["push"]["outcome"] == "ok" and by["push"]["rounds"] == 1
     assert by["push"]["credential"] == "not_required"
-    for hook in ("gate",):
-        assert by[hook]["outcome"] == "not_implemented"
-        assert by[hook]["owner"].startswith("t"), by[hook]
+    assert by["gate"]["outcome"] == "stubbed", by["gate"]
     # t8's steps are wired; with no control plane configured they say so.
     for hook in ("reply", "resolve"):
         assert by[hook]["outcome"] == "skipped" and by[hook]["reason"] == "no_control_plane"

@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Deploy the current checkout to the production pair (plan t19).
-#
 #   deploy.sh thor          # full control plane + worker + runner host unit
 #   deploy.sh orin          # second worker + runner host unit
 #   deploy.sh spark         # bridge lanes only: the claude + qwen bridges (#243)
-#
 # Ships the working tree's HEAD as a git archive over ssh (no push, no
 # registry), builds the image on the target (both machines are aarch64 —
 # native builds), installs the runner binary + systemd user unit, installs
@@ -912,6 +910,8 @@ deploy_jira() { # host
 source "$SCRIPT_DIR/lanes/two-host.sh"
 # shellcheck source=deploy/prod/lanes/liveness-detector.sh
 source "$SCRIPT_DIR/lanes/liveness-detector.sh"
+# shellcheck source=deploy/prod/lanes/land-toolchain.sh
+source "$SCRIPT_DIR/lanes/land-toolchain.sh"
 
 case "$HOST" in
   thor*)
@@ -946,8 +946,8 @@ case "$HOST" in
     # lane this deploy shipped.
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
-    # Third detector (#308, t11): the codex bridge's liveness fact, one line, never a gate.
     lane_liveness_detector "$HOST"
+    land_toolchain_check "$HOST" || true   # land gate toolchains per binary (t7); guarded, a detector
     account_bridges_summary "$HOST"
     deploy_summary thor
     ;;
@@ -978,7 +978,8 @@ case "$HOST" in
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
-    lane_liveness_detector "$HOST"  # same liveness detector as the thor lane (#308, t11)
+    lane_liveness_detector "$HOST"  # liveness + toolchain detectors, as on thor
+    land_toolchain_check "$HOST" || true   # land gate toolchains per binary (t7); guarded, a detector
     account_bridges_summary "$HOST"
     deploy_summary orin
     ;;

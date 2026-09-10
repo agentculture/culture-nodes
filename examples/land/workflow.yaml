@@ -65,6 +65,10 @@
 #                               the digest the bootstrap refuses to run without
 #                               (the merge-gate / combining-loop discipline: a
 #                               loader chooses WHOSE code runs, and verifies it).
+#     LAND_GATE_SOURCE_URL / LAND_GATE_SOURCE_SHA256   the same for land_gate.py,
+#                               the gate module land.py reaches at its `gate`
+#                               step (task t7); fetched into the same directory
+#                               so the sibling import resolves.
 #     GITHUB_TOKEN_WORKER       the push credential (Contents: write), from
 #                               culture-land's ~/.culture-nodes/bridge-push.env
 #                               (deploy/prod/lanes/land-secrets.sh). Environment
@@ -87,6 +91,25 @@
 #   input), NODES_RUN_ID / NODES_NODE_RUN_ID / NODES_ATTEMPT_ID (this run's
 #   identity, which the routing record is attributed to) and NODES_WORKSPACE.
 #
+#   TOOLCHAINS THE GATE NEEDS ON THE RUNNER HOST (task t7, spec c36): the
+#   culture-land account's PATH must carry `go` (go test ./tests/lint/...),
+#   `uv` (the target pytest and lint-all's linters), `node` and
+#   `markdownlint-cli2` (lint-all root's markdown step). land_gate.py checks
+#   all four BEFORE the first step and refuses by name with a
+#   `toolchain_missing` record when one is absent; deploy.sh's
+#   land_toolchain_check (deploy/prod/lanes/land-toolchain.sh) reports the
+#   same fact per binary at the end of a thor/orin deploy. Go was NOT on
+#   thor's login PATH on 2026-09-07 -- installing it is a counted hand-turn.
+#
+#   OPTIONAL gate configuration, environment of the land account (each has
+#   the production default built in, so none needs to be set): LAND_GATE_TESTS
+#   (default `uv run pytest -n auto -q`), LAND_GATE_JOB (default `root`),
+#   LAND_FINDINGS_JSON (a JSON list naming the findings landed; default: the
+#   landed commits' subjects), LAND_BUMP_PART (default `patch`),
+#   LAND_GATE_STEP_TIMEOUT_SECONDS (default 600). They ride the environment
+#   rather than the input contract because land.py's input admits exactly
+#   its six keys -- a recorded t7 deviation, see land_gate.py's docstring.
+#
 # Per-run values arrive as the triggering event's payload -- the run input:
 # the handover ref (preserve.py mints refs/culture-nodes/<run-id>/<tail>,
 # never pushed), the producing actor's handover_remote (registry.go:218,
@@ -97,11 +120,11 @@
 # WHAT IS DELIBERATELY NOT HERE (other tasks own it)
 # ---------------------------------------------------------------------------
 #
-#  1. The gate chain and the single version bump (t7): land.py reaches it as
-#     a named hook point and writes a `not_implemented` record with the owning
-#     task, never a silent skip. The thread reply + resolve (t8) are wired:
-#     land_reply.py posts one signed reply and one resolve per landed finding
-#     (one PR comment for findings with no thread), idempotently.
+#  1. All three land modules are wired: land_gate.py runs the gate chain and
+#     the single version bump (t7; a red gate is a `gate_failed` routing record
+#     and no push), and land_reply.py posts one signed reply and one resolve
+#     per landed finding (t8; one PR comment for findings with no thread),
+#     idempotently.
 #  2. Merging the PR. The node has no merge call (grep-asserted in
 #     tests/test_land_node.py); human-merges-pr stays the only merge path.
 #  3. Repair. A conflict or a twice-stale push is a derived routing record to
@@ -166,6 +189,8 @@ spec:
         environmentRefs:
           - LAND_SOURCE_URL
           - LAND_SOURCE_SHA256
+          - LAND_GATE_SOURCE_URL
+          - LAND_GATE_SOURCE_SHA256
           - GITHUB_TOKEN_WORKER
           - LAND_REPLY_SOURCE_URL
           - LAND_REPLY_SOURCE_SHA256
@@ -179,6 +204,7 @@ spec:
             root = tempfile.mkdtemp()
             for name, url_key, sha_key in (
                 ("land.py", "LAND_SOURCE_URL", "LAND_SOURCE_SHA256"),
+                ("land_gate.py", "LAND_GATE_SOURCE_URL", "LAND_GATE_SOURCE_SHA256"),
                 ("land_reply.py", "LAND_REPLY_SOURCE_URL", "LAND_REPLY_SOURCE_SHA256"),
             ):
                 body = urllib.request.urlopen(os.environ[url_key], timeout=60).read()

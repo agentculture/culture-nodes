@@ -641,9 +641,15 @@ def remote_needs_credential(url: str) -> bool:
 # -- hook points owned by other tasks ---------------------------------------
 
 
-def gate_hook(_ctx: Landing) -> dict[str, Any]:
-    """t7: the gate chain (pytest, go test ./tests/lint, lint-all, file-length) + one bump."""
-    return {"outcome": "not_implemented", "owner": "t7", "note": "gate chain + version bump"}
+def gate_hook(ctx: Landing) -> dict[str, Any]:
+    """t7: the gate chain (pytest, go test ./tests/lint, lint-all, file-length) + one bump,
+    in the sibling module land_gate.py (the bootstrap fetches it beside this file)."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from land_gate import run_gate  # resolved beside this file, at the step
+
+    return run_gate(ctx)
 
 
 def reply_hook(ctx: Landing) -> dict[str, Any]:

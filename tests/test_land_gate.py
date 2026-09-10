@@ -607,7 +607,8 @@ def test_a_red_gate_routes_to_a_human_and_leaves_the_branch_untouched(
     assert code == land.EXIT_ROUTED_HUMAN, records
     assert result(records)["outcome"] == "routed_human"
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before, "the branch moved"
-    assert "push" not in steps(records) and "reset" not in steps(records)
+    assert "push" not in steps(records), records
+    assert "reset" not in steps(records), records
 
     gate = steps(records)["gate"]
     assert gate["outcome"] == "routed"

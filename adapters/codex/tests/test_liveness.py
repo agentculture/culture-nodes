@@ -36,6 +36,12 @@ ALREADY_USED = (
     "Your access token could not be refreshed because your refresh token was already used. "
     "Please log out and sign in again."
 )
+#: Code-review finding 8: what a codex that was NEVER logged in on this host
+#: prints instead -- a completed thread and then the API's own 401. Observed
+#: live. It carries none of the three spent-token phrases, so before this was
+#: classified the probe called it `probe_failed` and doctor read the lane as
+#: live.
+NOT_LOGGED_IN_401 = "unexpected status 401 Unauthorized: Missing bearer or basic authentication"
 
 
 # --- the shared module's own contract -------------------------------------
@@ -69,6 +75,36 @@ def test_an_unagreed_reason_is_refused_rather_than_carried():
 def test_both_observed_spent_token_texts_are_recognised(text):
     assert liveness.credential_spent(text)
     assert liveness.credential_spent("", None, "noise\n" + text + "\n")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        NOT_LOGGED_IN_401,
+        "401 Unauthorized",
+        "Missing bearer token",
+        "You are not logged in. Run codex login.",
+        "Please log in to continue",
+    ],
+)
+def test_the_never_logged_in_texts_are_classified_as_not_logged_in(text):
+    assert liveness.not_logged_in(text) is True
+    assert liveness.credential_spent(text) is False
+
+
+def test_a_never_logged_in_reason_is_in_the_closed_vocabulary():
+    fact = liveness.liveness_fact(
+        session_ok=False, reason=liveness.REASON_NOT_LOGGED_IN, mode="CHECK"
+    )
+    assert fact["reason"] == "not_logged_in"
+    assert liveness.REASON_NOT_LOGGED_IN in liveness.REASONS
+
+
+@pytest.mark.parametrize("text", [REVOKED, ALREADY_USED, "fake failure", "turn.completed"])
+def test_ordinary_and_spent_text_is_not_a_never_logged_in_lane(text):
+    """The two classifiers must not overlap: a spent refresh token is a lane
+    that WAS logged in, and the operator's remediation differs."""
+    assert liveness.not_logged_in(text) is False
 
 
 def test_ordinary_failure_text_is_not_a_spent_credential():
@@ -225,6 +261,19 @@ def test_check_probe_that_fails_for_another_reason_is_not_a_spent_credential(
     fact = codex_cli.liveness_probe(_cfg(fake_codex, tmp_path, liveness_mode="CHECK"))
     assert fact["session_ok"] is None
     assert fact["reason"] == liveness.REASON_PROBE_FAILED
+
+
+def test_check_probe_reports_a_never_logged_in_lane_as_not_logged_in(
+    fake_codex, tmp_path, monkeypatch
+):
+    """Code-review finding 8: this lane used to answer `session_ok=None
+    reason=probe_failed`, which `nodes doctor` counted as live."""
+    monkeypatch.delenv("FAKE_CODEX_SPENT_TOKEN", raising=False)
+    monkeypatch.setenv("FAKE_CODEX_NOT_LOGGED_IN", "1")
+    fact = codex_cli.liveness_probe(_cfg(fake_codex, tmp_path, liveness_mode="CHECK"))
+    assert fact["session_ok"] is False
+    assert fact["reason"] == liveness.REASON_NOT_LOGGED_IN
+    assert fact["mode"] == "CHECK"
 
 
 def test_check_probe_is_bounded_and_a_timeout_is_not_a_verdict(fake_codex, tmp_path, monkeypatch):

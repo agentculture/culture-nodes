@@ -496,6 +496,10 @@ def liveness_probe(cfg: Config, *, timeout_seconds: float | None = None) -> dict
 
     A completed turn is `session_ok=true`; the spent-credential sentence
     anywhere in the output is `session_ok=false reason=refresh_token_spent`;
+    a never-logged-in lane's `401 Unauthorized: Missing bearer` is
+    `session_ok=false reason=not_logged_in` (code-review finding 8 — it
+    carries none of the spent-token phrasing, so it used to read as an
+    unclassified failure and every reader was free to call the lane live);
     a timeout, a missing binary, or any other failure is `null` with a
     reason that says so — a probe that could not run is not evidence the
     lane is dead, and a false negative parks a lane that works.
@@ -529,6 +533,14 @@ def liveness_probe(cfg: Config, *, timeout_seconds: float | None = None) -> dict
     task_result = parse_session(completed.stdout)
     if task_result is not None and task_result.get("status") == "ok":
         return liveness.liveness_fact(session_ok=True, reason=liveness.REASON_OK, mode=mode)
+    # No completed turn. A 401 is a measured verdict — this lane has no
+    # session — while anything else stays the honest non-answer.
+    if liveness.not_logged_in(
+        str((task_result or {}).get("error") or ""), completed.stdout, completed.stderr
+    ):
+        return liveness.liveness_fact(
+            session_ok=False, reason=liveness.REASON_NOT_LOGGED_IN, mode=mode
+        )
     return liveness.liveness_fact(session_ok=None, reason=liveness.REASON_PROBE_FAILED, mode=mode)
 
 

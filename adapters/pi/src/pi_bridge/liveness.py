@@ -35,8 +35,14 @@ which a reader must be able to tell apart from `false` — a stale or
 unmeasured lane is never refused a lease (c26), only a measured-dead one.
 `reason` says why, from a closed vocabulary, so the same word means the same
 thing on every bridge: `refresh_token_spent` is codex's observed failure,
-`credential_expired` is a past `expiresAt` in claude-code's credential file,
-`unmeasured`/`probe_timeout`/`probe_failed` are the honest non-answers.
+`not_logged_in` is a lane that never had a session at all (its engine answers
+`401 Unauthorized: Missing bearer` rather than the spent-token sentence —
+code-review finding 8), `credential_expired` is a past `expiresAt` in
+claude-code's credential file, `unmeasured`/`probe_timeout`/`probe_failed` are
+the honest non-answers. The two dead reasons are kept apart because their
+remediation differs: a spent token is re-minted by re-logging in and
+re-copying the credential, while a never-logged-in lane was never bootstrapped
+on this host.
 
 ## The two modes
 
@@ -82,6 +88,7 @@ REASON_OK = "ok"
 REASON_UNMEASURED = "unmeasured"
 # A reason NAME, not a credential: bandit pattern-matches the word "token".
 REASON_REFRESH_TOKEN_SPENT = "refresh_token_spent"  # nosec B105
+REASON_NOT_LOGGED_IN = "not_logged_in"
 REASON_CREDENTIAL_EXPIRED = "credential_expired"
 REASON_PROBE_TIMEOUT = "probe_timeout"
 REASON_PROBE_FAILED = "probe_failed"
@@ -91,6 +98,7 @@ REASONS = frozenset(
         REASON_OK,
         REASON_UNMEASURED,
         REASON_REFRESH_TOKEN_SPENT,
+        REASON_NOT_LOGGED_IN,
         REASON_CREDENTIAL_EXPIRED,
         REASON_PROBE_TIMEOUT,
         REASON_PROBE_FAILED,
@@ -107,6 +115,23 @@ SPENT_CREDENTIAL_SIGNALS = (
     "refresh token was revoked",
     "refresh token was already used",
     "access token could not be refreshed",
+)
+
+#: Lower-cased substrings of the engine text that means "this lane has no
+#: session at all: nobody ever logged in here". A never-logged-in codex
+#: completes its thread and then fails the turn with the API's own 401
+#: (`turn.failed ... 401 Unauthorized: Missing bearer`, observed live,
+#: code-review finding 8) — none of `SPENT_CREDENTIAL_SIGNALS` appears in it,
+#: so before this vocabulary existed the probe called that `probe_failed` and
+#: every reader downstream was free to treat the lane as live. Matched as
+#: substrings of the WHOLE output for the same reason as above: the refusal
+#: may arrive as an event's error message or as a bare stderr line.
+NOT_LOGGED_IN_SIGNALS = (
+    "401",
+    "unauthorized",
+    "missing bearer",
+    "not logged in",
+    "please log in",
 )
 
 
@@ -132,6 +157,19 @@ def credential_spent(*texts: Any) -> bool:
     """True when any of *texts* carries the spent-credential sentence."""
     lowered = "\n".join(str(t) for t in texts if t).lower()
     return any(signal in lowered for signal in SPENT_CREDENTIAL_SIGNALS)
+
+
+def not_logged_in(*texts: Any) -> bool:
+    """True when any of *texts* says this lane has no session to spend.
+
+    A spent credential wins: it is the more specific fact (that lane WAS
+    logged in), and its remediation differs, so a text carrying both is
+    classified as spent rather than never-logged-in.
+    """
+    if credential_spent(*texts):
+        return False
+    lowered = "\n".join(str(t) for t in texts if t).lower()
+    return any(signal in lowered for signal in NOT_LOGGED_IN_SIGNALS)
 
 
 def now_iso() -> str:

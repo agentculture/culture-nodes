@@ -91,12 +91,20 @@ gated, not prose:
 5. `lane_liveness` — reads `GET /v1alpha1/actors` and names every actor
    whose newest revision carries `liveness.session_ok=false` or
    `liveness.locked=true`, by key and reason (`refresh_token_spent`,
-   `credential_expired`, ...). This is the fact the 2026-09-07 incident
-   lacked: both codex bridges answered `/healthz` 200 and `codex login
-   status` said "Logged in" minutes before every dispatch failed on a
+   `not_logged_in`, `credential_expired`). This is the fact the 2026-09-07
+   incident lacked: both codex bridges answered `/healthz` 200 and `codex
+   login status` said "Logged in" minutes before every dispatch failed on a
    revoked refresh token (#308). An unreachable API, or a listing with no
-   `liveness` field yet, reads `unmeasured` — never a verdict. A lane with
-   `session_ok=false` is not in a split plan.
+   `liveness` field yet, reads `unmeasured` — never a verdict. So does a
+   lane whose fact IS present but whose `session_ok` is `null`
+   (`probe_timeout`, `probe_failed`, `unmeasured`): the check reports
+   `N live, M unmeasured, K dead` and names the unmeasured lanes with their
+   reason, because `null` is not `true` — it never counts toward an
+   all-clear. A lane with `session_ok=false` is not in a split plan.
+   The reason vocabulary is closed and lives in the shared bridge module
+   (`adapters/*/src/*/liveness.py`, byte-identical across all seven); the
+   table of what each reason measured and what restores the lane is in
+   `adapters/codex/README.md`.
 
 Checks 2–5 are `warning` severity: they can fail without flipping `healthy`
 or the exit code. Doctor is read-only and probes sysctls directly — it never

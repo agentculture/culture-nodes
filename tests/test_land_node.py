@@ -754,7 +754,8 @@ def test_a_checkout_without_an_origin_is_refused_by_name(
     )
     assert code == land.EXIT_ENVIRONMENT
     step = steps(records)["workspace"]
-    assert step["outcome"] == "refused" and step["reason"] == "origin_not_configured"
+    assert step["outcome"] == "refused"
+    assert step["reason"] == "origin_not_configured"
     assert set(steps(records)) == {"workspace"}
 
 

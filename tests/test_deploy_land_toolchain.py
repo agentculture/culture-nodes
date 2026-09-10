@@ -177,7 +177,8 @@ def test_the_binary_list_is_the_gate_declaration(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert "rc=1" in proc.stdout
-    assert lines(proc, "uv present") and lines(proc, "shellcheck MISSING")
+    assert lines(proc, "uv present"), proc.stdout
+    assert lines(proc, "shellcheck MISSING"), proc.stdout
     assert not lines(proc, "go ")
 
 

@@ -358,19 +358,37 @@ func TestLandCutoverDeliversBothCredentialFilesAndRegistersTheAccount(t *testing
 	if code != 0 {
 		t.Fatalf("real run exit=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
+	h.assertEveryStepRan(stdout)
+	h.assertCredentialFilesDelivered(home)
+	h.assertCallOrderAndNoTokenLeak()
+	h.assertLandActorRow()
+
+	if !strings.Contains(stdout, "company/land-thor") {
+		t.Errorf("success line does not name the actor\n%s", stdout)
+	}
+}
+
+// assertEveryStepRan pins that the run printed the three steps in the order
+// the acceptance names, each with the `run` verdict -- no skips.
+func (h *landHarness) assertEveryStepRan(stdout string) {
+	h.t.Helper()
 	order, verdicts := landSteps(stdout)
 	if strings.Join(order, ",") != strings.Join(landStepOrder, ",") {
-		t.Errorf("step order = %v, want %v", order, landStepOrder)
+		h.t.Errorf("step order = %v, want %v", order, landStepOrder)
 	}
 	for _, name := range []string{"secrets", "deploy", "register"} {
 		if verdicts[name] != "run" {
-			t.Errorf("step %s = %q, want run", name, verdicts[name])
+			h.t.Errorf("step %s = %q, want run", name, verdicts[name])
 		}
 	}
+}
 
-	// The two credential files landed in the ACCOUNT, mode 600, each carrying
-	// exactly its own token: the Contents-write push credential and the
-	// pull-requests:write reply credential are never aliased.
+// assertCredentialFilesDelivered pins that the two credential files landed in
+// the ACCOUNT, mode 600, each carrying exactly its own token: the
+// Contents-write push credential and the pull-requests:write reply credential
+// are never aliased.
+func (h *landHarness) assertCredentialFilesDelivered(home string) {
+	h.t.Helper()
 	for file, want := range map[string]string{
 		"bridge-push.env": "GITHUB_TOKEN_WORKER=ghp-contents-write-token\n",
 		"land-pr.env":     "GITHUB_TOKEN_LAND_PR=ghp-pull-requests-write-token\n",
@@ -378,49 +396,57 @@ func TestLandCutoverDeliversBothCredentialFilesAndRegistersTheAccount(t *testing
 		path := filepath.Join(home, ".culture-nodes", file)
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			t.Errorf("%s was not delivered: %v", file, err)
+			h.t.Errorf("%s was not delivered: %v", file, err)
 			continue
 		}
 		if string(raw) != want {
-			t.Errorf("%s = %q, want %q", file, raw, want)
+			h.t.Errorf("%s = %q, want %q", file, raw, want)
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			t.Fatal(err)
+			h.t.Fatal(err)
 		}
 		if mode := info.Mode().Perm(); mode != 0o600 {
-			t.Errorf("%s is mode %o, want 600", file, mode)
+			h.t.Errorf("%s is mode %o, want 600", file, mode)
 		}
 	}
+}
 
-	// The order the acceptance names, read off the shared log.
+// assertCallOrderAndNoTokenLeak reads the shared log for the order the
+// acceptance names, and for what must never appear in an argv.
+func (h *landHarness) assertCallOrderAndNoTokenLeak() {
+	h.t.Helper()
 	calls := h.calls()
 	secrets := indexOfCall(calls, "land-pr.env")
 	deployed := indexOfCall(calls, "deploy thor-fake")
 	registered := indexOfCall(calls, "psql INSERT")
 	if secrets < 0 || deployed < 0 || registered < 0 || !(secrets < deployed && deployed < registered) {
-		t.Errorf("expected secrets < deploy < register in the log, got secrets=%d deploy=%d register=%d:\n%s",
+		h.t.Errorf("expected secrets < deploy < register in the log, got secrets=%d deploy=%d register=%d:\n%s",
 			secrets, deployed, registered, strings.Join(calls, "\n"))
 	}
 	// No token ever rides an ssh argv: the shim logs the remote command
 	// string, so a token in it would appear here.
 	for _, line := range calls {
 		if strings.Contains(line, "ghp-") {
-			t.Errorf("a credential value appeared in a logged argv: %s", line)
+			h.t.Errorf("a credential value appeared in a logged argv: %s", line)
 		}
 		if strings.HasPrefix(line, "sudo ") {
-			t.Errorf("cutover.sh reached for sudo: %s", line)
+			h.t.Errorf("cutover.sh reached for sudo: %s", line)
 		}
 		if strings.Contains(line, "bootstrap-accounts") {
-			t.Errorf("cutover.sh ran the root bootstrap: %s", line)
+			h.t.Errorf("cutover.sh ran the root bootstrap: %s", line)
 		}
 	}
+}
 
-	// The registration: os_user=culture-land, handover_remote, an endpoint-
-	// less agent row the runner executes for -- never a bridge endpoint.
+// assertLandActorRow pins the registration: os_user=culture-land,
+// handover_remote, an endpoint-less agent row the runner executes for --
+// never a bridge endpoint.
+func (h *landHarness) assertLandActorRow() {
+	h.t.Helper()
 	raw, err := os.ReadFile(h.actorState)
 	if err != nil {
-		t.Fatalf("register-actor.sh wrote no row: %v", err)
+		h.t.Fatalf("register-actor.sh wrote no row: %v", err)
 	}
 	var row struct {
 		Endpoint string `json:"endpoint"`
@@ -428,14 +454,14 @@ func TestLandCutoverDeliversBothCredentialFilesAndRegistersTheAccount(t *testing
 		Query    string `json:"query"`
 	}
 	if err := json.Unmarshal(raw, &row); err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	if row.Endpoint != "" {
-		t.Errorf("land actor registered with endpoint %q; it runs no bridge", row.Endpoint)
+		h.t.Errorf("land actor registered with endpoint %q; it runs no bridge", row.Endpoint)
 	}
 	overlay := map[string]string{}
 	if err := json.Unmarshal([]byte(row.Overlay), &overlay); err != nil {
-		t.Fatalf("overlay %q is not JSON: %v", row.Overlay, err)
+		h.t.Fatalf("overlay %q is not JSON: %v", row.Overlay, err)
 	}
 	for key, want := range map[string]string{
 		"os_user":             "culture-land",
@@ -443,17 +469,14 @@ func TestLandCutoverDeliversBothCredentialFilesAndRegistersTheAccount(t *testing
 		"repository_identity": "agentculture/culture-nodes",
 	} {
 		if overlay[key] != want {
-			t.Errorf("metadata %s = %q, want %q", key, overlay[key], want)
+			h.t.Errorf("metadata %s = %q, want %q", key, overlay[key], want)
 		}
 	}
 	if _, has := overlay["auth_token_env"]; has {
-		t.Error("land actor carries auth_token_env; there is no bridge for the worker to authenticate to")
+		h.t.Error("land actor carries auth_token_env; there is no bridge for the worker to authenticate to")
 	}
 	if !strings.Contains(row.Query, "'agent', 'runner', NULL") {
-		t.Errorf("land row is not an endpoint-less agent/runner row: %s", row.Query)
-	}
-	if !strings.Contains(stdout, "company/land-thor") {
-		t.Errorf("success line does not name the actor\n%s", stdout)
+		h.t.Errorf("land row is not an endpoint-less agent/runner row: %s", row.Query)
 	}
 }
 

@@ -127,6 +127,29 @@ def cmd_run_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def _format_run_list_line(item: dict) -> str:
+    """One ``nodes run list`` text row: the fixed columns, then the labels.
+
+    An operator-supplied ``name`` wins over the API's ``display_hint``, and
+    the hint is marked ``(derived)`` so a named run is never mistaken for an
+    inferred one. ``work_item`` is bracketed when the run carries one.
+    """
+    line = (
+        f"{item.get('id', '')}  {item.get('state', '')}  "
+        f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
+    )
+    name = item.get("name")
+    hint = item.get("display_hint")
+    if name:
+        line += f"  {name}"
+    elif hint:
+        line += f"  {hint} (derived)"
+    work_item = item.get("work_item")
+    if work_item:
+        line += f"  [{work_item}]"
+    return line
+
+
 def cmd_run_list(args: argparse.Namespace) -> int:
     client = client_from_args(args)
     resp = client.request(
@@ -144,28 +167,12 @@ def cmd_run_list(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-    else:
-        items = (resp.payload or {}).get("items") or []
-        if not items:
-            emit_result("no runs", json_mode=False)
-        else:
-            lines = []
-            for item in items:
-                line = (
-                    f"{item.get('id', '')}  {item.get('state', '')}  "
-                    f"{item.get('workflow_digest', '')}  {item.get('created_at', '')}"
-                )
-                name = item.get("name")
-                hint = item.get("display_hint")
-                if name:
-                    line += f"  {name}"
-                elif hint:
-                    line += f"  {hint} (derived)"
-                work_item = item.get("work_item")
-                if work_item:
-                    line += f"  [{work_item}]"
-                lines.append(line)
-            emit_result("\n".join(lines), json_mode=False)
+        return 0
+    items = (resp.payload or {}).get("items") or []
+    if not items:
+        emit_result("no runs", json_mode=False)
+        return 0
+    emit_result("\n".join(_format_run_list_line(item) for item in items), json_mode=False)
     return 0
 
 

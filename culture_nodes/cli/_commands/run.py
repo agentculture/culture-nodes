@@ -167,12 +167,13 @@ def cmd_run_list(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if json_mode:
         emit_json_passthrough(resp.raw)
-        return 0
-    items = (resp.payload or {}).get("items") or []
-    if not items:
-        emit_result("no runs", json_mode=False)
-        return 0
-    emit_result("\n".join(_format_run_list_line(item) for item in items), json_mode=False)
+    else:
+        items = (resp.payload or {}).get("items") or []
+        if items:
+            rows = "\n".join(_format_run_list_line(item) for item in items)
+        else:
+            rows = "no runs"
+        emit_result(rows, json_mode=False)
     return 0
 
 

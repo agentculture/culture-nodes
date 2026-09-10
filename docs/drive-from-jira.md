@@ -310,7 +310,7 @@ There are six stages, and they always go in this order:
 | --- | --- | --- |
 | `intake` | your move to **To Do** was picked up: an intake comment is on the ticket and the board has been moved to In Progress | the jira-intake flow, after the board move |
 | `spec` | *reserved* — the spec lane's converged frame. **Nothing writes it yet**: the stage exists in the vocabulary so a reader knows what it will mean, and no flow posts it today | — |
-| `dispatch` | a developer session has been started for the highest-priority finding on the ticket's pull request | the pr-upkeep flow, before the fix |
+| `dispatch` | the open findings on the ticket's pull request have been analysed, and a developer session has been started for the highest-priority package of them | the pr-upkeep flow, after the analysis and before the fix |
 | `pr-open` | that session finished and its fix is on a pull request, waiting for a maintainer's merge decision | the pr-upkeep flow, after the fix |
 | `merged` | the pull request landed | the cleanup flow, before it does anything |
 | `cleanup` | the loose ends are settled: landed branches and handover refs deleted, unreachable ones kept and reported, any run still parked on the merge decision ended | the cleanup flow, after it finished |

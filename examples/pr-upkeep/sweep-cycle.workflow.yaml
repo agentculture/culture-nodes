@@ -4,8 +4,8 @@
 #
 # pr-upkeep v2's header says "no discovery credentials or sweep process are
 # part of this graph" — correct for the upkeep graph, and it left the sweep
-# emitter with no driver except a human (driver.sh's own header calls itself
-# a LIVE-ONLY MANUAL DRIVER). #107/t33 then shipped engine schedules: a
+# emitter with no driver except a human running a LIVE-ONLY MANUAL DRIVER
+# script (deleted in task t14). #107/t33 then shipped engine schedules: a
 # durable row fires a signal event, and a published workflow's trigger turns
 # it into a run. This file is the missing joint — a one-code-node workflow
 # triggered by the schedule's event, whose node runs sweep.py through the

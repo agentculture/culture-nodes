@@ -25,8 +25,8 @@ sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.
     │  pr-upkeep.pr          (one PR, one finding, one work_item)
     │  pr-upkeep.jira.*      (transitions, comments)
     ▼
-workflow.yaml ── fix ──completed──▶ human-merges-pr ──approved/rejected/expired──▶ finish
-                  └───no_change───────────────────────────────────────────────────▶ finish
+workflow.yaml ── analyse ──packaged──▶ fix ──completed──▶ human-merges-pr ──▶ finish
+                    └─────no_fix──────────────────────────────────────────────▶ finish
 ```
 
 Four properties make this a *repeat* process rather than a script someone
@@ -51,16 +51,35 @@ runs:
 ## One tick, precisely
 
 A tick sweeps up to `PR_UPKEEP_MAX_PRS_PER_SWEEP` (default 10) open PRs, and
-for each one emits **at most one `pr-upkeep.pr` fact carrying exactly one
-finding** — the highest-priority finding not already held by a running
-pr-upkeep run.
+for each one emits **at most one `pr-upkeep.pr` fact carrying one file's
+findings** — every finding not already held by a pr-upkeep run that sits on
+the same file as the PR's highest-priority finding.
 
-That "one" is the load-bearing number, and it changed in 0.46.0 (issue #268).
-It has two consequences worth holding in your head when you watch the lane:
+That unit is the load-bearing choice, and it has moved twice. It was the whole
+PR until 0.46.0 (issue #268), which made a parked run suppress findings it had
+never touched; it was exactly one finding from 0.46.0 until 2.5.0, which made
+bundling impossible — no run ever held two findings, so nothing could see that
+thirteen of them were the same rule in the same file. It is now the file, which
+is the unit a fix actually has. Three consequences worth holding in your head
+when you watch the lane:
 
-- **A PR with N findings takes N ticks**, roughly N × 5 minutes, and the
-  findings are worked in priority order — SonarCloud/Qodo severities and
-  failed CI checks on one shared ladder.
+- **A PR takes one tick per file, not one tick per finding.** The `analyse`
+  node judges every finding the fact carries — FIX, PUSHBACK, DUPLICATE or
+  SKIP, each with a one-line reason — and bundles the FIX ones into packages
+  of one rule in one file. Thirteen instances of `python:S1192` in
+  `_output.py` are **one** dispatch, one PR update and one approval, not
+  thirteen. A PR whose findings span F files therefore takes roughly F ticks
+  at a given head, worked in priority order — SonarCloud/Qodo severities and
+  failed CI checks on one shared ladder — and the findings on a file that the
+  package it worked did not cover wait for the **post-push re-scan**, because
+  the moment the fix pushes their line numbers have moved. That deferral is
+  not a second mechanism: it is the head-SHA clause below, said out loud in
+  the analysis instruction.
+- **A tick can buy no session at all.** If every finding on the chosen file is
+  pushed back, duplicate or already resolved, `analyse` reports `no_fix` and
+  the run ends at `finish` carrying the verdicts. That is the return on the
+  node: the loop used to buy a full developer session to discover a thread had
+  been resolved.
 - **A finding already answered at this commit is not asked again.** A run
   that ended — the actor said `no_change`, a person rejected the fix — is an
   answer, and the sweep does not re-buy it. A push re-opens every finding on
@@ -215,7 +234,7 @@ after the first one's `cleanup` is a new transition and still emits.
 stage comment cannot name a head SHA or a finding, and this lane promises a
 finding is not blocked by the run before it, so finding dispatch keeps the
 run-input walk (`pr_upkeep_emit.undispatched_findings`) as its dedupe. Nothing
-about the stage watermark changes the cadence claim below.
+about the stage watermark changes the cadence claim above.
 
 One ordering consequence is worth knowing before a Jira outage surprises
 someone. The stage watermarks come from the sweep's Jira read, and the
@@ -254,18 +273,31 @@ The tick's own report is JSON on the code node's stdout:
   "emitted": 3,
   "skipped_findings": ["pr267-qodo-1"],
   "worked_findings": ["pr267-qodo-4"],
-  "deferred_findings": ["pr267-qodo-3"]
+  "deferred_findings": ["pr267-qodo-3"],
+  "pushbacks": [
+    {"id": "pr267-qodo-2", "reason": "the owner replied that the hint line is deliberately absent from --json", "run_id": "01M19YG9ZJ"}
+  ]
 }
 ```
 
-Read the lists as four different states, because they are:
+Read the lists as five different states, because they are:
 
 | Key | What it means | What to do |
 | --- | --- | --- |
 | `emitted` | facts appended this tick (PR findings **and** Jira facts) | nothing; the triggers took it from here |
-| `skipped_findings` | held by a **running** run — in flight, possibly parked on a human | decide the approval, or leave it |
+| `skipped_findings` | held by a **running** run — in flight, possibly parked on a human. A finding is held when its **package** is held: one member in flight holds the file | decide the approval, or leave it |
 | `worked_findings` | already dispatched **at this head SHA**; that run has ended (`no_change`, a rejected fix, a failure) | nothing until the PR moves — a push re-opens them all |
 | `deferred_findings` | read, outranked this tick, **emittable next tick** | nothing; it is taking its turn |
+| `pushbacks` | a **person** declined this finding on the PR thread, and `analyse` recorded it with their reason | tell the source surface — dismiss the Sonar issue, resolve the thread — or the loop reads it again next tick |
+
+`pushbacks` is the only one of the five that is not about scheduling. It is
+read off the run **outputs** the dedupe walk already fetched (since 2.5.0 a
+pr-upkeep run's output *is* its analysis document), and it exists so a PR
+owner's own objection is named back to them rather than silently re-proposed.
+The loop does not act on it: nothing here dismisses a SonarCloud issue or
+resolves a GitHub thread, so a pushed-back finding keeps arriving until
+somebody closes it at the source. What changes is that no session is bought
+for it — `analyse` marks it PUSHBACK and it is never packaged.
 
 A finding that is neither emitted nor in either list was not found this tick —
 it was resolved, dismissed, or its source surface went quiet.
@@ -279,9 +311,11 @@ bash .claude/skills/nodes-operator/scripts/nodes-op.sh ledger <id> # what it cla
 bash .claude/skills/nodes-operator/scripts/nodes-op.sh tasks       # approvals waiting on a person
 ```
 
-A run's `input.findings` is a one-item list naming the finding it is working.
-That is what the next tick's dedupe reads, so it is also the answer to "why
-was this finding not emitted again".
+A run's `input.findings` lists one file's findings — every one the tick
+dispatched, not only the ones the fix took. That is what the next tick's
+dedupe reads, so it is also the answer to "why was this finding not emitted
+again". Its `output.verdicts` is the other half: what `analyse` decided about
+each of them, and why.
 
 ## The decision that reaches a person
 
@@ -314,7 +348,7 @@ whose sha256 does not match:
 | --- | --- |
 | `examples/pr-upkeep/sweep.py` | sweeping: which repo, which PRs, which findings, naming the stage a failure happened at — and it is the **sole** writer to the control plane |
 | `examples/pr-upkeep/pr_upkeep_jira.py` | the Jira surface: what a Jira fact *is* (`jira_emissions`), its cursor position and watermark, self-echo, the granted Basic-auth pair (`jira_credentials`), and the granted REST base those two authenticate at (`jira_api_base` — a scoped service-account token is accepted only at the Atlassian gateway; browse links stay on the site host) |
-| `examples/pr-upkeep/pr_upkeep_emit.py` | what goes out this tick: both dedupe clauses (`dispatched_finding_ids`, `undispatched_findings`) and the cursor a fact is emitted under (`emission_watermark`). Pure — no credential, no socket; the sweep hands it the run listing |
+| `examples/pr-upkeep/pr_upkeep_emit.py` | what goes out this tick: both dedupe clauses (`dispatched_finding_ids`, `undispatched_findings`), the unit one fact carries (`finding_package`, keyed by `FINDING_PACKAGE_KEY`), the cursor it is emitted under (`emission_watermark`, `newest_comment_timestamp`) and what the tick reports back off the run outputs (`pushback_findings`). Pure — no credential, no socket; the sweep hands it the run listing |
 
 That split is enforced, not merely intended: `tests/test_pr_upkeep_sweep_jira.py`
 asserts the Jira module has no control-plane write path, the exact-set
@@ -371,8 +405,13 @@ widens the contract and the workflow is republished in the same change.
 - **No GitHub PR comment channel** in the fan-out: nothing registered in this
   deployment can write to a PR thread, so a PR-sourced decision goes to
   Discord rather than queueing a message nothing could deliver.
-- **No *batching* of findings into one fix.** One dispatch per PR per tick,
-  and the fix node works the one finding its run names.
+- **No *unjudged* batching of findings into one fix.** One dispatch per PR per
+  tick, and the fix node works one package — one rule in one file — which the
+  `analyse` node assembled after reading each finding's thread. A package is
+  not "the findings that happened to arrive together": findings a person
+  pushed back on, findings whose thread is resolved, and findings that
+  duplicate another are given a verdict and left out of it. Two packages are
+  never merged, and the rest of the file waits for the post-push re-scan.
 
   What this does **not** promise is that only one fix session ever touches a
   PR. If a fix outlasts the 5-minute tick, the next tick dispatches the next

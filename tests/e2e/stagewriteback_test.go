@@ -216,6 +216,16 @@ func (a *stageActors) script(req actors.InvocationRequest) (actors.InvocationRes
 		}, ""
 
 	// ---- pr-upkeep -------------------------------------------------------
+	case "analyse":
+		output, failure := analysePackagedResult(req.Input)
+		if failure != "" {
+			return actors.InvocationResult{}, failure
+		}
+		return actors.InvocationResult{
+			Outcome:     "packaged",
+			Output:      output,
+			LedgerDelta: claim("company/developer", map[string]any{"statement": "findings judged"}),
+		}, ""
 	case "fix":
 		return actors.InvocationResult{
 			Outcome:     "completed",
@@ -391,7 +401,7 @@ func TestATicketDrivenEndToEndShowsOneCommentPerStage(t *testing.T) {
 	}
 	upkeepView := s.runView(t, upkeepRun)
 	for node, want := range map[string]string{
-		"route": "keyed", "stage-dispatch": "comment_posted",
+		"route": "keyed", "analyse": "packaged", "stage-dispatch": "comment_posted",
 		"fix": "completed", "stage-pr-open": "comment_posted",
 	} {
 		if got := nodeOutcome(upkeepView, node); got != want {

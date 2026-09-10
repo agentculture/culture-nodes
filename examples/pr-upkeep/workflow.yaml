@@ -76,12 +76,52 @@
 # separately. Loading this graph into another deployment means editing those
 # two values; that is a recorded exception to this file's own rule, not
 # drift.
+#
+# ---------------------------------------------------------------------------
+# ANALYSIS BEFORE FIX (issue #309, claim c5; plan loop-closure task t14)
+# ---------------------------------------------------------------------------
+# A finding is not a defect until somebody has read the thread under it. Three
+# things were being bought a full developer session each: a finding whose
+# review thread the owner had already resolved, a finding the owner had
+# explicitly pushed back on, and each of thirteen instances of one SonarCloud
+# rule in one file.
+#
+# `analyse` sits between the routes and `fix` and answers, per finding,
+# FIX / PUSHBACK / DUPLICATE / SKIP with a one-line reason, then bundles the
+# findings it would FIX into `packages` keyed by (rule, file). `fix` binds
+# `packages` instead of the raw event payload's findings list and works the
+# FIRST package as ONE change, so thirteen instances of one rule are one
+# session, one PR update and one approval.
+#
+# Three consequences worth stating because they are easy to misread:
+#
+# 1. An analysis that packages nothing takes `no_fix` straight to `finish`.
+#    No session is dispatched and no stage comment claims one was -- which is
+#    why `analyse` is BEFORE `stage-dispatch` on the keyed route rather than
+#    after it.
+# 2. Deferral is a STATED RULE, not a second dedupe. The findings on a file
+#    that this run does not package are stale the moment the fix pushes (their
+#    lines moved), so the instruction says to leave them to the post-push
+#    re-scan and the sweep's existing head_sha clause is what enforces it
+#    (`pr_upkeep_emit.undispatched_findings`). Nothing here re-implements it.
+# 3. `finish` returns the ANALYSIS, not the run input. An end node's output is
+#    a single pointer, and the pushbacks are the part of this run a person
+#    outside the control plane needs: the sweep reads them back off the run
+#    listing and names them in the tick summary for the PR owner.
+#
+# The emitted fact changed shape with this node and did NOT change contract:
+# `findings` is still an array with minItems 1, so no republish was forced by
+# the payload -- it now carries every undispatched finding on the
+# highest-priority finding's FILE rather than exactly one. That is the middle
+# of three positions; the whole-PR fact (#268) and the one-finding fact both
+# have their own defect, and pr_upkeep_emit.FINDING_PACKAGE_KEY carries the
+# argument.
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.4.0
+  version: 2.5.0
   ownerRef: team/platform-ai
 
 spec:
@@ -142,10 +182,10 @@ spec:
     output:
       schema: {type: object}
 
-  # Longest paths: route -> intake-orphan -> stamp-pr -> fix -> human-merges-pr
-  # -> finish and route -> stage-dispatch -> fix -> stage-pr-open ->
-  # human-merges-pr -> finish (5 transitions each); 8 leaves headroom without
-  # hiding a loop.
+  # Longest paths: route -> intake-orphan -> stamp-pr -> analyse -> fix ->
+  # human-merges-pr -> finish and route -> analyse -> stage-dispatch -> fix ->
+  # stage-pr-open -> human-merges-pr -> finish (6 transitions each); 8 leaves
+  # headroom without hiding a loop.
   limits:
     maxDuration: 168h
     maxTransitions: 8
@@ -284,7 +324,7 @@ spec:
           comment:
             literal: |-
               culture-nodes:stage=dispatch
-              The pr-upkeep loop dispatched a developer session for the highest-priority finding on this ticket's pull request; the run and its ledger are in the culture-nodes control plane under this ticket's key.
+              The pr-upkeep loop analysed the open findings on this ticket's pull request and dispatched a developer session for the highest-priority package of them; the run, its per-finding verdicts and its ledger are in the culture-nodes control plane under this ticket's key.
       contract:
         outcomes:
           comment_posted:
@@ -293,6 +333,133 @@ spec:
               required: [issue, comment_id]
       policy:
         timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # The judgment the loop was skipping. Read-only: it opens no branch and
+    # pushes nothing, so `maxAttempts: 2` is safe here where `intake-orphan`
+    # and `stamp-pr` cannot afford it -- and it is not merely safe, it is
+    # load-bearing. A failed analysis leaves this file's findings marked as
+    # worked at this head sha by the sweep's own dedupe, so they would sit
+    # untouched until somebody pushed; one free retry is cheaper than that.
+    #
+    # `pr` is the whole event payload: the repository and number to read the
+    # review threads of, the head sha they are anchored at, and the findings
+    # themselves. No instruction key names a URL (the portability guard) and
+    # no binding composes one.
+    analyse:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          instruction:
+            literal: |
+              Judge the findings in `pr.findings` BEFORE any of them is
+              fixed. They are all on the same file of the same pull request,
+              which `pr` names by repository, number and head sha.
+
+              For EVERY finding, read the review thread it sits under on
+              that pull request -- its replies and whether it is marked
+              resolved -- and give it exactly one verdict:
+
+                FIX       nobody has answered it and it is a real defect
+                PUSHBACK  a human replied declining it; quote why, briefly
+                DUPLICATE another finding in this same list is the same
+                          defect under a different rule or tool
+                SKIP      its thread is resolved, or it is already fixed at
+                          this head sha, or it is a false positive
+
+              Every finding gets a verdict and a ONE-LINE reason. A finding
+              you did not judge is not a finding you may fix.
+
+              Then bundle the FIX verdicts into `packages`: one package per
+              (rule, file) pair, listing that pair's finding ids. Thirteen
+              instances of one rule in one file are ONE package, because one
+              edit answers all thirteen. Order the packages so the one
+              carrying the highest-priority finding is first; the fix node
+              works that one and only that one.
+
+              Do NOT package findings you would only reach after that fix
+              lands. The moment it pushes, every remaining finding on this
+              file is anchored to lines that moved, and the sweep re-scans
+              the file at the new head sha and dispatches them again with
+              current positions. Leaving them to that post-push re-scan is
+              the correct answer, not an omission.
+
+              Change no code and push nothing. If NO finding earns FIX,
+              report `no_fix` with the verdicts and an empty `packages`
+              list: a session nobody needed is the thing this node exists to
+              avoid buying.
+          pr: /run/input
+      contract:
+        outcomes:
+          # `packaged` and `no_fix` carry the SAME verdict list and differ
+          # only in whether anything is left to fix, because the verdicts are
+          # the record either way -- a run that fixes nothing still has to say
+          # why it fixed nothing, and its pushbacks still reach the tick
+          # summary through `finish`.
+          packaged:
+            schema:
+              type: object
+              required: [verdicts, packages]
+              properties:
+                verdicts:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [id, verdict, reason]
+                    properties:
+                      id: {type: string, minLength: 1}
+                      verdict: {enum: [FIX, PUSHBACK, DUPLICATE, SKIP]}
+                      # One line, and gated as one: a reason that runs to a
+                      # paragraph is a session summary, and the sweep prints
+                      # this verbatim in the tick summary.
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 240
+                        pattern: '^[^\n]+$'
+                packages:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [rule, file, finding_ids]
+                    properties:
+                      rule: {type: string}
+                      file: {type: string}
+                      finding_ids:
+                        type: array
+                        minItems: 1
+                        items: {type: string, minLength: 1}
+          no_fix:
+            schema:
+              type: object
+              required: [verdicts, packages]
+              properties:
+                verdicts:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [id, verdict, reason]
+                    properties:
+                      id: {type: string, minLength: 1}
+                      verdict: {enum: [PUSHBACK, DUPLICATE, SKIP]}
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 240
+                        pattern: '^[^\n]+$'
+                packages:
+                  type: array
+                  maxItems: 0
+      policy:
+        timeout: 30m
         retry:
           maxAttempts: 2
 
@@ -317,34 +484,43 @@ spec:
       # when that names exactly one repository, and refuses when the choice is
       # ambiguous.
       #
-      # `finding` carries the event payload. Every non-transport key arrives
-      # in the session as a verbatim "Bound inputs" block, so the findings are
-      # read by the actor without this graph reformatting them.
+      # `package` is what this node WORKS; `pr` is where it works. The raw
+      # findings list is deliberately no longer the selection surface (task
+      # t14): choosing among findings is `analyse`'s job, done once, with the
+      # review threads read -- and a node that could still see the unfiltered
+      # list would be invited to second-guess a verdict a human wrote.
+      # Every non-transport key arrives in the session as a verbatim "Bound
+      # inputs" block, so both are read without this graph reformatting them.
       input:
         bindings:
           instruction:
             literal: |
-              Take the HIGHEST-PRIORITY item from the prioritised `findings`
-              list bound below and work only that one item.
+              Take the FIRST entry of the `packages` list bound below and
+              work only that package. `pr` names the repository, the pull
+              request number and the head sha to work against.
 
-              The list is already ordered across three vocabularies —
-              SonarCloud severities, Qodo severities, and failed CI checks —
-              so the first entry is the item to work. Do not re-rank it, and
-              do not batch several items into one change.
+              A package is one rule in one file, and every finding id in it
+              is answered by ONE change — thirteen instances of a literal
+              duplication are one constant, not thirteen commits. Do not
+              re-rank the packages, do not merge two of them, and do not
+              touch findings outside the one you took: the analysis already
+              decided that the rest of this file waits for the re-scan after
+              your push, when their line numbers are current again.
 
               Implement the fix on a branch and open or update a pull request
               for it. NEVER merge anything: this graph's merge step is a
               separate human-approval node, and an agent merging here would
               bypass it.
 
-              If the item is not actually a defect — a false positive, a
-              finding already fixed, or one whose fix would be wrong — say so
-              plainly and submit `no_change` with the reason. A stated
-              non-fix is a better outcome than a manufactured one.
+              If the package is not actually a defect — a false positive, or
+              one whose fix would be wrong — say so plainly and submit
+              `no_change` with the reason. A stated non-fix is a better
+              outcome than a manufactured one.
 
-              Report which finding you took, what you changed, and the PR you
+              Report which package you took, what you changed, and the PR you
               opened or updated.
-          finding: /run/input
+          package: /nodes/analyse/output/packages
+          pr: /run/input
       contract:
         outcomes:
           completed:
@@ -404,29 +580,55 @@ spec:
           finding: /run/input
           fix: /nodes/fix/output
 
+    # The run's output IS the analysis document (task t14). An end node's
+    # output is a single pointer, and of the two candidates the analysis is
+    # the one carrying something no other surface has: the PUSHBACK verdicts,
+    # which are a person's objection on a PR thread. The run input is not
+    # lost by this -- it is the run's own `input` column, readable on the same
+    # listing row -- whereas an unrecorded pushback is re-proposed next tick.
     finish:
       kind: end
       ownerRef: team/platform-ai
       output:
-        from: /run/input
+        from: /nodes/analyse/output
 
   edges:
     - from: route.orphan
       to: intake-orphan
-    # The keyed route IS the shape test: `route` selected `keyed` because the
-    # work item does not start with `gh:`, so the stage node needs no second
-    # guard on the only edge that leaves that outcome.
+    # Both routes reach `analyse` first. On the keyed route that is a change
+    # of ORDER, not of membership: `stage-dispatch` still posts before the
+    # fix, but after the analysis has decided there is one -- a stage comment
+    # saying a developer session was dispatched must not be the loop's answer
+    # to a PR whose every finding a human already declined.
     - from: route.keyed
-      to: stage-dispatch
-    - from: stage-dispatch.comment_posted
-      to: fix
+      to: analyse
     - from: intake-orphan.issue_created
       to: stamp-pr
-    # The orphan path rejoins at `fix` and never posts a stage: its ticket was
+    - from: stamp-pr.stamped
+      to: analyse
+    # The same two mutually exclusive guards as `fix.completed` below, and for
+    # the same reason: the engine picks the first eligible edge in the
+    # COMPILER's normalized order (source, outcome, TARGET, guard text), and
+    # `fix` sorts before `stage-dispatch`, so an unguarded edge to `fix` would
+    # win before the stage guard was ever evaluated.
+    #
+    # The orphan path skips the stage and rejoins at `fix`: its ticket was
     # created in THIS run, so the work item in the run's input is still the
     # gh: form and there is no key to bind. The next, keyed fact for the PR
     # carries the stages.
-    - from: stamp-pr.stamped
+    - from: analyse.packaged
+      to: stage-dispatch
+      when: '!input.work_item.startsWith("gh:")'
+    - from: analyse.packaged
+      to: fix
+      when: 'input.work_item.startsWith("gh:")'
+    # Nothing to fix, so nothing to approve. The run ends carrying the
+    # verdicts that say why -- which is the whole return on this node: a tick
+    # that reads three findings, finds all three already answered, and buys no
+    # session at all still leaves a record a person can read.
+    - from: analyse.no_fix
+      to: finish
+    - from: stage-dispatch.comment_posted
       to: fix
     # Both `fix.completed` edges carry a guard, and that is not redundancy.
     # The engine selects the first eligible edge in the COMPILER's normalized

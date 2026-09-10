@@ -649,7 +649,7 @@ def gate_hook(ctx: Landing) -> dict[str, Any]:
         sys.path.insert(0, here)
     from land_gate import run_gate  # resolved beside this file, at the step
 
-    return run_gate(ctx)
+    return run_gate(ctx, refusal=Refusal)
 
 
 def reply_hook(ctx: Landing) -> dict[str, Any]:

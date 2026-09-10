@@ -132,6 +132,18 @@ def land_module(ctx: Any):
     return sys.modules[type(ctx).__module__]
 
 
+#: The caller's own Refusal class, handed in by land.py's gate hook exactly as
+#: land_reply.py takes it (t8). `sys.modules[...]` by name is only a fallback:
+#: when two copies of land.py have been loaded in one process (the test suite
+#: does that), the name resolves to the newest copy and a refusal raised from
+#: here would sail past the caller's `except Refusal`.
+_REFUSAL: type[Exception] | None = None
+
+
+def refusal_class(ctx: Any) -> type[Exception]:
+    return _REFUSAL or land_module(ctx).Refusal
+
+
 def tail(text: str, redact: Callable[[str], str]) -> str:
     lines = text.splitlines()[-TAIL_LINES:]
     return redact("\n".join(lines)[-TAIL_CHARS:])
@@ -338,7 +350,7 @@ def refuse_missing(ctx: Any, land: Any, missing: list[str]) -> None:
         missing=missing,
         required=list(REQUIRED_TOOLCHAINS),
     )
-    raise land.Refusal(
+    raise refusal_class(ctx)(
         f"gate toolchain missing on this host: {', '.join(missing)}",
         "install it on the runner host for the culture-land account (deploy.sh's "
         "land_toolchain_check reports the same fact per binary); installing is a "
@@ -369,17 +381,19 @@ def route_red(ctx: Any, land: Any, failed: StepResult, done: list[StepResult]) -
     )
 
 
-def run_gate(ctx: Any) -> dict[str, Any]:
+def run_gate(ctx: Any, *, refusal: type[Exception] | None = None) -> dict[str, Any]:
     """land.py's gate hook. Returns the `gate` step's fields on ok/skipped;
     on a missing toolchain or a red step it writes the step record itself
-    and raises land's Refusal / Routed."""
+    and raises land's Refusal / Routed. `refusal` is the caller's own class."""
+    global _REFUSAL
+    _REFUSAL = refusal
     land = land_module(ctx)
     if ctx.worktree is None:
         return {"outcome": "skipped", "reason": "already_on_branch", "bump": None}
     try:
         cfg = gate_config()
     except (ValueError, json.JSONDecodeError) as exc:
-        raise land.Refusal(
+        raise refusal_class(ctx)(
             f"gate configuration: {exc}", "fix the land account's environment"
         ) from exc
     missing = missing_toolchains()
@@ -414,7 +428,7 @@ def run_gate(ctx: Any) -> dict[str, Any]:
         try:
             old, new, _stdout = bump_version(land.git, wt, cfg.bump_part, changelog)
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            raise land.Refusal(
+            raise refusal_class(ctx)(
                 f"version bump failed: {exc}", "the gate was green; bump.py itself broke"
             ) from exc
         subject = (

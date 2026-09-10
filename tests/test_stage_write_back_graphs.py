@@ -372,7 +372,8 @@ class TestTheGraphChangeIsPublishable:
     def test_the_cleanup_graph_keeps_its_code_node_and_both_endings(self, documents):
         nodes = _nodes(documents["cleanup"])
         assert nodes["cleanup"]["kind"] == "code"
-        assert nodes["cleaned"]["kind"] == "end" and nodes["cleanup-failed"]["kind"] == "end"
+        assert nodes["cleaned"]["kind"] == "end"
+        assert nodes["cleanup-failed"]["kind"] == "end"
         assert {trigger["onEvent"] for trigger in documents["cleanup"]["spec"]["triggers"]} == {
             "pr.merged",
             "pr.closed",

@@ -911,11 +911,21 @@ Two knobs, in two different places:
   fact flips before a dispatch pays for it — one micro-session per window per
   lane. `adapters/codex/README.md` lists all three keys.
 
-Restoring a dead lane is a hand-turn: an interactive `codex login` as the
-engine account on the bridge host, `lanes/unix-user.sh bootstrap codex` to
-re-copy the credential, then a bridge restart so its start-up probe clears
-the latch. `codex-preflight.sh`'s check 3 (`login status`) is advisory since
-this incident — it reads the stored credential, not the session.
+Restoring a dead lane is a hand-turn, and it clears **two** latches, not
+one: an interactive `codex login` as the **login user** on the bridge host
+(bootstrap copies out of the login user's home, so a login as
+`culture-codex` is not what it picks up), `sudo bash lanes/unix-user.sh
+bootstrap codex` — the lane's one root step, which refuses a non-root caller
+— to copy the credential in, a bridge restart to reset the bridge's own
+per-process latch to `unmeasured`, and then `POST
+/v1alpha1/actors/{id}/resume` with the `NODES_ACTOR_REGISTRATION_TOKEN_SECRET`
+bearer to clear the control plane's `locked=true` (decision c43). A restart
+does not touch that lock, and resume clears the lock and nothing else — a
+lane whose stored fact is still `session_ok=false` in LOCK mode stays
+un-leasable until a later collector write replaces it, so read the actor
+back rather than trusting the resume's 200. `codex-preflight.sh`'s check 3
+(`login status`) is advisory since this incident — it reads the stored
+credential, not the session.
 
 `--os-user NAME` is sugar for `--metadata os_user=NAME` — a first-class
 metadata key (issue #204) that records the dedicated Unix account a bridge

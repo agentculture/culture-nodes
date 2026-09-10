@@ -208,12 +208,40 @@ substitution in the wave's session declaration below. `unmeasured`
 verdict — dispatch as usual, knowing the first failure is what will measure
 it (LOCK mode latches on it).
 
-Restoring a dead lane is an operator hand-turn — an interactive engine
-re-login as the engine account on the bridge host, `lanes/unix-user.sh
-bootstrap <engine>` to re-copy the credential, a bridge restart to clear the
-latch — and the check itself is one too. Record both with the CLI so they
-count (CLAUDE.md, "Every piece of operator work opens or updates an
-issue"):
+Restoring a dead lane is an operator hand-turn — and the check itself is one
+too. It takes **two** clears, because there are two latches: the bridge's
+per-process one (`liveness_mode: LOCK`, reset by a restart) and the control
+plane's `locked=true` lock, which a restart does not touch and only the
+resume endpoint clears (decision c43).
+
+```bash
+# 1. re-login as the LOGIN user on the bridge host — bootstrap copies the
+#    credential out of the login user's home, not the engine account's, so a
+#    login as culture-<engine> is not what it will pick up
+ssh <host>          # then, interactively on the host: codex login
+# 2. copy it into the engine account. bootstrap is the lane's ONE root step
+#    and refuses any non-root caller
+ssh <host> 'sudo bash culture-nodes-prod/deploy/prod/lanes/unix-user.sh bootstrap codex'
+# 3. restart the bridge: its latch is per-process, so this returns the
+#    bridge's own fact to `unmeasured`
+ssh culture-codex@<host> \
+  'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user restart codex-bridge'
+# 4. clear the control-plane lock. Nothing else clears it — not a restart,
+#    not a fresh credential. Needs the registration bearer, and the actor
+#    ID (act_...), not the key
+curl -fsS -X POST "$NODES_API_URL/v1alpha1/actors/<actor-id>/resume" \
+  -H "authorization: Bearer $NODES_ACTOR_REGISTRATION_TOKEN_SECRET"
+```
+
+Then **re-read the surface rather than assuming step 4 finished it**: resume
+clears the lock and nothing else, so a lane whose last stored fact is still
+`session_ok=false` in LOCK mode stays un-leasable until a later collector
+write replaces that fact. `nodes-op.sh actors` showing `session_ok` no
+longer `false` and `locked=false` is the recovery; a green `curl` from step 4
+is not.
+
+Record the repair and the check with the CLI so they count (CLAUDE.md,
+"Every piece of operator work opens or updates an issue"):
 
 ```bash
 # the ledger-native hand-turn record (t16): stage from the confirmed

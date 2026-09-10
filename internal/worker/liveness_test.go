@@ -30,7 +30,7 @@ import (
 //     the fallback;
 //  2. fresh false row without a fallback -> the lease proceeds and a
 //     warning-shaped record exists;
-//  3. stale false row -> proceeds, no record;
+//  3. stale CHECK-mode false row -> proceeds, no record;
 //  4. a locked row of ANY age refuses the lane;
 //  5. resume alone does not reopen the lane; resume followed by a healthy
 //     collector write does;
@@ -123,9 +123,17 @@ const withFallbackMetadata = `{"fallback_actor":"company/fallback"}`
 // bridge reporting session_ok=false at checkedAt.
 func observeNotLive(t *testing.T, h *harness, actorKey string, checkedAt time.Time) {
 	t.Helper()
+	observeNotLiveInMode(t, h, actorKey, checkedAt, storepg.LivenessModeLock)
+}
+
+// observeNotLiveInMode is observeNotLive with the bridge's detection mode
+// spelled out, because the mode decides whether checkedAt's age means
+// anything (postgres.ActorLiveness.Live).
+func observeNotLiveInMode(t *testing.T, h *harness, actorKey string, checkedAt time.Time, mode string) {
+	t.Helper()
 	notOK := false
 	if _, err := h.store.RecordActorLiveness(h.ctx, storepg.RecordActorLivenessInput{
-		NamespaceID: h.ns.ID, ActorKey: actorKey, SessionOK: &notOK, Reason: "refresh_token_spent", Mode: "LOCK",
+		NamespaceID: h.ns.ID, ActorKey: actorKey, SessionOK: &notOK, Reason: "refresh_token_spent", Mode: mode,
 		CheckedAt: checkedAt, Source: storepg.LivenessSourceCollector,
 	}); err != nil {
 		t.Fatalf("RecordActorLiveness: %v", err)
@@ -224,11 +232,14 @@ func TestFreshFalseRowWithoutAFallbackProceedsWithAWarningRecord(t *testing.T) {
 	}
 }
 
-func TestStaleFalseRowProceedsWithoutARecord(t *testing.T) {
+// A CHECK-mode bridge re-measures on every probe, so a false fact older
+// than the window is one nobody re-measured and proceeds. (A LOCK-mode
+// false fact does not age out — see liveness_routing_test.go.)
+func TestStaleCheckModeFalseRowProceedsWithoutARecord(t *testing.T) {
 	fb := newFallbackActor(t)
 	var lanes livenessLane
 	h := newHarness(t, completesSynchronously, withLivenessLanes(t, withFallbackMetadata, fb.server.URL, &lanes))
-	observeNotLive(t, h, "company/analyzer", time.Now().UTC().Add(-storepg.LivenessFreshness-time.Minute))
+	observeNotLiveInMode(t, h, "company/analyzer", time.Now().UTC().Add(-storepg.LivenessFreshness-time.Minute), storepg.LivenessModeCheck)
 
 	run := h.createRun("sync.workflow.yaml", `{"subject":"widget"}`)
 	h.runUntil(20*time.Second, func() bool { return h.run(run.ID).State.Terminal() })

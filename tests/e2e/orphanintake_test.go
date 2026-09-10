@@ -402,7 +402,7 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 		// so the runner is registered but never invoked -- which is exactly
 		// what the `<not visited>` assertion below pins.
 		runner: &scriptedRunner{}, runnerName: "headspace/pr-upkeep-readiness",
-		runnerActorID: registerOrphanRunner(t, db, ns.ID),
+		runnerActorID:    registerOrphanRunner(t, db, ns.ID),
 		eventTokenSecret: orphanEventSecret,
 	})
 	defer s.stop()

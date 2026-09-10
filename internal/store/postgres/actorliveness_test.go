@@ -148,3 +148,70 @@ func TestActorLivenessUnmeasuredStaysNull(t *testing.T) {
 		t.Fatal("an unknown source was accepted; the column is CHECK-constrained and the wrapper must refuse it first")
 	}
 }
+
+// Live is the one routing rule, and it is mode-aware (code-review fix D,
+// decision c43's AND): a LOCK-mode bridge latches session_ok=false with a
+// FIXED checked_at — the bridge never re-stamps it and the collector
+// re-persists it verbatim — so age says nothing about whether the lane
+// recovered. Such a row refuses until a healthy write clears it. A
+// CHECK-mode row is re-measured every probe, so a stale false there is a
+// fact nobody re-measured and proceeds, exactly as before.
+func TestActorLivenessLiveIsModeAware(t *testing.T) {
+	now := time.Now().UTC()
+	fresh := now.Add(-30 * time.Second)
+	stale := now.Add(-postgres.LivenessFreshness - time.Hour)
+	cases := []struct {
+		name string
+		row  postgres.ActorLiveness
+		want bool
+	}{
+		{"missing measurement is live", postgres.ActorLiveness{Mode: postgres.LivenessModeLock, CheckedAt: fresh}, true},
+		{"true is live whatever the mode", postgres.ActorLiveness{SessionOK: boolPtr(true), Mode: postgres.LivenessModeLock, CheckedAt: stale}, true},
+		{"LOCK false fresh refuses", postgres.ActorLiveness{SessionOK: boolPtr(false), Mode: postgres.LivenessModeLock, CheckedAt: fresh}, false},
+		{"LOCK false stale STILL refuses", postgres.ActorLiveness{SessionOK: boolPtr(false), Mode: postgres.LivenessModeLock, CheckedAt: stale}, false},
+		{"lock mode is case-insensitive", postgres.ActorLiveness{SessionOK: boolPtr(false), Mode: "lock", CheckedAt: stale}, false},
+		{"CHECK false fresh refuses", postgres.ActorLiveness{SessionOK: boolPtr(false), Mode: postgres.LivenessModeCheck, CheckedAt: fresh}, false},
+		{"CHECK false stale proceeds", postgres.ActorLiveness{SessionOK: boolPtr(false), Mode: postgres.LivenessModeCheck, CheckedAt: stale}, true},
+		{"no mode false stale proceeds (CHECK semantics)", postgres.ActorLiveness{SessionOK: boolPtr(false), Mode: "", CheckedAt: stale}, true},
+		{"locked refuses at any age", postgres.ActorLiveness{SessionOK: boolPtr(true), Locked: true, Mode: postgres.LivenessModeCheck, CheckedAt: stale}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.row.Live(now); got != tc.want {
+				t.Fatalf("Live(%+v) = %t, want %t", tc.row, got, tc.want)
+			}
+		})
+	}
+}
+
+// The persisted shape of the same rule: a LOCK-mode false fact written by
+// the collector an hour ago, never re-stamped, reads not-live from the row
+// the dispatch site reads.
+func TestActorLivenessLockModeFalseRowDoesNotExpireByAge(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "test-actor-liveness-lock-mode").ID
+	row, err := s.RecordActorLiveness(ctx, postgres.RecordActorLivenessInput{
+		NamespaceID: ns, ActorKey: "lanes/lock-mode", SessionOK: boolPtr(false), Reason: "refresh_token_spent",
+		Mode: postgres.LivenessModeLock, CheckedAt: time.Now().UTC().Add(-time.Hour), Source: postgres.LivenessSourceCollector,
+	})
+	if err != nil {
+		t.Fatalf("RecordActorLiveness: %v", err)
+	}
+	if row.Locked {
+		t.Fatal("a collector write set the control-plane lock")
+	}
+	if row.Live(time.Now().UTC()) {
+		t.Fatal("an hour-old LOCK-mode session_ok=false row reads live: the bridge latched, the age is the latch's, not the lane's")
+	}
+	healthy, err := s.RecordActorLiveness(ctx, postgres.RecordActorLivenessInput{
+		NamespaceID: ns, ActorKey: "lanes/lock-mode", SessionOK: boolPtr(true), Reason: "ok",
+		Mode: postgres.LivenessModeLock, CheckedAt: time.Now().UTC(), Source: postgres.LivenessSourceCollector,
+	})
+	if err != nil {
+		t.Fatalf("RecordActorLiveness(healthy): %v", err)
+	}
+	if !healthy.Live(time.Now().UTC()) {
+		t.Fatal("a healthy LOCK-mode write did not reopen the lane")
+	}
+}

@@ -347,7 +347,7 @@ func (w *Worker) refuseUnfunded(
 		"node_id":     node.ID,
 		"attempt_id":  dc.AttemptID,
 		"work_id":     claimed.ID,
-		"actor_ref":   node.Uses,
+		"actor_ref":   dc.ActorRef,
 		"outcome":     engine.OutcomeBudgetExhausted,
 		"detail":      detail,
 	}
@@ -380,7 +380,7 @@ func (w *Worker) chargeSession(ctx context.Context, spec *workflowSpec, node *no
 		RunID:       dc.RunID,
 		NodeRunID:   dc.NodeRunID,
 		NodeKey:     node.ID,
-		ActorRef:    node.Uses,
+		ActorRef:    dc.ActorRef,
 		ActorID:     dc.ActorRowID,
 	})
 	if err != nil {

@@ -308,6 +308,14 @@ type CallbackDeps struct {
 	// why a control plane that cannot look must write no record at all.
 	Handover *handover.Observer
 
+	// LaneLocker closes an actor's liveness lane when a terminal `failed`
+	// event carries class credential_spent — the asynchronous half of
+	// decision c43's OR rule (lanelock.go). Nil, the default, locks nothing:
+	// a deployment wired without it behaves exactly as before this field
+	// existed, which is the bug this field exists to fix in production
+	// (internal/api/server.go wires the callback store here).
+	LaneLocker LaneLocker
+
 	// Telemetry instruments the callback ingest seam (task t19,
 	// HandleCallback) through internal/telemetry. The zero value, a nil
 	// *telemetry.Provider, is a safe no-op — every telemetry.Provider
@@ -761,6 +769,11 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 	}
 
 	completion, err := deps.Engine.CompleteAttempt(ctx, req)
+	// A spent session credential locks the lane whatever the engine decided
+	// about THIS completion: the fact is about the lane, not the attempt,
+	// and the sync path (internal/worker/dispatch.go) locks after its own
+	// completion the same way. Best-effort — see lanelock.go.
+	deps.lockLaneIfCredentialSpent(ctx, inv, ev)
 	if err != nil {
 		// The item is leased to a completion that did not happen, and no
 		// worker is working it. Park it again whatever the reason. After an

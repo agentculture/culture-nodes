@@ -153,14 +153,16 @@ func capacityPauseUntil(now time.Time, retryAfter time.Duration) time.Duration {
 func (w *Worker) tripCapacityBreaker(
 	ctx context.Context, claimed postgres.ClaimedWork, node *nodeSpec, dc DispatchContext, invokeErr error,
 ) {
-	actorKey := actorKeyOf(node.Uses)
+	// The lane actually invoked — the fallback, when the liveness gate
+	// took one — is the lane whose provider ran out of capacity.
+	actorKey := actorKeyOf(dc.ActorRef)
 	if actorKey == "" {
 		// Nothing to key a pause on. A node whose `uses` names no actor key
 		// never resolved an endpoint either, so there is no provider capacity
 		// this failure could be about.
 		w.report(fmt.Errorf(
-			"worker: node %q reported capacity_exhausted but its uses %q names no actor key; no pause recorded",
-			node.ID, node.Uses))
+			"worker: node %q reported capacity_exhausted but its actor reference %q names no actor key; no pause recorded",
+			node.ID, dc.ActorRef))
 		return
 	}
 
@@ -194,10 +196,11 @@ func (w *Worker) tripCapacityBreaker(
 		"node_id":      node.ID,
 		"attempt_id":   dc.AttemptID,
 		"actor_key":    actorKey,
-		"actor_ref":    node.Uses,
+		"actor_ref":    dc.ActorRef,
 		"reason":       pause.Reason,
 		"paused_until": pause.PausedUntil.UTC().Format(time.RFC3339Nano),
 	}
+	routedFrom(data, node, dc)
 	if dc.ActorRowID != "" {
 		data["actor_id"] = dc.ActorRowID
 	}
@@ -219,7 +222,8 @@ func retryAfterOf(err error) time.Duration {
 	return 0
 }
 
-// activePauseFor reports the pause in force for the actor a node names, if
+// activePauseFor reports the pause in force for the actor ref names (the
+// lane the dispatch actually targets, dc.ActorRef), if
 // any.
 //
 // A lookup that fails is reported and treated as "not paused": the breaker
@@ -227,8 +231,8 @@ func retryAfterOf(err error) time.Duration {
 // and the node's own retry policy both still apply), and failing a dispatch
 // because the breaker could not be consulted would make the safety net the
 // new failure mode.
-func (w *Worker) activePauseFor(ctx context.Context, node *nodeSpec) (postgres.ActorPause, bool) {
-	actorKey := actorKeyOf(node.Uses)
+func (w *Worker) activePauseFor(ctx context.Context, ref string) (postgres.ActorPause, bool) {
+	actorKey := actorKeyOf(ref)
 	if actorKey == "" {
 		return postgres.ActorPause{}, false
 	}
@@ -273,11 +277,12 @@ func (w *Worker) deferForPause(
 		"node_id":      node.ID,
 		"work_id":      claimed.ID,
 		"actor_key":    pause.ActorKey,
-		"actor_ref":    node.Uses,
+		"actor_ref":    dc.ActorRef,
 		"reason":       pause.Reason,
 		"paused_until": pause.PausedUntil.UTC().Format(time.RFC3339Nano),
 		"available_at": availableAt.UTC().Format(time.RFC3339Nano),
 	}
+	routedFrom(data, node, dc)
 	if pause.Detail != "" {
 		data["detail"] = pause.Detail
 	}

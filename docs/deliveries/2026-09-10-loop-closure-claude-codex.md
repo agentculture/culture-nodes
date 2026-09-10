@@ -15,8 +15,8 @@ as 19 tasks in six waves on `build/loop-closure-claude-codex`.
 
 The run is `partial` on one count only: every build task merged and gated, but
 `t19` — this summary and the validate-delivery evidence — is the operator's,
-and its records (`o1`–`o17`, `e1`–`e17`, `b1`–`b3`) are `proposed` until the owner confirms them; the four deviations
-(`d1`–`d4`) are approved.
+and its obligations (`o1`–`o17`) and deviations (`d1`–`d4`) are approved; the
+evidence (`e1`–`e17`) and deltas (`b1`–`b3`) are `proposed` until the owner confirms them.
 
 ## Planned Work
 
@@ -116,7 +116,7 @@ run), 2026-09-10:
 - commits: `7f65d31..f08ea40` on `build/loop-closure-claude-codex` (44 commits, 18 `merge tN:` commits, 242 files, +39806/−787)
 - nodes runs: `01M25VSZBCWKX52JWWTWYZVKHM` (t7), `01M25VT24ZXDA79W3B80VYESKZ` (t17), `01M25YD5Z7PZD7B0MJEZN9HF53` (t14), `01M260089KYQBCXKZN3TH48QWM` (t18) — completed with handover refs; `01M1X6JM…`, `01M1X6JV…`, `01M25T4X…`, `01M25T4Z…`, `01M25XVB…`, `01M25XVBM…`, `01M25Y1R…` — codex, failed on the revoked token
 - PRs / issues: #322 (spec + plan), #303, #308–#319, #321, #323, #324, agentculture/devague#119
-- devague records: `o1`–`o17`, `e1`–`e17` (all `pass`), `b1`–`b3` — proposed; `d1`–`d4` — approved
+- devague records: `o1`–`o17` — approved; `e1`–`e17` (all `pass`), `b1`–`b3` — proposed; `d1`–`d4` — approved
 
 ## Delivery Claims
 
@@ -135,7 +135,7 @@ run), 2026-09-10:
 
 ## Remaining Work / Follow-up
 
-- **Owner confirmations**: `devague plan confirm t4 t7 t19`, then `devague plan export` (the plan-md re-export into PR #322); `devague evidence`/`oblige`/`delta` confirms for `o1`–`o17`, `e1`–`e17`, `b1`–`b3` — 43 single confirms today, which is agentculture/devague#119's point.
+- **Owner confirmations**: `devague plan confirm t4 t7 t19`, then `devague plan export` (the plan-md re-export into PR #322); `devague evidence`/`delta` confirms for `e1`–`e17`, `b1`–`b3` — 20 single confirms today, which is agentculture/devague#119's point.
 - **Codex lanes** (#303, #324): `codex login` as `culture-codex` on thor with `CODEX_HOME=/home/culture-codex/.codex`; orin later; stop copying `auth.json` at bootstrap. Every codex dispatch this cycle (7 runs) failed on the revoked token.
 - **Deploy and publish**: control plane (migrations 0057/0058, hand-turn routes, liveness), all seven bridges (liveness), the sweep and the six republished workflows (pr-upkeep 2.6.0, cleanup 1.1.0, jira-intake 1.8.0, land, hand-turn-observer) must land together with the sweep redeploy (a 2.6.0 contract refuses a pre-t2 fact). Then the live success signals above flip from `unverified`.
 - **Land account on thor**: `bootstrap-accounts.sh thor` (root hand-turn), install Go for the land gate, `cutover.sh thor land`, two GitHub tokens; egress allowlist for `ssh://culture-claude@localhost/...` fetches from the runner (`d2`'s and r1's open point).

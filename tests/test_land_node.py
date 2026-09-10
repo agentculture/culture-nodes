@@ -687,9 +687,8 @@ def test_the_script_makes_no_merge_api_call():
     probe_code = code_only((EXAMPLE_DIR / "land_probe.py").read_text(encoding="utf-8"))
     assert len(re.findall(urlopen, probe_code)) == 1
     assert "api.github.com" not in probe_code
-    assert (
-        '"push"' not in probe_code and "subprocess" not in probe_code
-    ), "the probe reads the control plane and runs nothing"
+    assert '"push"' not in probe_code, "the probe reads the control plane and pushes nothing"
+    assert "subprocess" not in probe_code, "the probe reads the control plane and runs nothing"
 
 
 def test_the_handover_ref_fence(monkeypatch, capsys, land_ws, actor_checkout):

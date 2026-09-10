@@ -120,7 +120,8 @@ def test_the_check_prints_one_line_per_binary_and_names_the_missing_one(tmp_path
     missing = lines(proc, "land toolchain: go MISSING")
     assert len(missing) == 1, proc.stdout
     warning = lines(proc, "WARNING")
-    assert len(warning) == 1 and "go" in warning[0], proc.stdout
+    assert len(warning) == 1, proc.stdout
+    assert "go" in warning[0], proc.stdout
     assert "hand-turn" in warning[0]
     assert "toolchain_missing" in warning[0], "the warning names the record the gate would write"
     # Probed AS the account, once per binary, over ssh -- never sudo, never a

@@ -225,6 +225,46 @@ func TestPatchRunRekeysOrphanWorkItemOnce(t *testing.T) {
 	}
 }
 
+// TestPatchRunRefusedCategoryDoesNotRekeyWorkItem pins the atomicity the
+// once-only re-key needs: PATCH carries two fields, and the work_item half
+// can never be replayed. A body whose work_item is good and whose category
+// is unusable must therefore be refused having written NOTHING — otherwise
+// the caller is answered 400 by a request that nevertheless spent the
+// transition, and the obvious repair (the same body, category fixed) is met
+// with the 409 the half-applied re-key now earns, with no way left to set
+// the category at all. The same shape covers a category UPDATE the database
+// refuses; a decode failure is the half of it a test can drive honestly.
+func TestPatchRunRefusedCategoryDoesNotRekeyWorkItem(t *testing.T) {
+	f := newFixture(t)
+	digest := publishFixtureWorkflow(t, f)
+	const orphanKey = "gh:agentculture/culture-nodes#307"
+	orphan := createWorkItemRun(t, f, digest, orphanKey)
+
+	resp, body := doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+orphan.ID),
+		json.RawMessage(`{"work_item":"SCRUM-7","category":42}`), nil)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+	decodeAPIError(t, body)
+
+	var after apipkg.RunViewOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/runs/"+orphan.ID), nil, &after)
+	requireStatus(t, resp, body, http.StatusOK)
+	if after.Run.WorkItem != orphanKey {
+		t.Fatalf("a refused PATCH moved work_item to %q; the once-only re-key was spent by a request that failed", after.Run.WorkItem)
+	}
+	if got := listRunIDs(t, f, "?work_item=SCRUM-7"); len(got) != 0 {
+		t.Fatalf("work_item=SCRUM-7 lists %v after a refused PATCH, want none", got)
+	}
+
+	// So the retry is the repair: the same body, category fixed, lands both.
+	var patched apipkg.RunOut
+	resp, body = doJSON(t, f.client, http.MethodPatch, f.url("/v1alpha1/runs/"+orphan.ID),
+		json.RawMessage(`{"work_item":"SCRUM-7","category":"orphan-intake"}`), &patched)
+	requireStatus(t, resp, body, http.StatusOK)
+	if patched.WorkItem != "SCRUM-7" || patched.Category != "orphan-intake" {
+		t.Fatalf("after the repair: work_item=%q category=%q, want SCRUM-7 / orphan-intake", patched.WorkItem, patched.Category)
+	}
+}
+
 // TestTriggeredRunStampsWorkItemFromEventPayload covers the engine's
 // event->run minting path: a fact whose payload carries a string
 // `work_item` lands as a run keyed by it (so a sweep-emitted pr-upkeep.pr

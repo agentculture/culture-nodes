@@ -540,9 +540,12 @@ func (s *Server) runMetadataByID(ctx context.Context, runID string) (runMetadata
 // string" contract setRunMetadata above uses. Returns postgres.ErrNotFound
 // when no run with this id exists in this server's namespace, so
 // handlePatchRun can classify() it into the documented 404 the same way
-// every other run lookup in this package does.
-func (s *Server) setRunCategory(ctx context.Context, runID, category string) error {
-	tag, err := s.Store.Pool().Exec(ctx,
+// every other run lookup in this package does. It runs on the caller's
+// transaction: a PATCH that carries a work_item re-key alongside the retag
+// must land both or neither (see runPatch), and a category failure here is
+// exactly the case that used to leave the once-only re-key committed.
+func (s *Server) setRunCategory(ctx context.Context, tx pgx.Tx, runID, category string) error {
+	tag, err := tx.Exec(ctx,
 		`UPDATE runs SET category = NULLIF($2, ''), updated_at = now() WHERE id = $1 AND namespace_id = $3`,
 		runID, category, s.NamespaceID,
 	)

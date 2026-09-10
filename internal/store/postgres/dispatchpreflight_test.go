@@ -60,7 +60,7 @@ func TestAnIssuedPreflightIsNotYetAcknowledged(t *testing.T) {
 		t.Error("a freshly issued preflight reports itself consumed")
 	}
 
-	open, ok, err := s.OpenPreflight(ctx, ns.ID, "nr_issue_1")
+	open, ok, err := s.OpenPreflight(ctx, ns.ID, "nr_issue_1", "company/fixer")
 	if err != nil || !ok {
 		t.Fatalf("OpenPreflight: ok=%v err=%v", ok, err)
 	}
@@ -120,10 +120,52 @@ func TestAnAcknowledgementIsSingleUse(t *testing.T) {
 
 	// And it is no longer the open preflight for that node run, so the next
 	// claim composes a fresh briefing rather than reviving this one.
-	if _, ok, err := s.OpenPreflight(ctx, ns.ID, "nr_single_1"); err != nil {
+	if _, ok, err := s.OpenPreflight(ctx, ns.ID, "nr_single_1", "company/fixer"); err != nil {
 		t.Fatalf("OpenPreflight: %v", err)
 	} else if ok {
 		t.Error("a consumed preflight is still reported as the open one")
+	}
+}
+
+// A briefing belongs to the lane it was composed for. A node run is not
+// pinned to one lane — liveness routing picks the actor per claim — so the
+// row an acknowledgement sits on must not answer for a lane that was never
+// briefed and never answered.
+func TestAnAcknowledgedPreflightIsNotOpenForAnotherActor(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "test-preflight-actor")
+
+	in := issueInput(ns, "nr_actor_1", 15*time.Minute)
+	issued, err := s.IssuePreflight(ctx, in)
+	if err != nil {
+		t.Fatalf("IssuePreflight: %v", err)
+	}
+	if _, err := s.AcknowledgePreflight(ctx, postgres.AcknowledgePreflightInput{
+		NamespaceID:             ns.ID,
+		ID:                      issued.ID,
+		AcknowledgedBy:          in.ActorID,
+		AcknowledgementRecordID: "ledger_ack_" + issued.ID,
+		Now:                     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("AcknowledgePreflight: %v", err)
+	}
+
+	// The lane that was briefed reads its own briefing.
+	if open, ok, err := s.OpenPreflight(ctx, ns.ID, "nr_actor_1", in.ActorKey); err != nil || !ok {
+		t.Fatalf("OpenPreflight(%s): ok=%v err=%v", in.ActorKey, ok, err)
+	} else if open.ID != issued.ID {
+		t.Errorf("OpenPreflight(%s) returned %s, want %s", in.ActorKey, open.ID, issued.ID)
+	}
+
+	// Any other lane is simply unbriefed: it may not ride this
+	// acknowledgement, which states another host's facts and carries
+	// another actor's claim to have read them.
+	if _, ok, err := s.OpenPreflight(ctx, ns.ID, "nr_actor_1", "company/fallback"); err != nil {
+		t.Fatalf("OpenPreflight(company/fallback): %v", err)
+	} else if ok {
+		t.Error("a briefing issued for company/fixer is open for company/fallback; " +
+			"the fallback would dispatch on an authorization composed for another lane")
 	}
 }
 

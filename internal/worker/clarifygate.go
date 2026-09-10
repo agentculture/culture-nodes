@@ -149,9 +149,20 @@ func (w *Worker) clarifyGate(
 	}
 
 	now := w.opts.Now()
-	open, found, err := w.db.OpenPreflight(ctx, w.opts.NamespaceID, dc.NodeRunID)
+	// The briefing is looked up by node run AND by the lane this dispatch is
+	// actually addressed to. dc.ActorRef is the lane liveness routing chose
+	// for THIS claim (liveness.go), which is not necessarily the one the
+	// previous claim of the same node run was briefed for: a primary that
+	// went dead after acknowledging its briefing reroutes to its fallback,
+	// and a briefing states the host facts of the lane it was composed for.
+	// Looking one up by node run alone would let the fallback dispatch on
+	// the primary's acknowledgement — an authorization for a different host,
+	// answered by a different actor. A lane with no briefing of its own is
+	// simply unbriefed, and is issued one below.
+	open, found, err := w.db.OpenPreflight(ctx, w.opts.NamespaceID, dc.NodeRunID, actorKeyOf(dc.ActorRef))
 	if err != nil {
-		return false, fmt.Errorf("worker: read open preflight for node run %s: %w", dc.NodeRunID, err)
+		return false, fmt.Errorf("worker: read open preflight for node run %s actor %s: %w",
+			dc.NodeRunID, dc.ActorRef, err)
 	}
 
 	switch {

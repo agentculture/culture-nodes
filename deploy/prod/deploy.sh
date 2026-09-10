@@ -910,6 +910,8 @@ deploy_jira() { # host
 # --- the two-host r4 sequence (task t2, spec c25/c26/c28, #230) -----------
 # shellcheck source=deploy/prod/lanes/two-host.sh
 source "$SCRIPT_DIR/lanes/two-host.sh"
+# shellcheck source=deploy/prod/lanes/land-toolchain.sh
+source "$SCRIPT_DIR/lanes/land-toolchain.sh"
 
 case "$HOST" in
   thor*)
@@ -943,6 +945,7 @@ case "$HOST" in
     # lane this deploy shipped.
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    land_toolchain_check "$HOST"   # third detector (t7): the land gate's go/uv/node/markdownlint, per binary
     account_bridges_summary "$HOST"
     deploy_summary thor
     ;;
@@ -973,6 +976,7 @@ case "$HOST" in
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    land_toolchain_check "$HOST"   # same detector as the thor arm (t7)
     account_bridges_summary "$HOST"
     deploy_summary orin
     ;;

@@ -21,6 +21,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "hand-turn-observer"
@@ -195,3 +196,46 @@ def test_main_reads_nodes_input_json_when_no_inputs_flag(monkeypatch, capsys) ->
     assert json.loads(capsys.readouterr().out)["proposed"] == 13
     monkeypatch.delenv("NODES_INPUT_JSON")
     assert observer.main(["--definition", str(EXAMPLE / "definition.json")]) == 2
+
+
+def test_the_observe_node_binds_the_run_input() -> None:
+    """A code node that declares no `input:` gets no NODES_INPUT_JSON.
+
+    `internal/worker/code.go` forwards a node's RESOLVED input document, and
+    `resolveNodeInput` returns the literal `{}` for a node with no binding —
+    which that worker treats as nothing to forward. The observer's only other
+    source is `--inputs`, a path the graph's argv does not pass, so without a
+    binding every dispatched run exits 2 before reading a rule.
+    """
+    document = yaml.safe_load((EXAMPLE / "workflow.yaml").read_text(encoding="utf-8"))
+    observe = document["spec"]["nodes"]["observe"]
+    assert observe["kind"] == "code"
+    assert observe["input"]["bindings"] == {"item": "/run/input"}
+
+
+def test_main_reads_the_engine_bound_input_document(monkeypatch, capsys) -> None:
+    # The engine forwards the resolved input, so the binding NAME wraps the
+    # run input: NODES_INPUT_JSON is {"item": {...}}, not the bare document.
+    payload = {"item": json.loads(FIXTURE.read_text(encoding="utf-8"))}
+    monkeypatch.setenv("NODES_INPUT_JSON", json.dumps(payload))
+    rc = observer.main(["--definition", str(EXAMPLE / "definition.json")])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["work_item"] == "SCRUM-7"
+    assert out["proposed"] == 13
+
+
+def test_a_gh_work_item_is_url_encoded_in_the_runs_query(fake_api) -> None:
+    # The transient `gh:<owner>/<repo>#<n>` form is a real work item for a PR
+    # with no ticket; unescaped, everything from `#` is a URL fragment and the
+    # control plane is asked about the wrong item.
+    seen: list[dict] = []
+
+    def listing(h, m, q, b):
+        seen.append(q)
+        h.send_json(200, {"items": []})
+
+    fake_api.route("GET", r"/v1alpha1/runs$", listing)
+    fake_api.start()
+    assert observer.fetch_runs(fake_api.base_url, "gh:owner/repo#12") == []
+    assert seen[0]["work_item"] == ["gh:owner/repo#12"]

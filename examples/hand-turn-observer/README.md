@@ -17,7 +17,7 @@ number a delivery summary cites (`docs/operations/hand-turn-ledger.md`).
 |------|------------|
 | `observer.py` | Stdlib-only node program. `propose(inputs, definition)` is the deterministic core; `http_json` is the one network helper (`fetch_runs`, `post_proposals`). |
 | `definition.json` | The first definition's `data` — four rules read off PR #307. The ledger record is the authority; this is its published copy for the bootstrap to fetch by digest. |
-| `workflow.yaml` | One code node (`observe`) that fetches the observer and definition by digest, reads the item's runs, proposes, and posts; then an approval node where the graph waits for the review. |
+| `workflow.yaml` | One code node (`observe`) that fetches the observer and definition by digest, reads the item's runs, proposes, and posts; then an approval node where the graph waits for the review. Its `input.bindings` (`item: /run/input`) is what makes the engine forward the run input as `NODES_INPUT_JSON` — a code node without one is dispatched with nothing. |
 | `../../tests/fixtures/hand-turn-observer/pr-307.json` | PR #307's shape as neutral placeholders: two runs, two handover refs, eight `review-fix/*` branches created and deleted, the `a029689` cherry-pick, three operator replies on loop-fixed threads, one ssh checkout reset noted on #286 — plus the near-misses the rules must not match. |
 
 ## Run it by hand
@@ -30,7 +30,9 @@ python3 examples/hand-turn-observer/observer.py \
 ```
 
 That prints the batch (13 proposals for the fixture: 1 cherry-pick, 8
-branch-deletes, 3 replies, 1 reset) without touching the network. Add
+branch-deletes, 3 replies, 1 reset) without touching the network. A dispatched
+run gets the same document from `$NODES_INPUT_JSON` instead, under the node's
+`item` binding — `--inputs` accepts either shape. Add
 `--fetch-runs` to read the item's runs from `$NODES_API_URL`, and `--post` to
 append each proposal through `POST /v1alpha1/hand-turns` as
 `$NODES_OBSERVER_ACTOR_ID` with `$NODES_HAND_TURN_TOKEN` (the observer actor's

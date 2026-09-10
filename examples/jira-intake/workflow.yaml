@@ -253,9 +253,10 @@ spec:
     # statement about something that already happened: the ticket was picked
     # up, acknowledged and moved to In Progress. The first line is
     # machine-readable -- `culture-nodes:stage=intake` -- and the sweep reads
-    # the newest such line on a ticket as its stage WATERMARK, so a tick that
-    # finds the transition already recorded emits nothing for it
-    # (pr_upkeep_jira.stage_already_recorded). A retried comment is at worst a
+    # such a line as a stage RECORD: a record later on the ticket's timeline
+    # than the To Do transition closes it, so a ticket the loop already picked
+    # up does not re-fire pickup every tick (pr_upkeep_jira's
+    # STAGE_DRIVEN_BY). A retried comment is at worst a
     # duplicate record and the newest wins, so unlike the two nodes above
     # this one may retry rather than fail the run over bookkeeping.
     stage-intake:

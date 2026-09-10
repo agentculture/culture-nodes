@@ -126,8 +126,8 @@ class TestTheStageVocabularyHasWriters:
             for graph in STAGE_NODES
             for stage in _found_stage_nodes(documents[graph]).values()
         }
-        # Whatever the sweep suppresses a fact for, some graph must be able to
-        # record -- otherwise stage_already_recorded can never fire.
+        # Whatever the sweep closes a transition on, some graph must be able
+        # to record -- otherwise the entry can never fire.
         assert set(jira.STAGE_DRIVEN_BY.values()) <= written
 
 

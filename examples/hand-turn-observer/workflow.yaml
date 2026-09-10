@@ -51,6 +51,9 @@
 #   `pr_events` / `issue_comments` / `handover_refs` arrays the operator
 #   lane collects with `gh api` (README.md) -- this node holds no GitHub
 #   credential and should not. `runs` is read live from NODES_API_URL.
+#   That forwarding is not automatic: it is the `observe` node's
+#   `input.bindings` (`item: /run/input`) below that makes the engine lower
+#   the document into NODES_INPUT_JSON at all, wrapped in the binding's name.
 #
 # ---------------------------------------------------------------------------
 # WHAT DOES NOT WORK YET -- read before believing the graph
@@ -149,6 +152,18 @@ spec:
           - NODES_HAND_TURN_TOKEN
           - NODES_OBSERVER_ACTOR_ID
         allowedOutputPaths: []
+      # Without this the engine forwards NOTHING: `resolveNodeInput` returns
+      # the literal `{}` for a node that declares no binding, and
+      # buildCodeOperation (internal/worker/code.go) treats that as nothing to
+      # lower into NODES_INPUT_JSON -- so the observer, whose argv passes no
+      # `--inputs` path, would exit 2 on every dispatched run before reading a
+      # single rule. The whole run input is bound (the work item, the
+      # pre-fetched PR events, comments and handover refs), the same shape
+      # examples/cleanup's code node binds, and the resolved document arrives
+      # under this binding's name: {"item": {...}}.
+      input:
+        bindings:
+          item: /run/input
       contract:
         outcomes:
           passed:

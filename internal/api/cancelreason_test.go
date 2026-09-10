@@ -12,7 +12,7 @@ import (
 
 // The cleanup node's half of POST /v1alpha1/runs/{id}/cancel (plan
 // loop-closure t13, spec c6/c37): an optional JSON body {"reason": ...}
-// drawn from a short allowlist rides the existing cancelRunWithReason seam so
+// drawn from a short allowlist rides the cancelRunGuarded seam so
 // the run.cancelled event -- and runs.reason -- carry a machine-readable
 // cause. The operator's bodiless cancel is the pre-t13 behaviour, unchanged:
 // no reason recorded, and no `reason` key in the event at all.
@@ -176,4 +176,113 @@ func TestOperatorBodilessCancelRecordsNoReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The cancel endpoint's second half: the optional `parked_at` PRECONDITION.
+//
+// The cleanup node decides from GET /v1alpha1/runs/{id} and acts in a second
+// request, and the fact that triggers it -- a human merging the PR -- is the
+// same act that advances the approval node. Without a precondition the two
+// requests race, and the loser is the run: an unconditional cancel would kill
+// the downstream nodes the approval just made live. `parked_at` is re-checked
+// inside the cancel transaction, under the same per-run advisory lock the
+// advance itself takes, so the window is closed rather than narrowed.
+
+type cancelRunParkedReq struct {
+	Reason   string `json:"reason"`
+	ParkedAt string `json:"parked_at"`
+}
+
+// liveNodeID returns the node id of the run's single live node run.
+func liveNodeID(t *testing.T, f *fixture, runID string) string {
+	t.Helper()
+	view := getRunView(t, f, runID)
+	for _, nr := range view.NodeRuns {
+		if !engine.NodeRunState(nr.State).Terminal() {
+			return nr.NodeID
+		}
+	}
+	t.Fatalf("run %s has no live node run: %+v", runID, view.NodeRuns)
+	return ""
+}
+
+func TestCancelRunHonoursAMatchingParkedAt(t *testing.T) {
+	f := newFixture(t)
+	run := publishAndStartRun(t, f)
+	node := liveNodeID(t, f, run.ID)
+
+	var cancelled apipkg.RunOut
+	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/cancel"),
+		cancelRunParkedReq{Reason: "pr_merged", ParkedAt: node}, &cancelled)
+	requireStatus(t, resp, body, http.StatusOK)
+	if cancelled.State != string(engine.RunCancelled) {
+		t.Fatalf("state = %q, want %q", cancelled.State, engine.RunCancelled)
+	}
+	if cancelled.Reason != "pr_merged" {
+		t.Fatalf("RunOut.reason = %q, want %q", cancelled.Reason, "pr_merged")
+	}
+	if got := runCancelledEvent(t, f, run.ID)["reason"]; got != "pr_merged" {
+		t.Fatalf("run.cancelled event reason = %v, want %q", got, "pr_merged")
+	}
+}
+
+func TestCancelRunRefusesAParkedAtTheRunHasLeft(t *testing.T) {
+	f := newFixture(t)
+	run := publishAndStartRun(t, f)
+	live := liveNodeID(t, f, run.ID)
+
+	// The node the caller claims to have observed is not where the run is —
+	// exactly the state an approval advance leaves behind between the
+	// caller's read and its POST.
+	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/cancel"),
+		cancelRunParkedReq{Reason: "pr_merged", ParkedAt: "a-node-this-run-has-left"}, nil)
+	requireStatus(t, resp, body, http.StatusPreconditionFailed)
+	decodeAPIError(t, body)
+
+	// Nothing was cancelled: the run is still live, its node run is still
+	// live, and no run.cancelled event was appended. A precondition that does
+	// not hold fails CLOSED.
+	view := getRunView(t, f, run.ID)
+	if engine.RunState(view.Run.State).Terminal() {
+		t.Fatalf("run state = %q after a refused cancel, want a live run", view.Run.State)
+	}
+	if got := liveNodeID(t, f, run.ID); got != live {
+		t.Fatalf("live node = %q after a refused cancel, want %q untouched", got, live)
+	}
+	var n int
+	if err := f.store.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM events WHERE aggregate_id = $1 AND event_type = $2`,
+		run.ID, engine.TypeRunCancelled).Scan(&n); err != nil {
+		t.Fatalf("count run.cancelled events: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("%d run.cancelled event(s) after a refused cancel, want 0", n)
+	}
+
+	// And the same body without the precondition still cancels: `parked_at`
+	// guards, it does not disable the endpoint.
+	var cancelled apipkg.RunOut
+	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/cancel"),
+		cancelRunReq{Reason: "pr_merged"}, &cancelled)
+	requireStatus(t, resp, body, http.StatusOK)
+	if cancelled.State != string(engine.RunCancelled) {
+		t.Fatalf("state = %q, want %q", cancelled.State, engine.RunCancelled)
+	}
+}
+
+func TestCancelRunRefusesAParkedAtOnATerminalRunAsAConflict(t *testing.T) {
+	f := newFixture(t)
+	run := publishAndStartRun(t, f)
+	node := liveNodeID(t, f, run.ID)
+
+	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/cancel"), nil, nil)
+	requireStatus(t, resp, body, http.StatusOK)
+
+	// A terminal run stays a 409, not a 412: the two say opposite things —
+	// 409 means the run already ended, 412 means it is still live and moved
+	// on — and a caller records them differently.
+	resp, body = doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/runs/"+run.ID+"/cancel"),
+		cancelRunParkedReq{Reason: "pr_merged", ParkedAt: node}, nil)
+	requireStatus(t, resp, body, http.StatusConflict)
+	decodeAPIError(t, body)
 }

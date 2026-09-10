@@ -212,19 +212,16 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) error {
 
 // handleCancelRun is POST /v1alpha1/runs/{id}/cancel. The body is optional
 // (cancelreason.go): absent, the operator cancel records no reason exactly as
-// before; present, an allowlisted reason rides the cancelRunWithReason seam
-// into runs.reason and the run.cancelled event.
+// before; present, an allowlisted reason rides the cancelRunGuarded seam
+// into runs.reason and the run.cancelled event, and an optional `parked_at`
+// rides it as a precondition re-checked inside the cancel transaction.
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
-	reason, err := readCancelReason(r)
+	req, err := readCancelRequest(r)
 	if err != nil {
 		return err
 	}
-	var run engine.Run
-	if reason == "" {
-		run, err = s.cancelRun(r.Context(), r.PathValue("id"))
-	} else {
-		run, err = s.cancelRunWithReason(r.Context(), r.PathValue("id"), reason, cancelDetail(reason))
-	}
+	run, err := s.cancelRunGuarded(
+		r.Context(), r.PathValue("id"), req.Reason, cancelDetail(req.Reason), req.ParkedAt)
 	if err != nil {
 		return err
 	}
@@ -455,7 +452,7 @@ func truncateHint(s string) string {
 	return strings.TrimSpace(string(r[:displayHintMaxLen])) + "…"
 }
 
-// cancelRun consumes every active token, marks every non-terminal node run
+// cancelRunGuarded consumes every active token, marks every non-terminal node run
 // and every leasable work item cancelled, and moves the run to cancelled,
 // all in one transaction under the run's advisory lock — the same
 // ledger.RunLockKey(runID) the engine's own §12.5 completion transaction
@@ -498,19 +495,22 @@ func truncateHint(s string) string {
 // which the worker's engine.ErrStaleClaim / engine.TerminalNodeRunError
 // handling already treats as a documented, tested no-op rather than an
 // error it needs new handling for.
-func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error) {
-	return s.cancelRunWithReason(ctx, runID, "", "cancelled via POST /v1alpha1/runs/{id}/cancel")
-}
-
-// cancelRunWithReason is cancelRun with the two things a caller other than
-// the cancel endpoint needs to say: a durable run-level `reason`
-// (migrations/0052, rendered as RunOut.Reason) and the `detail` string the
-// run.cancelled audit event and its outbox row carry. An empty reason
-// leaves runs.reason untouched -- the operator's own POST
-// /v1alpha1/runs/{id}/cancel records no machine-readable reason because
-// there is none to record; the human who pressed it is the reason, and the
-// event's detail says so.
-func (s *Server) cancelRunWithReason(ctx context.Context, runID, reason, detail string) (engine.Run, error) {
+//
+// Its two caller-supplied extras: `reason`, a durable run-level cause
+// (migrations/0052, rendered as RunOut.Reason) written alongside the `detail`
+// string the run.cancelled audit event and its outbox row carry -- an empty
+// reason leaves runs.reason untouched, which is the operator's own POST
+// /v1alpha1/runs/{id}/cancel, because there is no machine-readable cause to
+// record and the event's detail says so; and `parkedAt`, the one thing a
+// caller that decided from a SEPARATE read needs. Empty means no
+// precondition -- every pre-t13 caller. Non-empty names the node id the
+// caller observed the run sitting at, and is re-checked here, inside the
+// transaction that already holds ledger.RunLockKey(runID) -- the same lock
+// the human-decision advance takes (engine/humandecision.go). That closes
+// the read-then-cancel race rather than narrowing it: a run that left the
+// node between the caller's read and this call is a 412 and keeps running,
+// instead of losing the downstream nodes the advance just made live.
+func (s *Server) cancelRunGuarded(ctx context.Context, runID, reason, detail, parkedAt string) (engine.Run, error) {
 	tx, err := s.Store.Pool().Begin(ctx)
 	if err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: begin: %w", err))
@@ -531,6 +531,9 @@ func (s *Server) cancelRunWithReason(ctx context.Context, runID, reason, detail 
 	}
 	if engine.RunState(status).Terminal() {
 		return engine.Run{}, conflict("the run has already reached a terminal state", "run %s is already %s", runID, status)
+	}
+	if err := checkParkedAt(ctx, tx, runID, parkedAt); err != nil {
+		return engine.Run{}, err
 	}
 
 	if _, err := tx.Exec(ctx,

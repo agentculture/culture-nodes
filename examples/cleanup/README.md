@@ -28,16 +28,40 @@ parked `human-merges-pr` runs behind after its merge, all removed by hand.
    only copy of that work: it is listed as `declined: unreachable` and never
    touched. On a `pr.closed` fact nothing was merged, so every ref is declined
    and the record still names them (h24).
-3. **Cancel the parked runs with a reason.** Each of the item's non-terminal
-   runs is read; one whose `human-merges-pr` node run is still live is
-   cancelled through `POST /v1alpha1/runs/{id}/cancel` with the body
-   `{"reason": "pr_merged"}` or `{"reason": "pr_closed"}`. The control plane
-   validates the reason against a short allowlist
-   (`internal/api/cancelreason.go`) and writes it into `runs.reason` and the
-   `run.cancelled` event through the existing `cancelRunWithReason` seam. The
-   operator's bodiless cancel is unchanged and records no reason. A live run
-   that is NOT parked at the approval node is listed as `left_running`, not
-   cancelled — the spec scopes cancellation to parked runs.
+3. **Cancel the parked runs with a reason, and only while they are still
+   parked.** Each of the item's non-terminal runs is read; one whose
+   `human-merges-pr` node run is still live is cancelled through
+   `POST /v1alpha1/runs/{id}/cancel` with the body
+   `{"reason": "pr_merged", "parked_at": "human-merges-pr"}` (or
+   `pr_closed`). The control plane validates the reason against a short
+   allowlist (`internal/api/cancelreason.go`) and writes it into
+   `runs.reason` and the `run.cancelled` event through the
+   `cancelRunGuarded` seam. The operator's bodiless cancel is unchanged
+   and records no reason.
+
+   `parked_at` is a **precondition, not a fact**, and it is what keeps this
+   step honest. This node decides from the run view and acts in a second
+   request, and the trigger for the whole graph — a human merging the PR — is
+   the same act that advances the approval node. Without the precondition,
+   the run that advances between those two requests gets cancelled *along
+   with the downstream nodes the approval just made live*, work this node
+   never saw and never decided about. The control plane re-checks the node
+   inside the cancel transaction, under the same per-run advisory lock the
+   human-decision advance itself takes (`internal/engine/humandecision.go`),
+   so the two cannot interleave; a run that moved on is a `412` and nothing
+   is cancelled. The guard fails closed.
+
+   Either way the run keeps running and is listed as `left_running` with a
+   `why`: `not_at_human-merges-pr` when the view already showed it elsewhere,
+   `advanced_past_human-merges-pr` when the control plane refused the
+   precondition. The spec scopes cancellation to parked runs, and this is how
+   that scope survives a race.
+
+   The node and the control plane ship from this repo together. A control
+   plane that predates `parked_at` rejects the unknown field with a `400`, so
+   pointing this node at a stale deployment is a named `cancel` failure and
+   exit 2 — never a silent unconditional cancel. Check what is running with
+   `curl -s $NODES_API_URL/v1alpha1/version` before blaming the node.
 4. **Per-item sweep state.** The pr-upkeep sweep keeps none outside the
    control plane: its idempotency is the signal watermark row per
    `source_key` plus the run-input walk, and a watermark is an immutable
@@ -121,6 +145,11 @@ against a scratch bare remote
 and `tests/fake_api.py`: a reachable ref is deleted, an unreachable ref is
 declined and still present, another item's reachable ref is left alone, a
 closed PR cancels with `pr_closed`, a remote that refuses the deletion is a
-recorded failure rather than a claimed removal. `internal/api/cancelreason_test.go`
-covers the API half: a body reason reaches the event, an unknown reason is a
-400 that cancels nothing, the bodiless operator cancel is unchanged.
+recorded failure rather than a claimed removal, and a `412` from the control
+plane leaves the run running with `advanced_past_human-merges-pr` rather than
+claiming a cancellation. `internal/api/cancelreason_test.go` covers the API
+half: a body reason reaches the event, an unknown reason is a 400 that cancels
+nothing, the bodiless operator cancel is unchanged, a matching `parked_at`
+cancels, a `parked_at` the run has left is a 412 that cancels nothing and
+leaves the node run live, and a terminal run stays a 409 rather than becoming
+a 412.

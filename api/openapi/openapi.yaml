@@ -2314,8 +2314,19 @@ paths:
         lease on finishes that lease's fenced completion path (it will find
         the node run terminal and no-op); cancellation does not reach into
         an in-flight attempt.
+
+
+        The body is OPTIONAL. Sent with no body — the operator's own cancel —
+        the run records no machine-readable `reason`: the human who pressed
+        it is the reason, and the `run.cancelled` event's `detail` says so.
       parameters:
         - $ref: '#/components/parameters/RunID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRunRequest'
       responses:
         '200':
           description: The run is now cancelled.
@@ -2323,6 +2334,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Run'
+        '400':
+          description: The body is malformed, carries an unknown field, or names a reason outside the allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: No run has this id.
           content:
@@ -2331,6 +2348,14 @@ paths:
                 $ref: '#/components/schemas/Error'
         '409':
           description: The run has already reached a terminal state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: >-
+            `parked_at` was sent and the run is still live but no longer has
+            an active node run at that node. Nothing was cancelled.
           content:
             application/json:
               schema:
@@ -3769,6 +3794,37 @@ components:
             key). Set at creation only; PATCH /v1alpha1/runs/{id} refuses
             it. A run minted by an event trigger is stamped from the
             triggering payload's string `work_item` field instead.
+
+    CancelRunRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        The OPTIONAL body of POST /v1alpha1/runs/{id}/cancel (plan
+        loop-closure-claude-codex t13, decisions c6/c37). Both fields are
+        optional and independent; an unknown field is a 400 so a typo cannot
+        silently degrade into the bodiless operator cancel.
+      properties:
+        reason:
+          type: string
+          enum: [pr_merged, pr_closed]
+          description: >-
+            The machine-readable FACT this cancellation acts on, written to
+            `runs.reason` and into the `run.cancelled` event. The allowlist
+            is closed: every value names a fact the control plane can
+            receive, not an opinion about the run. Omit it for the
+            operator's own cancel — the human who pressed it is the reason.
+        parked_at:
+          type: string
+          description: >-
+            An optional PRECONDITION, not a fact: the node id the caller
+            observed this run parked at in an earlier
+            `GET /v1alpha1/runs/{id}`. When present, the cancel transaction
+            re-checks — under the same per-run advisory lock the human
+            decision advance itself takes — that the node still has a live
+            node run, and returns 412 without cancelling anything if the run
+            has moved on. Without it a caller that decided from a separate
+            read can cancel downstream nodes an approval made live between
+            the two requests.
 
     AdhocRunRequest:
       type: object

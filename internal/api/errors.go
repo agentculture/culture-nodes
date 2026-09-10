@@ -61,6 +61,16 @@ func unprocessable(remediation, format string, args ...any) *apiError {
 	return newAPIError(http.StatusUnprocessableEntity, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
 }
 
+// preconditionFailed builds a 412 — the cancel endpoint's optional
+// `parked_at` guard (cancelreason.go). It is deliberately NOT the 409 a
+// terminal run returns, because the two say opposite things to the caller:
+// 409 means the run already ended, so there was nothing left to cancel; 412
+// means the run is still live and has MOVED ON from the node the caller
+// observed, so cancelling it would have killed work the caller never saw.
+func preconditionFailed(remediation, format string, args ...any) *apiError {
+	return newAPIError(http.StatusPreconditionFailed, clifmt.ExitUserError, fmt.Sprintf(format, args...), remediation)
+}
+
 // payloadTooLarge builds a 413 — the artifact publication route's body limit
 // (api.MaxArtifactBytes). A user error, not an environment one: the caller
 // chose what to send, and the remediation tells them what to do instead.

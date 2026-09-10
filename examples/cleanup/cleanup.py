@@ -14,7 +14,10 @@ without merge (`pr.closed`). Given the fact payload it:
   3. cancels the item's runs still parked at the merge approval node through
      `POST /v1alpha1/runs/{id}/cancel` WITH a machine-readable reason
      (`pr_merged` | `pr_closed`), so the run.cancelled event says which fact
-     ended the run (internal/api/cancelreason.go);
+     ended the run, and WITH a `parked_at` precondition naming that node, so
+     a run the approval advanced between this node's read and its POST is
+     refused (412) and left running rather than losing the downstream nodes
+     the approval just made live (internal/api/cancelreason.go);
   4. drops per-item sweep state — of which there is none outside the control
      plane's own signal watermark rows, and the record says so;
   5. writes ONE derived-shaped record, as a single JSON line on stdout (the
@@ -292,8 +295,19 @@ class Api:
             raise RuntimeError(f"GET /v1alpha1/runs/{run_id}: HTTP {status}: {body!r}"[:500])
         return body
 
-    def cancel(self, run_id: str, reason: str) -> tuple[int, Any]:
-        return self._request("POST", f"/v1alpha1/runs/{run_id}/cancel", {"reason": reason})
+    def cancel(self, run_id: str, reason: str, parked_at: str) -> tuple[int, Any]:
+        """Cancel `run_id` ONLY while it is still parked at `parked_at`.
+
+        `parked_at` is a precondition the control plane re-checks inside the
+        cancel transaction, under the same per-run advisory lock the approval
+        advance takes. Without it this node would decide from `run_view` and
+        act in a second request, and the gap between the two is exactly when
+        a run moves: the fact that triggers this node IS a human merging the
+        PR, which is the same act that advances the approval node. A 412 says
+        the run moved on and nothing was cancelled."""
+        return self._request(
+            "POST", f"/v1alpha1/runs/{run_id}/cancel", {"reason": reason, "parked_at": parked_at}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -470,11 +484,15 @@ def cancel_parked_runs(
         parked = [nr for nr in live if nr.get("node_id") == parked_node]
         if not parked:
             record.left_running.append(
-                {"run_id": run_id, "live_nodes": sorted(str(nr.get("node_id")) for nr in live)}
+                {
+                    "run_id": run_id,
+                    "why": "not_at_" + parked_node,
+                    "live_nodes": sorted(str(nr.get("node_id")) for nr in live),
+                }
             )
             continue
         try:
-            status, body = api.cancel(run_id, record.reason)
+            status, body = api.cancel(run_id, record.reason, parked_node)
         except OSError as exc:
             record.fail("cancel", str(exc)[:500], run_id=run_id)
             continue
@@ -484,6 +502,12 @@ def cancel_parked_runs(
             )
         elif status == 409:
             record.skipped_runs.append({"run_id": run_id, "why": "already_terminal"})
+        elif status == 412:
+            # The run left the approval node between the view above and this
+            # POST -- the precondition refused, so nothing was cancelled and
+            # the run is still doing whatever the approval made live. That is
+            # a success, and the honest record of it is `left_running`.
+            record.left_running.append({"run_id": run_id, "why": "advanced_past_" + parked_node})
         else:
             record.fail(
                 "cancel",

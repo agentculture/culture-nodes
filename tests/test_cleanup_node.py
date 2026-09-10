@@ -136,7 +136,12 @@ def _view(run_id: str, node_id: str, node_state: str) -> dict:
 @pytest.fixture
 def api():
     """The item's runs: two parked at human-merges-pr, one already completed.
-    Records every cancel POST (path + decoded body) for the assertions."""
+    Records every cancel POST (path + decoded body) for the assertions.
+
+    `fake.views` and `fake.cancel_status` are the two knobs a test turns: the
+    first changes what `GET /v1alpha1/runs/{id}` reports, the second makes the
+    cancel endpoint answer something other than 200 — 412 being the control
+    plane refusing the `parked_at` precondition."""
     fake = FakeNodesAPI()
     cancels: list[tuple[str, dict | None]] = []
     views = {
@@ -155,7 +160,7 @@ def api():
         handler.send_json(200, {"items": items})
 
     def get_run(handler, match, _query, _body):
-        view = views.get(match.group(1))
+        view = fake.views.get(match.group(1))
         if view is None:
             handler.send_json(404, {"error": {"message": "no such run"}})
             return
@@ -164,6 +169,12 @@ def api():
     def cancel(handler, match, _query, body):
         decoded = json.loads(body) if body else None
         cancels.append((match.group(1), decoded))
+        if fake.cancel_status != 200:
+            handler.send_json(
+                fake.cancel_status,
+                {"error": {"message": "the run is no longer at that node", "code": 1}},
+            )
+            return
         handler.send_json(
             200, {**_run(match.group(1), "cancelled"), "reason": (decoded or {}).get("reason", "")}
         )
@@ -172,6 +183,8 @@ def api():
     fake.route("GET", r"^/v1alpha1/runs/([^/]+)$", get_run)
     fake.route("POST", r"^/v1alpha1/runs/([^/]+)/cancel$", cancel)
     fake.cancels = cancels  # type: ignore[attr-defined]
+    fake.views = views  # type: ignore[attr-defined]
+    fake.cancel_status = 200  # type: ignore[attr-defined]
     fake.start()
     yield fake
     fake.stop()
@@ -284,9 +297,13 @@ def test_merged_pr_cancels_parked_runs_with_reason_pr_merged(remote, api, tmp_pa
     assert proc.returncode == 0, proc.stderr
 
     cancelled = {run_id: body for run_id, body in api.cancels}
+    # Each POST carries the reason AND the `parked_at` precondition naming the
+    # node the view above reported: the control plane re-checks it inside the
+    # cancel transaction, so a run the approval advanced in between is refused
+    # rather than cancelled out from under its live downstream nodes.
     assert cancelled == {
-        RUN_PARKED_REACHABLE: {"reason": "pr_merged"},
-        RUN_PARKED_UNREACHABLE: {"reason": "pr_merged"},
+        RUN_PARKED_REACHABLE: {"reason": "pr_merged", "parked_at": PARKED_NODE},
+        RUN_PARKED_UNREACHABLE: {"reason": "pr_merged", "parked_at": PARKED_NODE},
     }
     assert record["reason"] == "pr_merged"
     assert sorted(entry["run_id"] for entry in record["cancelled_runs"]) == sorted(
@@ -307,7 +324,7 @@ def test_closed_pr_cancels_parked_runs_with_reason_pr_closed_and_declines_its_re
 
     assert {
         body for _, body in map(lambda c: (c[0], json.dumps(c[1], sort_keys=True)), api.cancels)
-    } == {json.dumps({"reason": "pr_closed"}, sort_keys=True)}
+    } == {json.dumps({"reason": "pr_closed", "parked_at": PARKED_NODE}, sort_keys=True)}
     assert {run_id for run_id, _ in api.cancels} == {RUN_PARKED_REACHABLE, RUN_PARKED_UNREACHABLE}
     assert record["reason"] == "pr_closed"
     assert record["pull_request"] == 308
@@ -388,3 +405,52 @@ def test_a_remote_that_refuses_the_deletion_is_a_recorded_failure_not_a_claimed_
     assert remote_refs(bare) == before
     # And the item's parked runs were still cancelled with the reason.
     assert {run_id for run_id, _ in api.cancels} == {RUN_PARKED_REACHABLE, RUN_PARKED_UNREACHABLE}
+
+
+def test_a_run_that_advanced_past_the_approval_node_is_left_running_not_cancelled(
+    remote, api, tmp_path
+):
+    """The control plane refuses the cancel with 412: between this node's
+    `run_view` and its POST, the approval that merged the PR advanced the run
+    off `human-merges-pr`, so cancelling would have killed the downstream
+    nodes the approval just made live. Nothing may be claimed as cancelled,
+    the run is recorded as left running with the reason, and the exit stays 0
+    -- a refused precondition is the honest answer, not an environment
+    failure."""
+    bare, _ = remote
+    api.cancel_status = 412  # type: ignore[attr-defined]
+
+    proc, record = run_cleanup(bare, api, merged_fact(), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert record is not None
+
+    # Both live runs were attempted, both carrying the precondition ...
+    assert {run_id for run_id, _ in api.cancels} == {RUN_PARKED_REACHABLE, RUN_PARKED_UNREACHABLE}
+    assert all(body["parked_at"] == PARKED_NODE for _, body in api.cancels)
+    # ... and neither is claimed as cancelled.
+    assert record["cancelled_runs"] == []
+    left = {entry["run_id"]: entry["why"] for entry in record["left_running"]}
+    assert left == {
+        RUN_PARKED_REACHABLE: f"advanced_past_{PARKED_NODE}",
+        RUN_PARKED_UNREACHABLE: f"advanced_past_{PARKED_NODE}",
+    }
+    assert record["failures"] == []
+
+
+def test_a_run_not_at_the_approval_node_is_left_running_and_never_posted(remote, api, tmp_path):
+    """The view already shows the run somewhere else: the node does not even
+    POST, and says which node it saw live."""
+    bare, _ = remote
+    api.views[RUN_PARKED_REACHABLE] = _view(  # type: ignore[attr-defined]
+        RUN_PARKED_REACHABLE, "run-suite", "running"
+    )
+
+    proc, record = run_cleanup(bare, api, merged_fact(), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert record is not None
+
+    assert {run_id for run_id, _ in api.cancels} == {RUN_PARKED_UNREACHABLE}
+    left = {entry["run_id"]: entry for entry in record["left_running"]}
+    assert set(left) == {RUN_PARKED_REACHABLE}
+    assert left[RUN_PARKED_REACHABLE]["why"] == f"not_at_{PARKED_NODE}"
+    assert left[RUN_PARKED_REACHABLE]["live_nodes"] == ["run-suite"]

@@ -22,6 +22,17 @@ silent no-op rather than a repeat delivery.
 
 Self-echo uses configured identity or the actor marker, which also correlates
 answers to question ids.
+
+THE STAGE WATERMARK (plan loop-closure task t17; spec c9/c16). A graph node
+-- never the sweep -- posts one structured comment per stage transition
+through the jira actor's ``post_comment`` verb, first line
+``culture-nodes:stage=<stage>`` (see ``STAGES``). This module reads the
+newest such comment as the ticket's stage watermark (``jira_stage_watermark``)
+and the sweep emits nothing for a lifecycle fact whose stage that watermark
+already records (``stage_already_recorded``). The bridge's own stage comments
+are self-echo by account id; they are recognised here as stage RECORDS rather
+than skipped as noise, and a person typing the prefix does not move the
+watermark (s14: a configured account id is authoritative).
 """
 
 from __future__ import annotations
@@ -32,6 +43,7 @@ import re
 import urllib.parse
 import urllib.request
 from base64 import b64encode
+from datetime import datetime
 
 JIRA_SEARCH_PATH = "/rest/api/3/search/jql"
 JIRA_RATE_LIMIT_PER_WINDOW = 350
@@ -160,6 +172,99 @@ def jira_comment_is_self_echo(comments: list[dict], bot_account_id: str | None) 
     if bot_account_id:
         return _account_id(latest) == bot_account_id
     return JIRA_ACTOR_MARKER in jira_comment_text(latest)
+
+
+#: The stage vocabulary, in lifecycle order (spec c9). Order is load-bearing:
+#: a recorded stage closes every transition at or before it.
+STAGES = ("intake", "spec", "dispatch", "pr-open", "merged", "cleanup")
+#: The structured first line of a stage comment. The graph literal carries
+#: the stage; ``work_item`` and ``ref`` are optional tokens because a graph
+#: binding is a pointer or a constant and cannot compose them -- the ticket
+#: the comment sits on IS the work item.
+STAGE_LINE_PREFIX = "culture-nodes:stage="
+_STAGE_LINE_RE = re.compile(r"^culture-nodes:stage=(?P<stage>[a-z][a-z-]*)(?P<attrs>(?:[ \t]+[a-z_]+=\S+)*)")
+_STAGE_ATTRS = ("work_item", "ref")
+#: Which sweep fact drives which stage transition. ``pr-upkeep.pr`` is
+#: deliberately absent: a stage comment cannot name a head or a finding, and
+#: the lane promises a finding is not blocked by the run before it, so finding
+#: dispatch keeps the run listing (pr_upkeep_emit) as its dedupe.
+STAGE_DRIVEN_BY = {
+    jira_transition_event_name("To Do"): "intake",
+    "pr.merged": "merged",
+    "pr.closed": "cleanup",
+}
+
+
+def jira_stage_record(comment: dict, bot_account_id: str | None = "") -> dict | None:
+    """The stage record a comment carries, or None for anything else.
+
+    Only the bridge's own comments count (account id when configured, else
+    the actor marker): a stage record is a fact the loop wrote about itself.
+    """
+    if not jira_comment_is_self_echo([comment], bot_account_id):
+        return None
+    first_line = jira_description_text(comment.get("body")).lstrip().split("\n", 1)[0]
+    match = _STAGE_LINE_RE.match(first_line)
+    if not match or match.group("stage") not in STAGES:
+        return None
+    record = {
+        "stage": match.group("stage"),
+        "comment_id": _history_id(comment.get("id")),
+        "recorded_at": _comment_timestamp(comment),
+    }
+    for token in match.group("attrs").split():
+        key, value = token.split("=", 1)
+        if key in _STAGE_ATTRS:
+            record[key] = value
+    return record
+
+
+def jira_stage_watermark(comments: list[dict], bot_account_id: str | None = "") -> dict | None:
+    """The newest stage record on a ticket -- latest wins, everything else ignored."""
+    records = [
+        (_comment_timestamp(comment), _history_id_key(comment.get("id")), record)
+        for comment in comments
+        if (record := jira_stage_record(comment, bot_account_id)) is not None
+    ]
+    return max(records, key=lambda entry: entry[:2])[2] if records else None
+
+
+def jira_stage_watermarks(payload: dict, bot_account_id: str | None = "") -> dict[str, dict]:
+    """Ticket key -> stage watermark, for every ticket in a search response that has one."""
+    marks = {}
+    for issue in payload.get("issues", []):
+        comments = ((issue.get("fields") or {}).get("comment") or {}).get("comments") or []
+        mark = jira_stage_watermark(comments, bot_account_id)
+        if mark is not None and issue.get("key"):
+            marks[str(issue["key"])] = mark
+    return marks
+
+
+def _instant(text: str) -> datetime | None:
+    """Jira (``+0000``) and GitHub (``Z``) timestamps as one comparable instant."""
+    try:
+        parsed = datetime.fromisoformat(str(text or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def stage_already_recorded(event_name: str, watermark: dict | None, fact_at: str = "") -> bool:
+    """Whether the ticket's stage watermark already records the transition
+    `event_name` would drive, so the tick should emit nothing for it.
+
+    Two conditions, both required: the recorded stage is at or beyond the
+    driven one, and it was recorded at or after the fact arose -- a second PR
+    merging after the first one's cleanup is a new transition. A fact time
+    that cannot be read falls back to the stage alone.
+    """
+    driven = STAGE_DRIVEN_BY.get(event_name)
+    if not driven or not watermark or watermark.get("stage") not in STAGES:
+        return False
+    if STAGES.index(watermark["stage"]) < STAGES.index(driven):
+        return False
+    recorded, arose = _instant(watermark.get("recorded_at", "")), _instant(fact_at)
+    return recorded is None or arose is None or recorded >= arose
 
 
 def _get_json(url: str, *, basic: tuple[str, str]) -> dict:
@@ -421,11 +526,12 @@ def jira_history_facts(
     )
     timeline.sort(key=lambda entry: entry[:3])
 
-    facts = []
+    facts = []  # (timeline position, fact)
+    stage_marks = []  # (timeline position, STAGES index) -- the loop's own records
     changelog_id = ""
     comment_id = ""
     comments_seen = []
-    for _created, _kind_order, _id_key, kind, entry in timeline:
+    for position, (_created, _kind_order, _id_key, kind, entry) in enumerate(timeline):
         position_id = _history_id(entry.get("id"))
         if kind == "changelog":
             changelog_id = position_id
@@ -435,6 +541,10 @@ def jira_history_facts(
         watermark = {"changelog_id": changelog_id, "comment_id": comment_id}
 
         if kind == "comment":
+            record = jira_stage_record(entry, bot_account_id)
+            if record is not None:
+                stage_marks.append((position, STAGES.index(record["stage"])))
+                continue
             if jira_comment_is_self_echo([entry], bot_account_id):
                 continue
             payload = dict(payload_template)
@@ -442,7 +552,7 @@ def jira_history_facts(
             if question_id:
                 payload["originating_question_id"] = question_id
             payload["answer"] = {"comment_id": position_id, "body": jira_comment_text(entry)}
-            facts.append((JIRA_COMMENT_EVENT_NAME, payload, watermark, kind, position_id))
+            facts.append((position, (JIRA_COMMENT_EVENT_NAME, payload, watermark, kind, position_id)))
             continue
 
         status_item = next(
@@ -463,5 +573,20 @@ def jira_history_facts(
             payload["status"] = str(status_item.get("toString") or "")
             payload["from_status"] = str(status_item.get("fromString") or "")
             name = jira_transition_event_name(payload["status"])
-        facts.append((name, payload, watermark, kind, position_id))
-    return facts
+        facts.append((position, (name, payload, watermark, kind, position_id)))
+    # A stage record LATER on the timeline closes the transition it records
+    # (stage_already_recorded, by position rather than by clock): the intake
+    # stage comment closes the To Do transition before it, and a human moving
+    # the ticket back to To Do afterwards re-fires by design (jira-intake c24).
+    return [
+        fact
+        for position, fact in facts
+        if not _closed_by_later_stage(fact[0], position, stage_marks)
+    ]
+
+
+def _closed_by_later_stage(name: str, position: int, stage_marks: list[tuple[int, int]]) -> bool:
+    driven = STAGE_DRIVEN_BY.get(name)
+    if driven is None:
+        return False
+    return any(at > position and stage >= STAGES.index(driven) for at, stage in stage_marks)

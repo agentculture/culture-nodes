@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import NamedTuple
 
 from culture_nodes.api_client import (
     API_PREFIX,
@@ -197,6 +198,56 @@ def _fetch_actor_rows(base_url: str, timeout: float) -> tuple[list | None, str]:
     return items, ""
 
 
+class _LaneTally(NamedTuple):
+    """How the newest revision of each actor's liveness fact classified.
+
+    Three buckets, never two (code-review finding 8): ``unsure`` holds a lane
+    whose fact is present but whose ``session_ok`` is ``null``, which is
+    neither live nor dead and must never be folded into an all-clear.
+    """
+
+    live: int
+    unsure: list[str]
+    dead: list[str]
+
+    @property
+    def measured(self) -> int:
+        """Lanes that carried a liveness fact at all — every one lands in
+        exactly one of the three buckets."""
+        return self.live + len(self.unsure) + len(self.dead)
+
+
+def _describe_lane(key: str, state: str, fact: dict) -> str:
+    return (
+        f"{key} ({state}, reason={fact.get('reason', 'unmeasured')}, "
+        f"mode={fact.get('mode', '-')}, checked_at={fact.get('checked_at', '-')})"
+    )
+
+
+def _tally_lanes(newest: dict[str, dict]) -> _LaneTally:
+    """Sort each actor's newest liveness fact into live / unmeasured / dead.
+
+    A lane with no ``liveness`` field is not measured at all, so it counts
+    towards none of the three — the caller reads that as ``unmeasured``.
+    """
+    live = 0
+    unsure: list[str] = []
+    dead: list[str] = []
+    for key, row in sorted(newest.items()):
+        fact = row.get("liveness")
+        if not isinstance(fact, dict):
+            continue
+        if fact.get("locked") is True:
+            dead.append(_describe_lane(key, "locked", fact))
+        elif fact.get("session_ok") is False:
+            dead.append(_describe_lane(key, "session_ok=false", fact))
+        elif fact.get("session_ok") is True:
+            live += 1
+        else:
+            unsure.append(_describe_lane(key, "session_ok=null", fact))
+    return _LaneTally(live=live, unsure=unsure, dead=dead)
+
+
 def _liveness_check(*, passed: bool, message: str, remediation: str) -> dict[str, object]:
     return {
         "id": "lane_liveness",
@@ -245,39 +296,23 @@ def _lane_liveness_check(base_url: str, *, timeout: float = 2.0) -> dict[str, ob
             ),
         )
 
-    dead: list[str] = []
-    unsure: list[str] = []
-    live = 0
-    measured = 0
-    for key, row in sorted(_newest_rows(items).items()):
-        fact = row.get("liveness")
-        if not isinstance(fact, dict):
-            continue
-        measured += 1
-        if fact.get("session_ok") is False or fact.get("locked") is True:
-            state = "locked" if fact.get("locked") is True else "session_ok=false"
-            dead.append(
-                f"{key} ({state}, reason={fact.get('reason', 'unmeasured')}, "
-                f"mode={fact.get('mode', '-')}, checked_at={fact.get('checked_at', '-')})"
-            )
-        elif fact.get("session_ok") is True:
-            live += 1
-        else:
-            unsure.append(
-                f"{key} (session_ok=null, reason={fact.get('reason', 'unmeasured')}, "
-                f"mode={fact.get('mode', '-')}, checked_at={fact.get('checked_at', '-')})"
-            )
+    newest = _newest_rows(items)
+    lanes = _tally_lanes(newest)
+    unsure, dead = lanes.unsure, lanes.dead
 
-    if measured == 0:
+    if lanes.measured == 0:
         return _liveness_check(
             passed=True,
             message=(
-                f"lane liveness unmeasured: {len(_newest_rows(items))} actor(s) registered, "
+                f"lane liveness unmeasured: {len(newest)} actor(s) registered, "
                 "none carries a liveness fact (no liveness field on the actor listing)"
             ),
             remediation="",
         )
-    tally = f"{measured} lane(s) measured: {live} live, {len(unsure)} unmeasured, {len(dead)} dead"
+    tally = (
+        f"{lanes.measured} lane(s) measured: {lanes.live} live, "
+        f"{len(unsure)} unmeasured, {len(dead)} dead"
+    )
     if unsure:
         # Named in the MESSAGE, not only the remediation: the check passes
         # when nothing is dead, and the text renderer prints a hint only for a

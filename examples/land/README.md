@@ -39,7 +39,7 @@ curl -s -X POST "$NODES_API_URL/v1alpha1/events" \
 | `fetch` | fetch `handover_ref` from `handover_remote`; refuse a ref outside `refs/culture-nodes/<run_id>/` | exit 4 |
 | `lease` | per-target-branch lock directory under the land checkout's `.git` | `waiting`, exit 5 |
 | `rebase` | skip if already on the branch (ancestor or `git cherry` equivalent); route `.github/` changes; rebase in a scratch worktree | conflict → derived routing record, exit 3, no push |
-| `gate` | `land_gate.py`: the pre-push chain in the rebased worktree — target pytest (`LAND_GATE_TESTS`, default `uv run pytest -n auto -q`), `go test ./tests/lint/...`, `scripts/lint-all.sh <job>` (`LAND_GATE_JOB`, default `root`, with `LINT_ALL_SKIP=triage` — `LAND_LINT_ALL_SKIP`), the 1000-line file-length guard — then **one** version bump for the landing (`bump.py` fed a JSON changelog on stdin naming the findings; one commit on top of the handover commits, never a rewrite); toolchains `go`, `uv`, `node`, `markdownlint-cli2` are checked first | missing toolchain → `toolchain_missing` record + `refused`, exit 2, nothing ran; red step → routing record `gate_failed` naming the step and its tail, exit 3, no push; lint-all exit **2** → `measurement_incomplete`, naming the steps it could not run, and the landing proceeds |
+| `gate` | `land_gate.py`: the pre-push chain in the rebased worktree — target pytest (`LAND_GATE_TESTS`, default `uv run pytest -n auto -q`), `go test ./tests/lint/...`, `scripts/lint-all.sh <job>` (`LAND_GATE_JOB`, default `root`, with `LINT_ALL_SKIP=triage` — `LAND_LINT_ALL_SKIP`), the 1000-line file-length guard — then **one** version bump for the landing (`bump.py` fed a JSON changelog on stdin naming the findings; one commit on top of the handover commits, never a rewrite); toolchains `go`, `uv`, `node`, `markdownlint-cli2` are checked first | missing toolchain → `toolchain_missing` record + `refused`, exit 2, nothing ran; an `LAND_GATE_JOB` the script does not have → `lint_job_unknown` the same way; red step → routing record `gate_failed` naming the step and its tail, exit 3, no push; lint-all exit **2** → `measurement_incomplete`, but only when the script NAMED the steps it could not run (an exit 2 that names nothing linted nothing, and is red) |
 | `push` | `git push` `<sha>:refs/heads/<target>`, helpers reset, `GIT_ASKPASS` from `bridge-push.env`; a rejection is classified — one re-fetch-and-rebase on a STALE one (the branch moved: non-fast-forward, fetch first, or the `cannot lock ref` compare-and-swap form) | second stale rejection → routing record, exit 3; a POLICY rejection (`[remote rejected]` from branch protection or a pre-receive hook) → `refused` naming the remote's own message, exit 4, no second round |
 | `reply` | `land_reply.py`: reads the producing run's `input.findings` from the control plane; one signed reply per landed finding on its review thread (naming the landed sha and the finding id); findings with no thread share ONE PR comment; skips a reply already posted for this sha | `GITHUB_TOKEN_LAND_PR` missing → `refused` record naming it, exit 2, nothing posted |
 | `resolve` | `resolveReviewThread` per landed finding's thread; skips a thread already resolved; a finding with no thread is a recorded skip | GitHub error → exit 2 |
@@ -95,7 +95,11 @@ already bumps the version is landed as it is (`bump: {skipped:
 handover_already_bumps}`), and a re-run of a landed ref skips the gate with
 the rebase. A red step routes to a human (`gate_failed`) and pushes nothing; a
 missing toolchain refuses by name before the first step (`toolchain_missing`),
-which is how "Go is not on thor" reads in the ledger. The deploy reports the
+which is how "Go is not on thor" reads in the ledger. An `LAND_GATE_JOB` that
+`scripts/lint-all.sh` does not have is refused there too (`lint_job_unknown`):
+the script answers a typo with the same exit 2 it uses for a step it could not
+measure, so left to the chain an unlinted tree would read as a merely
+incomplete measurement and land. The deploy reports the
 same fact per binary for `culture-land`
 (`deploy/prod/lanes/land-toolchain.sh`, called at the end of `deploy.sh thor`
 and `deploy.sh orin`): the check itself fails naming the missing binaries, and

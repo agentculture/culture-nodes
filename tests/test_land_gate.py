@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import stat
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -95,6 +96,12 @@ if [ "${FAKE_GATE_FAIL:-}" = lint-all ]; then
   echo "<<< FAILED flake8 -- fake failure line 1"
   echo "lint-all: fake failure line 2 -- the tail the human reads" >&2
   exit 1
+fi
+if [ "${FAKE_GATE_UNRUNNABLE:-}" = unnamed ]; then
+  # Exit 2 with nothing named: the shape of the script's own usage error
+  # (`cd || exit 2`, an unknown job) -- a run in which no linter ran.
+  echo "error: could not start" >&2
+  exit 2
 fi
 if [ "${FAKE_GATE_UNRUNNABLE:-}" = lint-all ]; then
   echo ">>> triage"
@@ -421,6 +428,74 @@ def test_lint_all_exit_2_lands_as_measurement_incomplete_naming_what_could_not_r
     # The chain kept going: file_length ran and the bump happened.
     assert [s["name"] for s in gate["steps"]] == ["tests", "go_lint", "lint_all", "file_length"]
     assert gate["bump"]["new"] == "0.1.1"
+
+
+def test_an_exit_2_that_names_nothing_is_a_red_gate_not_an_incomplete_one(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    """`I could not measure` is a claim the script has to support by NAMING
+    the step. scripts/lint-all.sh exits 2 for its own usage errors too, and
+    such a run linted nothing -- reading it as merely incomplete would land a
+    handover no linter ever looked at."""
+    before = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    monkeypatch.setenv("FAKE_GATE_UNRUNNABLE", "unnamed")
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["one fix"])
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_ROUTED_HUMAN, records
+    assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before, "an unlinted tree landed"
+    gate = steps(records)["gate"]
+    assert gate["outcome"] == "routed" and gate["failing_step"] == "lint_all"
+    assert len(routing_records(records)) == 1
+
+
+def test_an_unknown_lint_job_is_refused_before_the_chain_starts(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    """A typo'd LAND_GATE_JOB makes scripts/lint-all.sh exit 2 from its usage
+    error WITHOUT running a linter -- the same code it uses for a step it
+    could not measure. So the gate refuses the job by name instead, the way
+    it refuses a missing toolchain."""
+    before = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    monkeypatch.setenv("LAND_GATE_JOB", "roott")
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["one fix"])
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_ENVIRONMENT, records
+    res = result(records)
+    assert res["outcome"] == "environment" and "roott" in res["error"]
+    named = [r for r in records if r.get("record") == land_gate.REASON_LINT_JOB_UNKNOWN]
+    assert len(named) == 1
+    assert named[0]["job"] == "roott" and named[0]["known"] == list(land_gate.LINT_ALL_JOBS)
+    assert named[0]["work_item"] == WORK_ITEM and named[0]["land_run_id"] == LAND_RUN
+    gate = steps(records)["gate"]
+    assert gate["outcome"] == "refused" and gate["reason"] == "lint_job_unknown"
+    assert gate_log(tmp_path) == [], "the chain ran on a job the script does not have"
+    assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before
+    assert "push" not in steps(records)
+    assert not routing_records(records), "bad configuration is not a human routing decision"
+
+
+def test_the_gates_lint_jobs_are_the_jobs_the_script_lists():
+    """The restated list is pinned to scripts/lint-all.sh's own `--list`, so
+    widening it there (issue #294 widened three jobs to five) cannot leave
+    the gate refusing a job CI actually runs."""
+    listed = subprocess.run(  # nosec B603 - the repository's own script, fixed argv
+        ["bash", str(ROOT / "scripts/lint-all.sh"), "--list"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert listed.stdout.split() == list(land_gate.LINT_ALL_JOBS)
+    assert land_gate.DEFAULT_GATE_JOB in land_gate.LINT_ALL_JOBS
 
 
 def test_only_lint_all_may_answer_could_not_measure(

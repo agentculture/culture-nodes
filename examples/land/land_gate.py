@@ -47,6 +47,21 @@ to a defect nobody found, on a chain whose every measured step was green,
 would make every production landing red for a fact about the host. Exit 1
 still routes, and so does exit 2 from any other step.
 
+That amnesty is granted to the CLAIM, not to the exit code: exit 2 reads as
+"could not measure" only when the script NAMED at least one step it could not
+run. lint-all exits 2 for a usage error too -- an unknown job, a `cd` that
+failed -- and that run linted nothing at all, so an exit 2 that names nothing
+is a red gate like any other.
+
+# The lint job, declared and refused by name
+
+LINT_ALL_JOBS restates the five jobs scripts/lint-all.sh runs, and an
+LAND_GATE_JOB outside it is refused BEFORE the chain starts
+(`lint_job_unknown`, exit 2), the way a missing toolchain is. Left to the
+chain, `LAND_GATE_JOB=roott` would be exit 2 from the script's own usage
+error -- and the paragraph above is why that could otherwise have landed a
+handover on which no linter ever ran.
+
 # The two host preconditions, declared and refused by name
 
 This module owns both facts about the HOST that a landing cannot proceed
@@ -116,6 +131,15 @@ REQUIRED_TOOLCHAINS: dict[str, str] = {
 
 DEFAULT_GATE_TESTS = "uv run pytest -n auto -q"
 DEFAULT_GATE_JOB = "root"
+
+#: The job names scripts/lint-all.sh runs, restated here the way
+#: MAX_SOURCE_FILE_LINES restates the Go guard's rule -- so the gate can
+#: refuse an unknown one BEFORE it runs the script. It must, because the
+#: script answers a typo the way it answers an unauthenticated `gh`: exit 2,
+#: which read as measurement_incomplete would land a handover on which lint
+#: never ran at all. tests/test_land_gate.py pins this against the script's
+#: own `--list`, so widening the list there cannot leave the gate behind.
+LINT_ALL_JOBS = ("root", "adapter-codex", "adapter-claude-code", "adapter-pi", "adapter-qwen")
 DEFAULT_BUMP_PART = "patch"
 DEFAULT_STEP_TIMEOUT_SECONDS = 600.0
 BUMP_TIMEOUT_SECONDS = 60.0
@@ -311,7 +335,14 @@ def run_step(
             name, list(argv), None, time.monotonic() - started, tail(text + note, redact), True
         )
     text = proc.stdout + proc.stderr
-    incomplete = incomplete_exit is not None and proc.returncode == incomplete_exit
+    # "I could not measure" is a claim the script has to SUPPORT: the exit
+    # code alone is not the fact -- scripts/lint-all.sh exits 2 for a usage
+    # error too, and that one linted nothing. So the step is incomplete only
+    # when the script named at least one step it could not run.
+    unrunnable = unrunnable_steps(text)
+    incomplete = (
+        incomplete_exit is not None and proc.returncode == incomplete_exit and bool(unrunnable)
+    )
     return StepResult(
         name,
         list(argv),
@@ -319,7 +350,7 @@ def run_step(
         time.monotonic() - started,
         tail(text, redact),
         incomplete=incomplete,
-        unrunnable=unrunnable_steps(text) if incomplete else [],
+        unrunnable=unrunnable if incomplete else [],
     )
 
 
@@ -445,6 +476,39 @@ def refuse_missing(ctx: Any, land: Any, missing: list[str]) -> None:
     )
 
 
+#: An unknown LAND_GATE_JOB, refused by name before the chain starts. The
+#: script itself answers a typo with exit 2 (`error: unknown job`, no step
+#: run) and exit 2 is the gate's "could not measure" code, so left to the
+#: chain a typo'd job would land a handover that lint never looked at.
+REASON_LINT_JOB_UNKNOWN = "lint_job_unknown"
+LINT_JOB_HINT = (
+    "set LAND_GATE_JOB to one of: {known} (scripts/lint-all.sh --list) -- the script exits 2 on "
+    "an unknown job WITHOUT running a linter, and exit 2 is the code it uses for a step it could "
+    "not measure, so an unlinted landing would read as a merely incomplete one"
+)
+
+
+def refuse_lint_job(ctx: Any, land: Any, job: str) -> None:
+    emit(
+        ctx,
+        {
+            "record": REASON_LINT_JOB_UNKNOWN,
+            "job": job,
+            "known": list(LINT_ALL_JOBS),
+            "script": LINT_ALL_SCRIPT,
+            "at": now_iso(),
+        },
+    )
+    ctx.records.step(
+        "gate", "refused", reason=REASON_LINT_JOB_UNKNOWN, job=job, known=list(LINT_ALL_JOBS)
+    )
+    raise refusal_class(ctx)(
+        f"{job!r} is not a job {LINT_ALL_SCRIPT} runs",
+        LINT_JOB_HINT.format(known=", ".join(LINT_ALL_JOBS)),
+        land.EXIT_ENVIRONMENT,
+    )
+
+
 #: The remediation lines the two workspace refusals carry. Both name the
 #: DEPLOYMENT, because neither is anything a graph or a re-run can fix.
 WORKSPACE_HINT = (
@@ -535,6 +599,8 @@ def run_gate(ctx: Any, *, refusal: type[Exception] | None = None) -> dict[str, A
     missing = missing_toolchains()
     if missing:
         refuse_missing(ctx, land, missing)
+    if cfg.job not in LINT_ALL_JOBS:
+        refuse_lint_job(ctx, land, cfg.job)
 
     wt: Path = ctx.worktree
     lint_env = {"LINT_ALL_SKIP": cfg.lint_all_skip} if cfg.lint_all_skip else {}

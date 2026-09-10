@@ -151,7 +151,8 @@ def test_readiness_fetches_its_program_by_granted_url_and_digest(nodes):
     for want in ("PR_UPKEEP_READINESS_SOURCE_URL", "PR_UPKEEP_READINESS_SOURCE_SHA256"):
         assert want in refs, f"{want} is not granted to the readiness operation"
         assert want in argv, f"granting {want} changes nothing: argv never reads it"
-    assert "http://" not in argv and "https://" not in argv
+    assert "http://" not in argv
+    assert "https://" not in argv
 
 
 def test_every_readiness_grant_is_stamped_by_the_deploy_lane(nodes):

@@ -330,8 +330,10 @@ class TestTheGraphChangeIsPublishable:
     def test_each_touched_graph_declares_a_bumped_version(self, documents):
         # A published workflow is immutable and pinned by digest: a node added
         # to a graph that keeps its version number is a definition nobody can
-        # roll forward to. These are the versions this task publishes.
-        assert documents["pr-upkeep"]["metadata"]["version"] == "2.4.0"
+        # roll forward to. These are the versions this task publishes -- and
+        # pr-upkeep moved on again in the same wave (2.5.0, the `analyse` node
+        # of task t14), which is the rule holding, not breaking.
+        assert documents["pr-upkeep"]["metadata"]["version"] == "2.5.0"
         assert documents["cleanup"]["metadata"]["version"] == "1.1.0"
         assert documents["jira-intake"]["metadata"]["version"] == "1.8.0"
 

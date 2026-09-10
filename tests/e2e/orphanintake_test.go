@@ -146,6 +146,16 @@ func (a *orphanActors) script(req actors.InvocationRequest) (actors.InvocationRe
 			Output:      json.RawMessage(`{"summary":"wrote ` + orphanJiraKey + ` into the PR body"}`),
 			LedgerDelta: claim("company/developer", map[string]any{"statement": "PR body names " + orphanJiraKey}),
 		}, ""
+	case "analyse":
+		output, failure := analysePackagedResult(req.Input)
+		if failure != "" {
+			return actors.InvocationResult{}, failure
+		}
+		return actors.InvocationResult{
+			Outcome:     "packaged",
+			Output:      output,
+			LedgerDelta: claim("company/developer", map[string]any{"statement": "findings judged"}),
+		}, ""
 	// The stage write-back nodes (t17) post one structured comment per
 	// transition through the jira actor; this fake answers them so the keyed
 	// path reaches fix. The comment text is the graph's, not this test's concern.
@@ -163,6 +173,59 @@ func (a *orphanActors) script(req actors.InvocationRequest) (actors.InvocationRe
 		}, ""
 	}
 	return actors.InvocationResult{}, "unexpected node dispatched to the fake bridges: " + req.Node.ID
+}
+
+// analysePackagedResult is the fake developer session behind the `analyse`
+// node (task t14): it reads the findings the fact carried and answers with a
+// verdict for every one of them plus one package per (rule, file) pair, which
+// is exactly the contract examples/pr-upkeep/workflow.yaml declares for the
+// `packaged` outcome. It judges nothing -- an e2e test cannot -- but a fake
+// that skipped the verdicts would let a graph whose output contract had
+// drifted still pass, which is the one thing this node's schema is for.
+func analysePackagedResult(input json.RawMessage) (json.RawMessage, string) {
+	var bound struct {
+		PR struct {
+			Findings []struct {
+				ID   string `json:"id"`
+				Rule string `json:"rule"`
+				File string `json:"file"`
+			} `json:"findings"`
+		} `json:"pr"`
+	}
+	if err := json.Unmarshal(input, &bound); err != nil {
+		return nil, "analyse: input is not an object"
+	}
+	if len(bound.PR.Findings) == 0 {
+		return nil, "analyse: input carries no pr.findings -- the node binds pr:/run/input"
+	}
+	type pkg struct {
+		Rule       string   `json:"rule"`
+		File       string   `json:"file"`
+		FindingIDs []string `json:"finding_ids"`
+	}
+	type verdict struct {
+		ID      string `json:"id"`
+		Verdict string `json:"verdict"`
+		Reason  string `json:"reason"`
+	}
+	var verdicts []verdict
+	var packages []pkg
+	index := map[string]int{}
+	for _, finding := range bound.PR.Findings {
+		verdicts = append(verdicts, verdict{finding.ID, "FIX", "open, unanswered on its thread"})
+		key := finding.Rule + "\x00" + finding.File
+		if at, ok := index[key]; ok {
+			packages[at].FindingIDs = append(packages[at].FindingIDs, finding.ID)
+			continue
+		}
+		index[key] = len(packages)
+		packages = append(packages, pkg{finding.Rule, finding.File, []string{finding.ID}})
+	}
+	output, err := json.Marshal(map[string]any{"verdicts": verdicts, "packages": packages})
+	if err != nil {
+		return nil, "analyse: could not render its own output"
+	}
+	return output, ""
 }
 
 func (a *orphanActors) invocationsOf(nodeID string) []actors.InvocationRequest {
@@ -340,7 +403,7 @@ func TestOrphanIntakeCreatesOneTicketAndRekeysTheRun(t *testing.T) {
 	if view.Run.State != "completed" || view.Run.WorkflowDigest != digest {
 		t.Fatalf("run state=%q digest=%q, want completed on %s", view.Run.State, view.Run.WorkflowDigest, digest)
 	}
-	for node, want := range map[string]string{"route": "orphan", "intake-orphan": "issue_created", "stamp-pr": "stamped", "fix": "no_change"} {
+	for node, want := range map[string]string{"route": "orphan", "intake-orphan": "issue_created", "stamp-pr": "stamped", "analyse": "packaged", "fix": "no_change"} {
 		if got := nodeOutcome(view, node); got != want {
 			t.Errorf("node %s outcome = %q, want %q", node, got, want)
 		}

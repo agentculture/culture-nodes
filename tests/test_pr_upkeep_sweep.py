@@ -140,6 +140,7 @@ def _stub_sweep(
     comments=None,
     running_findings=None,
     worked_by_head=None,
+    pushbacks=None,
 ):
     """Stub every network call main() makes; return the per-source call log.
 
@@ -148,8 +149,10 @@ def _stub_sweep(
     `comments` maps PR number -> its GitHub issue comments (default none).
     `running_findings` seeds the finding ids a still-running pr-upkeep run
     already carries, which is what the emission dedupe reads (task t12).
-    The third element of the stubbed answer is `dedupe_truncated`, always
-    False here: these tests read a complete listing.
+    `pushbacks` seeds the PUSHBACK verdicts the same run listing carries on
+    its run OUTPUTS (task t14), which the tick summary reports. The last
+    element of the stubbed answer is `dedupe_truncated`, always False here:
+    these tests read a complete listing.
     `worked_by_head` seeds {head_sha: ids already dispatched at that head} —
     the second dedupe clause, which is what stops a finding whose run has
     ENDED being re-dispatched at the same commit (issue #268).
@@ -188,6 +191,7 @@ def _stub_sweep(
         lambda *_a, **_kw: (
             set(running_findings or ()),
             {head: set(ids) for head, ids in (worked_by_head or {}).items()},
+            list(pushbacks or ()),
             False,
         ),
     )

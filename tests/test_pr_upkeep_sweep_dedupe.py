@@ -305,7 +305,7 @@ class TestFetchDispatchedFindings:
             return {"items": [{"state": "running", "input": {"findings": [{"id": "a"}]}}]}
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_dispatched_findings() == ({"a"}, {}, False)
+        assert sweep.fetch_dispatched_findings() == ({"a"}, {}, [], False)
         assert seen["url"].startswith("https://nodes.example/v1alpha1/runs?")
         assert "workflow_key=pr-upkeep" in seen["url"]
         assert seen["token"] == "event-token"
@@ -338,7 +338,7 @@ class TestFetchDispatchedFindings:
             return pages[len(urls) - 1]
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        assert sweep.fetch_dispatched_findings() == ({"a"}, {"sha-a": {"a", "b"}}, False)
+        assert sweep.fetch_dispatched_findings() == ({"a"}, {"sha-a": {"a", "b"}}, [], False)
         assert len(urls) == 2
         assert "cursor" not in urls[0]
         assert "cursor=cur-2" in urls[1]
@@ -358,10 +358,11 @@ class TestFetchDispatchedFindings:
             return {"items": [], "next_cursor": f"cur-{len(urls)}"}
 
         monkeypatch.setattr(sweep, "_get_json", fake_get)
-        # The third element is the truncation fact itself: stderr is for
+        # The LAST element is the truncation fact itself: stderr is for
         # whoever opens the node output, and this is for whatever reads the
-        # report.
-        assert sweep.fetch_dispatched_findings() == (set(), {}, True)
+        # report. (The third is the pushback list task t14 reads off the same
+        # walk -- empty here, since no run in this listing has an output.)
+        assert sweep.fetch_dispatched_findings() == (set(), {}, [], True)
         assert len(urls) == emit.RUNS_MAX_PAGES
         assert "were NOT read this cycle" in capsys.readouterr().err
 

@@ -45,15 +45,17 @@ from base64 import b64encode
 # watermarks, transition slugs — is pr_upkeep_jira's to own; re-exporting it
 # here made the sweep look like it had opinions about Jira that it does not.
 from pr_upkeep_emit import (
-    FINDINGS_PER_EVENT,
     RUNS_MAX_PAGES,
     RUNS_PAGE_LIMIT,
     closed_pull_event,
     dispatched_finding_ids,
     emission_watermark,
+    finding_package,
     merged_pr_fact,  # noqa: F401 - main() routes via closed_pull_event; tests reach it here
+    newest_comment_timestamp,
     next_run_cursor,
     opened_pr_fact,
+    pushback_findings,
     runs_query,
     undispatched_findings,
     upkeep_pr_fact,
@@ -667,28 +669,6 @@ def fetch_pr_comments(token: str | None, repository: str, number: int) -> list[d
     )
 
 
-def _comment_timestamp(comment: dict) -> str:
-    """A comment's position for "newest" comparisons.
-
-    Checks BOTH schemas this file reads comments from: GitHub issue-comment
-    objects (`updated_at`/`created_at`) and Jira Cloud v3 comment objects
-    (`updated`/`created` — no `_at` suffix). `updated` is preferred over
-    `created`, matching the GitHub-side preference, so an edited comment
-    still counts as the newest touch on the thread.
-    """
-    return str(
-        comment.get("updated_at")
-        or comment.get("created_at")
-        or comment.get("updated")
-        or comment.get("created")
-        or ""
-    )
-
-
-def newest_comment_timestamp(comments: list[dict]) -> str:
-    return max((_comment_timestamp(c) for c in comments), default="")
-
-
 def raise_event(
     name: str, payload: dict, source_key: str, watermark: dict, subject: str = ""
 ) -> dict:
@@ -764,7 +744,8 @@ def fetch_dispatched_findings(repository: str = "") -> tuple:
         # is for whatever reads the report, which is the surface an operator
         # actually watches. A degradation only one of those two can see is a
         # degradation that gets noticed the month after it starts costing.
-    return (*dispatched_finding_ids(pages, repository), truncated)
+    in_flight, by_head = dispatched_finding_ids(pages, repository)
+    return in_flight, by_head, pushback_findings(pages, repository), truncated
 
 
 def _max_prs_per_sweep() -> int:
@@ -853,6 +834,7 @@ def main() -> int:
             (
                 in_flight_findings,
                 findings_worked_by_head,
+                pushbacks,
                 dedupe_truncated,
             ) = fetch_dispatched_findings(github_repo)
         emitted = []
@@ -911,8 +893,13 @@ def main() -> int:
             # sha. Skipping leaves the position free for a later cycle.
             if (skipped or worked) and not findings:
                 continue
-            dispatched = findings[:FINDINGS_PER_EVENT]
-            deferred_findings.extend(f["id"] for f in findings[FINDINGS_PER_EVENT:])
+            dispatched = finding_package(findings)
+            # Membership, not a slice: a package's members are the findings on
+            # ONE file and are interleaved with higher-severity findings on
+            # others, so "everything after the first N" would name findings
+            # this tick just dispatched.
+            packaged = {f["id"] for f in dispatched}
+            deferred_findings.extend(f["id"] for f in findings if f["id"] not in packaged)
             # The payload carries `work_item` (Jira key, else the transient
             # gh:owner/repo#N form) and still NO subject (#268, #310).
             payload = upkeep_pr_fact(pull, github_repo, dispatched, repository.get("jira_project"))
@@ -987,6 +974,11 @@ def main() -> int:
             # this cycle.
             "dedupe_complete": not dedupe_truncated,
             "deferred_findings": deferred_findings,
+            # Findings a PERSON declined on the PR thread, as the analysis
+            # node judged them (t14). Read off the run outputs the dedupe
+            # walk already fetched — it is the PR owner's own objection,
+            # named back to them rather than silently re-proposed.
+            "pushbacks": pushbacks,
         },
         sys.stdout,
         indent=2,

@@ -1,0 +1,106 @@
+{
+  "verdicts": [
+    {
+      "id": "pr412-qodo-1",
+      "verdict": "PUSHBACK",
+      "reason": "the PR owner replied on the thread that omitting hint from --json is deliberate machine-contract behaviour"
+    },
+    {
+      "id": "AZm412-resolved",
+      "verdict": "SKIP",
+      "reason": "its review thread is resolved and the owner names the commit that split the function"
+    },
+    {
+      "id": "AZm412-dup",
+      "verdict": "DUPLICATE",
+      "reason": "same line-44 defect as AZm412-resolved, which is already resolved on its own thread"
+    },
+    {
+      "id": "AZm412-nit01",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit02",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit03",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit04",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit05",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit06",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit07",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit08",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit09",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit10",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit11",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit12",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    },
+    {
+      "id": "AZm412-nit13",
+      "verdict": "FIX",
+      "reason": "an open python:S1192 literal duplication with no thread reply and no resolution"
+    }
+  ],
+  "packages": [
+    {
+      "rule": "python:S1192",
+      "file": "culture_nodes/cli/_output.py",
+      "finding_ids": [
+        "AZm412-nit01",
+        "AZm412-nit02",
+        "AZm412-nit03",
+        "AZm412-nit04",
+        "AZm412-nit05",
+        "AZm412-nit06",
+        "AZm412-nit07",
+        "AZm412-nit08",
+        "AZm412-nit09",
+        "AZm412-nit10",
+        "AZm412-nit11",
+        "AZm412-nit12",
+        "AZm412-nit13"
+      ],
+      "summary": "13 duplications of the same literal in one file, fixable as one constant"
+    }
+  ]
+}

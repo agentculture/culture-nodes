@@ -213,12 +213,27 @@ PR_UPKEEP_WORKFLOW_KEY = "pr-upkeep"
 RUNS_PAGE_LIMIT = 500
 RUNS_MAX_PAGES = 20
 
-#: How many findings one emitted pr-upkeep fact carries: ONE — the one the fix
-#: node will actually work ("take the HIGHEST-PRIORITY item ... and work only
-#: that one item"). A fact carrying the whole list made every id on it
-#: undispatchable for as long as the run holding it lived, which is until a
-#: human merges (issue #268; README, "One finding per fact").
-FINDINGS_PER_EVENT = 1
+#: The unit ONE emitted pr-upkeep fact carries: every undispatched finding on
+#: the highest-priority finding's FILE (task t14; issue #309).
+#:
+#: This is the middle of three positions, and both ends are known to be wrong.
+#: A fact carrying the WHOLE PR made every id on it undispatchable for as long
+#: as the run holding it lived, which is until a human merges — one fix per PR
+#: per merge, measured on PR #267 (issue #268). A fact carrying exactly ONE
+#: finding fixed that and made bundling impossible: no run ever held two
+#: findings, so nothing could see that thirteen of them were the same rule in
+#: the same file, and each bought its own session, its own PR update and its
+#: own approval.
+#:
+#: The file is the unit because it is the unit a fix actually has: one edit to
+#: one file answers every same-rule finding in it at once, and the findings a
+#: fix does NOT take are stale the moment it pushes — their line numbers moved.
+#: So a file's findings are dispatched together, judged together by the
+#: `analyse` node, and the ones outside the package it works are deferred to
+#: the post-push re-scan rather than dispatched against a commit that no
+#: longer exists. Findings on the PR's OTHER files are untouched by that and
+#: stay dispatchable on the next tick, which is the property #268 bought.
+FINDING_PACKAGE_KEY = "file"
 
 #: The run states that mean "over" (engine.RunState.Terminal). Everything
 #: else counts as in flight for clause 1 — `created` and `waiting` as well as
@@ -313,6 +328,47 @@ def dispatched_finding_ids(listed: dict | list | None, repository: str = "") -> 
     return in_flight, by_head
 
 
+def finding_package_key(finding: dict) -> str | None:
+    """Which package a finding belongs to, or None when it belongs to no one.
+
+    The file it names (``FINDING_PACKAGE_KEY``). A finding with no file — a
+    failed CI check run names a job, not a path — is its own package of one:
+    nothing about it says another finding would be answered by the same edit.
+    """
+    return finding.get(FINDING_PACKAGE_KEY) or None
+
+
+def finding_package(findings: list[dict]) -> list[dict]:
+    """The findings ONE pr-upkeep.pr fact carries, off a PRIORITISED list.
+
+    The highest-priority finding decides the file; the package is every
+    finding on that file, in priority order. The rest of the PR is left for
+    the next tick — this is a dispatch bound, not a triage: which of these
+    findings is actually worth fixing is the `analyse` node's judgment, and
+    the ones it does not package are deferred to the post-push re-scan.
+    """
+    if not findings:
+        return []
+    key = finding_package_key(findings[0])
+    if key is None:
+        return findings[:1]
+    return [finding for finding in findings if finding_package_key(finding) == key]
+
+
+def _held_package_keys(findings: list[dict], in_flight: set, worked_at_head: set) -> tuple:
+    """(keys held in flight, keys settled at this head) — from ANY member."""
+    flying, settled = set(), set()
+    for finding in findings:
+        key = finding_package_key(finding)
+        if key is None:
+            continue
+        if finding.get("id") in in_flight:
+            flying.add(key)
+        elif finding.get("id") in worked_at_head:
+            settled.add(key)
+    return flying, settled - flying
+
+
 def undispatched_findings(
     findings: list[dict], in_flight: set, worked_at_head: set = frozenset()
 ) -> tuple:
@@ -322,17 +378,114 @@ def undispatched_findings(
     a reader would act on differently: `in flight` may be waiting on a human
     right now, while `worked at this head` is settled until the PR moves. A
     finding in both is reported as in flight — the more actionable of the two.
+
+    Both refusals apply to the whole PACKAGE, not only to the finding that
+    triggered them (task t14). A run holding one finding on a file is a fix
+    being written for that file, and releasing the file's other findings
+    would mint a second run pushing a second change to the same lines — the
+    collision this lane already cannot serialise, arriving through a door
+    #268's one-finding-per-fact rule used to keep shut. So a package is held
+    whole and released whole, and the summary names every id it held, not
+    just the one the control plane had already seen.
     """
+    flying, settled = _held_package_keys(findings, in_flight, worked_at_head)
     kept, skipped, worked = [], [], []
     for finding in findings:
         finding_id = finding.get("id")
-        if finding_id in in_flight:
+        key = finding_package_key(finding)
+        if finding_id in in_flight or key in flying:
             skipped.append(finding_id)
-        elif finding_id in worked_at_head:
+        elif finding_id in worked_at_head or key in settled:
             worked.append(finding_id)
         else:
             kept.append(finding)
     return kept, skipped, worked
+
+
+def pushback_findings(listed: dict | list | None, repository: str = "") -> list[dict]:
+    """The PUSHBACK verdicts the `analyse` node recorded, off the run listing.
+
+    A pushback is a finding a PERSON declined on the PR thread, so it is the
+    one analysis verdict that has to leave the run: nobody watching the
+    control plane is the person who wrote the reply, and the finding will be
+    re-read from its source surface on every later tick regardless. The tick
+    summary names it so the PR owner sees their own objection was heard,
+    rather than watching the loop propose the same fix again.
+
+    It costs no extra read: `fetch_dispatched_findings` already walks the
+    whole `pr-upkeep` run listing for the dedupe, and a listing row carries
+    the run's `output` beside its `input` (`internal/api/types.go`,
+    `RunOut.Output`) — which, since workflow 2.5.0, IS the analysis document
+    (the end node's `output.from` points at `/nodes/analyse/output`).
+
+    Newest-first wins on a repeated id: the listing is newest-first, so the
+    first verdict seen for a finding is the most recent judgment of it.
+    Malformed rows are skipped rather than raising, for the same reason
+    ``dispatched_finding_ids`` skips them — this is a report, and one
+    unreadable run must not cost a whole tick.
+    """
+    pages = [listed] if isinstance(listed, dict) else (listed or [])
+    pushbacks: list[dict] = []
+    seen: set = set()
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        for run in page.get("items") or []:
+            if not isinstance(run, dict):
+                continue
+            run_input = run.get("input")
+            run_repository = run_input.get("repository") if isinstance(run_input, dict) else None
+            if repository and isinstance(run_repository, str) and run_repository != repository:
+                continue
+            output = run.get("output")
+            verdicts = output.get("verdicts") if isinstance(output, dict) else None
+            for verdict in verdicts if isinstance(verdicts, list) else []:
+                if not isinstance(verdict, dict) or verdict.get("verdict") != "PUSHBACK":
+                    continue
+                finding_id = verdict.get("id")
+                if not finding_id or finding_id in seen:
+                    continue
+                seen.add(finding_id)
+                pushbacks.append(
+                    {
+                        "id": finding_id,
+                        "reason": verdict.get("reason", ""),
+                        "run_id": run.get("id", ""),
+                    }
+                )
+    return pushbacks
+
+
+def _comment_timestamp(comment: dict) -> str:
+    """A comment's position for "newest" comparisons.
+
+    Checks BOTH schemas the sweep reads comments from: GitHub issue-comment
+    objects (`updated_at`/`created_at`) and Jira Cloud v3 comment objects
+    (`updated`/`created` — no `_at` suffix). `updated` is preferred over
+    `created`, matching the GitHub-side preference, so an edited comment
+    still counts as the newest touch on the thread.
+    """
+    return str(
+        comment.get("updated_at")
+        or comment.get("created_at")
+        or comment.get("updated")
+        or comment.get("created")
+        or ""
+    )
+
+
+def newest_comment_timestamp(comments: list[dict]) -> str:
+    """The newest touch on a PR's comments — half of the emission cursor.
+
+    It lives beside ``emission_watermark`` rather than in ``sweep.py``
+    because it is a decision about what the cursor MEANS, not a read: the
+    sweep fetches the comments, this module says which of them the watermark
+    is. (It moved here in task t14, when the sweep's own file had no room
+    left under the 1000-line hard limit — which is the signal the lane doc's
+    "Changing the sweep" recipe says to read as *this concern belongs in a
+    module of its own*.)
+    """
+    return max((_comment_timestamp(c) for c in comments), default="")
 
 
 def emission_watermark(head_sha: str, newest_comment_at: str, findings: list[dict]) -> dict:

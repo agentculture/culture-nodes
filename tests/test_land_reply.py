@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_land_node import (  # noqa: F401 - fixtures by name
+    ACTOR_ID,
     LAND_RUN,
     PRODUCING_RUN,
     TARGET,
@@ -81,6 +82,7 @@ class FakeGitHub:
         self.issue_comments: list[dict] = []
         self.run_input: dict | None = None
         self.node_runs: list[dict] = []
+        self.actors: list[dict] = [{"id": ACTOR_ID, "actor_key": "codex/thor", "revision": 1}]
         self.requests: list[tuple[str, str, dict | None, dict]] = []
         self.next_comment_id = 9000
 
@@ -142,6 +144,16 @@ def _handler(state: FakeGitHub):
                 return self._send(200, {"run": {"id": PRODUCING_RUN, "input": state.run_input}})
             if path == "/v1alpha1/node-runs":
                 return self._send(200, {"items": state.node_runs})
+            # The checkout probe resolves the producing actor's KEY and every
+            # registration revision that shares it before it counts anything.
+            if path == "/v1alpha1/actors":
+                return self._send(200, {"items": state.actors})
+            if path.startswith("/v1alpha1/actors/"):
+                wanted = path.rsplit("/", 1)[1]
+                for actor in state.actors:
+                    if actor["id"] == wanted:
+                        return self._send(200, actor)
+                return self._send(404, {"error": "no such actor"})
             if path == f"/repos/{REPO}/issues/{PR}/comments":
                 return self._send(200, state.issue_comments)
             return self._send(404, {"message": "Not Found"})

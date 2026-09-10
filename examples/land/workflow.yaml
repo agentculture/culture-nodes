@@ -73,6 +73,12 @@
 #                               culture-land's ~/.culture-nodes/bridge-push.env
 #                               (deploy/prod/lanes/land-secrets.sh). Environment
 #                               only; helpers reset on push; never in argv.
+#     LAND_PROBE_SOURCE_URL / LAND_PROBE_SOURCE_SHA256   the same for
+#                               land_probe.py, the control-plane half of the
+#                               checkout lease (it resolves the producing
+#                               actor's KEY and walks the node-run listing to
+#                               its end; a read it could not complete makes
+#                               the landing WAIT rather than reset).
 #     LAND_REPLY_SOURCE_URL / LAND_REPLY_SOURCE_SHA256   where land_reply.py
 #                               (the reply + resolve steps, task t8) is fetched
 #                               from and its digest, verified the same way and
@@ -85,7 +91,13 @@
 #                               step holds one that could merge (t8, c38).
 #     NODES_API_URL             the control plane the checkout lease reads live
 #                               attempts from. Unset it and the record says
-#                               `active_attempts: null` -- unchecked, not zero.
+#                               `active_attempts: null` with
+#                               `attempts_probe: not_configured` -- unchecked,
+#                               not zero. A probe that was configured but could
+#                               NOT be completed records
+#                               `attempts_probe: unmeasured` and the landing
+#                               waits (exit 5) instead of resetting the
+#                               producing checkout on a guess.
 #
 #   The runner boundary itself supplies NODES_INPUT_JSON (this node's bound
 #   input), NODES_RUN_ID / NODES_NODE_RUN_ID / NODES_ATTEMPT_ID (this run's
@@ -101,12 +113,17 @@
 #   same fact per binary at the end of a thor/orin deploy. Go was NOT on
 #   thor's login PATH on 2026-09-07 -- installing it is a counted hand-turn.
 #
-#   OPTIONAL gate configuration, environment of the land account (each has
-#   the production default built in, so none needs to be set): LAND_GATE_TESTS
+#   OPTIONAL configuration, environment of the land account (each has the
+#   production default built in, so none needs to be set): LAND_GATE_TESTS
 #   (default `uv run pytest -n auto -q`), LAND_GATE_JOB (default `root`),
 #   LAND_FINDINGS_JSON (a JSON list naming the findings landed; default: the
 #   landed commits' subjects), LAND_BUMP_PART (default `patch`),
-#   LAND_GATE_STEP_TIMEOUT_SECONDS (default 600). They ride the environment
+#   LAND_GATE_STEP_TIMEOUT_SECONDS (default 600), LAND_LINT_ALL_SKIP (the
+#   lint-all steps the gate waives, default `triage` -- it needs an
+#   authenticated `gh`, which culture-land does not have), and
+#   LAND_PRODUCING_ACTOR_KEY (the producing actor's key, when the operator
+#   declares it rather than letting the probe resolve it). They ride the
+#   environment
 #   rather than the input contract because land.py's input admits exactly
 #   its six keys -- a recorded t7 deviation, see land_gate.py's docstring.
 #
@@ -191,6 +208,8 @@ spec:
           - LAND_SOURCE_SHA256
           - LAND_GATE_SOURCE_URL
           - LAND_GATE_SOURCE_SHA256
+          - LAND_PROBE_SOURCE_URL
+          - LAND_PROBE_SOURCE_SHA256
           - GITHUB_TOKEN_WORKER
           - LAND_REPLY_SOURCE_URL
           - LAND_REPLY_SOURCE_SHA256
@@ -205,6 +224,7 @@ spec:
             for name, url_key, sha_key in (
                 ("land.py", "LAND_SOURCE_URL", "LAND_SOURCE_SHA256"),
                 ("land_gate.py", "LAND_GATE_SOURCE_URL", "LAND_GATE_SOURCE_SHA256"),
+                ("land_probe.py", "LAND_PROBE_SOURCE_URL", "LAND_PROBE_SOURCE_SHA256"),
                 ("land_reply.py", "LAND_REPLY_SOURCE_URL", "LAND_REPLY_SOURCE_SHA256"),
             ):
                 body = urllib.request.urlopen(os.environ[url_key], timeout=60).read()

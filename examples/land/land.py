@@ -7,80 +7,67 @@ engine account. It takes ONE handover ref a finished actor run produced and
 puts it on the PR branch the way the operator did by hand last cycle -- fetch,
 rebase onto the tip, push -- and writes down every step it reached, so a
 landing that stopped half way is visible in the ledger and a re-run continues
-instead of pushing twice.
+instead of pushing twice. Three siblings the bootstrap fetches beside it carry
+the rest: land_gate.py (the gate chain and the single version bump, t7),
+land_reply.py (reply + resolve, t8), land_probe.py (the control-plane half of
+the checkout lease).
 
 NODES_INPUT_JSON carries handover_ref (refs/culture-nodes/<run-id>/<tail>),
-handover_remote (where the producing actor's refs are fetchable), target_branch
-(the PR branch), work_item (the join key, c2), actor_id and run_id (the
-PRODUCING actor and run).
+handover_remote (where the producing actor's refs are fetchable),
+target_branch, work_item (the join key, c2), and the PRODUCING actor_id/run_id.
 
 # The steps -- one `land_step` JSON line on stdout each (the runner stores
-# stdout as attempt evidence, #189)
+# stdout as attempt evidence, #189), then one `land_result` line:
+#   fetch  lease  rebase  gate  push  reply  resolve  checkout_lease  reset
 
-    fetch           fetch handover_ref from handover_remote; refuse a ref
-                    outside refs/culture-nodes/<run_id>/
-    lease           the PER-TARGET-BRANCH lease; `waiting` if held (h26)
-    rebase          fetch the tip; skip if already on the branch (h27:
-                    ancestor or git-cherry equivalent); route a .github/
-                    change to a human (#102); else rebase in a scratch
-                    worktree -- a conflict is a derived routing record naming
-                    a human and NO push
-    gate            hook point, task t7 (gate chain + single version bump)
-    push            `git push` <sha>:refs/heads/<target> with helpers reset
-                    and GIT_ASKPASS from bridge-push.env; a non-fast-forward
-                    rejection re-fetches and rebases ONCE more
-                    (MAX_LAND_ROUNDS = 2), then routes to a human
-    reply, resolve  hook points, task t8
-    checkout_lease  the PER-CHECKOUT lease on the PRODUCING actor's checkout:
-                    a lock under ITS .git AND the control plane's live
-                    attempts for that actor (`active_attempts`). Either says
-                    busy -> `waiting`, and the reset does not run (h12)
-    reset           reset that checkout to the landed tip (#286's hand-turn)
-
-Then one `land_result` line. The hooks return `not_implemented` records on
-purpose: an honest placeholder beats a silent skip -- the ledger shows the
-step was reached and which task owes it.
+README.md carries the same nine with what each does on trouble. The one
+easiest to get wrong is the push: a rejection is CLASSIFIED, not assumed. A
+STALE rejection (the branch moved under us) re-fetches and rebases ONCE more
+(MAX_LAND_ROUNDS = 2), then routes to a human. A POLICY rejection -- branch
+protection, a pre-receive hook, the token's permissions -- is a refusal
+naming what the remote SAID: another round earns the same answer, and "the
+branch moved twice" is a sentence nobody can act on.
 
 # Exit codes (the graph routes on them through a decision node)
 
     0 landed   2 environment   3 routed_human   4 refused   5 waiting
 
 A code node's outcomes are only passed/failed to the worker
-(internal/worker/code.go); examples/land/workflow.yaml routes `failed` on
-`output.exit_code` -- the development-loop / combining-loop idiom.
+(internal/worker/code.go); workflow.yaml routes `failed` on `output.exit_code`
+-- the development-loop / combining-loop idiom.
 
 # The lease model (the plan asked for the choice to be recorded)
 
 Both leases are LOCK DIRECTORIES -- mkdir is atomic everywhere git runs,
-locally and over ssh -- holding a holder.json (land run, pid, host). The
-branch lease lives in the land checkout's .git, the one place every lander
-of a deployment shares, so two landers serialise without a control-plane
-round trip. The checkout lease lives in the producing checkout's .git,
-reached through the same transport the fetch used (a local path, or
-ssh://user@host/path), paired with the fact a file cannot know: whether the
-engine has a LIVE attempt on that actor (GET /v1alpha1/node-runs, states
-leased/running/waiting_external). A stale local lock (same host, pid dead) is
-reclaimed and the record says so; a lock this node cannot judge is honoured.
-Nothing is written to the control plane: an AGENT actor's bearer cannot
-write a lease row (internal/api/actorbearer.go), and the engine's own
-attempt leases are what `active_attempts` reads. Waiting is non-blocking by
-default (LAND_LEASE_WAIT_SECONDS=0): the graph parks and re-enters.
+locally and over ssh -- holding a holder.json (land run, pid, host): the
+branch lease in the land checkout's .git, the one place every lander of a
+deployment shares, so two landers serialise without a control-plane round
+trip; the checkout lease in the producing checkout's .git, reached through
+the same transport the fetch used (a local path, or ssh://user@host/path)
+and paired with the fact a file cannot know -- whether the engine has a LIVE
+attempt on that actor's KEY (land_probe.py carries that half, including why
+a probe that could not MEASURE waits rather than resets). A stale local lock
+(same host, pid dead) is reclaimed and the record says so; a lock this node
+cannot judge is honoured. Nothing is written to the control plane: an AGENT
+actor's bearer cannot write a lease row. Waiting is non-blocking
+(LAND_LEASE_WAIT_SECONDS=0): the graph parks and re-enters.
 
 # What this never does
 
 No `--force`, no force refspec, no merge API call, no PR merge
-(human-merges-pr is the only merge path, c15/c38), no operator Access cookie.
-The only HTTP request is the control-plane node-runs read. The push token
-comes from the environment or ~/.culture-nodes/bridge-push.env
+(human-merges-pr is the only merge path, c15/c38), no operator Access cookie,
+and no URL opened by land.py itself -- the only HTTP is the siblings'. The
+push token comes from the environment or ~/.culture-nodes/bridge-push.env
 (LAND_PUSH_ENV_FILE), never from the input, never in argv; diagnostics are
-redacted before they are printed. The land run's own identity comes from the
-runner boundary (NODES_RUN_ID / NODES_NODE_RUN_ID / NODES_ATTEMPT_ID), the
-checkout from NODES_WORKSPACE (default cwd), the routing record's producer
-from LAND_ACTOR_ID (default company/land).
+redacted. This run's identity comes from the runner boundary (NODES_RUN_ID /
+NODES_NODE_RUN_ID / NODES_ATTEMPT_ID), the checkout from NODES_WORKSPACE
+(default cwd), the routing record's producer from LAND_ACTOR_ID (default
+company/land).
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import posixpath
@@ -92,9 +79,7 @@ import subprocess  # noqa: S404 # nosec B404 - fixed git/ssh binaries, argv list
 import sys
 import tempfile
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -107,8 +92,8 @@ EXIT_ROUTED_HUMAN = 3
 EXIT_REFUSED = 4
 EXIT_WAITING = 5
 
-#: The steps, in the order they are reached. A run that lands writes one
-#: record per name; a run that stops early writes the prefix it reached.
+#: The steps in order: a landing writes one record per name, a run that
+#: stopped early writes the prefix it reached.
 STEPS = ("fetch", "lease", "rebase", "gate", "push", "reply", "resolve", "checkout_lease", "reset")
 
 #: One re-fetch-and-rebase after a non-fast-forward rejection, then a human
@@ -139,8 +124,24 @@ GUARDED_PATH_PREFIXES = (".github/",)
 GUARDED_BARE = tuple(p.rstrip("/") for p in GUARDED_PATH_PREFIXES)
 BOUND = {"max_attempts": 2, "window_seconds": 86400, "at_ceiling": "route to a human node"}
 
-#: Node-run states in which an attempt may be executing in the actor's checkout.
-ACTIVE_NODE_RUN_STATES = frozenset({"leased", "running", "waiting_external"})
+#: The producing actor's KEY, when the operator declares it rather than
+#: letting the probe resolve it from the row id (land_probe.actor_rows).
+PRODUCING_ACTOR_KEY = "LAND_PRODUCING_ACTOR_KEY"
+#: The wait reason when the control-plane probe could not measure at all.
+REASON_ATTEMPTS_UNMEASURED = "active_attempts_unmeasured"
+
+#: A `!` rejection whose reason is one of these is the branch MOVING under the
+#: landing -- the only rejection another round can fix; everything else the
+#: remote rejects is its policy speaking, and would say so again. The last two
+#: are the same race in compare-and-swap form (a branch that moves between git
+#: reading the old value and the remote updating the ref).
+STALE_REJECTION_MARKERS = (
+    "non-fast-forward",
+    "fetch first",
+    "stale info",
+    "failed to update ref",
+    "cannot lock ref",
+)
 
 #: The routing rationales, operator-facing sentences in the record.
 RATIONALE_CONFLICT = (
@@ -587,32 +588,6 @@ class SshLock(Lock):
         self.checkout.ssh(["rm", "-rf", self.path], check=False)
 
 
-# -- the control-plane half of the checkout lease ---------------------------
-
-
-def active_attempts(api_url: str | None, actor_id: str, *, exclude_run_id: str) -> int | None:
-    """How many node runs the control plane has LIVE on this actor, other
-    than the land run's own. None means "no control plane configured, not
-    checked" -- distinct from 0 on purpose, and the record carries it."""
-    if not api_url:
-        return None
-    url = f"{api_url.rstrip('/')}/v1alpha1/node-runs?{urllib.parse.urlencode({'limit': '200'})}"
-    headers = {"Accept": "application/json", "User-Agent": "culture-nodes-land/1"}
-    request = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # nosec B310 - configured URL
-            body = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        raise Refusal(f"could not read {url}: {exc}", "fix NODES_API_URL, or unset it") from exc
-    count = 0
-    for item in body.get("items", []) or []:
-        if item.get("actor_id") != actor_id or item.get("run_id") == exclude_run_id:
-            continue
-        if item.get("state") in ACTIVE_NODE_RUN_STATES:
-            count += 1
-    return count
-
-
 # -- the push credential ----------------------------------------------------
 
 
@@ -638,35 +613,44 @@ def remote_needs_credential(url: str) -> bool:
     return urllib.parse.urlsplit(url).scheme in ("http", "https")
 
 
-# -- hook points owned by other tasks ---------------------------------------
+# -- the sibling modules the bootstrap fetches beside this file -------------
 
 
-def gate_hook(ctx: Landing) -> dict[str, Any]:
-    """t7: the gate chain (pytest, go test ./tests/lint, lint-all, file-length) + one bump,
-    in the sibling module land_gate.py (the bootstrap fetches it beside this file)."""
+def sibling(module: str, attr: str):
+    """One attribute of a module fetched BESIDE this file, resolved at the
+    step by path -- the bootstrap verified its digest before any of it ran."""
     here = str(Path(__file__).resolve().parent)
     if here not in sys.path:
         sys.path.insert(0, here)
-    from land_gate import run_gate  # resolved beside this file, at the step
+    return getattr(importlib.import_module(module), attr)
 
-    return run_gate(ctx, refusal=Refusal)
+
+def gate_hook(ctx: Landing) -> dict[str, Any]:
+    """t7: the gate chain and the landing's single bump (land_gate.py)."""
+    return sibling("land_gate", "run_gate")(ctx, refusal=Refusal)
 
 
 def reply_hook(ctx: Landing) -> dict[str, Any]:
-    """t8: reply on each landed finding's review thread naming the landed
-    commit (sibling module land_reply.py, same directory)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from land_reply import reply_step
-
-    return reply_step(ctx, refusal=Refusal)
+    """t8: one reply per landed finding, naming the sha (land_reply.py)."""
+    return sibling("land_reply", "reply_step")(ctx, refusal=Refusal)
 
 
 def resolve_hook(ctx: Landing) -> dict[str, Any]:
     """t8: resolve each landed finding's review thread (land_reply.py)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from land_reply import resolve_step
+    return sibling("land_reply", "resolve_step")(ctx, refusal=Refusal)
 
-    return resolve_step(ctx, refusal=Refusal)
+
+def active_attempts(api_url: str | None, actor_id: str, *, exclude_run_id: str):
+    """The control-plane half of the checkout lease (land_probe.py). The
+    AttemptProbe carries a COUNT only when it measured one: a failed read and
+    a listing that did not end within its page bound carry none, and this
+    node waits on those rather than resetting on a guess (h12)."""
+    return sibling("land_probe", "active_attempts")(
+        api_url,
+        actor_id,
+        exclude_run_id=exclude_run_id,
+        actor_key=os.environ.get(PRODUCING_ACTOR_KEY) or None,
+    )
 
 
 # -- the landing ------------------------------------------------------------
@@ -853,15 +837,28 @@ class Landing:
 
     def push_once(self, env: dict[str, str]) -> bool:
         """One push of the rebased commit to the branch ref -- a plain refspec,
-        never a force. Returns True when the remote rejected it as stale."""
+        never a force. Returns True when the remote rejected it as STALE (the
+        branch moved; another round can fix it). A rejection the remote made
+        on POLICY is a refusal naming what the remote itself said, never a
+        second round that would be told the same thing again."""
         refspec = f"{self.landed_commit}:{self.branch_ref}"
         argv = (*RESET_HELPER_ARGS, "push", "--porcelain", "--", PUSH_REMOTE, refspec)
         proc = git(self.workspace, *argv, env=env, check=False)
         if proc.returncode == 0:
             return False
-        rejected = any(line.startswith("!") for line in proc.stdout.splitlines())
-        if rejected or "non-fast-forward" in proc.stderr or "fetch first" in proc.stderr:
+        rejected = [line for line in proc.stdout.splitlines() if line.startswith("!")]
+        echoed = [x for x in proc.stderr.splitlines() if x.startswith("remote:")]
+        said = "\n".join(rejected + echoed)
+        if any(marker in said or marker in proc.stderr for marker in STALE_REJECTION_MARKERS):
             return True
+        if rejected:
+            detail = redact(said.strip()) or "no reason given"
+            raise Refusal(
+                f"{PUSH_REMOTE} rejected the push to {self.branch_ref}: {detail}",
+                "branch protection, a pre-receive hook, or the push credential's permissions "
+                "-- a lander does not work around a remote's policy; a person does",
+                EXIT_REFUSED,
+            )
         detail = redact(proc.stderr.strip())
         raise Refusal(f"push to {PUSH_REMOTE} {self.branch_ref} failed: {detail}", "see git")
 
@@ -897,14 +894,22 @@ class Landing:
     def reset_checkout(self) -> None:
         checkout = Checkout.from_remote(self.inputs.handover_remote)
         api_url = os.environ.get("NODES_API_URL")
-        active = active_attempts(api_url, self.inputs.actor_id, exclude_run_id=self.land.run_id)
-        facts = {"scope": "actor_checkout", "active_attempts": active, "checkout": checkout.path}
+        probe = active_attempts(api_url, self.inputs.actor_id, exclude_run_id=self.land.run_id)
+        facts = {"scope": "actor_checkout", "checkout": checkout.path}
+        facts |= {"active_attempts": probe.count, "attempts_probe": probe.status}
+        facts["attempts_detail"] = probe.detail
         if checkout.kind == "none":
             reason = "remote_is_not_a_checkout"
             self.records.step("checkout_lease", "skipped", reason=reason, **facts)
             self.records.step("reset", "skipped", reason=reason)
             return
-        if active:
+        # h12: the count is what unlocks `checkout -B` + `reset --hard` on a
+        # checkout a session may be sitting in. Not measured is not zero.
+        if probe.unmeasured:
+            reason = REASON_ATTEMPTS_UNMEASURED
+            self.records.step("checkout_lease", "waiting", reason=reason, holder=None, **facts)
+            raise Waiting
+        if probe.busy:
             self.records.step("checkout_lease", "waiting", holder=None, **facts)
             raise Waiting
         lock = checkout.lock()

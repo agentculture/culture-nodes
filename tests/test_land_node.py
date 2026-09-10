@@ -23,7 +23,6 @@ a conflict, plus one terminal ``land_result`` line.
 from __future__ import annotations
 
 import ast
-import http.server
 import importlib.util
 import io
 import json
@@ -32,7 +31,6 @@ import re
 import socket
 import subprocess
 import sys
-import threading
 import tokenize
 from pathlib import Path
 
@@ -45,6 +43,12 @@ WORKFLOW = EXAMPLE_DIR / "workflow.yaml"
 PRODUCING_RUN = "01M0PRODUCINGRUNID0000000A"
 LAND_RUN = "01M0LANDRUNID00000000000B"
 ACTOR_ID = "01M0ACTORROWID00000000000C"
+#: The SAME actor identity, one registration revision earlier: re-registering
+#: mints a new actors row (append-only, internal/store/postgres ListActors'
+#: doc comment), and node runs dispatched before it keep pointing at the old
+#: row id. Both rows share ACTOR_KEY.
+OLD_ACTOR_ID = "01M0ACTORROWID00000000000B"
+ACTOR_KEY = "codex/thor"
 TARGET = "pr/loop-closure"
 WORK_ITEM = "SCRUM-42"
 
@@ -61,6 +65,25 @@ def _load_land():
 
 
 land = _load_land()
+
+
+def load_land_probe():
+    """The control-plane probe module (the checkout lease's other half),
+    registered under the name land.py's `active_attempts` imports."""
+    if "land_probe" in sys.modules:
+        return sys.modules["land_probe"]
+    spec = importlib.util.spec_from_file_location("land_probe", EXAMPLE_DIR / "land_probe.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def unchecked_probe(*_a, **_k):
+    """The seam every test that does not care about the control plane uses:
+    the answer a lander gets when NODES_API_URL is unset."""
+    probe_module = load_land_probe()
+    return probe_module.AttemptProbe(None, probe_module.NOT_CONFIGURED, "no control plane in tests")
 
 
 def load_land_reply():
@@ -179,7 +202,7 @@ def _quiet_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LAND_PUSH_ENV_FILE", "/nonexistent/bridge-push.env")
     # The probe is a seam: default to "no control plane configured" so a
     # test that does not care never reaches the network.
-    monkeypatch.setattr(land, "active_attempts", lambda *_a, **_k: None)
+    monkeypatch.setattr(land, "active_attempts", unchecked_probe)
     # The gate chain (t7, land_gate.py) needs a toolchain and a repository
     # shaped like this one; tests/test_land_gate.py runs it for real against
     # such an origin. Here the scratch remotes carry neither, so the hook is
@@ -382,6 +405,38 @@ def test_a_rebase_stale_twice_routes_to_a_human_and_pushes_nothing(
     assert "reset" not in steps(records)
 
 
+def test_a_remote_policy_rejection_is_a_refusal_naming_what_the_remote_said(
+    monkeypatch, capsys, origin, land_ws, actor_checkout
+):
+    """A `[remote rejected]` from branch protection or a pre-receive hook is
+    not the branch moving: rebasing again changes nothing and the second
+    push is rejected for the same reason. It is a refusal naming the
+    remote's own message, not `stale_after_retry`."""
+    hook = origin / "hooks" / "pre-receive"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(
+        "#!/bin/sh\n" 'echo "protected branch hook declined: review required" >&2\n' "exit 1\n"
+    )
+    hook.chmod(0o755)
+    before = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a = 1\n", "t6: add a")
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_REFUSED, records
+    outcome = result(records)
+    assert outcome["outcome"] == "refused"
+    assert "review required" in outcome["error"], "the remote's own message is the record"
+    assert not [
+        r for r in records if r.get("record") == "routing"
+    ], "a policy refusal is not a repair route: nothing about it is retryable"
+    assert "push" not in steps(records)
+    assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before
+    assert "reset" not in steps(records)
+
+
 # ---------------------------------------------------------------------------
 # the per-target-branch lease
 # ---------------------------------------------------------------------------
@@ -510,128 +565,6 @@ def test_a_rerun_detects_an_equivalent_rewritten_commit(
 
 
 # ---------------------------------------------------------------------------
-# the per-checkout lease on the producing actor's checkout
-# ---------------------------------------------------------------------------
-
-
-def test_a_second_active_attempt_on_the_actor_checkout_blocks_the_reset(
-    monkeypatch, capsys, origin, land_ws, actor_checkout
-):
-    ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a = 1\n", "t6: add a")
-    head_before = git(actor_checkout, "rev-parse", "HEAD")
-    seen: list[tuple] = []
-
-    def busy(api_url, actor_id, *, exclude_run_id):
-        seen.append((api_url, actor_id, exclude_run_id))
-        return 1
-
-    monkeypatch.setenv("NODES_API_URL", "http://control-plane.invalid")
-    monkeypatch.setattr(land, "active_attempts", busy)
-    # The t8 reply step reads the producing run from the same URL; seam it
-    # to "no PR findings" so this test stays about the checkout lease.
-    monkeypatch.setattr(load_land_reply(), "producing_run_input", lambda *_a, **_k: None)
-
-    code, records = run_land(
-        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
-    )
-
-    assert code == land.EXIT_WAITING, records
-    assert result(records)["outcome"] == "waiting"
-    by = steps(records)
-    assert by["push"]["outcome"] == "ok", "the landing itself is not what waits"
-    wait = by["checkout_lease"]
-    assert wait["outcome"] == "waiting" and wait["scope"] == "actor_checkout"
-    assert wait["active_attempts"] == 1
-    assert "reset" not in by, "the reset did not run"
-    assert seen == [("http://control-plane.invalid", ACTOR_ID, LAND_RUN)]
-    assert git(actor_checkout, "rev-parse", "HEAD") == head_before
-    tip = git(origin, "rev-parse", f"refs/heads/{TARGET}")
-
-    # h27: the re-run picks up from where the first attempt stopped -- push
-    # skipped, reset performed, exactly one commit on the branch.
-    monkeypatch.setattr(land, "active_attempts", lambda *_a, **_k: 0)
-    code, records = run_land(
-        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
-    )
-    assert code == land.EXIT_LANDED, records
-    by = steps(records)
-    assert by["push"]["outcome"] == "skipped"
-    assert by["checkout_lease"]["outcome"] == "ok" and by["checkout_lease"]["active_attempts"] == 0
-    assert by["reset"]["outcome"] == "ok"
-    assert git(actor_checkout, "rev-parse", "HEAD") == tip
-    assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == tip
-
-
-def test_a_held_checkout_file_lock_blocks_the_reset_too(
-    monkeypatch, capsys, origin, land_ws, actor_checkout
-):
-    ref, _ = mint_handover(actor_checkout, PRODUCING_RUN, "src/a.py", "a = 1\n", "t6: add a")
-    head_before = git(actor_checkout, "rev-parse", "HEAD")
-    lock = land.checkout_lock_path(actor_checkout)
-    with land.LocalLock(lock).held(holder={"land_run_id": "01M0OTHERLANDER", "pid": os.getpid()}):
-        code, records = run_land(
-            monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
-        )
-    assert code == land.EXIT_WAITING, records
-    wait = steps(records)["checkout_lease"]
-    assert wait["outcome"] == "waiting" and wait["holder"]["land_run_id"] == "01M0OTHERLANDER"
-    assert wait["active_attempts"] is None, "no control plane configured: the probe says so, not 0"
-    assert git(actor_checkout, "rev-parse", "HEAD") == head_before
-
-
-class _NodeRunsHandler(http.server.BaseHTTPRequestHandler):
-    items: list[dict] = []
-    seen_paths: list[str] = []
-
-    def do_GET(self):  # noqa: N802 - http.server's name
-        type(self).seen_paths.append(self.path)
-        body = json.dumps({"items": type(self).items}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *_a):  # silence
-        return
-
-
-@pytest.fixture
-def node_runs_api():
-    server = http.server.HTTPServer(("127.0.0.1", 0), _NodeRunsHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield server, _NodeRunsHandler
-    finally:
-        server.shutdown()
-        _NodeRunsHandler.items = []
-        _NodeRunsHandler.seen_paths = []
-
-
-def test_active_attempts_counts_live_node_runs_of_the_actor_from_the_control_plane(node_runs_api):
-    server, handler = node_runs_api
-    handler.items = [
-        {"id": "1", "run_id": "RUN-X", "actor_id": ACTOR_ID, "state": "running"},
-        {"id": "2", "run_id": "RUN-Y", "actor_id": ACTOR_ID, "state": "leased"},
-        {"id": "3", "run_id": "RUN-Z", "actor_id": ACTOR_ID, "state": "waiting_external"},
-        {"id": "4", "run_id": "RUN-DONE", "actor_id": ACTOR_ID, "state": "completed"},
-        {"id": "5", "run_id": "RUN-OTHER", "actor_id": "someone-else", "state": "running"},
-        {"id": "6", "run_id": LAND_RUN, "actor_id": ACTOR_ID, "state": "running"},
-    ]
-    real = _load_land()  # the un-monkeypatched function
-    url = f"http://127.0.0.1:{server.server_address[1]}"
-    assert real.active_attempts(url, ACTOR_ID, exclude_run_id=LAND_RUN) == 3
-    assert handler.seen_paths and handler.seen_paths[0].startswith("/v1alpha1/node-runs")
-
-
-def test_active_attempts_is_unchecked_without_a_control_plane():
-    real = _load_land()
-    assert real.active_attempts("", ACTOR_ID, exclude_run_id=LAND_RUN) is None
-    assert real.active_attempts(None, ACTOR_ID, exclude_run_id=LAND_RUN) is None
-
-
-# ---------------------------------------------------------------------------
 # a seeded conflict: the routing record, and no push
 # ---------------------------------------------------------------------------
 
@@ -746,9 +679,17 @@ def test_the_script_makes_no_merge_api_call():
     assert "merge" not in code.replace("merge-base", "").replace(
         "git-common-dir", ""
     ), "the only `merge` the script may spell is git merge-base; a PR merge is a human's act"
-    # The only HTTP the node performs is the control-plane read; git talks to
-    # GitHub through the git binary, never through a REST client here.
-    assert len(re.findall(r"urllib\s*\.\s*request\s*\.\s*urlopen", code)) == 1
+    # The only HTTP the node performs is the control-plane read, and it lives
+    # in the probe module -- git talks to GitHub through the git binary,
+    # never through a REST client here.
+    urlopen = r"urllib\s*\.\s*request\s*\.\s*urlopen"
+    assert not re.findall(urlopen, code), "land.py itself opens no URL"
+    probe_code = code_only((EXAMPLE_DIR / "land_probe.py").read_text(encoding="utf-8"))
+    assert len(re.findall(urlopen, probe_code)) == 1
+    assert "api.github.com" not in probe_code
+    assert (
+        '"push"' not in probe_code and "subprocess" not in probe_code
+    ), "the probe reads the control plane and runs nothing"
 
 
 def test_the_handover_ref_fence(monkeypatch, capsys, land_ws, actor_checkout):
@@ -868,6 +809,12 @@ def test_workflow_declares_the_inputs_and_routes_every_exit_code():
     assert "LAND_SOURCE_URL" in argv and "LAND_SOURCE_SHA256" in argv
     for ref in ("LAND_SOURCE_URL", "LAND_SOURCE_SHA256", "GITHUB_TOKEN_WORKER", "NODES_API_URL"):
         assert ref in land_node["operation"]["environmentRefs"]
+    # Every module land.py reaches for is fetched beside it, by granted digest.
+    for module in ("land_gate.py", "land_probe.py", "land_reply.py"):
+        assert module in argv, module
+        stem = module.removesuffix(".py").removeprefix("land").strip("_").upper()
+        for ref in (f"LAND_{stem}_SOURCE_URL", f"LAND_{stem}_SOURCE_SHA256"):
+            assert ref in land_node["operation"]["environmentRefs"], ref
 
     verdict = spec["nodes"]["land-verdict"]
     assert verdict["kind"] == "decision"
@@ -889,6 +836,8 @@ def test_workflow_prose_names_every_granted_value():
     for name in (
         "LAND_SOURCE_URL",
         "LAND_SOURCE_SHA256",
+        "LAND_PROBE_SOURCE_URL",
+        "LAND_PROBE_SOURCE_SHA256",
         "GITHUB_TOKEN_WORKER",
         "runner://headspace/land",
     ):

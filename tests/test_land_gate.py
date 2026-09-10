@@ -48,6 +48,7 @@ from tests.test_land_node import (
     result,
     run_land,
     steps,
+    unchecked_probe,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,12 +83,28 @@ fi
 echo "$name: ok"
 """
 
+#: The stub answers the way scripts/lint-all.sh does: exit 1 for a measured
+#: finding, exit 2 for "this environment could not run that step" (the
+#: unauthenticated-`gh` triage step, on every production landing), and it
+#: records the LINT_ALL_SKIP it was handed in a sidecar file so a test can
+#: assert the waiver without disturbing the argv log the order tests read.
 _LINT_ALL_STUB = """#!/usr/bin/env bash
 printf 'lint-all %s\\n' "$*" >> "$FAKE_GATE_LOG"
+printf 'LINT_ALL_SKIP=%s\\n' "${LINT_ALL_SKIP-<unset>}" >> "$FAKE_GATE_LOG.env"
 if [ "${FAKE_GATE_FAIL:-}" = lint-all ]; then
   echo "<<< FAILED flake8 -- fake failure line 1"
   echo "lint-all: fake failure line 2 -- the tail the human reads" >&2
   exit 1
+fi
+if [ "${FAKE_GATE_UNRUNNABLE:-}" = lint-all ]; then
+  echo ">>> triage"
+  echo "<<< UNRUNNABLE triage (exit 2 -- could not measure, not a finding)"
+  echo ""
+  echo "=== summary ==="
+  echo "UNRUNNABLE: triage" >&2
+  echo "            this environment could not run these; CI runs them anyway." >&2
+  echo "every step this environment could run passed, but 1 could not run -- exiting 2" >&2
+  exit 2
 fi
 echo "lint-all: every job green (fake)"
 """
@@ -110,11 +127,17 @@ def toolchain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     log.touch()
     monkeypatch.setenv("FAKE_GATE_LOG", str(log))
     monkeypatch.delenv("FAKE_GATE_FAIL", raising=False)
+    monkeypatch.delenv("FAKE_GATE_UNRUNNABLE", raising=False)
     return bin_dir
 
 
 def gate_log(tmp_path: Path) -> list[str]:
     return (tmp_path / "gate-calls.log").read_text().splitlines()
+
+
+def lint_all_env(tmp_path: Path) -> list[str]:
+    """What the lint-all stub saw in its environment, one line per call."""
+    return (tmp_path / "gate-calls.log.env").read_text().splitlines()
 
 
 @pytest.fixture
@@ -170,9 +193,16 @@ def _gate_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("GITHUB_TOKEN_WORKER", raising=False)
     monkeypatch.setenv("LAND_LEASE_WAIT_SECONDS", "0")
     monkeypatch.setenv("LAND_PUSH_ENV_FILE", "/nonexistent/bridge-push.env")
-    for name in ("LAND_GATE_TESTS", "LAND_GATE_JOB", "LAND_FINDINGS_JSON", "LAND_BUMP_PART"):
+    for name in (
+        "LAND_GATE_TESTS",
+        "LAND_GATE_JOB",
+        "LAND_FINDINGS_JSON",
+        "LAND_BUMP_PART",
+        "LAND_LINT_ALL_SKIP",
+        "FAKE_GATE_UNRUNNABLE",
+    ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(land, "active_attempts", lambda *_a, **_k: None)
+    monkeypatch.setattr(land, "active_attempts", unchecked_probe)
 
 
 def mint_fixes(repo: Path, run_id: str, subjects: list[str]) -> tuple[str, str]:
@@ -218,7 +248,7 @@ def test_the_gate_declares_go_uv_node_and_markdownlint_and_the_workflow_names_th
     assert "land_gate.py" in " ".join(node["operation"]["argv"])
     # And land.py's hook reaches for it rather than answering not_implemented.
     hook = (EXAMPLE_DIR / "land.py").read_text(encoding="utf-8")
-    assert "from land_gate import run_gate" in hook
+    assert 'sibling("land_gate", "run_gate")' in hook
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +349,107 @@ def test_gate_tests_and_job_are_configurable(
     assert code == land.EXIT_LANDED
     assert gate_log(tmp_path)[0] == "uv run pytest tests/test_land_node.py -q"
     assert gate_log(tmp_path)[2] == "lint-all adapter-codex"
+
+
+# ---------------------------------------------------------------------------
+# lint-all's exit 2: could not measure, which is not a finding
+# ---------------------------------------------------------------------------
+
+
+def test_the_lint_all_step_waives_triage_so_an_unauthenticated_gh_is_not_red(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    """scripts/lint-all.sh's triage step needs an authenticated `gh`, which
+    the culture-land account does not have. Unwaived it exits 2 on every
+    production landing."""
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["one fix"])
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_LANDED, records
+    assert lint_all_env(tmp_path) == ["LINT_ALL_SKIP=triage"]
+    assert steps(records)["gate"]["lint_all_skip"] == land_gate.DEFAULT_LINT_ALL_SKIP == "triage"
+    # And the waiver the gate hands down is the one the real script reads.
+    script = (ROOT / "scripts/lint-all.sh").read_text(encoding="utf-8")
+    assert "LINT_ALL_SKIP" in script
+
+
+def test_the_lint_all_waiver_is_configurable_and_can_be_emptied(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    monkeypatch.setenv("LAND_LINT_ALL_SKIP", "")
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["one fix"])
+
+    code, _records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_LANDED
+    assert lint_all_env(tmp_path) == ["LINT_ALL_SKIP=<unset>"], "an empty waiver waives nothing"
+
+
+def test_lint_all_exit_2_lands_as_measurement_incomplete_naming_what_could_not_run(
+    monkeypatch, capsys, tmp_path, toolchain, origin, land_ws, actor_checkout
+):
+    """Exit 2 from lint-all is `I could not measure that step`, not a
+    finding. It is recorded, named, and it does NOT route a landing whose
+    every measured step was green."""
+    before = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    monkeypatch.setenv("FAKE_GATE_UNRUNNABLE", "lint-all")
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["one fix"])
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_LANDED, records
+    assert not routing_records(records), "an unmeasured step is not a gate_failed route"
+    tip = git(origin, "rev-parse", f"refs/heads/{TARGET}")
+    assert tip != before, "the landing proceeded"
+
+    gate = steps(records)["gate"]
+    assert gate["outcome"] == land_gate.OUTCOME_MEASUREMENT_INCOMPLETE == "measurement_incomplete"
+    assert gate["measurement_incomplete"] == [
+        {"step": "lint_all", "exit_code": 2, "unrunnable": ["triage"]}
+    ]
+    by_name = {s["name"]: s for s in gate["steps"]}
+    assert by_name["lint_all"]["incomplete"] is True
+    assert by_name["lint_all"]["unrunnable"] == ["triage"]
+    assert by_name["tests"]["incomplete"] is False
+    # The chain kept going: file_length ran and the bump happened.
+    assert [s["name"] for s in gate["steps"]] == ["tests", "go_lint", "lint_all", "file_length"]
+    assert gate["bump"]["new"] == "0.1.1"
+
+
+def test_only_lint_all_may_answer_could_not_measure(
+    monkeypatch, capsys, toolchain, origin, land_ws, actor_checkout
+):
+    """A pytest run or a Go build that exits 2 is a failure like any other:
+    the measurement_incomplete exemption is scripts/lint-all.sh's declared
+    policy, not a blanket amnesty for exit code 2."""
+    _write_exec(toolchain / "uv", "#!/usr/bin/env bash\necho 'uv: broke' >&2\nexit 2\n")
+    ref, _ = mint_fixes(actor_checkout, PRODUCING_RUN, ["one fix"])
+
+    code, records = run_land(
+        monkeypatch, capsys, workspace=land_ws, handover_ref=ref, handover_remote=actor_checkout
+    )
+
+    assert code == land.EXIT_ROUTED_HUMAN, records
+    assert steps(records)["gate"]["failing_step"] == "tests"
+
+
+def test_the_unrunnable_step_names_come_from_the_scripts_own_summary():
+    text = "\n".join(
+        [
+            "<<< UNRUNNABLE triage (exit 2 -- could not measure, not a finding)",
+            "=== summary ===",
+            "UNRUNNABLE: triage vendored-skills",
+        ]
+    )
+    assert land_gate.unrunnable_steps(text) == ["triage", "vendored-skills"]
+    assert land_gate.unrunnable_steps("all lint steps passed") == []
 
 
 # ---------------------------------------------------------------------------
@@ -639,8 +770,10 @@ def test_the_gate_never_pushes_forces_or_merges():
 
 
 def test_the_gate_module_stays_under_the_file_length_guard():
-    for path in (GATE_SCRIPT, EXAMPLE_DIR / "land.py"):
+    for name in ("land.py", "land_probe.py", "land_reply.py"):
+        path = EXAMPLE_DIR / name
         assert len(path.read_text(encoding="utf-8").splitlines()) <= 1000, path
+    assert len(GATE_SCRIPT.read_text(encoding="utf-8").splitlines()) <= 1000
 
 
 def test_the_readme_documents_the_gate_row():

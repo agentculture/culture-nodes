@@ -38,11 +38,11 @@ curl -s -X POST "$NODES_API_URL/v1alpha1/events" \
 | `fetch` | fetch `handover_ref` from `handover_remote`; refuse a ref outside `refs/culture-nodes/<run_id>/` | exit 4 |
 | `lease` | per-target-branch lock directory under the land checkout's `.git` | `waiting`, exit 5 |
 | `rebase` | skip if already on the branch (ancestor or `git cherry` equivalent); route `.github/` changes; rebase in a scratch worktree | conflict → derived routing record, exit 3, no push |
-| `gate` | `land_gate.py`: the pre-push chain in the rebased worktree — target pytest (`LAND_GATE_TESTS`, default `uv run pytest -n auto -q`), `go test ./tests/lint/...`, `scripts/lint-all.sh <job>` (`LAND_GATE_JOB`, default `root`), the 1000-line file-length guard — then **one** version bump for the landing (`bump.py` fed a JSON changelog on stdin naming the findings; one commit on top of the handover commits, never a rewrite); toolchains `go`, `uv`, `node`, `markdownlint-cli2` are checked first | missing toolchain → `toolchain_missing` record + `refused`, exit 2, nothing ran; red step → routing record `gate_failed` naming the step and its tail, exit 3, no push |
-| `push` | `git push` `<sha>:refs/heads/<target>`, helpers reset, `GIT_ASKPASS` from `bridge-push.env`; one re-fetch-and-rebase on a non-fast-forward rejection | second rejection → routing record, exit 3 |
+| `gate` | `land_gate.py`: the pre-push chain in the rebased worktree — target pytest (`LAND_GATE_TESTS`, default `uv run pytest -n auto -q`), `go test ./tests/lint/...`, `scripts/lint-all.sh <job>` (`LAND_GATE_JOB`, default `root`, with `LINT_ALL_SKIP=triage` — `LAND_LINT_ALL_SKIP`), the 1000-line file-length guard — then **one** version bump for the landing (`bump.py` fed a JSON changelog on stdin naming the findings; one commit on top of the handover commits, never a rewrite); toolchains `go`, `uv`, `node`, `markdownlint-cli2` are checked first | missing toolchain → `toolchain_missing` record + `refused`, exit 2, nothing ran; red step → routing record `gate_failed` naming the step and its tail, exit 3, no push; lint-all exit **2** → `measurement_incomplete`, naming the steps it could not run, and the landing proceeds |
+| `push` | `git push` `<sha>:refs/heads/<target>`, helpers reset, `GIT_ASKPASS` from `bridge-push.env`; a rejection is classified — one re-fetch-and-rebase on a STALE one (the branch moved: non-fast-forward, fetch first, or the `cannot lock ref` compare-and-swap form) | second stale rejection → routing record, exit 3; a POLICY rejection (`[remote rejected]` from branch protection or a pre-receive hook) → `refused` naming the remote's own message, exit 4, no second round |
 | `reply` | `land_reply.py`: reads the producing run's `input.findings` from the control plane; one signed reply per landed finding on its review thread (naming the landed sha and the finding id); findings with no thread share ONE PR comment; skips a reply already posted for this sha | `GITHUB_TOKEN_LAND_PR` missing → `refused` record naming it, exit 2, nothing posted |
 | `resolve` | `resolveReviewThread` per landed finding's thread; skips a thread already resolved; a finding with no thread is a recorded skip | GitHub error → exit 2 |
-| `checkout_lease` | per-checkout lock directory under the producing checkout's `.git` **and** the control plane's live attempts for that actor | `waiting`, exit 5; the reset does not run |
+| `checkout_lease` | per-checkout lock directory under the producing checkout's `.git` **and** `land_probe.py`'s count of the control plane's live attempts for that actor's **key** (every registration revision, over the whole paged node-run listing) | busy → `waiting`, exit 5; a probe that could not measure (a failed read, or a listing that did not end within its page bound) records `attempts_probe: unmeasured` and **also** waits — the reset does not run on an unmeasured count |
 | `reset` | `checkout -B <target> <tip>` + `reset --hard` in the producing checkout | exit 2 |
 
 The reply and resolve steps live in the sibling `land_reply.py` (task t8), fetched
@@ -76,6 +76,21 @@ and `deploy.sh orin`): the check itself fails naming the missing binaries, and
 the call site guards it, because installing one is a counted hand-turn a
 deploy cannot type.
 
+## The checkout probe (`land_probe.py`)
+
+Fetched beside `land.py` (`LAND_PROBE_SOURCE_URL` / `LAND_PROBE_SOURCE_SHA256`),
+it answers the one question the checkout's own lock file cannot: does the
+engine have a live attempt on the actor whose checkout is about to be
+`reset --hard`? Three reads — the actor row behind the input's id, the actor
+listing (every registration revision of that **key**, because re-registering
+mints a new row id while older attempts keep the old one), and the node-run
+listing walked through `next_cursor` to its end. Anything it could not
+complete is `unmeasured`, never `0`: a lander that read one page, or none,
+and reported "nothing is running" would be reporting a measurement it never
+made. `LAND_PRODUCING_ACTOR_KEY` declares the key and saves a read;
+`NODES_API_URL` unset is `not_configured` (the checkout's lock is then the
+only lease).
+
 ## What it never does
 
 No `--force`, no force refspec, no merge API call, no PR merge, no read of the
@@ -83,5 +98,6 @@ operator's Access cookie — all grep-asserted in `tests/test_land_node.py`,
 which drives the node against scratch bare remotes with no network.
 
 The workflow header documents the deployment grants (`LAND_SOURCE_URL`,
-`LAND_SOURCE_SHA256`, `GITHUB_TOKEN_WORKER`, `NODES_API_URL`) and why the
-graph routes on exit codes through a decision node.
+`LAND_SOURCE_SHA256`, the same pair for each of `land_gate.py`,
+`land_probe.py` and `land_reply.py`, `GITHUB_TOKEN_WORKER`, `NODES_API_URL`)
+and why the graph routes on exit codes through a decision node.

@@ -43,6 +43,11 @@ type ActorOut struct {
 	// global rate is not rendered here (it is not this actor's); it is on
 	// GET /v1alpha1/dispatch-rates alongside every per-actor scope.
 	DispatchRate *DispatchRateOut `json:"dispatch_rate,omitempty"`
+	// Liveness is the persisted session-liveness row for this actor KEY
+	// (plan loop-closure t10, migration 0058) — absent when nothing has ever
+	// observed the actor's session. Keyed by actor_key for the same reason
+	// the two blocks above are. See liveness.go.
+	Liveness *ActorLivenessOut `json:"liveness,omitempty"`
 }
 
 // ActorAvailabilityOut is one actor_availability row rendered for the
@@ -175,12 +180,18 @@ func (s *Server) handleListActors(w http.ResponseWriter, r *http.Request) error 
 		return internalError(err)
 	}
 	ratesByKey := actorRatesByKey(rates)
+	// And once more for the liveness rows (plan loop-closure t10).
+	liveness, err := s.engineStore.ActorLivenessAll(ctx)
+	if err != nil {
+		return internalError(err)
+	}
 	now := time.Now().UTC()
 	out := make([]ActorOut, len(actors))
 	for i, a := range actors {
 		pause, ok := pauses[a.ActorKey]
 		rate, rated := ratesByKey[a.ActorKey]
-		out[i] = withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now)
+		live, observed := liveness[a.ActorKey]
+		out[i] = withLiveness(withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now), live, observed, now)
 	}
 	writeJSON(w, http.StatusOK, ActorListOut{Items: out})
 	return nil
@@ -202,8 +213,12 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) error {
 		return internalError(err)
 	}
 	rate, rated := actorRatesByKey(rates)[a.ActorKey]
+	live, observed, err := s.engineStore.ActorLivenessFor(ctx, a.ActorKey)
+	if err != nil {
+		return internalError(err)
+	}
 	now := time.Now().UTC()
-	writeJSON(w, http.StatusOK, withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now))
+	writeJSON(w, http.StatusOK, withLiveness(withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now), live, observed, now))
 	return nil
 }
 
@@ -268,6 +283,14 @@ func (s *Server) handleResumeActor(w http.ResponseWriter, r *http.Request) error
 	if _, _, err := s.engineStore.ClearActorPause(ctx, a.ActorKey, clearedBy); err != nil {
 		return internalError(err)
 	}
+	// The same lane out of a liveness LOCK (plan loop-closure t10, decision
+	// c43): resume clears the control-plane lock and nothing else. The lane
+	// leases again only once a later bridge fact says session_ok=true — a
+	// resume alone never reopens a lane whose last fact is false. See
+	// liveness.go's unlockLiveness.
+	if err := s.unlockLiveness(ctx, a.ActorKey); err != nil {
+		return internalError(err)
+	}
 
 	// Re-read rather than render the clear's own return value: an actor with
 	// no pause at all has nothing to return from the clear, and this way one
@@ -276,7 +299,12 @@ func (s *Server) handleResumeActor(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, actorOutWithAvailability(a, pause, ok, time.Now().UTC()))
+	live, observed, err := s.engineStore.ActorLivenessFor(ctx, a.ActorKey)
+	if err != nil {
+		return internalError(err)
+	}
+	now := time.Now().UTC()
+	writeJSON(w, http.StatusOK, withLiveness(actorOutWithAvailability(a, pause, ok, now), live, observed, now))
 	return nil
 }
 

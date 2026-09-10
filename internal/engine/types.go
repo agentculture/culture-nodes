@@ -106,7 +106,7 @@ type Run struct {
 
 	// WorkItem is the key of the work item this run belongs to -- a Jira
 	// issue key such as SCRUM-9 (migrations/0057, plan
-	// loop-closure-claude-codex t1, decision c41). It is its OWN column, not
+	// loop-closure plan t1, decision c41). It is its OWN column, not
 	// an overload of Category (the stats slicing dimension) or Subject (the
 	// one-active-run-per-subject correlation key, which pr-upkeep facts
 	// deliberately omit): GET /v1alpha1/runs?work_item=KEY answers "which

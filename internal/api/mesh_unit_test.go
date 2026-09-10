@@ -13,7 +13,7 @@ func TestBuildMeshPreservesProbeClasses(t *testing.T) {
 		"unsupported": {ObservedAt: now, Class: "unsupported", Reason: "GET capabilities: 404 Not Found", Error: "GET capabilities: 404 Not Found"},
 		"failed":      {ObservedAt: now, Class: "failed", Error: "connection refused", FailureCount: 3},
 	}
-	got := buildMesh([]meshActorRow{{id: "a1", key: "unobserved"}, {id: "a2", key: "unsupported"}, {id: "a3", key: "failed"}}, nil, "v", observations)
+	got := buildMesh([]meshActorRow{{id: "a1", key: "unobserved"}, {id: "a2", key: "unsupported"}, {id: "a3", key: "failed"}}, nil, "v", observations, nil, now)
 	if got.Actors[0].Bridge.Class != "unobserved" || got.Actors[0].Bridge.Error != "not observed by the bridge collector" {
 		t.Fatalf("unobserved actor = %#v", got.Actors[0])
 	}

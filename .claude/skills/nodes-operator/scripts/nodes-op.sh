@@ -501,7 +501,10 @@ actors)
   # Fourth column (issue #308, t11): the row's liveness fact when the control
   # plane attaches one — session_ok/reason/mode/locked. A lane reading
   # session_ok=false or locked=true is not in the next split plan; a row
-  # without the fact reads unmeasured, which is not a verdict (c26).
+  # without the fact reads unmeasured, which is not a verdict (c26). The row
+  # also carries the router's own `live` verdict (t10): a locked lane is cleared
+  # with POST /v1alpha1/actors/{id}/resume and leases again only once the
+  # bridge's next fact says session_ok=true.
   api_get /v1alpha1/actors | py 'import json,sys
 rows = json.load(sys.stdin).get("items", [])
 def live(r):

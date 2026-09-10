@@ -25,6 +25,30 @@ type Config struct {
 	HTTPClient     *http.Client
 	Logger         *slog.Logger
 	TargetSource   func(context.Context) ([]Target, error)
+	// Liveness, when set, is handed every liveness fact a bridge advertises
+	// (plan loop-closure t10, spec c23): this cache lives in the API
+	// process and the worker that must refuse a lease on a dead lane is a
+	// separate container, so the fact is persisted rather than only cached.
+	// Nil means "cache only", which is what every existing caller gets.
+	Liveness LivenessSink
+}
+
+// LivenessSink persists one bridge's liveness fact. The collector calls it
+// once per probe that advertised the fact, after the cache is updated; an
+// error is logged and never affects the cached observation.
+type LivenessSink interface {
+	RecordLiveness(ctx context.Context, actorKey string, fact Liveness) error
+}
+
+// Liveness is the bridge-advertised session-liveness fact, the shared
+// preflight host block's `liveness` entry (t9). SessionOK is three-valued
+// on purpose: nil is "nobody measured this", which is neither true nor
+// false and must never be collapsed into either.
+type Liveness struct {
+	SessionOK *bool     `json:"session_ok"`
+	Reason    string    `json:"reason"`
+	CheckedAt time.Time `json:"checked_at"`
+	Mode      string    `json:"mode"`
 }
 
 type Target struct {
@@ -42,6 +66,11 @@ type Observation struct {
 	Reason       string          `json:"reason,omitempty"`
 	Error        string          `json:"error,omitempty"`
 	FailureCount uint64          `json:"failure_count,omitempty"`
+	// Liveness is the bridge's own session-liveness fact, nil when the
+	// bridge advertised none. It is the BRIDGE's half of decision c43; the
+	// control plane's authority of record is the persisted actor_liveness
+	// row, which the mesh read model renders beside this.
+	Liveness *Liveness `json:"liveness,omitempty"`
 }
 
 type Collector struct {
@@ -208,6 +237,7 @@ func (c *Collector) probe(parent context.Context, target Target) {
 							Host struct {
 								Hostname   string          `json:"hostname"`
 								Deployment json.RawMessage `json:"deployment"`
+								Liveness   json.RawMessage `json:"liveness"`
 							} `json:"host"`
 						} `json:"preflight"`
 					}
@@ -221,7 +251,10 @@ func (c *Collector) probe(parent context.Context, target Target) {
 						c.storeNonFailure(target.Key, "unsupported", "capabilities has no preflight.host.deployment block")
 						return
 					} else {
-						c.store(target.Key, Observation{Hostname: payload.Preflight.Host.Hostname, Deployment: payload.Preflight.Host.Deployment, ObservedAt: observedAt})
+						observation := Observation{Hostname: payload.Preflight.Host.Hostname, Deployment: payload.Preflight.Host.Deployment, ObservedAt: observedAt}
+						observation.Liveness = c.parseLiveness(target.Key, payload.Preflight.Host.Liveness)
+						c.store(target.Key, observation)
+						c.persistLiveness(parent, target.Key, observation.Liveness)
 						return
 					}
 				}
@@ -258,4 +291,38 @@ func (c *Collector) store(key string, observation Observation) {
 	c.cache[key] = observation
 	delete(c.reported, key)
 	c.mu.Unlock()
+}
+
+// parseLiveness decodes the host block's optional `liveness` entry. Absent
+// stays absent (nil); a block this collector cannot read is logged and
+// treated as absent rather than failing the whole observation — the
+// deployment facts beside it are still true, and a bridge on an older
+// preflight.py advertises no block at all.
+func (c *Collector) parseLiveness(key string, raw json.RawMessage) *Liveness {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var fact Liveness
+	if err := json.Unmarshal(raw, &fact); err != nil {
+		c.config.Logger.Warn("mesh bridge probe: unreadable liveness block", "target", key, "error", err)
+		return nil
+	}
+	if fact.Reason == "" || fact.CheckedAt.IsZero() {
+		c.config.Logger.Warn("mesh bridge probe: liveness block lacks reason or checked_at", "target", key)
+		return nil
+	}
+	return &fact
+}
+
+// persistLiveness hands a fact to the configured sink. A sink failure is
+// logged and nothing else: the cached observation is already stored, and a
+// database that is away must not make the mesh read model forget a bridge
+// it just talked to.
+func (c *Collector) persistLiveness(ctx context.Context, key string, fact *Liveness) {
+	if fact == nil || c.config.Liveness == nil {
+		return
+	}
+	if err := c.config.Liveness.RecordLiveness(ctx, key, *fact); err != nil {
+		c.config.Logger.Warn("mesh bridge probe: persist liveness", "target", key, "error", err)
+	}
 }

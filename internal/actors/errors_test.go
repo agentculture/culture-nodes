@@ -85,8 +85,8 @@ func TestOnlyExplicitlyRetryableClassesAreRetryable(t *testing.T) {
 	}
 
 	classes := actors.ErrorClasses()
-	if len(classes) != 10 {
-		t.Fatalf("ErrorClasses() has %d entries, want the 9 PRD §13.5 lists plus capacity_exhausted", len(classes))
+	if len(classes) != 11 {
+		t.Fatalf("ErrorClasses() has %d entries, want the 9 PRD §13.5 lists plus capacity_exhausted and credential_spent", len(classes))
 	}
 	for _, class := range classes {
 		if !class.Valid() {
@@ -228,5 +228,38 @@ func TestCapacityExhaustedSurfacesRetryAfter(t *testing.T) {
 	}
 	if invErr.Requests != 1 {
 		t.Errorf("Requests = %d, want 1 — a non-retryable class must not spend the maxRequests budget", invErr.Requests)
+	}
+}
+
+// A bridge error body that declares class credential_spent is honored the
+// same way capacity_exhausted is (issue #308; the loop-closure plan's
+// t10): the engine behind the bridge answers a spent refresh token as an ordinary turn failure, so
+// the status code says "execution" and only the bridge that read the
+// provider's sentence can name what actually happened. It is not retryable
+// (a retry never refreshes a revoked token) and it collapses to `failed` on
+// the tech status; the class rides along for the worker's liveness lock.
+func TestCredentialSpentIsBodyDeclared(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Your access token could not be refreshed because your refresh token was revoked","class":"credential_spent"}`))
+	}))
+	defer server.Close()
+
+	_, err := newClient(t, actors.WithMaxRequests(1)).
+		Invoke(context.Background(), actors.Endpoint{URL: server.URL}, testRequest())
+
+	got, ok := actors.ClassOf(err)
+	if !ok {
+		t.Fatalf("HTTP 500 produced an unclassified error: %v", err)
+	}
+	if got != actors.ClassCredentialSpent {
+		t.Errorf("class = %s, want credential_spent", got)
+	}
+	if got.Retryable() {
+		t.Error("credential_spent.Retryable() = true, want false (a retry never refreshes a revoked token)")
+	}
+	if status := actors.TechStatusFor(got); status != engine.StatusFailed {
+		t.Errorf("TechStatusFor(credential_spent) = %s, want failed", status)
 	}
 }

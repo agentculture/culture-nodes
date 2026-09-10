@@ -251,3 +251,116 @@ func TestCollectorProbeReleasesSingleThreadedBridge(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+// A recording sink for the liveness fact (plan loop-closure t10, spec c23):
+// what the collector would persist for the worker to read.
+type recordingLivenessSink struct {
+	mu    sync.Mutex
+	facts map[string][]Liveness
+	err   error
+}
+
+func (s *recordingLivenessSink) RecordLiveness(_ context.Context, key string, fact Liveness) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.facts == nil {
+		s.facts = map[string][]Liveness{}
+	}
+	s.facts[key] = append(s.facts[key], fact)
+	return s.err
+}
+
+func TestCollectorParsesTheLivenessFactAndPersistsItThroughTheSink(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"thor","deployment":{"version":"1.2.3"},` +
+			`"liveness":{"session_ok":false,"reason":"refresh_token_spent","checked_at":"2026-09-07T10:00:00Z","mode":"LOCK"}}}}`))
+	}))
+	defer bridge.Close()
+	unmeasured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"orin","deployment":{},` +
+			`"liveness":{"session_ok":null,"reason":"unmeasured","checked_at":"2026-09-07T10:00:00Z","mode":"CHECK"}}}}`))
+	}))
+	defer unmeasured.Close()
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"spark","deployment":{}}}}`))
+	}))
+	defer silent.Close()
+
+	sink := &recordingLivenessSink{}
+	c := New(Config{Interval: time.Hour, ProbeTimeout: time.Second, MaxConcurrency: 1, Liveness: sink})
+	c.SetTargets([]Target{{Key: "bridge-a", URL: bridge.URL}, {Key: "bridge-b", URL: unmeasured.URL}, {Key: "bridge-c", URL: silent.URL}})
+	c.Collect(context.Background())
+
+	snap := c.Snapshot()
+	a := snap["bridge-a"].Liveness
+	if a == nil || a.SessionOK == nil || *a.SessionOK || a.Reason != "refresh_token_spent" || a.Mode != "LOCK" || a.CheckedAt.IsZero() {
+		t.Fatalf("bridge-a liveness = %#v, want session_ok=false reason=refresh_token_spent mode=LOCK", a)
+	}
+	if snap["bridge-a"].Hostname != "thor" || snap["bridge-a"].Class != "" {
+		t.Fatalf("a liveness fact must not change the deployment observation: %#v", snap["bridge-a"])
+	}
+	b := snap["bridge-b"].Liveness
+	if b == nil || b.SessionOK != nil || b.Reason != "unmeasured" {
+		t.Fatalf("bridge-b liveness = %#v, want session_ok=null (unmeasured is neither true nor false)", b)
+	}
+	if snap["bridge-c"].Liveness != nil {
+		t.Fatalf("bridge-c advertised no liveness and got %#v; absent stays absent", snap["bridge-c"].Liveness)
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if got := sink.facts["bridge-a"]; len(got) != 1 || got[0].Reason != "refresh_token_spent" {
+		t.Fatalf("sink saw %v for bridge-a, want exactly the one fact", got)
+	}
+	if got := sink.facts["bridge-b"]; len(got) != 1 || got[0].SessionOK != nil {
+		t.Fatalf("sink saw %v for bridge-b, want the unmeasured fact with a nil session_ok", got)
+	}
+	if _, saw := sink.facts["bridge-c"]; saw {
+		t.Fatal("sink was handed a fact for a bridge that advertised none")
+	}
+}
+
+func TestCollectorTreatsAMalformedLivenessBlockAsAbsentAndKeepsTheObservation(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"thor","deployment":{},"liveness":{"session_ok":"yes","reason":"ok"}}}}`))
+	}))
+	defer bridge.Close()
+	var logs bytes.Buffer
+	sink := &recordingLivenessSink{}
+	c := New(Config{Interval: time.Hour, ProbeTimeout: time.Second, MaxConcurrency: 1, Liveness: sink,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	c.SetTargets([]Target{{Key: "bridge-a", URL: bridge.URL}})
+	c.Collect(context.Background())
+	got := c.Snapshot()["bridge-a"]
+	if got.Hostname != "thor" || got.Liveness != nil {
+		t.Fatalf("observation = %#v, want the deployment kept and the unreadable liveness dropped", got)
+	}
+	if len(sink.facts) != 0 {
+		t.Fatalf("sink received %v from an unreadable block", sink.facts)
+	}
+	if !strings.Contains(logs.String(), "liveness") {
+		t.Fatalf("an unreadable liveness block was dropped silently; log = %s", logs.String())
+	}
+}
+
+func TestCollectorSinkFailureIsLoggedAndDoesNotDropTheObservation(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"preflight":{"host":{"hostname":"thor","deployment":{},` +
+			`"liveness":{"session_ok":true,"reason":"ok","checked_at":"2026-09-07T10:00:00Z","mode":"CHECK"}}}}`))
+	}))
+	defer bridge.Close()
+	var logs bytes.Buffer
+	sink := &recordingLivenessSink{err: fmt.Errorf("database is away")}
+	c := New(Config{Interval: time.Hour, ProbeTimeout: time.Second, MaxConcurrency: 1, Liveness: sink,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	c.SetTargets([]Target{{Key: "bridge-a", URL: bridge.URL}})
+	c.Collect(context.Background())
+	got := c.Snapshot()["bridge-a"]
+	if got.Hostname != "thor" || got.Liveness == nil {
+		t.Fatalf("observation = %#v, want cached with its liveness even though persisting failed", got)
+	}
+	if !strings.Contains(logs.String(), "database is away") {
+		t.Fatalf("sink failure was not logged: %s", logs.String())
+	}
+}

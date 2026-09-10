@@ -425,3 +425,18 @@ carry the key without changing what an existing consumer reads. Written at
 creation (`POST /v1alpha1/runs`) or stamped by the engine's event→run minting
 from the payload's `work_item`; `PATCH /v1alpha1/runs/{id}` still accepts
 category and nothing else.
+
+## `0058_actor_liveness.sql`
+
+Adds `actor_liveness`, one row per `(namespace_id, actor_key)`: the control
+plane's authority of record for whether an actor's **session** can start
+(plan loop-closure-claude-codex t10; spec c23/c26/c33, decision c43). The
+mesh collector persists the bridge's `preflight.host.liveness` fact here
+(`source = 'collector'`), the worker writes a **locked** `session_ok = false`
+row when an attempt fails with class `credential_spent`
+(`source = 'worker'`), and `POST /v1alpha1/actors/{id}/resume` clears only
+`locked` (`source = 'resume'`) — the lane leases again only once a later
+collector write reports `session_ok = true` (c43's AND). The router treats a
+fresh (< 5 min) false row, or a locked row of any age, as "not live" and
+routes to the actor's registered `metadata.fallback_actor`. `session_ok` is
+nullable: NULL is "unmeasured", never true or false.

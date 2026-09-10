@@ -1044,6 +1044,15 @@ paths:
         secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is
         what grants an endpoint the standing to be dispatched real work,
         and clearing a pause restores exactly that standing.
+
+        Plan loop-closure t10 (decision c43): this is also the operator's
+        lane out of a session-liveness LOCK. The call clears the actor's
+        `liveness.locked` flag and records `source: resume`, but leaves
+        `session_ok` as last observed — unlocking is an AND, and resume
+        alone never reopens a lane whose last fact is false. The lane leases
+        again only once the bridge's next liveness fact (persisted by the
+        mesh collector) reports `session_ok: true`. The response carries the
+        `liveness` block so the caller sees which half is still owed.
       security:
         - actorRegistrationBearerAuth: []
       parameters:
@@ -5443,6 +5452,8 @@ components:
         actor_key: {type: string}
         machine: {type: string, nullable: true}
         bridge: {$ref: '#/components/schemas/MeshBridgeObservation'}
+        liveness:
+          $ref: '#/components/schemas/ActorLiveness'
     MeshMachine:
       type: object
       required: [actors]
@@ -5458,6 +5469,31 @@ components:
         reason: {type: string, description: Why an answering bridge has no supported capability surface; present for unsupported observations.}
         error: {type: string}
         failure_count: {type: integer, format: uint64, minimum: 0, description: "Per-target count of timeout, 5xx, and connection failures; present only for failed observations."}
+        liveness:
+          $ref: '#/components/schemas/BridgeLiveness'
+    BridgeLiveness:
+      type: object
+      description: >-
+        The bridge's OWN session-liveness fact, read verbatim off
+        `capabilities.preflight.host.liveness` (plan loop-closure t9/t10,
+        issue #308). Absent when the bridge advertises none. This is the
+        bridge's half of decision c43; the control plane's authority of
+        record is the persisted row rendered as `MeshActor.liveness` and
+        `Actor.liveness`.
+      required: [session_ok, reason, checked_at, mode]
+      properties:
+        session_ok:
+          type: boolean
+          nullable: true
+          description: true, false, or null for "nobody measured this" — never collapsed into either.
+        reason:
+          type: string
+          enum: [ok, unmeasured, refresh_token_spent, credential_expired, probe_timeout, probe_failed]
+        checked_at: {type: string, format: date-time}
+        mode:
+          type: string
+          enum: [LOCK, CHECK]
+          description: The lane's operator-configured detection mode.
     MeshWorker:
       type: object
       required: [worker_id, hostname, revision, actor_keys, last_seen]
@@ -5504,6 +5540,60 @@ components:
           $ref: '#/components/schemas/ActorAvailability'
         dispatch_rate:
           $ref: '#/components/schemas/DispatchRate'
+        liveness:
+          $ref: '#/components/schemas/ActorLiveness'
+
+    ActorLiveness:
+      type: object
+      description: >-
+        The control plane's persisted session-liveness row for this actor
+        (plan loop-closure t10; migration 0058's `actor_liveness` table;
+        decision c43). Absent entirely when nothing has ever observed the
+        actor's session — a different fact from `session_ok: null`, which is
+        a row that says "unmeasured".
+
+        Keyed by `actor_key` like `availability`, so every revision of one
+        identity reports the same row: a credential belongs to the identity.
+
+        Three writers: the mesh collector persists the bridge's fact
+        (`source: collector`); the worker writes a LOCKED `session_ok: false`
+        row when an attempt fails with class `credential_spent`
+        (`source: worker`); `POST /v1alpha1/actors/{id}/resume` clears only
+        `locked` (`source: resume`). Unlocking is an AND — resume alone never
+        reopens a lane whose last fact is false; the lane leases again once
+        a later collector write reports `session_ok: true`.
+
+        `live` is the router's own verdict, computed with the rule the
+        dispatch site applies: not live when `locked` (any age) or when
+        `session_ok` is false and `checked_at` is within the 5-minute
+        freshness window; everything else — unmeasured, true, a stale false
+        — is live. A not-live lane routes to the actor's registered
+        `metadata.fallback_actor` with a derived `decision` record
+        (`router: lane_liveness`), or proceeds with a warning record when
+        none is registered.
+      required: [session_ok, reason, mode, checked_at, source, locked, live]
+      properties:
+        session_ok:
+          type: boolean
+          nullable: true
+        reason:
+          type: string
+          description: The bridge's closed vocabulary (ok, unmeasured, refresh_token_spent, credential_expired, probe_timeout, probe_failed); a worker lock writes refresh_token_spent.
+        mode:
+          type: string
+          description: LOCK or CHECK as the bridge advertised; empty when the last writer was not a bridge fact.
+        checked_at: {type: string, format: date-time}
+        source:
+          type: string
+          enum: [collector, worker, resume]
+        locked:
+          type: boolean
+          description: The control-plane lock. Set by a worker write after a credential_spent attempt; cleared only by resume.
+        locked_by_run_id: {type: string}
+        locked_by_attempt_id: {type: string}
+        live:
+          type: boolean
+          description: What the next lease will decide for this lane.
 
     ActorAvailability:
       type: object

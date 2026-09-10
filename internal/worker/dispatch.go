@@ -122,6 +122,18 @@ func (w *Worker) dispatchActor(
 			"this worker has no actor registry configured, so it cannot resolve an endpoint to invoke")
 	}
 
+	// Lane liveness (plan loop-closure t10, decision c43), checked before
+	// the pre_run hook and before the endpoint is resolved: a hook executes
+	// real code on a real host, and a lane whose session cannot start must
+	// not be paid for by it. The gate reads the persisted actor_liveness
+	// row and, when the lane is not live and the registration names a
+	// fallback_actor, substitutes the target and the session plan; a stale
+	// or missing row changes nothing. See liveness.go.
+	target, session, proceed, err := w.livenessGate(ctx, claimed, node, dc, session)
+	if err != nil || !proceed {
+		return err
+	}
+
 	// Task t14, spec claim c37, honesty condition h32: a pre-run hook
 	// executes through the runner boundary BEFORE the actor is dispatched.
 	// Its failure fails the attempt as a technical failure and the agent is
@@ -139,7 +151,7 @@ func (w *Worker) dispatchActor(
 		preRun = run
 	}
 
-	endpoint, err := w.opts.Registry.Resolve(ctx, node.Uses)
+	endpoint, err := w.opts.Registry.Resolve(ctx, target)
 	if err != nil {
 		// An unresolvable actor is a policy/configuration refusal, not a
 		// transport failure: retrying the same reference against the same
@@ -147,7 +159,7 @@ func (w *Worker) dispatchActor(
 		// the engine does not retry. The attempt stays unattributed ("" →
 		// NULL): nothing was resolved, so there is no actor to charge.
 		return w.failAttempt(ctx, claimed, "", engine.StatusPolicyDenied, string(actors.ClassAuthOrPolicy),
-			fmt.Sprintf("node %q uses %q, which did not resolve to an endpoint: %v", node.ID, node.Uses, err))
+			fmt.Sprintf("node %q uses %q, which did not resolve to an endpoint: %v", node.ID, target, err))
 	}
 
 	// Best-effort durable attribution: the actors-table row id this
@@ -232,7 +244,15 @@ func (w *Worker) dispatchActor(
 	})
 
 	if invokeErr != nil {
-		return w.completeFromInvocationError(ctx, claimed, d, node, dc, invokeErr, preRun)
+		err := w.completeFromInvocationError(ctx, claimed, d, node, dc, invokeErr, preRun)
+		// Plan loop-closure t10 (decision c43's OR rule): a spent session
+		// credential locks the lane that was actually invoked — the target,
+		// which may be the fallback — so the next dispatch is routed around
+		// it. After the completion, best-effort, like the breaker's trip.
+		if class, ok := actors.ClassOf(invokeErr); ok && class == actors.ClassCredentialSpent {
+			w.lockLaneOnCredentialSpent(ctx, claimed, node, dc, target)
+		}
+		return err
 	}
 
 	if !response.Async {

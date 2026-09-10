@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/mesh"
+	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/worker"
 )
 
@@ -21,6 +22,11 @@ type meshActor struct {
 	ActorKey string           `json:"actor_key"`
 	Machine  *string          `json:"machine"`
 	Bridge   mesh.Observation `json:"bridge"`
+	// Liveness is the control plane's persisted session-liveness row for
+	// this actor (plan loop-closure t10; migration 0058) — the authority of
+	// record the router reads, rendered beside the bridge's own fact under
+	// Bridge.Liveness. Absent when nothing has ever observed the session.
+	Liveness *ActorLivenessOut `json:"liveness,omitempty"`
 }
 
 type meshMachine struct {
@@ -85,7 +91,7 @@ FROM worker_presence WHERE namespace_id = $1 ORDER BY worker_id`, s.NamespaceID)
 	return out, rows.Err()
 }
 
-func buildMesh(actorRows []meshActorRow, workers []meshWorker, version string, observations map[string]mesh.Observation) meshOut {
+func buildMesh(actorRows []meshActorRow, workers []meshWorker, version string, observations map[string]mesh.Observation, liveness map[string]postgres.ActorLiveness, now time.Time) meshOut {
 	out := meshOut{Actors: make([]meshActor, 0, len(actorRows)), Machines: make(map[string]meshMachine), Version: version, Workers: workers}
 	for _, row := range actorRows {
 		observation, observed := observations[row.key]
@@ -94,6 +100,9 @@ func buildMesh(actorRows []meshActorRow, workers []meshWorker, version string, o
 			observation.Error = "not observed by the bridge collector"
 		}
 		actor := meshActor{ID: row.id, ActorKey: row.key, Bridge: observation}
+		if live, ok := liveness[row.key]; ok {
+			actor.Liveness = actorLivenessOut(live, now)
+		}
 		if observation.Hostname != "" {
 			hostname := observation.Hostname
 			actor.Machine = &hostname
@@ -123,8 +132,12 @@ func (s *Server) handleMesh(w http.ResponseWriter, r *http.Request) error {
 	if s.meshCollector != nil {
 		observations = s.meshCollector.Snapshot()
 	}
+	liveness, err := s.engineStore.ActorLivenessAll(r.Context())
+	if err != nil {
+		return internalError(err)
+	}
 	// Marshal once through writeJSON. encoding/json sorts map keys, keeping the
 	// representation deterministic as long as the committed rows are unchanged.
-	writeJSON(w, http.StatusOK, buildMesh(actors, workers, s.buildVersion, observations))
+	writeJSON(w, http.StatusOK, buildMesh(actors, workers, s.buildVersion, observations, liveness, time.Now().UTC()))
 	return nil
 }

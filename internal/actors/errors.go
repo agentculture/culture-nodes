@@ -60,15 +60,29 @@ const (
 	// that self-report the same way §13.5 already trusts a bridge's
 	// auth_or_policy or actor_rejected_input declarations.
 	ClassCapacityExhausted ErrorClass = "capacity_exhausted"
+	// ClassCredentialSpent is the actor's own SESSION credential being
+	// unusable — a refresh token that was revoked or already used — so no
+	// dispatch to this lane can start a session until a human logs in again
+	// (issue #308; the loop-closure plan's t9/t10). It is distinct
+	// from auth_or_policy (the bridge refused OUR bearer) and from
+	// capacity_exhausted (the provider is out of quota): a retry never fixes
+	// it, and neither does waiting. Like capacity_exhausted it is never
+	// inferred from a status code — only a bridge's own error body declaring
+	// "class":"credential_spent" reaches it — and its response lives above
+	// the attempt: the worker locks the actor's liveness row and the router
+	// sends later work to the actor's registered fallback
+	// (internal/worker/liveness.go).
+	ClassCredentialSpent ErrorClass = "credential_spent"
 )
 
 // ErrorClasses returns the §13.5 classes in the order that section lists
-// them, followed by ClassCapacityExhausted.
+// them, followed by ClassCapacityExhausted and ClassCredentialSpent.
 func ErrorClasses() []ErrorClass {
 	return []ErrorClass{
 		ClassRetryableTransport, ClassRateLimited, ClassActorUnavailable,
 		ClassActorRejectedInput, ClassAuthOrPolicy, ClassContract,
 		ClassExecution, ClassTimeout, ClassCancelled, ClassCapacityExhausted,
+		ClassCredentialSpent,
 	}
 }
 
@@ -385,6 +399,11 @@ func classifyStatus(status int) ErrorClass {
 // has no honest opinion to defend here the way it does everywhere else.
 var bodyDeclarableClasses = map[ErrorClass]bool{
 	ClassCapacityExhausted: true,
+	// A spent session credential is equally invisible at the status level:
+	// the engine behind the bridge answers it as an ordinary turn failure
+	// (500), and only the bridge, which read the provider's own sentence,
+	// can name it.
+	ClassCredentialSpent: true,
 }
 
 // classifyBody looks for a bridge-declared class in a non-2xx response

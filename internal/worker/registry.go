@@ -234,6 +234,23 @@ func repositoryIdentityOf(metadata []byte) string {
 	return fields.RepositoryIdentity
 }
 
+// fallbackActorOf reads metadata.fallback_actor the same partial way
+// authTokenEnvOf reads its key: the metadata column is deliberately open.
+// The value is an actor reference or bare key ("company/other"), resolved
+// through the same registry the node's own reference is.
+func fallbackActorOf(metadata []byte) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var fields struct {
+		FallbackActor string `json:"fallback_actor"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return ""
+	}
+	return fields.FallbackActor
+}
+
 // ActorRowID resolves a reference to the actors-table row id of its current
 // (highest) revision — the identity attempts.actor_id records so per-actor
 // surfaces (GET /v1alpha1/actors/{id}/stats, the jobs view) can attribute

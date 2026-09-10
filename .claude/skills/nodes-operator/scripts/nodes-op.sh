@@ -498,10 +498,26 @@ actors)
   # that GET /v1alpha1/actors already returns actor_key, revision AND
   # endpoint_ref, so the ssh path was answering a question the API answers.
   # Registration itself still goes through register-actor.sh.
+  # Fourth column (loop-closure t10): the persisted session-liveness row --
+  # `live`/`not-live` per the router's own verdict, then session_ok/reason,
+  # with `locked` appended when the control plane locked the lane (clear it
+  # with POST /v1alpha1/actors/{id}/resume; it leases again only once the
+  # bridge's next fact says session_ok=true). `-` means nothing has observed
+  # this actor's session yet, which is a different fact from "unmeasured".
   api_get /v1alpha1/actors | py 'import json,sys
 rows = json.load(sys.stdin).get("items", [])
+def liveness(r):
+    l = r.get("liveness")
+    if not l:
+        return "-"
+    ok = l.get("session_ok")
+    ok = "null" if ok is None else str(ok).lower()
+    out = ("live" if l.get("live") else "not-live") + f" session_ok={ok} reason={l.get('reason','')}"
+    if l.get("locked"):
+        out += " locked"
+    return out
 for r in sorted(rows, key=lambda r: (r.get("actor_key",""), r.get("revision",0))):
-    print("|".join([str(r.get("actor_key","")), str(r.get("revision","")), str(r.get("endpoint_ref") or "")]))'
+    print("|".join([str(r.get("actor_key","")), str(r.get("revision","")), str(r.get("endpoint_ref") or ""), liveness(r)]))'
   ;;
 *)
   usage

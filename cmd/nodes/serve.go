@@ -346,9 +346,15 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	// only the cache reader, so a slow or unreachable bridge can never extend
 	// GET /v1alpha1/mesh latency. Targets are supplied by deployment wiring as
 	// they become known; an empty set honestly renders bridges as unknown.
-	meshCollector := mesh.New(mesh.Config{TargetSource: func(refreshCtx context.Context) ([]mesh.Target, error) {
-		return meshTargets(refreshCtx, db, namespaceID, os.LookupEnv)
-	}})
+	meshCollector := mesh.New(mesh.Config{
+		TargetSource: func(refreshCtx context.Context) ([]mesh.Target, error) {
+			return meshTargets(refreshCtx, db, namespaceID, os.LookupEnv)
+		},
+		// Every bridge liveness fact is persisted as an actor_liveness row
+		// (plan loop-closure t10): the worker that must refuse a lease on a
+		// dead lane is a separate process and cannot read this cache.
+		Liveness: api.CollectorLivenessSink(db, namespaceID),
+	})
 
 	go meshCollector.Run(ctx)
 	opts = append(opts, api.WithMeshCollector(meshCollector))

@@ -100,6 +100,9 @@
           "kind": {
             "type": "string"
           },
+          "liveness": {
+            "$ref": "#/components/schemas/ActorLiveness"
+          },
           "metadata": {
             "description": "Open metadata, as the row's own JSON value."
           },
@@ -308,6 +311,59 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "ActorLiveness": {
+        "description": "The control plane's persisted session-liveness row for this actor (plan loop-closure t10; migration 0058's `actor_liveness` table; decision c43). Absent entirely when nothing has ever observed the actor's session — a different fact from `session_ok: null`, which is a row that says \"unmeasured\".\nKeyed by `actor_key` like `availability`, so every revision of one identity reports the same row: a credential belongs to the identity.\nThree writers: the mesh collector persists the bridge's fact (`source: collector`); the worker writes a LOCKED `session_ok: false` row when an attempt fails with class `credential_spent` (`source: worker`); `POST /v1alpha1/actors/{id}/resume` clears only `locked` (`source: resume`). Unlocking is an AND — resume alone never reopens a lane whose last fact is false; the lane leases again once a later collector write reports `session_ok: true`.\n`live` is the router's own verdict, computed with the rule the dispatch site applies: not live when `locked` (any age) or when `session_ok` is false and `checked_at` is within the 5-minute freshness window; everything else — unmeasured, true, a stale false — is live. A not-live lane routes to the actor's registered `metadata.fallback_actor` with a derived `decision` record (`router: lane_liveness`), or proceeds with a warning record when none is registered.",
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "live": {
+            "description": "What the next lease will decide for this lane.",
+            "type": "boolean"
+          },
+          "locked": {
+            "description": "The control-plane lock. Set by a worker write after a credential_spent attempt; cleared only by resume.",
+            "type": "boolean"
+          },
+          "locked_by_attempt_id": {
+            "type": "string"
+          },
+          "locked_by_run_id": {
+            "type": "string"
+          },
+          "mode": {
+            "description": "LOCK or CHECK as the bridge advertised; empty when the last writer was not a bridge fact.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "The bridge's closed vocabulary (ok, unmeasured, refresh_token_spent, credential_expired, probe_timeout, probe_failed); a worker lock writes refresh_token_spent.",
+            "type": "string"
+          },
+          "session_ok": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "source": {
+            "enum": [
+              "collector",
+              "worker",
+              "resume"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_ok",
+          "reason",
+          "mode",
+          "checked_at",
+          "source",
+          "locked",
+          "live"
         ],
         "type": "object"
       },
@@ -631,6 +687,46 @@
         "required": [
           "input_tokens",
           "output_tokens"
+        ],
+        "type": "object"
+      },
+      "BridgeLiveness": {
+        "description": "The bridge's OWN session-liveness fact, read verbatim off `capabilities.preflight.host.liveness` (plan loop-closure t9/t10, issue #308). Absent when the bridge advertises none. This is the bridge's half of decision c43; the control plane's authority of record is the persisted row rendered as `MeshActor.liveness` and `Actor.liveness`.",
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mode": {
+            "description": "The lane's operator-configured detection mode.",
+            "enum": [
+              "LOCK",
+              "CHECK"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "ok",
+              "unmeasured",
+              "refresh_token_spent",
+              "credential_expired",
+              "probe_timeout",
+              "probe_failed"
+            ],
+            "type": "string"
+          },
+          "session_ok": {
+            "description": "true, false, or null for \"nobody measured this\" — never collapsed into either.",
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_ok",
+          "reason",
+          "checked_at",
+          "mode"
         ],
         "type": "object"
       },
@@ -2203,6 +2299,9 @@
             "description": "The `actors` row id of this actor's current (highest) revision -- the identity `attempts.actor_id` records, and therefore the value `GET /v1alpha1/node-runs` reports as a node run's `actor_id`. Join run attribution on this, not on `actor_key`.",
             "type": "string"
           },
+          "liveness": {
+            "$ref": "#/components/schemas/ActorLiveness"
+          },
           "machine": {
             "nullable": true,
             "type": "string"
@@ -2243,6 +2342,9 @@
           "hostname": {
             "description": "Hostname reported by capabilities.preflight.host.hostname.",
             "type": "string"
+          },
+          "liveness": {
+            "$ref": "#/components/schemas/BridgeLiveness"
           },
           "observed_at": {
             "format": "date-time",
@@ -4465,7 +4567,7 @@
     },
     "/v1alpha1/actors/{id}/resume": {
       "post": {
-        "description": "Task t9: the reversibility half of the capacity circuit breaker. When a dispatch to an actor fails with the `capacity_exhausted` §13.5 class, the worker marks that actor unavailable until a deadline and defers — never fails — work addressed to it. This operation ends that pause early, so an operator who knows better (the quota reset, the bridge was misreporting, the limit did not apply to this project) can overrule the automatic classification without touching the database.\nThe pause is keyed by `actor_key`, not by this row's id, so resuming any revision of an identity resumes the identity — provider capacity belongs to the identity, not to one append-only registration revision.\nClearing an actor that is not currently paused is 200 with the actor's current state, not an error: the caller's intent (\"this actor should be dispatchable\") is already satisfied, and two operators racing to clear one pause should both succeed.\nWork items already deferred become claimable again within the worker's deferral horizon (at most a few minutes), not instantaneously: a deferral pushes `work_items.available_at` forward, and the horizon is bounded precisely so an early clear cannot go unnoticed for the whole pause.\nLike actor registration on this same noun — and unlike the rest of this authless-by-phase-1-design API (spec decision c45) — it requires the actor-registration bearer token, deliberately the SAME secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is what grants an endpoint the standing to be dispatched real work, and clearing a pause restores exactly that standing.",
+        "description": "Task t9: the reversibility half of the capacity circuit breaker. When a dispatch to an actor fails with the `capacity_exhausted` §13.5 class, the worker marks that actor unavailable until a deadline and defers — never fails — work addressed to it. This operation ends that pause early, so an operator who knows better (the quota reset, the bridge was misreporting, the limit did not apply to this project) can overrule the automatic classification without touching the database.\nThe pause is keyed by `actor_key`, not by this row's id, so resuming any revision of an identity resumes the identity — provider capacity belongs to the identity, not to one append-only registration revision.\nClearing an actor that is not currently paused is 200 with the actor's current state, not an error: the caller's intent (\"this actor should be dispatchable\") is already satisfied, and two operators racing to clear one pause should both succeed.\nWork items already deferred become claimable again within the worker's deferral horizon (at most a few minutes), not instantaneously: a deferral pushes `work_items.available_at` forward, and the horizon is bounded precisely so an early clear cannot go unnoticed for the whole pause.\nLike actor registration on this same noun — and unlike the rest of this authless-by-phase-1-design API (spec decision c45) — it requires the actor-registration bearer token, deliberately the SAME secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is what grants an endpoint the standing to be dispatched real work, and clearing a pause restores exactly that standing.\nPlan loop-closure t10 (decision c43): this is also the operator's lane out of a session-liveness LOCK. The call clears the actor's `liveness.locked` flag and records `source: resume`, but leaves `session_ok` as last observed — unlocking is an AND, and resume alone never reopens a lane whose last fact is false. The lane leases again only once the bridge's next liveness fact (persisted by the mesh collector) reports `session_ok: true`. The response carries the `liveness` block so the caller sees which half is still owed.",
         "operationId": "resumeActor",
         "parameters": [
           {

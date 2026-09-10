@@ -364,8 +364,9 @@ def test_a_malformed_analysis_is_refused_by_the_node_contract(
 ):
     document = json.loads(json.dumps(fixture_analysis))
     mutation(document)
+    schema = _packaged_schema(analysis_outcomes)
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(document, _packaged_schema(analysis_outcomes))
+        jsonschema.validate(document, schema)
 
 
 def test_the_no_fix_outcome_refuses_a_package(analysis_outcomes, fixture_analysis):

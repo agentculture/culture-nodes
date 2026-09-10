@@ -605,7 +605,8 @@ def test_an_unreadable_github_leaves_ci_and_threads_null(github, sonar, devague)
         github, sonar, devague, fact(), PR_UPKEEP_READINESS_GITHUB_API="http://127.0.0.1:1"
     )
     assert proc.returncode == 0, proc.stderr
-    assert block["ci"] is None and block["threads"] is None
+    assert block["ci"] is None
+    assert block["threads"] is None
     assert sorted(f["source"] for f in block["failures"]) == ["github-checks", "github-threads"]
     assert block["sonar"] == {"gate": "ERROR", "open_issues": 4, "hotspots": 2}
 

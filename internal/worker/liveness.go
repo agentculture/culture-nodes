@@ -48,7 +48,7 @@ import (
 // credential_spent — from the SYNCHRONOUS path (dispatchActor calls
 // lockLaneOnCredentialSpent below) and from the ASYNCHRONOUS one (the
 // callback ingest, internal/actors/lanelock.go), both through the one
-// shared helper, because production codex is async and a lock only the
+// shared helper, because production lanes are async and a lock only the
 // sync path could write never landed there (code-review fix D). Whichever
 // side sees it first closes the lane. Unlocking is an AND: POST
 // /v1alpha1/actors/{id}/resume clears the control-plane lock, and the lane

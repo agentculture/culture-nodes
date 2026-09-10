@@ -602,7 +602,7 @@ func (s *Server) routes() http.Handler {
 			// The async half of decision c43's OR rule: a `failed` event
 			// carrying class credential_spent locks the lane it was
 			// dispatched to, exactly as the worker does for a synchronous
-			// failure (internal/actors/lanelock.go). Production codex is
+			// failure (internal/actors/lanelock.go). Production async lanes are
 			// async, so without this the lock never landed (fix D).
 			LaneLocker: s.callbackStore,
 		})))

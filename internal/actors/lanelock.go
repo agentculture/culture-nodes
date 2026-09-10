@@ -14,7 +14,7 @@ import (
 // whose classified error reaches internal/worker/dispatch.go, and an
 // ASYNCHRONOUS one whose bridge answered 202 and later reported a §13.4
 // `failed` event carrying class credential_spent through HandleCallback —
-// in the API process, which holds no worker. Production codex is the
+// in the API process, which holds no worker. Production async lanes are the
 // second kind (`always_async: true`). Before this file only the first path
 // locked the actor_liveness row, so a dead async lane was leased again as
 // soon as the collector's fact aged out and failed the same way, forever,

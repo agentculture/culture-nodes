@@ -710,7 +710,8 @@ def test_a_missing_toolchain_refuses_by_name_before_running_anything(
     assert missing[0]["work_item"] == WORK_ITEM, missing[0]
     assert missing[0]["land_run_id"] == LAND_RUN, missing[0]
     gate = steps(records)["gate"]
-    assert gate["outcome"] == "refused" and gate["reason"] == "toolchain_missing"
+    assert gate["outcome"] == "refused", gate
+    assert gate["reason"] == "toolchain_missing", gate
     assert gate["missing"] == ["go"]
     assert gate_log(tmp_path) == [], "the chain started although a toolchain was missing"
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before

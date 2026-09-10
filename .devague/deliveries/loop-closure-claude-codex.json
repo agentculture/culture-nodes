@@ -2,7 +2,7 @@
   "plan_slug": "loop-closure-claude-codex",
   "schema_version": 2,
   "created": "2026-09-07T05:51:17Z",
-  "updated": "2026-09-10T16:10:59Z",
+  "updated": "2026-09-10T16:44:09Z",
   "deviations": [
     {
       "id": "d1",
@@ -14,7 +14,7 @@
         "t3"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up",
       "seq": 1
     },
@@ -28,7 +28,7 @@
         "t19"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up",
       "seq": 2
     },
@@ -42,7 +42,7 @@
         "t19"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up",
       "seq": 3
     },
@@ -56,7 +56,7 @@
         "t17"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up",
       "seq": 4
     }

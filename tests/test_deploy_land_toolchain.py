@@ -158,7 +158,8 @@ def test_an_unbootstrapped_land_account_is_skipped_by_name(tmp_path):
     skipped = lines(proc, "not bootstrapped")
     assert len(skipped) == 1, proc.stdout
     assert "culture-land" in skipped[0], proc.stdout
-    assert not lines(proc, "present") and not lines(proc, "MISSING")
+    assert not lines(proc, "present"), proc.stdout
+    assert not lines(proc, "MISSING"), proc.stdout
 
 
 def test_the_binary_list_is_the_gate_declaration(tmp_path):

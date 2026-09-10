@@ -448,7 +448,8 @@ def test_an_exit_2_that_names_nothing_is_a_red_gate_not_an_incomplete_one(
     assert code == land.EXIT_ROUTED_HUMAN, records
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == before, "an unlinted tree landed"
     gate = steps(records)["gate"]
-    assert gate["outcome"] == "routed" and gate["failing_step"] == "lint_all"
+    assert gate["outcome"] == "routed"
+    assert gate["failing_step"] == "lint_all"
     assert len(routing_records(records)) == 1
 
 

@@ -707,7 +707,8 @@ def test_a_missing_toolchain_refuses_by_name_before_running_anything(
     missing = [r for r in records if r.get("record") == "toolchain_missing"]
     assert [r["binary"] for r in missing] == ["go"]
     assert missing[0]["needed_for"] == land_gate.REQUIRED_TOOLCHAINS["go"]
-    assert missing[0]["work_item"] == WORK_ITEM and missing[0]["land_run_id"] == LAND_RUN
+    assert missing[0]["work_item"] == WORK_ITEM, missing[0]
+    assert missing[0]["land_run_id"] == LAND_RUN, missing[0]
     gate = steps(records)["gate"]
     assert gate["outcome"] == "refused" and gate["reason"] == "toolchain_missing"
     assert gate["missing"] == ["go"]

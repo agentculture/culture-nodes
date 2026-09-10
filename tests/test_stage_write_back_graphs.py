@@ -373,8 +373,9 @@ class TestTheGraphChangeIsPublishable:
         nodes = _nodes(documents["cleanup"])
         assert nodes["cleanup"]["kind"] == "code"
         assert nodes["cleaned"]["kind"] == "end" and nodes["cleanup-failed"]["kind"] == "end"
-        assert {"pr.merged", "pr.closed"} == {
-            trigger["onEvent"] for trigger in documents["cleanup"]["spec"]["triggers"]
+        assert {trigger["onEvent"] for trigger in documents["cleanup"]["spec"]["triggers"]} == {
+            "pr.merged",
+            "pr.closed",
         }
 
 

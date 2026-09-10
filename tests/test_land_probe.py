@@ -78,7 +78,8 @@ def test_a_second_active_attempt_on_the_actor_checkout_blocks_the_reset(
     by = steps(records)
     assert by["push"]["outcome"] == "ok", "the landing itself is not what waits"
     wait = by["checkout_lease"]
-    assert wait["outcome"] == "waiting" and wait["scope"] == "actor_checkout"
+    assert wait["outcome"] == "waiting"
+    assert wait["scope"] == "actor_checkout"
     assert wait["active_attempts"] == 1
     assert "reset" not in by, "the reset did not run"
     assert seen == [("http://control-plane.invalid", ACTOR_ID, LAND_RUN)]

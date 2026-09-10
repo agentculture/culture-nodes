@@ -176,6 +176,33 @@ class TestEveryStageNodeIsTheJiraActorsNarrowWrite:
                 # at least one sentence of prose.
                 assert rest.strip(), node_id
 
+    def test_a_stage_literal_states_no_outcome_only_the_run_can_know(self, documents):
+        """A literal is fixed at authoring time; the node decides at run time.
+
+        The cleanup node deletes a ref when the default branch already carries
+        its commit and declines it otherwise -- a decision it makes per ref,
+        from a reachability measurement, on both lifecycle facts. So no stage
+        comment can state the OUTCOME of that decision: it can state the rule
+        and point at the derived record, and that is what each one does.
+
+        The phrases below are the measured instance, not a style rule. The
+        closed-path comment said "deleted nothing: every branch and handover
+        ref it found is unreachable", which is false for a work item whose
+        earlier pull request merged -- its landed refs are reachable and are
+        deleted on a close too (tests/test_cleanup_node.py
+        ``test_a_closed_pr_still_deletes_a_ref_an_earlier_merge_landed``).
+        A ticket comment is a record a person reads; a false one is the thing
+        this graph refuses to post when cleanup FAILS, and it must not post
+        one when cleanup succeeds either.
+        """
+        forbidden = ("deleted nothing", "nothing was deleted", "all of them were kept")
+        for graph, stages in STAGE_NODES.items():
+            for node_id in stages:
+                literal = _bindings(_nodes(documents[graph])[node_id])["comment"]["literal"]
+                lowered = literal.lower()
+                for phrase in forbidden:
+                    assert phrase not in lowered, f"{node_id}: claims {phrase!r}"
+
     def test_no_graph_writes_the_actors_own_marker(self):
         # The bridge stamps [culture-nodes:jira-actor] itself; a graph that
         # wrote one would be forging the identity the self-echo filter trusts.

@@ -338,6 +338,40 @@ def test_closed_pr_cancels_parked_runs_with_reason_pr_closed_and_declines_its_re
     assert unreachable_branch in {entry["ref"] for entry in record["declined"]}
 
 
+def test_a_closed_pr_still_deletes_a_ref_an_earlier_merge_landed(remote, api, tmp_path):
+    """Reachability is measured per ref, never inferred from the reason.
+
+    `pr.closed` says THAT pull request's branch did not land. It says nothing
+    about the work item's other refs, and an item whose earlier pull request
+    merged owns refs the default branch already carries — the very leak this
+    node exists to close (#307's 8 leftover branches). Deleting one of those
+    destroys no work, so a close deletes it too, and the record says so.
+
+    This is pinned because the ticket comment on the closed path used to
+    assert the opposite ("deleted nothing: every ref ... is unreachable"),
+    which is a claim a fixed literal cannot make about a per-ref decision.
+    """
+    bare, before = remote
+    proc, record = run_cleanup(bare, api, closed_fact(), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+
+    landed_branch = f"refs/heads/review-fix/{RUN_PARKED_REACHABLE}-fix-20260907T000000Z-abc123"
+    landed_handover = f"refs/culture-nodes/{RUN_PARKED_REACHABLE}/20260907T000000Z-abc123"
+    deleted = {entry["ref"]: entry["commit"] for entry in record["deleted"]}
+    assert deleted == {
+        landed_branch: before[landed_branch],
+        landed_handover: before[landed_handover],
+    }
+    after = remote_refs(bare)
+    assert landed_branch not in after and landed_handover not in after
+    # And the unreachable ones are untouched on the same run: the close did
+    # not turn the reachability test off, it just did not change its answer.
+    unreachable_branch = (
+        f"refs/heads/review-fix/{RUN_PARKED_UNREACHABLE}-fix-20260907T000001Z-def456"
+    )
+    assert after[unreachable_branch] == before[unreachable_branch]
+
+
 def test_the_record_is_one_derived_shaped_json_line_listing_everything(remote, api, tmp_path):
     bare, _ = remote
     proc, record = run_cleanup(bare, api, merged_fact(), tmp_path)

@@ -26,8 +26,12 @@ parked `human-merges-pr` runs behind after its merge, all removed by hand.
    against the default branch decides. A reachable ref is deleted on the
    remote and the remote is re-read to confirm. An unreachable ref is the
    only copy of that work: it is listed as `declined: unreachable` and never
-   touched. On a `pr.closed` fact nothing was merged, so every ref is declined
-   and the record still names them (h24). The deletion carries the tested
+   touched. Reachability is measured per ref and is never inferred from the
+   fact that triggered the run: a `pr.closed` fact says THAT pull request's
+   branch never landed, so its refs decline, but the same work item can own a
+   ref an earlier merge already carried into the default branch — deleting
+   that one destroys nothing, and it is deleted on a close too. Either way the
+   record names every ref on both sides (h24). The deletion carries the tested
    commit as a lease (`git push --force-with-lease=<ref>:<sha> --delete`), so
    the ref it removes is the ref it measured: another worker's push landing in
    the window between the fetch and the deletion is refused by git and
@@ -105,6 +109,11 @@ the sweep, which has no Jira write path at all:
   parked runs and per-item state are settled and the record says what happened
   to each. A **failed** cleanup posts nothing — a comment saying the loose ends
   were closed when they were not is exactly the false record this graph avoids.
+  For the same reason neither comment states a *count*: both are literals fixed
+  at authoring time, while the node decides per ref at run time, so they
+  describe the rule it applied and point at the record for what it did. The
+  closed-path comment in particular cannot say "nothing was deleted" — see
+  step 2.
 
 Two nodes post `cleanup` and not one because a binding is a pointer and the
 two facts name the work item in different fields: `pr.merged` carries the

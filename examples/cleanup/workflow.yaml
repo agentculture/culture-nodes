@@ -17,8 +17,11 @@
 #   * deletes ONLY refs whose commits are reachable from the default branch
 #     (`git merge-base --is-ancestor`). An unreachable ref is the only copy of
 #     that work; it is reported as `declined: unreachable` and never deleted.
-#     On a pr.closed fact nothing was merged, so every ref is declined -- the
-#     record still lists them (h24);
+#     Reachability is measured per ref and is never inferred from the reason:
+#     a pr.closed fact means THAT pull request's branch never landed, so its
+#     refs decline, but the same work item can still own a ref an earlier
+#     merge carried into the default branch, and deleting that ref destroys
+#     nothing. The record lists both halves either way (h24);
 #   * cancels the item's runs still parked at the approval node through
 #     POST /v1alpha1/runs/{id}/cancel with a machine-readable reason
 #     (`pr_merged` | `pr_closed`, internal/api/cancelreason.go), so the
@@ -310,8 +313,16 @@ spec:
 
     # Stage `cleanup` on the pr.closed path. Same stage, same words about the
     # record, different pointer: a pr.closed fact names the work item in
-    # `work_item`, and its declined-everything outcome is worth saying in
-    # its own sentence rather than leaving a reader to infer it.
+    # `work_item`. It gets its own wording because the usual outcome of a
+    # close is a decline, and that is worth saying rather than leaving a
+    # reader to infer it -- but the sentence stops at what the node
+    # GUARANTEES. It cannot say "nothing was deleted": this literal is fixed
+    # at authoring time while the node decides per ref at run time, and a
+    # work item whose earlier pull request merged can own a ref the default
+    # branch already carries. That ref is deleted on a close too, and a
+    # comment claiming otherwise would be the false record this graph exists
+    # to avoid. What the deleting and the declining actually were is in the
+    # node's record, which is what the comment points at.
     stage-cleanup-declined:
       kind: agent
       ownerRef: team/platform-ai
@@ -326,7 +337,7 @@ spec:
           comment:
             literal: |-
               culture-nodes:stage=cleanup
-              The pull request for this work item was closed without merging, so the culture-nodes cleanup node deleted nothing: every branch and handover ref it found is unreachable from the default branch and is the only copy of that work, so all of them were kept and reported. Any run parked on the merge decision was cancelled with a machine-readable reason. The one derived record listing each ref it declined is the node's attempt artifact in the culture-nodes control plane.
+              The pull request for this work item was closed without merging. The culture-nodes cleanup node kept and reported every branch and handover ref unreachable from the default branch rather than deleting it -- an unreachable ref is the only copy of that work -- and deleted only refs whose commits the default branch already carries, which after a close are the ones an EARLIER merge of this work item landed. Reachability is measured per ref, never inferred from the close. The one derived record listing each ref it deleted and each it declined is the node's attempt artifact in the culture-nodes control plane. Any run parked on the merge decision was cancelled with a machine-readable reason.
       contract:
         outcomes:
           comment_posted:

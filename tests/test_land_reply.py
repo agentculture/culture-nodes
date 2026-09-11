@@ -602,7 +602,8 @@ def test_a_landing_replies_and_resolves_through_the_hooks(
     assert by["reply"]["outcome"] == "ok"
     assert by["reply"]["replies_posted"] == 1
     assert by["reply"]["pr_comment"] == "posted"
-    assert by["resolve"]["outcome"] == "ok" and by["resolve"]["resolved"] == 1
+    assert by["resolve"]["outcome"] == "ok"
+    assert by["resolve"]["resolved"] == 1
     assert by["reset"]["outcome"] == "ok"
     body = fake_github.threads[0]["comments"][-1]["body"]
     assert landed in body and QODO["id"] in body and land_reply.SIGNATURE in body

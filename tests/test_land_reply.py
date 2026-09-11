@@ -572,7 +572,8 @@ def test_the_client_has_no_merge_endpoint():
 
 def test_the_reply_client_never_forces_or_pushes():
     code = code_only(REPLY_SCRIPT.read_text(encoding="utf-8"))
-    assert "subprocess" not in code and '"push"' not in code
+    assert "subprocess" not in code
+    assert '"push"' not in code
     assert land_reply.REPLY_CREDENTIAL == "GITHUB_TOKEN_LAND_PR"
     assert land_reply.SIGNATURE == "- culture-nodes (land node)"
 

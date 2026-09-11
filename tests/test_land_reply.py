@@ -665,5 +665,6 @@ def test_workflow_grants_the_reply_credential_and_the_sibling_source():
         assert ref in op["environmentRefs"], ref
         assert ref in text.split("apiVersion:")[0], f"{ref} not named in the deployment prose"
     argv = " ".join(op["argv"])
-    assert "LAND_REPLY_SOURCE_URL" in argv and "LAND_REPLY_SOURCE_SHA256" in argv
+    assert "LAND_REPLY_SOURCE_URL" in argv
+    assert "LAND_REPLY_SOURCE_SHA256" in argv
     assert "land_reply.py" in argv

@@ -562,7 +562,8 @@ def test_the_client_has_no_merge_endpoint():
     # resolve, read comments, comment.
     assert "resolveReviewThread" in code
     assert "/replies" in code
-    assert "/issues/" in code and "/comments" in code
+    assert "/issues/" in code
+    assert "/comments" in code
     # And land.py's own guard still holds with the hooks wired in.
     land_code = code_only(LAND_SCRIPT.read_text(encoding="utf-8"))
     assert "api.github.com" not in land_code

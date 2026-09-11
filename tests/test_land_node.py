@@ -617,7 +617,8 @@ def test_a_rebase_conflict_routes_to_a_human_and_pushes_nothing(
     assert data["reason"] == land.REASON_REBASE_CONFLICT == "rebase_conflict"
     assert data["dispatched"] is False
     assert data["router"] == land.ROUTER_COLLECTION_METHOD
-    assert data["bound"]["max_attempts"] == 2 and data["bound"]["window_seconds"] == 86400
+    assert data["bound"]["max_attempts"] == 2
+    assert data["bound"]["window_seconds"] == 86400
     assert data["bound"]["at_ceiling"] == "route to a human node"
     assert data["conflicted_paths"] == ["feature.txt"]
     assert "feature.txt" in data["rationale"]

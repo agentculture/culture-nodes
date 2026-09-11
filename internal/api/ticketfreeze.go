@@ -118,7 +118,7 @@ func (s *Server) freezeTicketRuns(ctx context.Context, ticketID, ticketStatus st
 	for _, run := range live {
 		if cancel {
 			detail := fmt.Sprintf("ticket %s frozen with status %q; run cancelled", ticketID, ticketStatus)
-			if _, err := s.cancelRunWithReason(ctx, run.id, TicketFrozenReason, detail); err != nil {
+			if _, err := s.cancelRunGuarded(ctx, run.id, TicketFrozenReason, detail, ""); err != nil {
 				return effect, fmt.Errorf("api: freeze ticket %s: cancel run %s: %w", ticketID, run.id, err)
 			}
 			effect.Cancelled = append(effect.Cancelled, run.id)

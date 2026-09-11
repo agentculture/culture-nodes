@@ -45,18 +45,27 @@ from base64 import b64encode
 # watermarks, transition slugs — is pr_upkeep_jira's to own; re-exporting it
 # here made the sweep look like it had opinions about Jira that it does not.
 from pr_upkeep_emit import (
-    FINDINGS_PER_EVENT,
     RUNS_MAX_PAGES,
     RUNS_PAGE_LIMIT,
+    closed_pull_event,
     dispatched_finding_ids,
     emission_watermark,
-    merged_pr_fact,
+    finding_package,
+    merged_pr_fact,  # noqa: F401 - main() routes via closed_pull_event; tests reach it here
+    newest_comment_timestamp,
     next_run_cursor,
     opened_pr_fact,
+    pushback_findings,
     runs_query,
     undispatched_findings,
+    upkeep_pr_fact,
 )
-from pr_upkeep_jira import fetch_jira_issues, jira_api_base, jira_credentials, jira_emissions
+from pr_upkeep_jira import (
+    fetch_jira_issues,
+    jira_api_base,
+    jira_credentials,
+    jira_emissions,
+)
 
 # The blast radius used to be one repo pinned in this module. That narrowing
 # existed because fetch_open_pulls enumerates EVERY open PR and then reads
@@ -562,8 +571,8 @@ def fetch_sonar_issues(component: str, pr: int | None = None) -> dict:
 
 
 def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
-    """Every currently open PR as ``{"number": int, "head_sha": str}``,
-    unfiltered. The cap lives with the caller (`main`) so the SAME swept set
+    """Every currently open PR as ``{"number", "head_sha", "head": {"ref"},
+    "body"}``, unfiltered. The cap lives with the caller (`main`) so the SAME swept set
     feeds all three per-PR queries — the SonarCloud per-PR query, the Qodo
     comment fetch, and the check-runs fetch below, one request per PR each —
     rather than independently-capped (and possibly diverging) sets.
@@ -579,7 +588,12 @@ def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
         if not isinstance(pull.get("number"), int):
             continue
         head = pull.get("head") or {}
-        open_pulls.append({"number": pull["number"], "head_sha": head.get("sha") or ""})
+        # `head.ref` + `body` ride along for the work-item correlation (branch,
+        # then body); without them every PR falls to the transient gh: form.
+        open_pulls.append(
+            {"number": pull["number"], "head_sha": head.get("sha") or ""}
+            | {"head": {"ref": head.get("ref") or ""}, "body": pull.get("body") or ""}
+        )
     return open_pulls
 
 
@@ -587,19 +601,21 @@ MERGED_PR_LOOKBACK_DAYS = 30
 MERGED_PR_MAX_PAGES = 10
 
 
-def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
-    """Closed PRs merged inside the lookback window, across pages.
+def fetch_closed_pulls(token: str | None, repository: str) -> list[dict]:
+    """Closed PRs -- merged AND declined -- inside the lookback window, across pages.
 
     One 50-item page silently dropped every merge past it (Qodo 6 on PR
     #244). GitHub sorts closed PRs by `updated` when asked; pages are read
-    newest-first until a page ends before the window, so every merge inside
-    the window is observed and the source_key + merged_at watermark keeps
-    each one to a single fact. The window and page cap bound the read.
+    newest-first until a page ends before the window, so every closure inside
+    the window is observed and the source_key + immutable-timestamp watermark
+    keeps each one to a single fact. The window and page cap bound the read.
+    One listing feeds both lifecycle facts: `pr.merged` takes the rows with a
+    `merged_at`, `pr.closed` (t12) the rows without one.
     """
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=MERGED_PR_LOOKBACK_DAYS)
-    merged: list[dict] = []
+    closed: list[dict] = []
     for page in range(1, MERGED_PR_MAX_PAGES + 1):
         pulls = _get_json(
             f"{GITHUB_API}/repos/{repository}/pulls"
@@ -608,11 +624,16 @@ def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
         )
         if not pulls:
             break
-        merged.extend(pull for pull in pulls if pull.get("merged_at"))
+        closed.extend(pulls)
         oldest = min((pull.get("updated_at") or "9999") for pull in pulls)
         if oldest < cutoff.strftime("%Y-%m-%dT%H:%M:%SZ") or len(pulls) < 50:
             break
-    return merged
+    return closed
+
+
+def fetch_merged_pulls(token: str | None, repository: str) -> list[dict]:
+    """The merged subset of `fetch_closed_pulls` (kept for callers that only want merges)."""
+    return [pull for pull in fetch_closed_pulls(token, repository) if pull.get("merged_at")]
 
 
 def fetch_check_runs(token: str | None, repository: str, head_sha: str) -> dict:
@@ -644,28 +665,6 @@ def fetch_pr_comments(token: str | None, repository: str, number: int) -> list[d
     return _get_json(
         f"{GITHUB_API}/repos/{repository}/issues/{number}/comments?per_page=100", token
     )
-
-
-def _comment_timestamp(comment: dict) -> str:
-    """A comment's position for "newest" comparisons.
-
-    Checks BOTH schemas this file reads comments from: GitHub issue-comment
-    objects (`updated_at`/`created_at`) and Jira Cloud v3 comment objects
-    (`updated`/`created` — no `_at` suffix). `updated` is preferred over
-    `created`, matching the GitHub-side preference, so an edited comment
-    still counts as the newest touch on the thread.
-    """
-    return str(
-        comment.get("updated_at")
-        or comment.get("created_at")
-        or comment.get("updated")
-        or comment.get("created")
-        or ""
-    )
-
-
-def newest_comment_timestamp(comments: list[dict]) -> str:
-    return max((_comment_timestamp(c) for c in comments), default="")
 
 
 def raise_event(
@@ -743,7 +742,8 @@ def fetch_dispatched_findings(repository: str = "") -> tuple:
         # is for whatever reads the report, which is the surface an operator
         # actually watches. A degradation only one of those two can see is a
         # degradation that gets noticed the month after it starts costing.
-    return (*dispatched_finding_ids(pages, repository), truncated)
+    in_flight, by_head = dispatched_finding_ids(pages, repository)
+    return in_flight, by_head, pushback_findings(pages, repository), truncated
 
 
 def _max_prs_per_sweep() -> int:
@@ -832,6 +832,7 @@ def main() -> int:
             (
                 in_flight_findings,
                 findings_worked_by_head,
+                pushbacks,
                 dedupe_truncated,
             ) = fetch_dispatched_findings(github_repo)
         emitted = []
@@ -843,28 +844,6 @@ def main() -> int:
         # emittable next one. Separate from skipped_findings so the summary
         # keeps saying WHICH reason a finding is not in flight (#268).
         deferred_findings = []
-        # Closed PRs are a separate bounded read. The immutable merged_at
-        # value is the watermark, so two passes append exactly one fact.
-        with attempting(f"listing merged PRs of {github_repo} (GitHub)"):
-            merged_pulls = fetch_merged_pulls(token, github_repo)
-        for pull in merged_pulls:
-            fact = merged_pr_fact(pull, github_repo, repository.get("jira_project"))
-            if fact is None:
-                continue
-            # Re-emitted every pass by design: the control plane keys the
-            # fact on source_key + watermark (merged_at) and answers a repeat
-            # with duplicate=true (internal/store/postgres/signal.go), so
-            # consumers see one fact per merge, not one per sweep.
-            with attempting(f"emitting pr.merged for #{pull.get('number')} (control plane)"):
-                emitted.append(
-                    raise_event(
-                        "pr.merged",
-                        fact,
-                        f"github:{github_repo}:pr:{pull.get('number')}:merged",
-                        {"merged_at": pull["merged_at"]},
-                        subject=fact["issue_key"],
-                    )
-                )
         for pull in swept:
             fact = opened_pr_fact(pull, github_repo, repository.get("jira_project"))
             if fact is None:
@@ -879,6 +858,32 @@ def main() -> int:
                         subject=fact["issue_key"],
                     )
                 )
+        # Closed PRs are a separate bounded read; one listing feeds two facts,
+        # pr.merged (merged_at set) or pr.closed (t12), and `closed_pull_event`
+        # decides which. They are emitted HERE -- before the per-PR finding
+        # loop below and before the Jira read under it -- because a merge that
+        # already happened is not a finding: an unreachable SonarCloud or Jira
+        # fails the tick, and must not take the fact that closes the loop on a
+        # landed pull request down with it.
+        #
+        # NOTHING gates them here. The t17 stage watermark did, and could not:
+        # a stage comment names a TICKET, cannot name the pull request it was
+        # posted for, and one ticket may carry two -- so a `merged` comment for
+        # PR A suppressed PR B's own merge for the whole closed lookback, and a
+        # fact the sweep never sends cannot be deduplicated, only lost
+        # (pr_upkeep_jira.STAGE_DRIVEN_BY has the full reasoning). Each fact
+        # carries its own source_key plus an immutable timestamp watermark, so
+        # a re-emission is answered with duplicate=true
+        # (internal/store/postgres/signal.go).
+        with attempting(f"listing closed PRs of {github_repo} (GitHub)"):
+            closed_pulls = fetch_closed_pulls(token, github_repo)
+        for pull in closed_pulls:
+            event = closed_pull_event(pull, github_repo, repository.get("jira_project"))
+            if event is None:
+                continue
+            name, fact, source_key, watermark, subject = event
+            with attempting(f"emitting {name} for #{pull.get('number')} (control plane)"):
+                emitted.append(raise_event(name, fact, source_key, watermark, subject=subject))
         for pull in swept:
             if not pull["head_sha"]:
                 print(
@@ -912,15 +917,16 @@ def main() -> int:
             # sha. Skipping leaves the position free for a later cycle.
             if (skipped or worked) and not findings:
                 continue
-            dispatched = findings[:FINDINGS_PER_EVENT]
-            deferred_findings.extend(f["id"] for f in findings[FINDINGS_PER_EVENT:])
-            payload = {
-                "source": "github_pr",
-                "repository": github_repo,
-                "number": pull["number"],
-                "head_sha": pull["head_sha"],
-                "findings": dispatched,
-            }
+            dispatched = finding_package(findings)
+            # Membership, not a slice: a package's members are the findings on
+            # ONE file and are interleaved with higher-severity findings on
+            # others, so "everything after the first N" would name findings
+            # this tick just dispatched.
+            packaged = {f["id"] for f in dispatched}
+            deferred_findings.extend(f["id"] for f in findings if f["id"] not in packaged)
+            # The payload carries `work_item` (Jira key, else the transient
+            # gh:owner/repo#N form) and still NO subject (#268, #310).
+            payload = upkeep_pr_fact(pull, github_repo, dispatched, repository.get("jira_project"))
             with attempting(f"emitting pr-upkeep.pr for #{pull['number']} (control plane)"):
                 emitted.append(
                     raise_event(
@@ -935,19 +941,21 @@ def main() -> int:
 
         # What a Jira fact IS belongs to pr_upkeep_jira (jira_emissions); this
         # loop is the sweep's half of the split -- naming the stage a failure
-        # happened at, and being the one place that writes to the control
-        # plane.
+        # happened at, and being the one control-plane writer. It still writes
+        # NOTHING to Jira: a stage comment is posted by a graph node (t17) and
+        # is only READ here, inside jira_emissions, as the timeline position
+        # that closes an earlier To Do transition. It gates no fact emitted
+        # above it, so it sits last: a Jira outage costs this block's facts
+        # and nothing else.
         if repository.get("jira_site"):
             site, project = repository["jira_site"], repository["jira_project"]
             email, jira_token = jira_credentials()
             base = jira_api_base()
+            bot_account_id = repository.get("jira_bot_account_id") or ""
             with attempting(f"reading {project} issues (Jira {site})"):
                 jira_payload = fetch_jira_issues(site, project, email, jira_token, base)
             for fact in jira_emissions(
-                jira_payload,
-                site=site,
-                project=project,
-                bot_account_id=repository.get("jira_bot_account_id") or "",
+                jira_payload, site=site, project=project, bot_account_id=bot_account_id
             ):
                 with attempting(f"emitting {fact['name']} for {fact['subject']} (control plane)"):
                     emitted.append(raise_event(**fact))
@@ -974,6 +982,11 @@ def main() -> int:
             # this cycle.
             "dedupe_complete": not dedupe_truncated,
             "deferred_findings": deferred_findings,
+            # Findings a PERSON declined on the PR thread, as the analysis
+            # node judged them (t14). Read off the run outputs the dedupe
+            # walk already fetched — it is the PR owner's own objection,
+            # named back to them rather than silently re-proposed.
+            "pushbacks": pushbacks,
         },
         sys.stdout,
         indent=2,

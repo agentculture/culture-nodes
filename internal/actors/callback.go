@@ -308,6 +308,14 @@ type CallbackDeps struct {
 	// why a control plane that cannot look must write no record at all.
 	Handover *handover.Observer
 
+	// LaneLocker closes an actor's liveness lane when a terminal `failed`
+	// event carries class credential_spent — the asynchronous half of
+	// decision c43's OR rule (lanelock.go). Nil, the default, locks nothing:
+	// a deployment wired without it behaves exactly as before this field
+	// existed, which is the bug this field exists to fix in production
+	// (internal/api/server.go wires the callback store here).
+	LaneLocker LaneLocker
+
 	// Telemetry instruments the callback ingest seam (task t19,
 	// HandleCallback) through internal/telemetry. The zero value, a nil
 	// *telemetry.Provider, is a safe no-op — every telemetry.Provider
@@ -751,6 +759,16 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 
 	if err := deps.Store.ResumeWaitingWork(ctx, inv, deps.resumeLease()); err != nil {
 		if errors.Is(err, engine.ErrStaleClaim) {
+			// Lock before the refusal, for the same reason the committed
+			// path locks after it: a spent credential is a fact about the
+			// LANE, and a report that lost the race for its work item is no
+			// less a report that the lane's session is gone. Locking only
+			// after a successful re-lease left the commonest async shape
+			// unlocked — the deadline fires, the item is reclaimed, and the
+			// bridge's credential_spent event arrives to a stale claim — so
+			// the dead lane was leased again as soon as the collector's fact
+			// aged out, which is the failure lanelock.go exists to end.
+			deps.lockLaneIfCredentialSpent(ctx, inv, ev)
 			return deps.late(ctx, inv, ev, req,
 				fmt.Sprintf("attempt %s is no longer parked under fencing token %d attempt %d; the work was reclaimed, cancelled, or already completed",
 					inv.AttemptID, inv.FencingToken, inv.Attempt))
@@ -761,6 +779,12 @@ func commitTerminal(ctx context.Context, deps CallbackDeps, inv PendingInvocatio
 	}
 
 	completion, err := deps.Engine.CompleteAttempt(ctx, req)
+	// A spent session credential locks the lane whatever the engine decided
+	// about THIS completion — committed, or refused as late below: the fact
+	// is about the lane, not the attempt, and the sync path
+	// (internal/worker/dispatch.go) locks after its own completion the same
+	// way. Best-effort — see lanelock.go.
+	deps.lockLaneIfCredentialSpent(ctx, inv, ev)
 	if err != nil {
 		// The item is leased to a completion that did not happen, and no
 		// worker is working it. Park it again whatever the reason. After an

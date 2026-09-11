@@ -95,6 +95,28 @@ PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.
 PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
 PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=${PR_UPKEEP_SWEEP_EMIT_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_emit.py"}
 PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=${PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_emit.py" | sha256sum | cut -d' ' -f1)}
+# The readiness collector (issue #317) is the same shape, derived the same way
+# from the same shipped revision. One difference decides that it is granted
+# here rather than left for later like the cleanup example's pair: its node is
+# the ONLY path into `human-merges-pr`, so an ungranted readiness is not a node
+# that quietly does not run — it is every merge decision on this deployment
+# presented without the block the node exists to carry.
+PR_UPKEEP_READINESS_SOURCE_URL=${PR_UPKEEP_READINESS_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/readiness.py"}
+PR_UPKEEP_READINESS_SOURCE_SHA256=${PR_UPKEEP_READINESS_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/readiness.py" | sha256sum | cut -d' ' -f1)}
+# The node's other five refs are OPTIONAL to the collector and MANDATORY to the
+# runner, and those are not the same statement. readiness.py reads each as
+# "empty means the documented default"; the runner boundary resolves refs with
+# os.LookupEnv (internal/runners/headspace/bridge.go's resolveEnv), which asks
+# whether the name is SET, not whether it has a value. Granting the two source
+# values alone would leave the operation refused by name for the other five —
+# a fix that moves the refusal without removing it. So they are granted empty,
+# the way install-secrets.sh grants an absent Jira pair empty for the sweep,
+# and an operator who has a value exports it.
+PR_UPKEEP_READINESS_GITHUB_API=${PR_UPKEEP_READINESS_GITHUB_API:-}
+PR_UPKEEP_READINESS_SONAR_API=${PR_UPKEEP_READINESS_SONAR_API:-}
+PR_UPKEEP_READINESS_SONAR_COMPONENT=${PR_UPKEEP_READINESS_SONAR_COMPONENT:-}
+PR_UPKEEP_READINESS_DEVAGUE_ROOT=${PR_UPKEEP_READINESS_DEVAGUE_ROOT:-}
+PR_UPKEEP_READINESS_DEVAGUE_SLUG=${PR_UPKEEP_READINESS_DEVAGUE_SLUG:-}
 # systemd's EnvironmentFile parser is shell-LIKE: it processes backslash
 # escapes in an unquoted value. Measured on thor, unquoted:
 #
@@ -151,9 +173,16 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 		"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" \
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=$PR_UPKEEP_SWEEP_EMIT_SOURCE_URL" \
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=$PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256" \
+		"PR_UPKEEP_READINESS_SOURCE_URL=$PR_UPKEEP_READINESS_SOURCE_URL" \
+		"PR_UPKEEP_READINESS_SOURCE_SHA256=$PR_UPKEEP_READINESS_SOURCE_SHA256" \
+		"PR_UPKEEP_READINESS_GITHUB_API=$PR_UPKEEP_READINESS_GITHUB_API" \
+		"PR_UPKEEP_READINESS_SONAR_API=$PR_UPKEEP_READINESS_SONAR_API" \
+		"PR_UPKEEP_READINESS_SONAR_COMPONENT=$PR_UPKEEP_READINESS_SONAR_COMPONENT" \
+		"PR_UPKEEP_READINESS_DEVAGUE_ROOT=$PR_UPKEEP_READINESS_DEVAGUE_ROOT" \
+		"PR_UPKEEP_READINESS_DEVAGUE_SLUG=$PR_UPKEEP_READINESS_DEVAGUE_SLUG" \
 		"$PR_UPKEEP_REPOSITORIES_LINE"
 	} | ssh "$HOST" 'umask 077; mkdir -p ~/.culture-nodes/bin ~/.culture-nodes/runner-state; tmp=~/.culture-nodes/runner.env.new; trap '\''rm -f "$tmp"'\'' EXIT; cat > "$tmp"; mv -f "$tmp" ~/.culture-nodes/runner.env; trap - EXIT'
-	say "granted the pr-upkeep sweep source and closed repository set to the runner on $HOST"
+	say "granted the pr-upkeep sweep source, the readiness collector source, and the closed repository set to the runner on $HOST"
 else
 	say "a PR_UPKEEP_SWEEP source URL/digest pair is empty: pr-upkeep's sweep is not configured on $HOST (see examples/pr-upkeep/README.md)"
 fi

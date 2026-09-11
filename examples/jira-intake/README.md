@@ -60,19 +60,33 @@ the intake node's input. That is the whole of "the ticket description reaches
 the agent": before it, an agent drafting the acknowledgement had the title
 and nothing else, and the acknowledgement read like it.
 
-## The three nodes
+## The four nodes
 
 | Node | Actor | What it does |
 | --- | --- | --- |
 | `intake` | `actor://company/intake` | Reads the issue fields and drafts the acknowledging comment |
 | `post-comment` | `actor://company/jira-comment` | Posts that text, verbatim, on the ticket |
 | `transition` | `actor://company/jira-comment` | Moves the ticket to `In Progress` |
+| `stage-intake` | `actor://company/jira-comment` | Records the `intake` stage on the ticket, after the board move (task t17) |
 
 Then one named ending, `picked-up`. A run whose output does not name why it
 stopped is the illegible failure this repo's example graphs are against, and
-the longest path is four hops against a `maxTransitions: 8` ceiling that
+the longest path is five hops against a `maxTransitions: 8` ceiling that
 leaves headroom without hiding a loop — there is none; every node is visited
 at most once by construction.
+
+`stage-intake` is this graph's share of the loop's **stage write-back** (issue #311,
+decision c9): one structured comment per stage transition, posted by a
+graph node through the same narrow `post_comment` verb — never by the sweep,
+which has no Jira write path at all. Its first line is machine-readable
+(`culture-nodes:stage=intake`) and the sweep reads the newest such line on a
+ticket as that ticket's **watermark**, so a tick that finds the To Do
+transition already recorded emits nothing for it. It comes *after* the board
+move so the comment is a statement about something that already happened, and
+it retries (`maxAttempts: 2`) where the two nodes above do not: a duplicate
+stage record is harmless because the newest wins, while a failed one would
+stall pickup behind bookkeeping. The vocabulary's other five stages, and which
+graph writes each, are in `docs/operations/pr-upkeep-lane.md`.
 
 Three constraints in those nodes were **measured live**, not designed, and
 each is cited at its node in `workflow.yaml`:

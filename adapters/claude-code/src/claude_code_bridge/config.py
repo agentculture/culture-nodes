@@ -22,6 +22,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from claude_code_bridge import liveness
+
 #: Env var naming the JSON config file to load (optional).
 ENV_CONFIG_FILE = "CLAUDE_CODE_BRIDGE_CONFIG"
 
@@ -41,6 +43,8 @@ _ENV_STRING_FIELDS = {
     "CLAUDE_CODE_BRIDGE_PRESERVE_BRANCH_PREFIX": "preserve_branch_prefix",
     "CLAUDE_CODE_BRIDGE_PRESERVE_REMOTE": "preserve_remote",
     "CLAUDE_CODE_BRIDGE_HANDOVER_REMOTE": "handover_remote",
+    "CLAUDE_CODE_BRIDGE_LIVENESS_MODE": "liveness_mode",
+    "CLAUDE_CODE_BRIDGE_CREDENTIALS_PATH": "credentials_path",
 }
 _ENV_INT_FIELDS = {
     "CLAUDE_CODE_BRIDGE_PORT": "port",
@@ -228,6 +232,22 @@ class Config:
     #: name the shared one in a handle.
     handover_remote: str = "origin"
 
+    # --- lane liveness (issue #308, task t9) -------------------------------
+    #: The mode this lane's `liveness` fact reports, and therefore how it is
+    #: derived — the mode is a statement about the measurement, not an
+    #: operator preference about how strictly the router should read it (the
+    #: router refuses a LOCK-mode `session_ok=false` at any age and ages a
+    #: CHECK-mode one out, because only the first is a latch with a frozen
+    #: `checked_at`). CHECK is this backend's default where LOCK is codex's:
+    #: the probe here is a free file read rather than a spent micro-session,
+    #: and LOCK would report `unmeasured` forever, since nothing in this
+    #: bridge's dispatch path classifies a run's output into a latch.
+    liveness_mode: str = liveness.MODE_CHECK
+    #: Where `claude` keeps its OAuth credential; `claudeAiOauth.expiresAt`
+    #: (a millisecond epoch) is the field the fact is derived from. A missing
+    #: or unreadable file is `unmeasured`, never a crash.
+    credentials_path: str = "~/.claude/.credentials.json"
+
     # --- worktree reaping (task t17) -------------------------------------
     #: How long a minted worktree must have gone untouched before age stops
     #: being a reason to DEFER its removal. Read by `reap.ReapPolicy`; see
@@ -343,7 +363,16 @@ class Config:
         _apply_env_overrides(cfg, env)
         _normalize_allowlist(cfg)
         _normalize_custody(cfg)
+        _validate_liveness_mode(cfg)
         return cfg
+
+
+def _validate_liveness_mode(cfg: "Config") -> None:
+    """A typo'd mode fails here, at load, not on the first surface read."""
+    try:
+        cfg.liveness_mode = liveness.parse_mode(cfg.liveness_mode)
+    except liveness.LivenessError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _read_config_file(path: str) -> dict:
@@ -384,6 +413,8 @@ _FILE_FIELDS = {
     "preserve_push": bool,
     "preserve_remote": str,
     "handover_remote": str,
+    "liveness_mode": str,
+    "credentials_path": str,
     "worktree_reap_min_idle_seconds": float,
     "host": str,
     "port": int,

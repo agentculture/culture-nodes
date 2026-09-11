@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Deploy the current checkout to the production pair (plan t19).
-#
 #   deploy.sh thor          # full control plane + worker + runner host unit
 #   deploy.sh orin          # second worker + runner host unit
 #   deploy.sh spark         # bridge lanes only: the claude + qwen bridges (#243)
-#
 # Ships the working tree's HEAD as a git archive over ssh (no push, no
 # registry), builds the image on the target (both machines are aarch64 —
 # native builds), installs the runner binary + systemd user unit, installs
@@ -468,12 +466,44 @@ deploy_account_engine_bridge() { # host engine — runs on thor and orin, AS cul
 deploy_qwen_bridge() { deploy_account_engine_bridge "$1" qwen; }
 deploy_pi_bridge() { deploy_account_engine_bridge "$1" pi; }
 
+# --- the culture-land account lane (loop-closure t5, spec c13/c38, #315) ----
+# The land node is deterministic code the runner executes AS culture-land: it
+# fetches a handover ref, rebases, runs the gate chain, pushes to the PR
+# branch and replies on the thread. The account runs NO bridge and NO engine
+# binary, so this lane is account_prepare and nothing else -- the account (or
+# the named hand-turn), its ~/git/culture-nodes-land checkout, git identity,
+# archive copy and inventory. Its two credentials (bridge-push.env, Contents
+# write; land-pr.env, pull-requests:write) are install-secrets.sh's
+# (lanes/land-secrets.sh); a missing one is a printed hint, not a stopped
+# deploy. Additive like the qwen/pi lanes: a host without a culture-land
+# account is skipped by name, never failed, and the root bootstrap that
+# creates it (deploy/prod/bootstrap-accounts.sh thor) stays a hand-turn.
+# The actor row (company/land-<host>, --runner-account) is cutover.sh's
+# register step, not this lane's.
+deploy_land_account() { # host
+  local host=$1 target f
+  target=$(unix_user_target "$host" land)
+  if ! account_reachable "$target"; then
+    say "WARNING: culture-land on $host is not bootstrapped ($target does not open with the operator key) — skipping the land account lane (the root bootstrap is a counted hand-turn: deploy/prod/bootstrap-accounts.sh $host; then install-secrets.sh with GITHUB_TOKEN_WORKER and GITHUB_TOKEN_LAND_PR exported, then re-deploy). Nothing on $host was stopped"
+    return 0
+  fi
+  account_prepare "$host" land || exit 1
+  for f in bridge-push.env land-pr.env; do
+    ssh "$target" "test -f ~/.culture-nodes/$f" \
+      || say "WARNING: ~/.culture-nodes/$f missing in $target — the land node cannot push (bridge-push.env) or reply (land-pr.env) without it; run deploy/prod/install-secrets.sh with GITHUB_TOKEN_WORKER and GITHUB_TOKEN_LAND_PR exported"
+  done
+  say "culture-land prepared on $host: checkout ~/git/culture-nodes-land, no bridge, no engine binary (register with cutover.sh $host land)"
+}
+
 # Bridge lanes run for the codex hosts only; spark has no codex/qwen/pi thor
 # actor here (spark's qwen bridge is account_bridges_spark_lane's, in the case).
+# The land account lane runs on the same hosts: the runner is thor's, and the
+# land node's handover fetch is an ssh from the runner host to an account.
 if [[ "$HOST" != spark* ]]; then
   deploy_codex_bridge "$HOST"
   deploy_qwen_bridge "$HOST"
   deploy_pi_bridge "$HOST"
+  deploy_land_account "$HOST"
 fi
 
 # --- human-inbox actor bridge lane (task t34: deploy wiring for the t16
@@ -825,7 +855,7 @@ deploy_notify() { # host
 deploy_jira() { # host
   local host=$1
   local transition_targets=${JIRA_TRANSITION_TARGETS:-In Progress,Pending,In Review,Done}
-  local transition_project_prefix=${JIRA_TRANSITION_PROJECT_PREFIX:-SCRUM-}
+  local transition_project_prefix=${JIRA_TRANSITION_PROJECT_PREFIX:-SCRUM-} create_projects=${JIRA_CREATE_PROJECTS:-SCRUM}
   # The REST base the bridge's four verbs authenticate at. Empty means the
   # site URL; a scoped Jira Cloud service-account token needs the Atlassian
   # gateway base instead, because the site URL answers 401 for it.
@@ -867,7 +897,7 @@ deploy_jira() { # host
   # ordinary deploy. Values travel over stdin and output names only.
   say "merging the deploy-managed Jira bridge keys on $host (JIRA_API_BASE included: $write_api_base)"
   {
-    printf 'JIRA_TRANSITION_TARGETS=%s\nJIRA_TRANSITION_PROJECT_PREFIX=%s\n' "$transition_targets" "$transition_project_prefix"
+    printf 'JIRA_TRANSITION_TARGETS=%s\nJIRA_TRANSITION_PROJECT_PREFIX=%s\nJIRA_CREATE_PROJECTS=%s\n' "$transition_targets" "$transition_project_prefix" "$create_projects"
     if [ "$write_api_base" = yes ]; then printf 'JIRA_API_BASE=%s\n' "$JIRA_API_BASE"; fi
   } \
     | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; touch ~/.culture-nodes/jira-bridge-jira.env; chmod 600 ~/.culture-nodes/jira-bridge-jira.env; if [ -s ~/.culture-nodes/jira-bridge-jira.env ] && [ -n "$(tail -c1 ~/.culture-nodes/jira-bridge-jira.env)" ]; then echo >> ~/.culture-nodes/jira-bridge-jira.env; fi; while IFS= read -r line; do k=${line%%=*}; [ -z "$k" ] && continue; tmp=~/.culture-nodes/jira-bridge-jira.env.merge.$$; : > "$tmp"; chmod 600 "$tmp"; found=0; while IFS= read -r cur || [ -n "$cur" ]; do case "$cur" in "$k"=*) printf "%s\n" "$line" >> "$tmp"; found=1;; *) printf "%s\n" "$cur" >> "$tmp";; esac; done < ~/.culture-nodes/jira-bridge-jira.env; [ "$found" = 1 ] || printf "%s\n" "$line" >> "$tmp"; mv "$tmp" ~/.culture-nodes/jira-bridge-jira.env; done'
@@ -878,6 +908,10 @@ deploy_jira() { # host
 # --- the two-host r4 sequence (task t2, spec c25/c26/c28, #230) -----------
 # shellcheck source=deploy/prod/lanes/two-host.sh
 source "$SCRIPT_DIR/lanes/two-host.sh"
+# shellcheck source=deploy/prod/lanes/liveness-detector.sh
+source "$SCRIPT_DIR/lanes/liveness-detector.sh"
+# shellcheck source=deploy/prod/lanes/land-toolchain.sh
+source "$SCRIPT_DIR/lanes/land-toolchain.sh"
 
 case "$HOST" in
   thor*)
@@ -899,18 +933,21 @@ case "$HOST" in
     # now instead of 18 hours later from a 401 (issue #69 item 2).
     "$SCRIPT_DIR/audit-credentials.sh" "$HOST"
     # Doctor is the second detector (PR #208 review finding 2): after the
-    # stack is up, the Python nodes CLI's four checks say whether the agent
+    # stack is up, the Python nodes CLI's five checks say whether the agent
     # lane this deploy just reconfigured can actually work — prompt file,
-    # skills kit, API reachability, and the userns sysctl a workspace-write
-    # dispatch silently loses writes without (#63). Same posture as the
-    # credential audit above: a detector that fails the deploy LOUDLY at
-    # the end, not a gate that leaves the stack half-shipped.
+    # skills kit, API reachability, the userns sysctl a workspace-write
+    # dispatch silently loses writes without (#63), and which lanes the
+    # control plane measures dead (#308). Same posture as the credential
+    # audit above: a detector that fails the deploy LOUDLY at the end, not
+    # a gate that leaves the stack half-shipped.
     # As the ACCOUNT since #243: the agent lane is culture-codex's checkout
-    # and culture-codex's nodes CLI, so that is where the four checks mean
+    # and culture-codex's nodes CLI, so that is where the five checks mean
     # something. The login user's copies are the rollback posture, not the
     # lane this deploy shipped.
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    lane_liveness_detector "$HOST"
+    land_toolchain_check "$HOST" || true   # land gate toolchains per binary (t7); guarded, a detector
     account_bridges_summary "$HOST"
     deploy_summary thor
     ;;
@@ -941,6 +978,8 @@ case "$HOST" in
     # Same doctor detector as the thor lane (PR #208 review finding 2).
     say "running nodes doctor as culture-codex on $HOST"
     ssh "$(unix_user_target "$HOST" codex)" "cd \$HOME/git/culture-nodes-agent && \$HOME/.local/bin/nodes doctor" || { echo "nodes doctor reports unhealthy in culture-codex on $HOST" >&2; exit 1; }
+    lane_liveness_detector "$HOST"  # liveness + toolchain detectors, as on thor
+    land_toolchain_check "$HOST" || true   # land gate toolchains per binary (t7); guarded, a detector
     account_bridges_summary "$HOST"
     deploy_summary orin
     ;;

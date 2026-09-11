@@ -161,7 +161,7 @@ def test_engine_ok_accepts_pi_and_its_role_is_pi_developer(tmp_path: Path):
     assert result.stdout.strip() == "pi-developer"
     # The engine list is stated in one place for the operator too: the usage
     # line of the hand-typed bootstrap form names pi.
-    assert "<codex|claude|qwen|pi|colleague>" in _block()
+    assert "<codex|claude|qwen|pi|colleague|land>" in _block()
 
 
 # --- bootstrap ----------------------------------------------------------------
@@ -395,17 +395,20 @@ def test_bootstrap_accounts_maps_thor_and_orin_to_codex_qwen_pi(tmp_path: Path):
     script runs."""
     script = BOOTSTRAP_ACCOUNTS.read_text()
     assert re.search(r'^\s*spark\)\s+ENGINES="claude qwen colleague"', script, re.M)
-    assert re.search(r'^\s*orin\|thor\)\s+ENGINES="codex qwen pi"', script, re.M)
+    # thor carries land beside the three since loop-closure t5 (#315); orin
+    # keeps exactly the #294 set.
+    assert re.search(r'^\s*orin\)\s+ENGINES="codex qwen pi"', script, re.M)
+    assert re.search(r'^\s*thor\)\s+ENGINES="codex qwen pi land"', script, re.M)
     header = script[: script.index("set -euo pipefail")]
     assert "bootstrap-accounts.sh orin" in header
     assert "codex qwen pi" in header
     assert "bootstrap-accounts.sh thor" in header
     assert "bootstrap-accounts.sh spark" in header
     assert "culture-claude + culture-qwen" in header
-    for host in ("thor", "orin"):
+    for host, engines in (("thor", "codex qwen pi land"), ("orin", "codex qwen pi")):
         (tmp_path / host).mkdir()
         h = PiHarness(tmp_path / host)
         result = _bootstrap_accounts_over_ssh(h, host)
         assert result.returncode == 0, result.stderr + result.stdout
-        h.first(f"ssh[{host}] sudo bash", "bootstrap codex qwen pi")
-        assert f"bootstrapping codex qwen pi on {host}" in result.stdout
+        h.first(f"ssh[{host}] sudo bash", f"bootstrap {engines}")
+        assert f"bootstrapping {engines} on {host}" in result.stdout

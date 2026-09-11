@@ -68,6 +68,13 @@ type DispatchContext struct {
 	// guessed attribution. Best-effort besides: a registry without the
 	// ActorRowID capability leaves it empty on the success paths too.
 	ActorRowID string
+	// ActorRef is the actor reference this dispatch actually targets:
+	// node.Uses, unless the liveness gate substituted the registration's
+	// fallback_actor (internal/worker/liveness.go). Every per-actor gate,
+	// event, session charge and invocation row keys on THIS, so a fallback
+	// is judged, paced, paused and attributed as itself — node.Uses stays
+	// the reference the author wrote. Empty on seams that dispatch no actor.
+	ActorRef string
 	// Attempt is the attempt number this claim represents.
 	Attempt int
 	// Input is the node's resolved input payload (§11.2).

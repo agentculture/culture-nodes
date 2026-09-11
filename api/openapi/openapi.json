@@ -100,6 +100,9 @@
           "kind": {
             "type": "string"
           },
+          "liveness": {
+            "$ref": "#/components/schemas/ActorLiveness"
+          },
           "metadata": {
             "description": "Open metadata, as the row's own JSON value."
           },
@@ -251,6 +254,28 @@
         ],
         "type": "object"
       },
+      "ActorHandTurnStageCount": {
+        "properties": {
+          "count": {
+            "description": "Confirmed hand_turn records under this stage for this work item.",
+            "type": "integer"
+          },
+          "stage": {
+            "description": "The hand_turn record's `data.stage`.",
+            "type": "string"
+          },
+          "work_item": {
+            "description": "The hand_turn record's `data.work_item`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "work_item",
+          "count"
+        ],
+        "type": "object"
+      },
       "ActorLedgerAuthorityCount": {
         "description": "How many ledger records this actor originated (`origin.actor_id`) at a given authority — every record_type, not only `claim`; PRD §10.4 uses \"claim\" generically for anything an agent asserts.",
         "properties": {
@@ -286,6 +311,59 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "ActorLiveness": {
+        "description": "The control plane's persisted session-liveness row for this actor (plan loop-closure t10; migration 0058's `actor_liveness` table; decision c43). Absent entirely when nothing has ever observed the actor's session — a different fact from `session_ok: null`, which is a row that says \"unmeasured\".\nKeyed by `actor_key` like `availability`, so every revision of one identity reports the same row: a credential belongs to the identity.\nThree writers: the mesh collector persists the bridge's fact (`source: collector`); the control plane writes a LOCKED `session_ok: false` row when an attempt fails with class `credential_spent` — from the worker on a synchronous failure and from the callback ingest on an asynchronous one, through one shared helper (`source: worker` either way); `POST /v1alpha1/actors/{id}/resume` clears only `locked` (`source: resume`). Unlocking is an AND — resume alone never reopens a lane whose last fact is false; the lane leases again once a later collector write reports `session_ok: true`.\n`live` is the router's own verdict, computed with the rule the dispatch site applies: not live when `locked` (any age); not live when `session_ok` is false and `mode` is `LOCK` (any age — a LOCK-mode bridge latches with a fixed `checked_at`, so the fact does not age out); not live when `session_ok` is false, `mode` is `CHECK` (or empty) and `checked_at` is within the 5-minute freshness window. Everything else — unmeasured, true, a stale CHECK-mode false — is live. A not-live lane routes to the actor's registered `metadata.fallback_actor` with a derived `decision` record (`router: lane_liveness`), or proceeds with a warning record when none is registered. The lane is decided before the breaker, concurrency, clarify and pacing gates, so a paused or rate-limited fallback is deferred rather than dispatched, and the invocation, session charge and any breaker trip name the fallback.",
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "live": {
+            "description": "What the next lease will decide for this lane.",
+            "type": "boolean"
+          },
+          "locked": {
+            "description": "The control-plane lock. Set after a credential_spent attempt (synchronous or asynchronous); cleared only by resume.",
+            "type": "boolean"
+          },
+          "locked_by_attempt_id": {
+            "type": "string"
+          },
+          "locked_by_run_id": {
+            "type": "string"
+          },
+          "mode": {
+            "description": "LOCK or CHECK as the bridge advertised; empty when the last writer was not a bridge fact.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "The bridge's closed vocabulary (ok, unmeasured, refresh_token_spent, credential_expired, probe_timeout, probe_failed); a worker lock writes refresh_token_spent.",
+            "type": "string"
+          },
+          "session_ok": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "source": {
+            "enum": [
+              "collector",
+              "worker",
+              "resume"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_ok",
+          "reason",
+          "mode",
+          "checked_at",
+          "source",
+          "locked",
+          "live"
         ],
         "type": "object"
       },
@@ -371,6 +449,13 @@
           "grades": {
             "$ref": "#/components/schemas/ActorGrades"
           },
+          "hand_turns_by_stage": {
+            "description": "CONFIRMED hand_turn records only — a confirming review record exists for the turn — per stage and work item, on runs this actor attempted (task t16, decision c25). Proposed and rejected turns contribute nothing. Always present; empty when nothing was confirmed.",
+            "items": {
+              "$ref": "#/components/schemas/ActorHandTurnStageCount"
+            },
+            "type": "array"
+          },
           "retry_burn": {
             "$ref": "#/components/schemas/ActorRetryBurn"
           },
@@ -394,7 +479,8 @@
           "claims_by_authority",
           "retry_burn",
           "usage",
-          "grades"
+          "grades",
+          "hand_turns_by_stage"
         ],
         "type": "object"
       },
@@ -604,6 +690,65 @@
         ],
         "type": "object"
       },
+      "BridgeLiveness": {
+        "description": "The bridge's OWN session-liveness fact, read verbatim off `capabilities.preflight.host.liveness` (plan loop-closure t9/t10, issue #308). Absent when the bridge advertises none. This is the bridge's half of decision c43; the control plane's authority of record is the persisted row rendered as `MeshActor.liveness` and `Actor.liveness`.",
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mode": {
+            "description": "The lane's operator-configured detection mode.",
+            "enum": [
+              "LOCK",
+              "CHECK"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "ok",
+              "unmeasured",
+              "refresh_token_spent",
+              "credential_expired",
+              "probe_timeout",
+              "probe_failed"
+            ],
+            "type": "string"
+          },
+          "session_ok": {
+            "description": "true, false, or null for \"nobody measured this\" — never collapsed into either.",
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_ok",
+          "reason",
+          "checked_at",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "CancelRunRequest": {
+        "additionalProperties": false,
+        "description": "The OPTIONAL body of POST /v1alpha1/runs/{id}/cancel (plan loop-closure-claude-codex t13, decisions c6/c37). Both fields are optional and independent; an unknown field is a 400 so a typo cannot silently degrade into the bodiless operator cancel.",
+        "properties": {
+          "parked_at": {
+            "description": "An optional PRECONDITION, not a fact: the node id the caller observed this run parked at in an earlier `GET /v1alpha1/runs/{id}`. When present, the cancel transaction re-checks — under the same per-run advisory lock the human decision advance itself takes — that the node still has a live node run, and returns 412 without cancelling anything if the run has moved on. Without it a caller that decided from a separate read can cancel downstream nodes an approval made live between the two requests.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "The machine-readable FACT this cancellation acts on, written to `runs.reason` and into the `run.cancelled` event. The allowlist is closed: every value names a fact the control plane can receive, not an opinion about the run. Omit it for the operator's own cancel — the human who pressed it is the reason.",
+            "enum": [
+              "pr_merged",
+              "pr_closed"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "CommitReviewRequest": {
         "properties": {
           "decisions": {
@@ -733,6 +878,120 @@
         ],
         "type": "object"
       },
+      "CreateHandTurnDefinitionRequest": {
+        "properties": {
+          "actor_id": {
+            "description": "The actor recording the definition — normally the person; kind decides origin, authority is always proposed.",
+            "type": "string"
+          },
+          "human_logins": {
+            "description": "The logins whose acts count as a person's; a bot login never proposes a hand-turn.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "notes": {
+            "description": "Why the definition is what it is, for the next person iterating it.",
+            "type": "string"
+          },
+          "rules": {
+            "description": "What the observer recognises — `{id, stage, description}` plus the matcher parameters the observer understands.",
+            "items": {
+              "additionalProperties": true,
+              "required": [
+                "id",
+                "stage",
+                "description"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "run_id": {
+            "description": "File against this run instead of the newest one carrying `work_item`.",
+            "type": "string"
+          },
+          "stages": {
+            "description": "The loop stages a hand-turn may be filed under, in loop order.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "supersedes": {
+            "description": "The previous definition record this one replaces.",
+            "type": "string"
+          },
+          "work_item": {
+            "description": "The work-item key the definition is filed against (its newest run).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stages",
+          "rules",
+          "work_item",
+          "actor_id"
+        ],
+        "type": "object"
+      },
+      "CreateHandTurnRequest": {
+        "properties": {
+          "actor_id": {
+            "description": "The actor recording the turn — the observing agent or the person. Its registered kind (human or agent) becomes the record's origin; the authority is always proposed.",
+            "type": "string"
+          },
+          "definition_ref": {
+            "description": "The hand_turn_definition record the turn was recognised against; recorded as the record's subject_ref too.",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "description": "Pointers to what the observer saw — commit shas, event ids, comment URLs. References, not evidence.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "observed_at": {
+            "description": "When the turn happened as read from the source, distinct from the record's created_at.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "rule": {
+            "description": "The definition rule id that matched (e.g. `commit_without_run`), so a rejection tells the human which rule to iterate.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "File against this run instead of the newest one carrying `work_item`; it must carry the same work item.",
+            "type": "string"
+          },
+          "stage": {
+            "description": "The loop stage the turn belongs to — one of the confirmed hand_turn_definition's `stages` (e.g. dispatch, land, review, cleanup). A string, so the definition can grow without an API change.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "what": {
+            "description": "What the person did, in one line (e.g. `cherry-picked review-fix/t3 onto the PR branch`).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "work_item": {
+            "description": "The work-item key the turn served (e.g. `SCRUM-9`). The record is filed against the newest run carrying it.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "stage",
+          "work_item",
+          "actor_id"
+        ],
+        "type": "object"
+      },
       "CreateNamespace": {
         "additionalProperties": false,
         "properties": {
@@ -792,6 +1051,10 @@
           },
           "name": {
             "description": "Optional operator-given display name (task t3, migrations/0013). Additive: omitting it (every pre-t3 client) behaves exactly as before. Set at creation only — there is no way to change it afterward; see PatchRunRequest.",
+            "type": "string"
+          },
+          "work_item": {
+            "description": "Optional key of the work item this run belongs to — a Jira issue key such as `SCRUM-9` (migrations/0057, plan loop-closure-claude-codex t1, decision c41). Its OWN run column and its own `GET /v1alpha1/runs?work_item=` filter, deliberately not an overload of `category` (the stats slicing tag) or `subject` (the one-active-run-per-subject correlation key). Set at creation only; PATCH /v1alpha1/runs/{id} refuses it. A run minted by an event trigger is stamped from the triggering payload's string `work_item` field instead.",
             "type": "string"
           },
           "workflow_digest": {
@@ -2055,6 +2318,9 @@
             "description": "The `actors` row id of this actor's current (highest) revision -- the identity `attempts.actor_id` records, and therefore the value `GET /v1alpha1/node-runs` reports as a node run's `actor_id`. Join run attribution on this, not on `actor_key`.",
             "type": "string"
           },
+          "liveness": {
+            "$ref": "#/components/schemas/ActorLiveness"
+          },
           "machine": {
             "nullable": true,
             "type": "string"
@@ -2095,6 +2361,9 @@
           "hostname": {
             "description": "Hostname reported by capabilities.preflight.host.hostname.",
             "type": "string"
+          },
+          "liveness": {
+            "$ref": "#/components/schemas/BridgeLiveness"
           },
           "observed_at": {
             "format": "date-time",
@@ -2315,16 +2584,18 @@
         "type": "object"
       },
       "PatchRunRequest": {
-        "description": "The only body PATCH /v1alpha1/runs/{id} accepts. `name` and `description` are immutable once a run is created (frame decision q4) — a request body carrying either key is refused with a structured 400, not silently ignored.",
+        "description": "The only body PATCH /v1alpha1/runs/{id} accepts; at least one of the two keys must be present. `name` and `description` are immutable once a run is created (frame decision q4) — a body carrying either is refused with a structured 400, not silently ignored. `work_item` (decision c41) is set at creation and admits exactly ONE transition (decision c42, the orphan intake): from the transient `gh:\u003cowner\u003e/\u003crepo\u003e#\u003cn\u003e` form to a Jira issue key, once. A target that is not a Jira key is a 400; a run whose work_item is not the gh: form (already keyed, or never keyed) is a 409.",
         "properties": {
           "category": {
             "description": "The run's new category tag. An empty string clears it. See CreateRunRequest.category for what this field means.",
             "type": "string"
+          },
+          "work_item": {
+            "description": "The Jira issue key the run's transient gh: work item is re-keyed to. Accepted only while the run's current work_item starts with `gh:`; afterwards the run lists under `GET /v1alpha1/runs?work_item=\u003ckey\u003e` and the gh: form no longer finds it.",
+            "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+            "type": "string"
           }
         },
-        "required": [
-          "category"
-        ],
         "type": "object"
       },
       "PatchScheduleRequest": {
@@ -3041,6 +3312,10 @@
               }
             ],
             "description": "The run-wide §13.2 usage/cost rollup (task t2), summed over every attempt of every node run in this run. Always present on GET /v1alpha1/runs/{id} (getRun), POST /v1alpha1/runs (createRun), PATCH /v1alpha1/runs/{id} (patchRun), and POST /v1alpha1/runs/{id}/cancel (cancelRun) — even a freshly created run with zero attempts carries a present-but-empty rollup, never an absent field. NOT computed (and therefore absent) on GET /v1alpha1/runs (listRuns), which would otherwise need one extra query per listed row."
+          },
+          "work_item": {
+            "description": "The key of the work item this run belongs to (e.g. `SCRUM-9`; migrations/0057, decision c41), if any. Its own column, distinct from `category` and `subject`; set at creation (or stamped by the trigger from the event payload). The one later change PATCH admits is the orphan intake's re-key from the transient `gh:\u003cowner\u003e/\u003crepo\u003e#\u003cn\u003e` form to a Jira key, once (decision c42). Filter with `GET /v1alpha1/runs?work_item=`.",
+            "type": "string"
           },
           "workflow_digest": {
             "type": "string"
@@ -4313,7 +4588,7 @@
     },
     "/v1alpha1/actors/{id}/resume": {
       "post": {
-        "description": "Task t9: the reversibility half of the capacity circuit breaker. When a dispatch to an actor fails with the `capacity_exhausted` §13.5 class, the worker marks that actor unavailable until a deadline and defers — never fails — work addressed to it. This operation ends that pause early, so an operator who knows better (the quota reset, the bridge was misreporting, the limit did not apply to this project) can overrule the automatic classification without touching the database.\nThe pause is keyed by `actor_key`, not by this row's id, so resuming any revision of an identity resumes the identity — provider capacity belongs to the identity, not to one append-only registration revision.\nClearing an actor that is not currently paused is 200 with the actor's current state, not an error: the caller's intent (\"this actor should be dispatchable\") is already satisfied, and two operators racing to clear one pause should both succeed.\nWork items already deferred become claimable again within the worker's deferral horizon (at most a few minutes), not instantaneously: a deferral pushes `work_items.available_at` forward, and the horizon is bounded precisely so an early clear cannot go unnoticed for the whole pause.\nLike actor registration on this same noun — and unlike the rest of this authless-by-phase-1-design API (spec decision c45) — it requires the actor-registration bearer token, deliberately the SAME secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is what grants an endpoint the standing to be dispatched real work, and clearing a pause restores exactly that standing.",
+        "description": "Task t9: the reversibility half of the capacity circuit breaker. When a dispatch to an actor fails with the `capacity_exhausted` §13.5 class, the worker marks that actor unavailable until a deadline and defers — never fails — work addressed to it. This operation ends that pause early, so an operator who knows better (the quota reset, the bridge was misreporting, the limit did not apply to this project) can overrule the automatic classification without touching the database.\nThe pause is keyed by `actor_key`, not by this row's id, so resuming any revision of an identity resumes the identity — provider capacity belongs to the identity, not to one append-only registration revision.\nClearing an actor that is not currently paused is 200 with the actor's current state, not an error: the caller's intent (\"this actor should be dispatchable\") is already satisfied, and two operators racing to clear one pause should both succeed.\nWork items already deferred become claimable again within the worker's deferral horizon (at most a few minutes), not instantaneously: a deferral pushes `work_items.available_at` forward, and the horizon is bounded precisely so an early clear cannot go unnoticed for the whole pause.\nLike actor registration on this same noun — and unlike the rest of this authless-by-phase-1-design API (spec decision c45) — it requires the actor-registration bearer token, deliberately the SAME secret (`NODES_ACTOR_REGISTRATION_TOKEN_SECRET`): registration is what grants an endpoint the standing to be dispatched real work, and clearing a pause restores exactly that standing.\nPlan loop-closure t10 (decision c43): this is also the operator's lane out of a session-liveness LOCK. The call clears the actor's `liveness.locked` flag and records `source: resume`, but leaves `session_ok` as last observed — unlocking is an AND, and resume alone never reopens a lane whose last fact is false. The lane leases again only once the bridge's next liveness fact (persisted by the mesh collector) reports `session_ok: true`. The response carries the `liveness` block so the caller sees which half is still owed.",
         "operationId": "resumeActor",
         "parameters": [
           {
@@ -4822,6 +5097,140 @@
         "summary": "Deliver a named signal event, resuming matching until.signal waits.",
         "tags": [
           "events"
+        ]
+      }
+    },
+    "/v1alpha1/hand-turn-definitions": {
+      "post": {
+        "description": "Appends a hand_turn_definition ledger record (schemas/ledger/hand_turn_definition.schema.json; decision c25, honesty h17): the stages a hand-turn may be filed under and the rules the observing agent recognises turns by. Filed against the newest run carrying `work_item` (or `run_id`) exactly like POST /v1alpha1/hand-turns, written `proposed` under `actor_id`'s registered kind, and confirmed through the review surface — so the ledger shows the definition was ratified, not merely typed. An iteration names the record it replaces in `supersedes`; the old record is untouched and leaves every projection, and a second replacement of the same record is refused (409). That record must itself be a `hand_turn_definition` — naming a record of any other kind is refused (400) rather than dropping it from every projection.",
+        "operationId": "createHandTurnDefinition",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHandTurnDefinitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerRecord"
+                }
+              }
+            },
+            "description": "The proposed hand_turn_definition record."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "stages or rules is empty, a core field is missing, `supersedes` names a record that is not a hand_turn_definition, or the ledger refused the record."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No decision bearer, bound principal, or agent bearer was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run carries `work_item`, `run_id` names no run, or `actor_id` is not a registered actor."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The record named in `supersedes` already has a live replacement."
+          }
+        },
+        "summary": "Record the human's definition of what counts as a hand-turn.",
+        "tags": [
+          "hand-turns"
+        ]
+      }
+    },
+    "/v1alpha1/hand-turns": {
+      "post": {
+        "description": "Appends a hand_turn ledger record (schemas/ledger/hand_turn.schema.json; issue #319, decision c25): one step a person performed by hand — a cherry-pick, a branch delete, a reply posted by hand, a checkout reset over ssh — between a finished actor run and a landed change. The record is filed against the NEWEST run whose `work_item` equals the request's (migrations/0057, decision c41); `run_id` may name a specific run instead, and must then carry the same work item. A work item no run carries is a 404 naming the fix, never a record with no run. `actor_id` is looked up in the registry and its kind (human or agent) becomes the record's origin — the observing agent (examples/hand-turn-observer) writes as itself, a person typing `nodes hand-turn` writes as themselves. The authority is ALWAYS `proposed`: unlike a grade, a hand-turn is a claim about the world, and it reaches `confirmed` only through the review surface (POST /v1alpha1/runs/{id}/reviews + POST /v1alpha1/reviews/{id}/commit), where a person confirms a batch and iterates the definition from what the observer got wrong. `GET /v1alpha1/actors/{id}/stats`' `hand_turns_by_stage` counts the confirmed subset only. Like the other decision routes this one requires the decision bearer (or a bound principal / an agent actor's own bearer).",
+        "operationId": "createHandTurn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHandTurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerRecord"
+                }
+              }
+            },
+            "description": "The proposed hand_turn record."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A core field is missing, `run_id` names a run carrying a different work item, the actor's registered kind is neither human nor agent, or the ledger refused the record."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No decision bearer, bound principal, or agent bearer was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No run carries `work_item`, `run_id` names no run, or `actor_id` is not a registered actor."
+          }
+        },
+        "summary": "Record one hand-turn against a work item.",
+        "tags": [
+          "hand-turns"
         ]
       }
     },
@@ -5942,6 +6351,14 @@
             }
           },
           {
+            "description": "Filter to runs whose `work_item` key matches exactly (e.g. `SCRUM-9`) — \"which runs belong to this work item\" (migrations/0057, decision c41). There is deliberately no `category` filter: category keeps its meaning as the stats slicing tag, and a `category=` query parameter is ignored.",
+            "in": "query",
+            "name": "work_item",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "Only runs updated at or after this instant (RFC3339). When set and `sort` is omitted, `sort` defaults to `updated_at` rather than the endpoint's own default of `created_at`.",
             "in": "query",
             "name": "updated_since",
@@ -6105,7 +6522,7 @@
         ]
       },
       "patch": {
-        "description": "The only field this accepts is `category` (frame decision q4): `name` and `description` are set once, at creation (POST /v1alpha1/runs), and cannot be changed afterward — a request body carrying either key is refused with a structured 400 rather than silently ignored.",
+        "description": "Accepts `category` (frame decision q4) and `work_item` for exactly one transition (decision c42): a run minted for the transient `gh:\u003cowner\u003e/\u003crepo\u003e#\u003cn\u003e` work item moves to the Jira issue key the orphan intake created for it, once. `name` and `description` are set at creation (POST /v1alpha1/runs) and cannot be changed afterward — a request body carrying either key is refused with a structured 400 rather than silently ignored; a `work_item` on a run that is not the gh: form is a 409.",
         "operationId": "patchRun",
         "parameters": [
           {
@@ -6154,7 +6571,7 @@
             "description": "No run has this id."
           }
         },
-        "summary": "Retag a run's category. name/description are immutable.",
+        "summary": "Retag a run's category, or re-key an orphan work item once. name/description are immutable.",
         "tags": [
           "runs"
         ]
@@ -6162,13 +6579,23 @@
     },
     "/v1alpha1/runs/{id}/cancel": {
       "post": {
-        "description": "Consumes every active token, marks every non-terminal node run and ready work item cancelled, and moves the run to `cancelled` — under the same per-run advisory lock the engine's own completion transaction takes (PRD §12.5), so a cancel cannot interleave with a concurrent attempt completion. A node run a worker already holds a lease on finishes that lease's fenced completion path (it will find the node run terminal and no-op); cancellation does not reach into an in-flight attempt.",
+        "description": "Consumes every active token, marks every non-terminal node run and ready work item cancelled, and moves the run to `cancelled` — under the same per-run advisory lock the engine's own completion transaction takes (PRD §12.5), so a cancel cannot interleave with a concurrent attempt completion. A node run a worker already holds a lease on finishes that lease's fenced completion path (it will find the node run terminal and no-op); cancellation does not reach into an in-flight attempt.\n\nThe body is OPTIONAL. Sent with no body — the operator's own cancel — the run records no machine-readable `reason`: the human who pressed it is the reason, and the `run.cancelled` event's `detail` says so.",
         "operationId": "cancelRun",
         "parameters": [
           {
             "$ref": "#/components/parameters/RunID"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelRunRequest"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "content": {
@@ -6179,6 +6606,16 @@
               }
             },
             "description": "The run is now cancelled."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The body is malformed, carries an unknown field, or names a reason outside the allowlist."
           },
           "404": {
             "content": {
@@ -6199,6 +6636,16 @@
               }
             },
             "description": "The run has already reached a terminal state."
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`parked_at` was sent and the run is still live but no longer has an active node run at that node. Nothing was cancelled."
           }
         },
         "summary": "Cancel a run.",
@@ -7882,6 +8329,10 @@
     {
       "description": "Opinion records — a 1-5 rating plus rationale — evaluating a completed run/attempt against an actor (issue #28 item 1; PRD §10.4 extended). Follows the same producer/authority matrix every other ledger record does; never observed or derived, and never self-graded.",
       "name": "grades"
+    },
+    {
+      "description": "Hand-turn records (issue #319, decision c25): one step a person performed by hand between a finished actor run and a landed change, filed against a work item. Always appended `proposed` — by the observing agent or by the person — and confirmed only through the ordinary review surface; per-actor stats count the confirmed subset. The producer/authority matrix is unchanged by this record kind.",
+      "name": "hand-turns"
     },
     {
       "description": "The paused-on-a-human side of an approval node (PRD §9.9): list and inspect human_tasks rows, and commit the decision that resumes the run. Unlike every other operation in this API, the decision endpoint is not authless — see its own description.",

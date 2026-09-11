@@ -26,7 +26,7 @@ response.
 - `culture-nodes learn` — structured self-teaching prompt.
 - `culture-nodes explain <path>` — markdown docs for any noun/verb.
 - `culture-nodes overview` — descriptive snapshot of the agent.
-- `culture-nodes doctor` — check the agent-identity and API-reachability invariants.
+- `culture-nodes doctor` — five checks: identity, skills, API reachability, userns, lane liveness.
 - `culture-nodes cli overview` — describe the CLI surface.
 
 ## Product verbs (thin API clients)
@@ -123,13 +123,24 @@ so a stray path never hard-fails.
 _DOCTOR = """\
 # culture-nodes doctor
 
-Checks the agent-identity invariants `steward doctor` verifies:
-prompt-file-present and backend-consistency (`colleague` → `AGENTS.colleague.md`), a
-skills-present check, and a `nodes_api_reachable` check (`GET /v1alpha1/healthz`
-against the resolved API URL). Only `error`-severity checks (prompt-file-present,
-backend-consistency) can flip the exit code to 1 — `nodes_api_reachable` and
-`skills-present` are `warning`/`info` and never fail `doctor` on their own,
-since the identity verbs work with no API running at all.
+Five checks. The agent-identity invariants `steward doctor` verifies:
+`prompt_file_present` and backend-consistency (`colleague` → `AGENTS.colleague.md`);
+`skills_present` (the vendored `.claude/skills/` kit); `nodes_api_reachable`
+(`GET /v1alpha1/healthz` against the resolved API URL); `unprivileged_userns`
+(can a bwrap-backed actor sandbox start on this host at all — #63); and
+`lane_liveness` (which registered actor lanes the control plane measures as
+dead, read off `GET /v1alpha1/actors`' per-actor `liveness` fact — a spent
+refresh token behind a bridge that still answers `/healthz` 200, #308).
+
+Only the `error`-severity check (`prompt_file_present`, or
+`backend_consistency` for an unknown backend) can flip the exit code to 1 —
+the other four are `warning` and never fail `doctor` on their own, since the
+identity verbs work with no API running at all. `lane_liveness` reports a
+dead lane BY KEY AND REASON (e.g. `company/codex-orin (session_ok=false,
+reason=refresh_token_spent, mode=LOCK, ...)`); an unreachable API or an actor
+listing with no `liveness` field yet is `unmeasured`, never a verdict — a lane
+nobody measured is not a dead lane. Read it before a fan-out: a lane with
+`session_ok=false` is not in the split plan.
 
 ## Usage
 
@@ -204,9 +215,10 @@ Culture Nodes control-plane API.
 ## Usage
 
     culture-nodes run create --workflow <digest> [--input <file>|--input -] \\
-        [--name TEXT] [--description TEXT] [--category TEXT]
+        [--name TEXT] [--description TEXT] [--category TEXT] [--work-item KEY]
     culture-nodes run list [--state STATE] [--updated-since RFC3339] \\
-        [--updated-until RFC3339] [--sort created_at|updated_at] [--limit N]
+        [--updated-until RFC3339] [--sort created_at|updated_at] \\
+        [--work-item KEY] [--limit N]
     culture-nodes run get <id>
     culture-nodes run cancel <id>
     culture-nodes run events <id> [--follow]
@@ -220,6 +232,21 @@ Culture Nodes control-plane API.
 and `--description` are set once, at creation, and immutable afterward —
 there is no verb to change them. `--category` is the one field retaggable
 later, via `run retag`.
+
+`--work-item KEY` (e.g. `SCRUM-9`) records which work item the run belongs
+to. It is its OWN run column and its own filter (`run list --work-item KEY`
+→ `GET /v1alpha1/runs?work_item=KEY`), deliberately not an overload of
+`--category`: category stays the stats slicing tag and keeps its meaning,
+and there is no category filter on `run list`. Set at creation only —
+`run retag` refuses it. A run minted by an event trigger carries the
+payload's `work_item` field automatically, so a sweep-emitted fact lands
+keyed without a second write.
+
+## list
+
+Filters combine: `--state`, `--updated-since`/`--updated-until`, and
+`--work-item` narrow the same listing. Text rows append `[KEY]` when the
+run carries a work item.
 
 ## retag
 
@@ -449,6 +476,38 @@ already committed — the API's own remediation names the fix (re-read the
 current ledger version and submit a new review request).
 """
 
+_HAND_TURN = """\
+# culture-nodes hand-turn
+
+Record one hand-turn — a step a person performed by hand between a finished
+actor run and a landed change — against a work item (issue #319, decision
+c25). One HTTP call: `POST /v1alpha1/hand-turns` (`api/openapi/openapi.yaml`,
+`hand-turns` tag). No authority logic lives here.
+
+## Usage
+
+    culture-nodes hand-turn "<what>" --stage <stage> --work-item KEY \\
+        [--as ACTOR] [--run RUN-ID] [--definition-ref ID] [--rule ID] \\
+        [--evidence REF]... [--token TOKEN] [--json]
+
+The record files against the NEWEST run whose `work_item` is `KEY` (`--run`
+names one explicitly; it must carry the same key). It ALWAYS lands
+`proposed` under the recording actor's identity — a person's or the
+observing agent's (`examples/hand-turn-observer`) — and is confirmed only
+through `culture-nodes review create` / `commit` on that run. The
+producer/authority matrix is unchanged: there is no direct-confirm carve-out
+for hand-turns the way there is for a human's own grade, because a hand-turn
+is a claim about the world, not an opinion.
+
+`GET /v1alpha1/actors/{id}/stats` reports `hand_turns_by_stage` over the
+CONFIRMED subset only, per stage and work item; a delivery summary cites that
+count (`docs/operations/hand-turn-ledger.md`).
+
+Like `human-tasks decide`, the route needs the decision bearer: `--token` or
+`$NODES_HUMAN_DECISION_TOKEN`; the actor comes from `--as` or
+`$NODES_HAND_TURN_ACTOR_ID`. Neither is ever printed.
+"""
+
 _HUMAN_TASKS = """\
 # culture-nodes human-tasks
 
@@ -648,6 +707,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("review",): _REVIEW,
     ("review", "create"): _REVIEW,
     ("review", "commit"): _REVIEW,
+    ("hand-turn",): _HAND_TURN,
     ("human-tasks",): _HUMAN_TASKS,
     ("human-tasks", "list"): _HUMAN_TASKS,
     ("human-tasks", "get"): _HUMAN_TASKS,

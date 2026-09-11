@@ -563,6 +563,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/pending-decisions", s.wrap(s.handleListPendingDecisions))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/grades", s.wrap(s.handleCreateGrade))
+	mux.HandleFunc("POST /v1alpha1/hand-turns", s.wrap(s.handleCreateHandTurn))
+	mux.HandleFunc("POST /v1alpha1/hand-turn-definitions", s.wrap(s.handleCreateHandTurnDefinition))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/suite-verdicts", s.wrap(s.handleCreateSuiteVerdict))
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/gate-reports", s.wrap(s.handleCreateGateReport))
@@ -597,6 +599,12 @@ func (s *Server) routes() http.Handler {
 			// configured a remote (WithHandoverObserver), in which case
 			// nothing is fetched and nothing is recorded.
 			Handover: s.handoverObserver,
+			// The async half of decision c43's OR rule: a `failed` event
+			// carrying class credential_spent locks the lane it was
+			// dispatched to, exactly as the worker does for a synchronous
+			// failure (internal/actors/lanelock.go). Production async lanes are
+			// async, so without this the lock never landed (fix D).
+			LaneLocker: s.callbackStore,
 		})))
 		mux.HandleFunc("POST "+runnerCallbackRoutePattern, s.handleRunnerOperationEvent)
 	}

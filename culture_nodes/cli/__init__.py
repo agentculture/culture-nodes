@@ -67,6 +67,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from culture_nodes.cli._commands import dispatch as _dispatch_group
     from culture_nodes.cli._commands import doctor as _doctor_cmd
     from culture_nodes.cli._commands import explain as _explain_cmd
+    from culture_nodes.cli._commands import hand_turn as _hand_turn_cmd
     from culture_nodes.cli._commands import human_tasks as _human_tasks_group
     from culture_nodes.cli._commands import jira_token as _jira_token_group
     from culture_nodes.cli._commands import learn as _learn_cmd
@@ -108,6 +109,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _ledger_group.register(sub)
     _review_group.register(sub)
     _human_tasks_group.register(sub)
+    _hand_turn_cmd.register(sub)
     _dispatch_group.register(sub)
     # Operator runbook verbs: no API call except verify's one GET at Atlassian.
     _jira_token_group.register(sub)

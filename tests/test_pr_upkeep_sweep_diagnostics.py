@@ -98,12 +98,15 @@ def test_a_failure_outside_every_attempting_block_says_it_is_unattributed(monkey
         sweep, "fetch_open_pulls", lambda *a, **k: [{"number": 1, "head_sha": "abc"}]
     )
     monkeypatch.setattr(sweep, "fetch_pr_comments", lambda *a, **k: [])
-    # t12 added a merged-PR pass ahead of the open-PR pass; stub it like the
-    # other fetches so the injected failure below is the first one main meets.
-    monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda *a, **k: [])
+    # The closed-PR pass (pr.merged / pr.closed) runs ahead of the open-PR
+    # pass; stub it like the other fetches so the injected failure below is
+    # the first one main meets — and so no test ever reads live GitHub.
+    monkeypatch.setattr(sweep, "fetch_closed_pulls", lambda *a, **k: [])
     # The finding-id dedupe read runs ahead of both; stub it for the same
     # reason (task t12).
-    monkeypatch.setattr(sweep, "fetch_dispatched_findings", lambda *_a, **_kw: (set(), {}, False))
+    monkeypatch.setattr(
+        sweep, "fetch_dispatched_findings", lambda *_a, **_kw: (set(), {}, [], False)
+    )
     # A pure transform between two fetches — inside main's try, inside no
     # `attempting` block.
     monkeypatch.setattr(

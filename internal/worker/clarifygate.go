@@ -123,13 +123,13 @@ func (w *Worker) clarifyGate(
 	if !ok {
 		return true, nil
 	}
-	capabilities, metadata, err := resolver.PreflightConfig(ctx, node.Uses)
+	capabilities, metadata, err := resolver.PreflightConfig(ctx, dc.ActorRef)
 	if err != nil {
 		// The configuration could not be read. Dispatching would be
 		// dispatching ungated on a guess, and failing the attempt would turn
 		// a transient database blip into a dead node run, so the lease
 		// recovers this claim and another worker asks again.
-		return false, fmt.Errorf("worker: read preflight configuration for %q: %w", node.Uses, err)
+		return false, fmt.Errorf("worker: read preflight configuration for %q: %w", dc.ActorRef, err)
 	}
 
 	gate, err := preflight.ParseGate(metadata)
@@ -142,16 +142,27 @@ func (w *Worker) clarifyGate(
 		// failure, recorded as one.
 		return false, w.failAttempt(ctx, claimed, session.ActorRowID, engine.StatusFailed, "configuration",
 			fmt.Sprintf("node %q uses %q, whose registration configures the clarify-then-commit gate "+
-				"in a shape this control plane cannot read: %v", node.ID, node.Uses, err))
+				"in a shape this control plane cannot read: %v", node.ID, dc.ActorRef, err))
 	}
 	if !gate.Enabled {
 		return true, nil
 	}
 
 	now := w.opts.Now()
-	open, found, err := w.db.OpenPreflight(ctx, w.opts.NamespaceID, dc.NodeRunID)
+	// The briefing is looked up by node run AND by the lane this dispatch is
+	// actually addressed to. dc.ActorRef is the lane liveness routing chose
+	// for THIS claim (liveness.go), which is not necessarily the one the
+	// previous claim of the same node run was briefed for: a primary that
+	// went dead after acknowledging its briefing reroutes to its fallback,
+	// and a briefing states the host facts of the lane it was composed for.
+	// Looking one up by node run alone would let the fallback dispatch on
+	// the primary's acknowledgement — an authorization for a different host,
+	// answered by a different actor. A lane with no briefing of its own is
+	// simply unbriefed, and is issued one below.
+	open, found, err := w.db.OpenPreflight(ctx, w.opts.NamespaceID, dc.NodeRunID, actorKeyOf(dc.ActorRef))
 	if err != nil {
-		return false, fmt.Errorf("worker: read open preflight for node run %s: %w", dc.NodeRunID, err)
+		return false, fmt.Errorf("worker: read open preflight for node run %s actor %s: %w",
+			dc.NodeRunID, dc.ActorRef, err)
 	}
 
 	switch {
@@ -214,7 +225,7 @@ func (w *Worker) issuePreflight(
 		// failure it is — and named as one, because the fix is a
 		// registration, not a retry.
 		detail := fmt.Sprintf("node %q uses %q, whose gate is enabled but which advertises no readable "+
-			"preflight capability surface", node.ID, node.Uses)
+			"preflight capability surface", node.ID, dc.ActorRef)
 		if err != nil {
 			detail = fmt.Sprintf("%s: %v", detail, err)
 		}
@@ -226,8 +237,8 @@ func (w *Worker) issuePreflight(
 		NodeRunID:      dc.NodeRunID,
 		NodeID:         node.ID,
 		NodeKind:       node.Kind,
-		ActorRef:       node.Uses,
-		ActorKey:       actorKeyOf(node.Uses),
+		ActorRef:       dc.ActorRef,
+		ActorKey:       actorKeyOf(dc.ActorRef),
 		ActorID:        session.ActorRowID,
 		WorkflowName:   spec.Name,
 		WorkflowDigest: spec.Digest,
@@ -262,7 +273,7 @@ func (w *Worker) issuePreflight(
 		RunID:        dc.RunID,
 		NodeRunID:    dc.NodeRunID,
 		NodeID:       node.ID,
-		ActorKey:     actorKeyOf(node.Uses),
+		ActorKey:     actorKeyOf(dc.ActorRef),
 		ActorID:      session.ActorRowID,
 		RecordID:     appended.ID,
 		RecordDigest: appended.ContentDigest,
@@ -279,7 +290,7 @@ func (w *Worker) issuePreflight(
 		"node_id":      node.ID,
 		"work_id":      claimed.ID,
 		"actor_key":    row.ActorKey,
-		"actor_ref":    node.Uses,
+		"actor_ref":    dc.ActorRef,
 		"preflight_id": row.ID,
 		"record_id":    row.RecordID,
 		"expires_at":   row.ExpiresAt.UTC().Format(time.RFC3339Nano),
@@ -341,13 +352,13 @@ func (w *Worker) refuseUnacknowledged(
 	detail := fmt.Sprintf(
 		"node %q uses %q, whose dispatch preflight %s (ledger record %s) was issued at %s and expired at %s "+
 			"without an acknowledgement; the actor was never invoked",
-		node.ID, node.Uses, row.ID, row.RecordID,
+		node.ID, dc.ActorRef, row.ID, row.RecordID,
 		row.IssuedAt.UTC().Format(time.RFC3339), row.ExpiresAt.UTC().Format(time.RFC3339))
 	if row.Acknowledged() {
 		detail = fmt.Sprintf(
 			"node %q uses %q, whose dispatch preflight %s was acknowledged at %s but expired at %s before it "+
 				"could authorize a dispatch; a stale acknowledgement authorizes nothing",
-			node.ID, node.Uses, row.ID,
+			node.ID, dc.ActorRef, row.ID,
 			row.AcknowledgedAt.UTC().Format(time.RFC3339), row.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 
@@ -369,7 +380,7 @@ func (w *Worker) refuseUnacknowledged(
 		"node_id":      node.ID,
 		"attempt_id":   dc.AttemptID,
 		"work_id":      claimed.ID,
-		"actor_ref":    node.Uses,
+		"actor_ref":    dc.ActorRef,
 		"actor_key":    row.ActorKey,
 		"preflight_id": row.ID,
 		"outcome":      engine.OutcomePreflightUnacknowledged,
@@ -393,7 +404,7 @@ func (w *Worker) recordPreflightConsumed(
 		"node_id":                   node.ID,
 		"attempt_id":                dc.AttemptID,
 		"actor_key":                 row.ActorKey,
-		"actor_ref":                 node.Uses,
+		"actor_ref":                 dc.ActorRef,
 		"preflight_id":              row.ID,
 		"record_id":                 row.RecordID,
 		"acknowledgement_record_id": row.AcknowledgementRecordID,

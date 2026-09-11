@@ -378,16 +378,32 @@ deployment decides *whose*. Leave them unset on a host that does not run the
 pr-upkeep loop — the sweep is then refused there by name, which is the
 correct answer and not a silent fallback to someone else's code.
 
+`PR_UPKEEP_READINESS_SOURCE_URL` / `_SHA256` are the same thing for the merge
+gate's readiness collector, and are overridden the same way. Unset, they
+default to `readiness.py` at the revision this deploy shipped.
+
+The collector's five endpoint values — `PR_UPKEEP_READINESS_GITHUB_API`,
+`_SONAR_API`, `_SONAR_COMPONENT`, `_DEVAGUE_ROOT`, `_DEVAGUE_SLUG` — are
+granted **empty** rather than omitted, and the distinction is the sentence at
+the top of this section. `readiness.py` treats each as "empty means the
+documented default", but the runner resolves refs with `os.LookupEnv`: an
+empty grant resolves, an absent one refuses the whole operation by name. Since
+that node is the only path into the pr-upkeep merge approval, a refusal there
+is a merge decision presented with no readiness block at all. Export any of
+the five on a deploy to point the collector somewhere other than the public
+APIs and the working directory.
+
 ### Runner grants: what lives where, and how to put it back
 
-Five grants keep the pr-upkeep loop running, and they live in **two files**
+The grants that keep the pr-upkeep loop running live in **two files**
 on each runner host, for one reason: `deploy.sh` rewrites `runner.env` on
 every deploy, so anything that must survive a deploy without being retyped
 belongs in the other file.
 
 | Grant | File | Who writes it |
 | --- | --- | --- |
-| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `PR_UPKEEP_READINESS_SOURCE_URL` / `_SHA256`, and `PR_UPKEEP_READINESS_GITHUB_API` / `_SONAR_API` / `_SONAR_COMPONENT` / `_DEVAGUE_ROOT` / `_DEVAGUE_SLUG` | `~/.culture-nodes/runner.env` | the same lane, same deploy. The two source values default to the shipped revision's `readiness.py`; the other five are granted **empty** — see below |
 | `JIRA_ACCOUNT_EMAIL` + `JIRA_API_TOKEN` | `~/.culture-nodes/runner-secrets.env` | `install-secrets.sh`'s Jira lane, **merged** — it replaces these two keys and no other |
 | `GITHUB_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
 | `SONAR_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
@@ -869,6 +885,74 @@ outright; only a numeric LAN IP is accepted (c20). `--human <actor_key>`
 registers a person as an endpoint-less `kind=human` actor — the second of
 the three onboarding places in `docs/operations/people.md`.
 
+#### Lane liveness: `fallback_actor` and `liveness_mode` (issue #308)
+
+On 2026-09-07 both codex bridges answered `/healthz` 200 and `codex login
+status` printed "Logged in using ChatGPT", and minutes later every dispatch
+failed with "refresh token was revoked". The fact that tells those apart is
+the bridge's `liveness` host fact on `/v1/capabilities` —
+`{session_ok, reason, checked_at, mode}` — which the control plane attaches
+to each actor row (t10) and three detectors read: `nodes doctor`'s
+`lane_liveness` check, `deploy.sh`'s one-line-per-lane tail after doctor,
+and `nodes-op.sh actors`' fourth column. None of them gates anything; a
+lane nobody measured (`session_ok=null`, `reason=unmeasured`) is not a dead
+lane.
+
+Two knobs, in two different places:
+
+- **`--metadata fallback_actor=<actor_key>`** (registry metadata) names the
+  lane the worker routes to when this actor's newest fact reads
+  `session_ok=false` or `locked=true` (parsed by the worker after t10; until
+  then carried, not read). Point the two codex lanes at each other:
+
+  ```bash
+  ./register-actor.sh company/codex-thor http://<thor-lan-ip>:8086 \
+    NODES_ACTOR_CODEX_THOR_TOKEN --metadata fallback_actor=company/codex-orin
+  ./register-actor.sh company/codex-orin http://<orin-lan-ip>:8086 \
+    NODES_ACTOR_CODEX_ORIN_TOKEN --metadata fallback_actor=company/codex-thor
+  ```
+
+  Like every other `--metadata` key it is merged into the previous revision's
+  metadata, never replaced. A fallback is another live lane, never a retry
+  into the dead one.
+- **`liveness_mode`** (bridge configuration, NOT registry metadata): how the
+  lane derives the fact — `liveness_mode` in the bridge's config JSON or env
+  `CODEX_BRIDGE_LIVENESS_MODE` in the account's `~/.culture-nodes/codex-bridge.env`.
+  `LOCK` (the codex default) costs nothing and flips `session_ok=false
+  reason=refresh_token_spent` on the first run whose output carries the
+  spent-credential text, holding it until the bridge restarts and re-probes;
+  `CHECK` additionally runs a dry read-only `codex exec` probe (bounded by
+  `CODEX_BRIDGE_LIVENESS_PROBE_TIMEOUT_SECONDS`, cached for
+  `CODEX_BRIDGE_LIVENESS_CHECK_TTL_SECONDS`) when the surface is read, so the
+  fact flips before a dispatch pays for it — one micro-session per window per
+  lane. `adapters/codex/README.md` lists all three keys.
+
+  **The default is per backend, because the probe's price is.** The
+  claude-code bridge (`CLAUDE_CODE_BRIDGE_LIVENESS_MODE`) defaults to
+  `CHECK`: its probe is a read of `claudeAiOauth.expiresAt` in
+  `~/.claude/.credentials.json`, which spends no session, and it hangs no
+  latch off a run's output — so a `LOCK` claude lane reports `unmeasured`
+  and measures nothing. Do not set `LOCK` on a claude lane expecting a
+  stricter reading: the mode states how the fact was DERIVED, and the router
+  refuses a `LOCK`-mode `session_ok=false` at any age precisely because a
+  latch never re-measures.
+
+Restoring a dead lane is a hand-turn, and it clears **two** latches, not
+one: an interactive `codex login` as the **login user** on the bridge host
+(bootstrap copies out of the login user's home, so a login as
+`culture-codex` is not what it picks up), `sudo bash lanes/unix-user.sh
+bootstrap codex` — the lane's one root step, which refuses a non-root caller
+— to copy the credential in, a bridge restart to reset the bridge's own
+per-process latch to `unmeasured`, and then `POST
+/v1alpha1/actors/{id}/resume` with the `NODES_ACTOR_REGISTRATION_TOKEN_SECRET`
+bearer to clear the control plane's `locked=true` (decision c43). A restart
+does not touch that lock, and resume clears the lock and nothing else — a
+lane whose stored fact is still `session_ok=false` in LOCK mode stays
+un-leasable until a later collector write replaces it, so read the actor
+back rather than trusting the resume's 200. `codex-preflight.sh`'s check 3
+(`login status`) is advisory since this incident — it reads the stored
+credential, not the session.
+
 `--os-user NAME` is sugar for `--metadata os_user=NAME` — a first-class
 metadata key (issue #204) that records the dedicated Unix account a bridge
 runs as (`culture-codex`, `culture-claude`, `culture-qwen`), so the registry
@@ -964,6 +1048,7 @@ runs it as one command, for **one host and one engine**:
 ./cutover.sh thor pi --dry-run          # read this first — it touches nothing
 ./cutover.sh thor pi --yes              # then act
 ./cutover.sh spark colleague --yes      # the spark lane, same command
+./cutover.sh thor land --yes            # the land node's account (no bridge; see below)
 ```
 
 It prints one line per step — `step <name>: run|skip|refuse — <detail>` —
@@ -1015,6 +1100,77 @@ Two things `cutover.sh` deliberately cannot fix for you:
 The endpoint is never hardcoded: the numeric LAN IP `register-actor.sh`
 requires (c20) is derived with `getent hosts` on the target, exactly as
 `deploy.sh` derives `THOR_IP`.
+
+### The culture-land account (loop-closure t5, #315)
+
+`culture-land` is the engine account the **land node** runs as. The land
+node is deterministic code the runner executes — it fetches a handover ref
+into the account's checkout, rebases it onto the PR branch tip, runs the gate
+chain, pushes to the PR branch, replies on the review thread and resolves the
+thread — so the account is unlike the five harness accounts in three ways:
+it runs **no bridge** (nothing dispatches to it over HTTP, so there is no
+port, no `NODES_ACTOR_*_TOKEN` and no compose declaration), it installs **no
+engine binary** (`lanes/unix-user.sh` skips the engine step on engine `land`),
+and it copies **no model credential** from the login user. What it holds is
+one checkout, `~/git/culture-nodes-land`, and two git credentials.
+
+**Two tokens, two scopes, two files.** Both are fine-grained GitHub tokens
+the operator issues by hand, scoped to `agentculture/culture-nodes`, and both
+are *relayed* from the operator's shell by `install-secrets.sh`
+(`lanes/land-secrets.sh`, sourced from it) — never minted, and never in an
+ssh argv (the value rides stdin; the remote command names only the file):
+
+| file (mode 600, under `~/.culture-nodes/`) | environment variable | GitHub permission | what the land node does with it |
+|---|---|---|---|
+| `bridge-push.env` | `GITHUB_TOKEN_WORKER` | **Contents: write** (Read and write), nothing else | the push to the PR branch — the same #90 seam every engine account already carries |
+| `land-pr.env` | `GITHUB_TOKEN_LAND_PR` | **pull-requests:write** (Pull requests: Read and write), nothing else | the thread reply and the thread resolve |
+
+They are separate on purpose. A single token with both permissions is
+technically able to call the merge API; keeping the scopes apart means the
+push step never holds a token that could merge and the reply step never
+holds one that could push. **The land node never merges a PR.** That boundary
+is enforced by the node — its script contains no merge call, and its declared
+GitHub operations are push, comment and resolve-thread — and audited by the
+spec's honesty condition, not by token scope; `human-merges-pr` stays the
+only merge path, so the lane doc's "a person is always in it" property holds.
+The account inventory (`lanes/unix-user.sh`) admits exactly these two env
+files beside the usual entries and refuses anything else, and the
+post-deploy audit reads the files' modes, never their contents.
+
+Bringing it online is `cutover.sh`, with two differences from the harness
+engines:
+
+```bash
+export GITHUB_TOKEN_WORKER=...      # Contents: write
+export GITHUB_TOKEN_LAND_PR=...     # Pull requests: write
+./cutover.sh thor land --dry-run    # prints the five steps; touches nothing
+./cutover.sh thor land --yes        # secrets -> deploy -> register
+```
+
+- `compose-declares-token-key` is a **skip** (no bridge, so no key to
+  declare), and `secrets` **refuses by name** when either variable is unset
+  rather than delivering one file of two — a re-run with both files already
+  present skips instead (`FORCE_LAND=1` re-relays them).
+- `register` writes an endpoint-less row: `register-actor.sh --runner-account
+  company/land-thor --os-user culture-land` (kind `agent`, protocol `runner`,
+  no bearer) with `handover_remote=ssh://culture-land@thor/home/culture-land/git/culture-nodes-land`
+  — the same per-actor deployment fact `scripts/collect-handover.py` reads
+  for every other actor — and `repository_identity`. `--os-user` is required
+  for this shape: the account *is* the actor.
+
+`deploy.sh thor` runs the `deploy_land_account` lane (the account's checkout,
+git identity, archive copy and inventory; additive — a host with no
+`culture-land` is skipped by name). **The root bootstrap that creates the
+account stays a counted hand-turn**: `deploy/prod/bootstrap-accounts.sh thor`
+now names `land` beside `codex qwen pi`, and it is typed by the operator and
+recorded on the tracking issue per CLAUDE.md's every-hand-turn rule.
+`cutover.sh` never calls it and never calls `sudo`
+(`tests/deploy/landcutover_test.go` checks the fake-host call log for both);
+an account that does not open is refused with the command to type:
+
+```bash
+sudo bash deploy/prod/lanes/unix-user.sh bootstrap land   # on thor itself
+```
 
 ### Unbounded concurrency — placement is the containment
 

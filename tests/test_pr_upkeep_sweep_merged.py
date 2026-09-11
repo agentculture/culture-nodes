@@ -134,7 +134,7 @@ def test_merged_pr_is_emitted_once_across_two_watermarked_passes(monkeypatch):
         "head": {"ref": "SCRUM-232/done"},
         "body": "",
     }
-    monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda *_: [merged])
+    monkeypatch.setattr(sweep, "fetch_closed_pulls", lambda *_: [merged])
     cursors = set()
     appended = []
 

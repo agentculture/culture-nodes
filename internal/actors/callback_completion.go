@@ -81,14 +81,8 @@ func completionFor(
 		return req, "", nil
 
 	case EventFailed:
-		var payload FailedPayload
-		if len(ev.Payload) > 0 {
-			_ = json.Unmarshal(ev.Payload, &payload)
-		}
-		class := payload.Class
-		if !class.Valid() {
-			class = ClassExecution
-		}
+		payload := failedPayloadOf(ev)
+		class := failedClassOf(ev)
 		req.TechStatus = TechStatusFor(class)
 		if req.TechStatus == engine.StatusTimedOut {
 			// A §13.4 terminal event is the actor reporting that ITS
@@ -116,4 +110,15 @@ func completionFor(
 	}
 
 	return req, fmt.Sprintf("event kind %q is not terminal", ev.Kind), nil
+}
+
+// failedPayloadOf decodes a `failed` event's payload, tolerating an absent
+// or malformed body exactly as the completion always has: the zero payload,
+// which classifies as an execution failure.
+func failedPayloadOf(ev CallbackEvent) FailedPayload {
+	var payload FailedPayload
+	if len(ev.Payload) > 0 {
+		_ = json.Unmarshal(ev.Payload, &payload)
+	}
+	return payload
 }

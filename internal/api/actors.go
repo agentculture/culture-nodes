@@ -43,6 +43,11 @@ type ActorOut struct {
 	// global rate is not rendered here (it is not this actor's); it is on
 	// GET /v1alpha1/dispatch-rates alongside every per-actor scope.
 	DispatchRate *DispatchRateOut `json:"dispatch_rate,omitempty"`
+	// Liveness is the persisted session-liveness row for this actor KEY
+	// (plan loop-closure t10, migration 0058) — absent when nothing has ever
+	// observed the actor's session. Keyed by actor_key for the same reason
+	// the two blocks above are. See liveness.go.
+	Liveness *ActorLivenessOut `json:"liveness,omitempty"`
 }
 
 // ActorAvailabilityOut is one actor_availability row rendered for the
@@ -175,12 +180,18 @@ func (s *Server) handleListActors(w http.ResponseWriter, r *http.Request) error 
 		return internalError(err)
 	}
 	ratesByKey := actorRatesByKey(rates)
+	// And once more for the liveness rows (plan loop-closure t10).
+	liveness, err := s.engineStore.ActorLivenessAll(ctx)
+	if err != nil {
+		return internalError(err)
+	}
 	now := time.Now().UTC()
 	out := make([]ActorOut, len(actors))
 	for i, a := range actors {
 		pause, ok := pauses[a.ActorKey]
 		rate, rated := ratesByKey[a.ActorKey]
-		out[i] = withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now)
+		live, observed := liveness[a.ActorKey]
+		out[i] = withLiveness(withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now), live, observed, now)
 	}
 	writeJSON(w, http.StatusOK, ActorListOut{Items: out})
 	return nil
@@ -202,8 +213,12 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) error {
 		return internalError(err)
 	}
 	rate, rated := actorRatesByKey(rates)[a.ActorKey]
+	live, observed, err := s.engineStore.ActorLivenessFor(ctx, a.ActorKey)
+	if err != nil {
+		return internalError(err)
+	}
 	now := time.Now().UTC()
-	writeJSON(w, http.StatusOK, withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now))
+	writeJSON(w, http.StatusOK, withLiveness(withDispatchRate(actorOutWithAvailability(a, pause, ok, now), rate, rated, now), live, observed, now))
 	return nil
 }
 
@@ -268,6 +283,14 @@ func (s *Server) handleResumeActor(w http.ResponseWriter, r *http.Request) error
 	if _, _, err := s.engineStore.ClearActorPause(ctx, a.ActorKey, clearedBy); err != nil {
 		return internalError(err)
 	}
+	// The same lane out of a liveness LOCK (plan loop-closure t10, decision
+	// c43): resume clears the control-plane lock and nothing else. The lane
+	// leases again only once a later bridge fact says session_ok=true — a
+	// resume alone never reopens a lane whose last fact is false. See
+	// liveness.go's unlockLiveness.
+	if err := s.unlockLiveness(ctx, a.ActorKey); err != nil {
+		return internalError(err)
+	}
 
 	// Re-read rather than render the clear's own return value: an actor with
 	// no pause at all has nothing to return from the clear, and this way one
@@ -276,7 +299,12 @@ func (s *Server) handleResumeActor(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, actorOutWithAvailability(a, pause, ok, time.Now().UTC()))
+	live, observed, err := s.engineStore.ActorLivenessFor(ctx, a.ActorKey)
+	if err != nil {
+		return internalError(err)
+	}
+	now := time.Now().UTC()
+	writeJSON(w, http.StatusOK, withLiveness(actorOutWithAvailability(a, pause, ok, now), live, observed, now))
 	return nil
 }
 
@@ -473,6 +501,16 @@ func actorGradesOut(g postgres.ActorGrades) ActorGradesOut {
 	}
 }
 
+// ActorHandTurnStageCountOut is one hand_turns_by_stage entry: CONFIRMED
+// hand_turn records only (a confirming review record exists for the turn),
+// per stage and work item, on runs this actor attempted -- see
+// postgres.ActorHandTurnStageCount's doc comment (task t16, decision c25).
+type ActorHandTurnStageCountOut struct {
+	Stage    string `json:"stage"`
+	WorkItem string `json:"work_item"`
+	Count    int    `json:"count"`
+}
+
 // ActorStatsBucketOut is one stats slice's numbers — either the
 // all-categories Total or one named category (see ActorCategoryBucketOut)
 // — components.schemas.ActorStatsBucket.
@@ -483,6 +521,9 @@ type ActorStatsBucketOut struct {
 	DurationPercentiles *ActorDurationPercentilesOut `json:"duration_percentiles,omitempty"`
 	Usage               *UsageOut                    `json:"usage,omitempty"`
 	Grades              ActorGradesOut               `json:"grades"`
+	// HandTurnsByStage is always emitted, empty when nothing was confirmed:
+	// "no confirmed hand-turns" is a computed answer, never an omission.
+	HandTurnsByStage []ActorHandTurnStageCountOut `json:"hand_turns_by_stage"`
 }
 
 func actorStatsBucketOut(cs postgres.ActorCategoryStats) ActorStatsBucketOut {
@@ -500,6 +541,10 @@ func actorStatsBucketOut(cs postgres.ActorCategoryStats) ActorStatsBucketOut {
 	if claims == nil {
 		claims = []ActorLedgerAuthorityOut{}
 	}
+	handTurns := make([]ActorHandTurnStageCountOut, len(cs.HandTurnsByStage))
+	for i, hc := range cs.HandTurnsByStage {
+		handTurns[i] = ActorHandTurnStageCountOut{Stage: hc.Stage, WorkItem: hc.WorkItem, Count: hc.Count}
+	}
 	return ActorStatsBucketOut{
 		RunsByOutcome:       outcomes,
 		ClaimsByAuthority:   claims,
@@ -507,6 +552,7 @@ func actorStatsBucketOut(cs postgres.ActorCategoryStats) ActorStatsBucketOut {
 		DurationPercentiles: actorDurationPercentilesOut(cs.DurationPercentiles),
 		Usage:               usageOut(cs.Usage),
 		Grades:              actorGradesOut(cs.Grades),
+		HandTurnsByStage:    handTurns,
 	}
 }
 

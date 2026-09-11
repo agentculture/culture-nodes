@@ -179,7 +179,8 @@ func (s *Store) IssuePreflight(ctx context.Context, in IssuePreflightInput) (Pre
 	return p, nil
 }
 
-// OpenPreflight returns the newest UNCONSUMED preflight for a node run.
+// OpenPreflight returns the newest UNCONSUMED preflight issued for one node
+// run AND one actor key.
 //
 // Consumed rows are excluded rather than filtered by the caller because
 // "open" is the question the dispatch site actually asks, and a consumed row
@@ -187,21 +188,31 @@ func (s *Store) IssuePreflight(ctx context.Context, in IssuePreflightInput) (Pre
 // Expiry is deliberately NOT filtered here: an expired-unacknowledged row is
 // exactly what tells the dispatch site to refuse rather than to re-issue,
 // and hiding it would make those two cases indistinguishable.
-func (s *Store) OpenPreflight(ctx context.Context, namespaceID, nodeRunID string) (Preflight, bool, error) {
+//
+// The actor key is part of the question rather than a detail of the answer,
+// because a briefing is composed FOR one lane: it states that lane's host
+// facts, and the acknowledgement against it is that lane's claim to have
+// read them. A node run is not pinned to one lane — liveness routing picks
+// the actor per claim, so the actor a node run dispatches to can change
+// between one claim and the next (internal/worker/liveness.go) — and a
+// briefing selected by node run alone would let the lane that was NOT
+// briefed ride the acknowledgement of the lane that was.
+func (s *Store) OpenPreflight(ctx context.Context, namespaceID, nodeRunID, actorKey string) (Preflight, bool, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+preflightColumns+`
 		FROM dispatch_preflights
-		WHERE namespace_id = $1 AND node_run_id = $2 AND consumed_at IS NULL
+		WHERE namespace_id = $1 AND node_run_id = $2 AND actor_key = $3 AND consumed_at IS NULL
 		ORDER BY issued_at DESC, id DESC
 		LIMIT 1
-	`, namespaceID, nodeRunID)
+	`, namespaceID, nodeRunID, actorKey)
 
 	p, err := scanPreflight(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Preflight{}, false, nil
 	}
 	if err != nil {
-		return Preflight{}, false, fmt.Errorf("postgres: OpenPreflight for node run %s: %w", nodeRunID, err)
+		return Preflight{}, false, fmt.Errorf("postgres: OpenPreflight for node run %s actor %s: %w",
+			nodeRunID, actorKey, err)
 	}
 	return p, true, nil
 }

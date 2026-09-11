@@ -22,13 +22,19 @@ means supplying these — it never means editing `workflow.yaml`.
 
 | Value | Where it comes from |
 | --- | --- |
-| `repo`, `review_repo` | **Run input.** Two per-host working directories: `repo` is where the fix actor works, `review_repo` is the review actor's own allowlisted checkout on its own machine. Neither is the work under review — that crosses as `handoff` (see "The cross-machine handoff"). |
-| `fix_instruction`, `review_instruction`, `ask_instruction`, `await_reply_instruction`, `merge_instruction`, `notify_title`, `notify_description`, `review_sandbox` | **Run input.** The words each actor is given, authored per run; [`driver.sh`](driver.sh) carries this deployment's defaults and every one is overridable by an environment variable it documents. |
-| `actor://company/developer` | **Actor registry.** The fix lane, and the only identity here holding a GitHub write credential. |
+| `actor://company/developer` | **Actor registry.** The analysis lane and the fix lane, and the only identity here holding a GitHub write credential. |
 | `actor://company/codex-thor` | **Actor registry.** The review lane — deliberately a different backend *and* host from the fix lane. The `thor` in the id is a registry key naming a role, not a hostname you must own: `internal/worker/registry.go` resolves the identity against your actors table (with the `@sha256` revision suffix stripped), so you register the same id against your own endpoint. |
 | `actor://company/human-ops` | **Actor registry.** The `kind=human` inbox bridge. |
 | `actor://company/notify-discord` | **Actor registry.** The notify adapter (issue #68). |
 | `runner://headspace/docker` | **Runner registry.** The code-node runner boundary the sweep dispatches through. |
+| `runner://headspace/pr-upkeep-readiness` | **Runner registry.** The code-node runner boundary the `readiness` collector dispatches through. Its image must be able to reach GitHub and SonarCloud, and its workspace must carry the checkout whose `.devague` records the block counts. |
+| `PR_UPKEEP_READINESS_SOURCE_URL` | **Granted environment value** on the readiness operation. Where `readiness.py` is fetched from at dispatch time. |
+| `PR_UPKEEP_READINESS_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
+| `PR_UPKEEP_READINESS_GITHUB_API` | **Granted environment value**, optional. The GitHub REST base the collector reads; empty means the public API, and the GraphQL endpoint is always `<base>/graphql`. |
+| `PR_UPKEEP_READINESS_SONAR_API` | **Granted environment value**, optional. The SonarCloud base; empty means the public one. |
+| `PR_UPKEEP_READINESS_SONAR_COMPONENT` | **Granted environment value**, optional. The Sonar project key; empty means the `<owner>_<repo>` convention `pr-status.sh` derives. |
+| `PR_UPKEEP_READINESS_DEVAGUE_ROOT` | **Granted environment value**, optional. The checkout's `.devague` directory; empty means `.devague` under the working directory. |
+| `PR_UPKEEP_READINESS_DEVAGUE_SLUG` | **Granted environment value**, optional. Read only the documents with this slug; empty reads every document and the block records which scope it used. |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` | **Granted environment value** on the sweep operation. Where `sweep.py` is fetched from at dispatch time. |
 | `PR_UPKEEP_SWEEP_SOURCE_SHA256` | **Granted environment value.** The sha256 those fetched bytes must have; the bootstrap refuses to execute anything else. |
 | `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` | **Granted environment value.** Where the sibling `pr_upkeep_jira.py` read/replay module is fetched from. |
@@ -62,6 +68,22 @@ environment — see [`deploy/prod/README.md`](../../deploy/prod/README.md)'s
 "Granted environment values" for where they live on this deployment and how
 `deploy.sh` re-grants them.
 
+The readiness collector's `PR_UPKEEP_READINESS_SOURCE_URL` /
+`PR_UPKEEP_READINESS_SOURCE_SHA256` work the same way and are stamped by
+`deploy/prod/lanes/runner-env-write.sh` from the same shipped revision. So are
+the collector's five endpoint values — **empty, but granted**, because "empty
+means the documented default" describes `readiness.py`, while the runner
+boundary asks whether the name is *set* and refuses the operation by name when
+it is not. Granting the two source values alone would leave the node refused
+for the other five.
+
+That the readiness node is granted at all, and the cleanup node's
+`CLEANUP_SOURCE_URL`/`CLEANUP_SOURCE_SHA256` still are not, is one difference:
+this collector is the only path into `human-merges-pr`, so an ungranted
+readiness is not a node that quietly does not run — it is every merge decision
+here presented without the block. `tests/test_pr_upkeep_readiness.py` diffs the
+node's `environmentRefs` against the lane, so the two cannot drift apart again.
+
 A digest mismatch, or either value unset, exits nonzero, which is the
 sweep node's technical-failure path: `sweep.failed` routes to the
 `sweep-failed` end node and the run says so. The `0` / `10` / other
@@ -83,9 +105,21 @@ item.
       ▼
   workflow.yaml v2 (one run per matching event)
 
-  fix.completed ──▶ human-merges-pr ──approved/rejected/expired──▶ finish
-      │
-      └──no_change───────────────────────────────────────────────▶ finish
+  route ──keyed───▶ analyse ──packaged──▶ stage-dispatch ──comment_posted──▶ fix
+      │                 │  │                (Jira-keyed work item only)      │
+      │                 │  └──packaged──────────────────────────────────────▶┤
+      │                 └──no_fix────────────────────────────────────────────┼─▶ finish
+      │                                                                      │
+      └──orphan──▶ intake-orphan ──issue_created──▶ stamp-pr ──stamped──▶ analyse
+
+  fix.completed ──▶ stage-pr-open ──comment_posted──▶ readiness
+      │                  (Jira-keyed work item only)        │
+      ├──completed ─────────────────────────────────────────┤ (gh: work item)
+      │                                                     │
+      │                           readiness.passed/failed ──▶ human-merges-pr
+      │                                                            │
+      │                                    approved/rejected/expired ──▶ finish
+      └──no_change───────────────────────────────────────────────────────▶ finish
 ```
 
 - [`sweep-cycle.workflow.yaml`](sweep-cycle.workflow.yaml) is triggered by
@@ -98,20 +132,133 @@ item.
 - [`workflow.yaml`](workflow.yaml) is v2 of the upkeep workflow. It starts a
   run for each `pr-upkeep.pr` event whose payload is from a GitHub PR and has
   at least one finding. The event payload is the run input, so the repository,
-  PR identity, head SHA, and the finding are durable before an actor starts.
-  One event carries **one** finding — the highest-priority one still
-  undispatched (see "One finding per fact" below).
+  PR identity, head SHA, the finding and the work item are durable before an
+  actor starts. One event carries **one file's** findings — every undispatched
+  finding sitting on the same file as the highest-priority one (see "One file
+  per fact" below).
+
+  What a `pr-upkeep.pr` fact carries, and where each value comes from
+  (`pr_upkeep_emit.upkeep_pr_fact`; the input contract is
+  `additionalProperties: false`, so this table and the contract are the same
+  list):
+
+  | Field | Value |
+  | --- | --- |
+  | `source` | the constant `github_pr` |
+  | `repository` | the granted `github_repo` being swept |
+  | `number` | the PR number |
+  | `head_sha` | the PR's head commit, which the check-runs read is keyed by |
+  | `findings` | one file's undispatched findings, in priority order: what this run's `analyse` node judges |
+  | `work_item` | the key of the work item the PR belongs to: the correlated Jira key (head branch, then body; narrowed to `jira_project` when configured), else the transient `gh:<owner>/<repo>#<n>` form. The engine stamps the run's `work_item` column from it; it is never empty, and it is neither `subject` nor `category` (#310). |
+
+- **route** is the entry, a decision node over the fact's `work_item`: a
+  value starting `gh:` selects `orphan`, anything else `keyed`. It computes
+  nothing and calls nobody; it reads the run's own input.
+- **intake-orphan** (orphan path only) is the jira actor's `create_issue`
+  verb with the exact-key input the bridge admits: `verb`, `project` (a
+  deployment literal that must be in the bridge's `JIRA_CREATE_PROJECTS`
+  allowlist), `summary` (the `gh:` work item, which names the PR),
+  `description`, and `labels: [orphan, auto-created, source:github,
+  repo:<owner>/<repo>]`. `maxAttempts: 1` — a retried create would be a
+  second ticket. Its output `issue` is the new key.
+- **stamp-pr** (orphan path only) is the developer actor writing `Jira:
+  <key>` into the PR body, the one channel a registered actor has to the
+  place the sweep's correlation reads. That is what makes the next tick
+  idempotent: a later fact for the same PR arrives keyed and takes the
+  `keyed` edge, and the jira bridge (which has no search verb) is never asked
+  twice. The run's own `work_item` column is re-keyed separately, by
+  `PATCH /v1alpha1/runs/{id} {"work_item": "<key>"}` — the one transition the
+  endpoint admits (gh: form → Jira key, once); see
+  `docs/operations/pr-upkeep-lane.md` for why the graph does not do it.
+- **analyse** is the agent node that decides whether a fix is worth buying
+  (issue #309, task t14). It reads the review thread under every finding the
+  fact carries — its replies and whether it is resolved — and answers with a
+  verdict and a one-line reason each: `FIX`, `PUSHBACK` (a human declined it),
+  `DUPLICATE` (another finding in this list is the same defect) or `SKIP` (the
+  thread is resolved, or it is already fixed, or it is a false positive). The
+  `FIX` verdicts are then bundled into `packages`, one per (rule, file) pair,
+  so thirteen instances of one SonarCloud rule in one file are **one** package.
+  Two outcomes: `packaged` carries on to the fix, `no_fix` goes straight to
+  `finish` and buys no session at all. `maxAttempts: 2`, unlike its neighbours:
+  the node writes nothing, so a retry is free, and a failed analysis would
+  leave this file's findings marked worked-at-this-head until somebody pushed.
 - **fix** is the agent node. Actor affinity selects the security developer
   when the finding on the event is a security finding and the general
-  developer otherwise. The actor works that finding and either reports
-  `completed` after opening or updating a PR, or `no_change` when a fix would
-  be inappropriate.
-- **human-merges-pr** is the approval node reached by `fix.completed`. A
-  platform maintainer decides the merge outcome; `approved`, `rejected`, and
-  `expired` are all terminal for this run.
-- **finish** is the end node. It receives `fix.no_change` directly and every
-  terminal outcome from `human-merges-pr`, then returns the original event
-  payload.
+  developer otherwise. It binds `packages` — not the raw event findings — and
+  works the FIRST package as one change, then reports `completed` after
+  opening or updating a PR, or `no_change` when a fix would be inappropriate.
+  The rest of the file is left to the post-push re-scan: once the fix lands,
+  the remaining findings' line numbers have moved, and the sweep re-reads them
+  at the new head SHA.
+- **stage-dispatch** and **stage-pr-open** post this graph's two stage
+  comments to the ticket, through the jira actor's `post_comment` verb with
+  the bridge's exact-key input (`verb`, `issue`, `comment`). Each comment's
+  first line is machine-readable — `culture-nodes:stage=dispatch` /
+  `culture-nodes:stage=pr-open` — and the sweep reads such a line as a stage
+  **record**, which closes an earlier pickup transition on the same timeline
+  and nothing else. The sweep gains no Jira write: the
+  nodes are the write path (issue #311, decision c9). Only a Jira-shaped work
+  item can carry a stage, so the `keyed` route reaches `stage-dispatch` and
+  both `fix.completed` edges are guarded on the item's shape — an orphan run
+  posts neither, because its ticket was created inside that same run and the
+  run's input still holds the `gh:` form. `maxAttempts: 2`, unlike
+  `intake-orphan`: a retried comment is at worst a duplicate record (newest
+  wins), while a failed one would stall the fix behind bookkeeping. The full
+  six-stage vocabulary is in `docs/operations/pr-upkeep-lane.md`.
+- **readiness** is the deterministic code node that assembles the block the
+  merge decision is made on (issue #317, claim c10, task t18). It runs
+  [`readiness.py`](readiness.py) through the runner boundary — fetched by
+  granted URL and digest, like every other code node here — and writes one
+  JSON document with five fields: `ci` (every check on the head commit as
+  `{name, state}`, merging check runs **and** commit statuses, because that
+  is what `gh pr checks` reports), `sonar` (`gate`, `open_issues`,
+  `hotspots`), `threads` (`unresolved`, `total`), `devague` (the proposed
+  records in the checkout's `.devague` tree) and `evidence` (the devague
+  evidence records whose outcome is not a pass). A source it could not read
+  is `null` plus a named entry in the block's `failures` list — never a
+  fabricated zero, which is the merge gate's `measurement_incomplete`
+  doctrine one node earlier. `maxAttempts: 2`: the node writes nothing
+  anywhere, so a retry costs a few HTTP reads.
+
+  It reuses the **shape** of
+  [`.claude/skills/cicd/scripts/pr-status.sh`](../../.claude/skills/cicd/scripts/pr-status.sh)
+  — the same three SonarCloud queries with the same filters, the same
+  `reviewThreads`/`isResolved` read — and none of its shell: `gh` and `devex`
+  are operator tools on an operator's PATH, and this runs in a runner image,
+  so the program calls the HTTP APIs directly and spawns no subprocess at
+  all.
+- **human-merges-pr** is the approval node, and it is reachable from
+  `readiness` and from **nowhere else**. That is what makes "no merge
+  decision is presented without its readiness block" a compiler-checked
+  property of the graph rather than a habit: both former routes into it — the
+  keyed path's `stage-pr-open.comment_posted` and the orphan path's guarded
+  `fix.completed` — now land on `readiness` instead. It binds
+  `readiness: /nodes/readiness/output` beside the 2.5.0 `finding` and `fix`
+  pointers.
+
+  Why a binding and not a presentation field: `presentation` metadata is
+  lifted out of the executable spec by the compiler and never reaches a run,
+  and `internal/engine/humantask.go` writes a task's `context_refs` as
+  **pointers** — the binding exactly as authored, never a payload the engine
+  resolved. So a readiness block has to be some node's output. What the
+  pointer resolves to is the code node's output document, whose
+  `artifacts.stdout_ref` is the block itself.
+
+  Both of the collector's outcomes route here. A collector that could not
+  produce a block at all still reaches the approver, because the merge
+  authority is a human (PRD §10.4) and a run that ended instead would have
+  turned a missing measurement into a dropped decision; which of the two
+  happened is the node run's own outcome. A platform maintainer decides the
+  merge; `approved`, `rejected`, and `expired` are all terminal for this
+  run.
+- **finish** is the end node. It receives `analyse.no_fix` and `fix.no_change`
+  directly and every terminal outcome from `human-merges-pr`, then returns the
+  **analysis document** — verdicts, reasons and packages. An end node's output
+  is a single pointer, and of the two candidates that is the one carrying
+  something no other surface has: the `PUSHBACK` verdicts, which are a
+  person's objection on a PR thread. The sweep reads them back off the run
+  listing and names them in the tick summary (`pushbacks`); the run input is
+  not lost by this, it is the run's own `input` column on the same row.
 
 ## Idle vs blocked (issue #71)
 
@@ -210,6 +357,15 @@ The GitHub lifecycle vocabulary is separate. A correlatable open PR raises
 watermark. A correlatable merge raises `pr.merged` with the same identity and
 `merged_at`. Both correlations prefer the head branch and then the body, and
 when `jira_project` is configured they accept only that project's keys.
+A PR closed *without* merge raises `pr.closed` instead (task t12, spec c37):
+`source=github_pr`, repository, number, `head_sha`, `closed_at`, `work_item`
+(the same `work_item_for_pull` correlation `pr-upkeep.pr` carries, so a
+ticketless PR still produces a fact) and `url` when GitHub sends one, on
+source key `github:{repo}:pr:{n}:closed` with the immutable `closed_at` as
+its watermark and the work item as its subject. A merged PR never raises
+`pr.closed`. Both lifecycle facts come from one bounded `state=closed`
+listing (`fetch_closed_pulls`). Nothing consumes `pr.closed` yet — the
+cleanup node that cancels the item's parked runs is task t13.
 
 ## Dedupe by finding id (spec c7/h6)
 
@@ -266,22 +422,42 @@ longer an accident of the cursor either: it is dedupe clause 2, stated
 deliberately, because a run that ended is an answer and re-asking at the same
 commit re-buys it.
 
-## One finding per fact (issue #268)
+## One file per fact (issues #268, #309)
 
-The dedupe above reads *every* id on a running run's `input.findings`. The
-fix node works exactly one — "take the HIGHEST-PRIORITY item from the
-prioritised findings list and work only that one item" — so a fact carrying
-the whole list named N findings, worked one, and made the other N-1
+The dedupe above reads *every* id on a running run's `input.findings`, so what
+one fact carries decides what a parked run suppresses. That unit has been
+wrong in both directions, and the current answer is the middle one.
+
+**The whole PR was too much (#268).** The fix node worked exactly one item —
+"take the HIGHEST-PRIORITY item ... and work only that one item" — so a fact
+carrying the whole list named N findings, worked one, and made the other N-1
 undispatchable for as long as that run lived. And a pr-upkeep run lives until
 a human merges: it parks on `human-merges-pr`. Net effect, measured on PR
 \#267 (run `01M19YG9ZJ…` carried `pr267-qodo-1` and `pr267-qodo-2`, worked
 `-1`, parked): **one fix per PR per merge**, with the second finding worked by
 hand in-session.
 
-A fact now carries exactly the finding it dispatches — `findings` is a
-one-item list — so the run's input is an honest statement of what is in
-flight, which is what the dedupe was already assuming it was. Findings that
-lost the priority ordering are reported separately from suppressed ones, as
+**Exactly one finding was too little (#309).** It fixed that, and made
+bundling impossible: no run ever held two findings, so nothing in the loop
+could see that thirteen of them were the same SonarCloud rule in the same
+file. Each bought its own developer session, its own PR update and its own
+human approval, for thirteen edits one constant would have answered.
+
+**A fact now carries one file's findings** (`pr_upkeep_emit.finding_package`,
+keyed by `FINDING_PACKAGE_KEY`): every undispatched finding sitting on the
+same file as the PR's highest-priority one. The file is the unit because it is
+the unit a fix actually has — one edit answers every same-rule finding in it,
+and the findings a fix does *not* take are stale the moment it pushes, their
+line numbers moved. So a file's findings are dispatched together, judged
+together by `analyse`, and the ones outside the package it works are deferred
+to the post-push re-scan. Findings on the PR's **other** files are untouched
+by that and stay dispatchable on the next tick, which is the property #268
+bought and this keeps.
+
+Two things follow. The dedupe holds and releases a package **whole**: one
+member in flight holds the file, because releasing the other twelve would mint
+a second run pushing a second change to the same lines. And findings that lost
+the priority ordering are still reported separately from suppressed ones, as
 `deferred_findings`: they are emittable next cycle, not waiting on anything.
 
 That alone is not enough, and the second half is easy to miss. The control
@@ -296,8 +472,8 @@ PR move*, the finding id answers *is this a different piece of work*.
 
 Two properties fall out of that shape:
 
-- **A PR with N findings gets N fixes before its merge**, one per tick, in
-  priority order — not N dispatched at once. (It does *not* promise only one
+- **A PR gets one fix per file per tick before its merge**, in priority
+  order — not every file dispatched at once. (It does *not* promise only one
   fix session ever touches a PR: if a fix outlasts the tick, the next
   dispatch overlaps it. See the recipe's "one tick, precisely".)
 - **A PR with no findings keeps the two-key watermark it always had**, so
@@ -399,12 +575,15 @@ so this needs no hand-edited grant — only a redeploy. `grant-check.sh` knows
 the two new keys, or the deploy that first grants them would be refused by
 its own preflight (`tests/deploy/grantsafety_test.go` pins that pairing).
 
-`workflow.yaml` is untouched, deliberately: a one-item list satisfies its
-published input contract (`findings` minItems 1), its trigger
+`workflow.yaml` was untouched by *that* change, deliberately: a one-item list
+satisfies its published input contract (`findings` minItems 1), its trigger
 (`size(event.payload.findings) > 0`), and its fix instruction verbatim — so
-this ships by deploying the sweep, with no workflow republish. Its
-`security-findings` affinity rule gets sharper for free: `findings.exists(f,
-f.kind == "security")` now asks whether the finding *being dispatched* is a
+issue #268 shipped by deploying the sweep, with no republish. The property
+survives the move to a file's findings (task t14): the contract declares no
+`maxItems`, so widening what the list holds again forced no republish either,
+and the 2.5.0 bump is for the `analyse` node, not the payload. Its
+`security-findings` affinity rule got sharper for free: `findings.exists(f,
+f.kind == "security")` now asks whether a finding *being dispatched* is a
 security finding, rather than whether any finding on the PR is.
 
 ## The cross-machine handoff (issue #74)
@@ -571,30 +750,31 @@ Run them with the normal suite:
 uv run pytest tests/test_pr_upkeep_sweep.py -v
 ```
 
-## Validate and run
+## Validate and publish
 
 ```bash
 # compile locally until clean (0 errors, 0 warnings):
 go run ./cmd/nodes validate examples/pr-upkeep/workflow.yaml
 
-# drive one cycle against a live deployment — BILLABLE, human-guarded:
-CONFIRM_BILLABLE=yes examples/pr-upkeep/driver.sh
+# publish it (idempotent by digest) against a deployment:
+uv run nodes workflow publish examples/pr-upkeep/workflow.yaml
 ```
 
-[`driver.sh`](driver.sh) is the external driver (scheduling stays outside
-the engine by design): it validates, publishes idempotently by digest, and
-POSTs **one** run to `/v1alpha1/runs` — one upkeep cycle-bundle, looping
-inside the workflow under `spec.limits` (`maxTransitions: 64`,
-`maxVisitsPerNode: 6`, `maxDuration: 168h`) until a terminal edge or bound
-ends it. It refuses to run without `CONFIRM_BILLABLE=yes`, exactly like
-`examples/codex-smoke-pair/run-smoke.sh`, because every loop iteration
-dispatches a real claude-code fix session and a real codex review session.
-It deliberately does **not** poll to a terminal state: the run parks on
-people (the merge assignment, or the decision) for hours or days;
-manual overrides happen in the web `/inbox` or via
-`POST /v1alpha1/human-tasks/{id}/decision`. When a run ends, re-invoke the
-driver for the next cycle — issue #71 means that is rarer now, since an
-empty sweep re-sweeps on its own instead of ending the run.
+**Nothing here creates a run by hand, and there is no driver script.** Until
+v2 there was one — `driver.sh`, a LIVE-ONLY billable script that POSTed one
+looping "upkeep cycle-bundle" to `/v1alpha1/runs` and left a person to
+re-invoke it after every terminal run. That graph no longer exists: the loop
+is started by a durable schedule (`pr-upkeep-sweep-5m`) whose event a
+published workflow's trigger turns into a run, the input contract is
+`additionalProperties: false` and refuses every key that driver carried, and
+the run created per fact is one PR's file, not a cycle. The script was deleted
+in task t14 rather than rewritten, because the thing it existed to do — start
+the loop — is now something no person does.
+
+The one operator lever that remains is the publish above: `workflow.yaml` is
+content-addressed and runs pin its digest, so a graph change (this node, a new
+instruction literal) is a republish, while a change to `sweep.py` and its
+siblings is not.
 
 ## Operational notes
 

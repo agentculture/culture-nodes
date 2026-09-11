@@ -51,7 +51,38 @@ Two things to know before anything else:
 | Description | **strongly recommended** | This is the brief. It is handed to the agent verbatim (first 4000 characters; a longer one is passed truncated and flagged as such). A ticket with an empty description gives the agent nothing but its title to work from. |
 | Status | **required — this is the trigger** | The status *change* is what starts a flow. See the table below. |
 | Issue type, priority | optional | Passed through as `kind` and `severity`; nothing branches on them today. |
-| Labels, components, assignee, story points, epics, attachments | **not read at all** | Use them for your own purposes; culture-nodes never sees them. |
+| Labels, components, assignee, story points, epics, attachments | **not read at all** | Use them for your own purposes; culture-nodes never sees them — but see the labels it *writes*, below. |
+
+### Tickets culture-nodes opens for you
+
+The PR upkeep loop sometimes finds a pull request with no ticket anywhere on
+it — no key in the branch name, none in the body. Rather than work it
+untracked, the loop opens an **orphan ticket** in the configured project and
+puts the new key at the top of the PR body (`Jira: SCRUM-12`), so everything
+that happens to that PR afterwards lands on a ticket you can see. You did not
+create it, so it is marked to say so, with four labels:
+
+| Label | Meaning |
+| --- | --- |
+| `orphan` | the ticket exists because a PR had none |
+| `auto-created` | the loop opened it, not a person |
+| `source:github` | the originating work item was a GitHub pull request |
+| `repo:<owner>/<repo>` | which repository, e.g. `repo:agentculture/culture-nodes` |
+
+The summary is the PR's transient key (`gh:<owner>/<repo>#<n>`) and the
+description says how to open the PR from it. Treat the ticket as yours from
+then on: rename it, move it, add a description — the loop only needs the
+`Jira:` line to stay in the PR body.
+
+That line is the only thing standing between the PR and a **second** orphan
+ticket. The loop cannot ask Jira whether it has already opened one, so on the
+next sweep it asks the pull request instead: a PR that still carries the key
+is read as keyed and its later findings are filed under the existing ticket. A
+PR that does not — because the line was edited out, or because the step that
+writes it failed after the ticket had already been created — looks orphaned
+again, and gets another orphan ticket. If you ever see two, the PR body is
+where to look: put one key back on its own line at the top, and close the
+spare ticket.
 
 Two limits worth knowing:
 
@@ -263,10 +294,56 @@ itself.
 | **Options** | `culture-nodes is waiting on a decision.` followed by task/run/node/options/decide lines | A decision is pending. The `decide:` line is the link. |
 | **Intake / reply prose** | An ordinary comment signed `- culture-nodes (Claude)` | An agent's own words: the acknowledgement on pickup, or a reply to something you wrote. |
 | **Your mirrored reply** | Your text, then `via <your name>` | Something you sent from the page, echoed onto the board so the ticket reads as one thread. |
+| **Stage** | `culture-nodes:stage=<stage>` on its own first line, then a sentence | Where in the loop this ticket's work item now is. One comment per stage, posted as the loop passes through it — see the next section. |
 
 The bracketed markers exist for the machine, not for you — they are how the
 system recognises its own writing. Ignore them, but do not delete them from a
 comment you are quoting.
+
+## Where the ticket says what stage it is at
+
+You should not have to ask an operator where a ticket's work has got to. The
+loop writes it onto the ticket: **one comment per stage, as it passes through
+that stage.** Each one starts with a line meant for the machine and then says
+the same thing in a sentence meant for you.
+
+```text
+culture-nodes:stage=dispatch
+The pr-upkeep loop dispatched a developer session for the highest-priority
+finding on this ticket's pull request; ...
+```
+
+There are six stages, and they always go in this order:
+
+| Stage | Written when | Written by |
+| --- | --- | --- |
+| `intake` | your move to **To Do** was picked up: an intake comment is on the ticket and the board has been moved to In Progress | the jira-intake flow, after the board move |
+| `spec` | *reserved* — the spec lane's converged frame. **Nothing writes it yet**: the stage exists in the vocabulary so a reader knows what it will mean, and no flow posts it today | — |
+| `dispatch` | the open findings on the ticket's pull request have been analysed, and a developer session has been started for the highest-priority package of them | the pr-upkeep flow, after the analysis and before the fix |
+| `pr-open` | that session finished and its fix is on a pull request, waiting for a maintainer's merge decision | the pr-upkeep flow, after the fix |
+| `merged` | the pull request landed | the cleanup flow, before it does anything |
+| `cleanup` | the loose ends are settled: landed branches and handover refs deleted, unreachable ones kept and reported, any run still parked on the merge decision ended | the cleanup flow, after it finished |
+
+Three things worth knowing about them:
+
+- **They are posted by the flow itself, never by the sweep.** The half of
+  culture-nodes that reads your board (the sweep) has no way to write to it at
+  all, by design. A stage comment comes from the same narrow Jira bridge as
+  every other comment above, through its `post_comment` verb.
+- **They are also how the loop remembers.** The newest stage comment on a
+  ticket is that ticket's **watermark**: when the sweep looks at your board
+  again and the stage it would act on is already recorded, it does nothing.
+  That is why re-running a sweep over a finished ticket adds no comments and
+  starts no runs.
+- **A ticket that has no ticket does not get them.** A pull request with no
+  Jira key gets an orphan ticket created for it first (see "Tickets
+  culture-nodes opens for you"); the run that created the ticket posts no
+  stage, because at that moment there was nothing to post onto. Every later
+  fact about that pull request arrives keyed and carries its stages.
+
+If you move a ticket back to **To Do** after it has been through a stage, that
+is still read as your re-triage signal and pickup fires again — a stage
+recorded *before* your move never suppresses it.
 
 ## Opening the page
 

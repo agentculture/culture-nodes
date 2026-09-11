@@ -2,19 +2,234 @@
 # starts from the durable pr-upkeep.pr fact and therefore needs no parked run.
 #
 # Deployment configuration: register actor://company/developer at the
-# deployment's developer bridge and group/platform-maintainers in its human
-# inbox. The event payload supplies repository identity and findings; no
-# discovery credentials or sweep process are part of this graph.
+# deployment's developer bridge, actor://company/jira-comment at its jira
+# bridge (the same narrow bridge jira-intake drives; its create_issue
+# allowlist -- JIRA_CREATE_PROJECTS -- must name the project bound at
+# `intake-orphan` below), and group/platform-maintainers in its human inbox.
+# The event payload supplies repository identity, findings and the work item;
+# no discovery credentials or sweep process are part of this graph.
+#
+# ---------------------------------------------------------------------------
+# ORPHAN INTAKE (issue #310, decisions c22/c42; plan loop-closure task t4)
+# ---------------------------------------------------------------------------
+# A fact whose `work_item` is the transient `gh:<owner>/<repo>#<n>` form is an
+# ORPHAN: a PR with no Jira ticket anywhere on it. The `route` decision node
+# at the front sends those through `intake-orphan`, which creates the ticket
+# through the jira actor's create_issue verb with the four orphan labels, and
+# `stamp-pr`, which writes the new key into the PR body so the NEXT sweep
+# correlates the PR to the ticket (pr_upkeep_emit._correlated_issue_key reads
+# the head branch, then the body) and every later fact for the PR arrives
+# keyed. Idempotency lives there, not in a lookup: the jira bridge has no
+# search verb, so "does this PR already have a ticket" is answered by the PR
+# itself on the following tick, and an already-keyed fact never reaches
+# `intake-orphan`. A REPLAYED fact (same source key and watermark) is deduped
+# by the control plane before any run exists.
+#
+# Re-keying the run's own `work_item` column (the value the trigger stamped
+# from the payload, GET /v1alpha1/runs?work_item=) is NOT done by this graph.
+# The two options were weighed (task t4): a graph step cannot address its own
+# run through the API (no /run/id pointer, and an action.http node would need
+# a deployment URL and a write credential in the graph text), and an
+# engine-native "re-key on completion" declaration would be new compiler and
+# engine vocabulary the plan did not size. What ships instead: PATCH
+# /v1alpha1/runs/{id} accepts `work_item` for exactly this one transition
+# (gh: form -> Jira key, once; internal/api/runs.go rekeyWorkItem), the
+# mapping is in the run's ledger as the jira actor's proposed create_issue
+# claim beside the run input's gh: key, and the re-key of the column is a
+# recorded operator step until a control-plane step performs it. That step is
+# counted as a hand-turn, per this repo's rule.
+#
+# ---------------------------------------------------------------------------
+# STAGE WRITE-BACK (issue #311, decision c9; plan loop-closure task t17)
+# ---------------------------------------------------------------------------
+# The ticket shows where its work item is without anyone asking the operator.
+# Two `stage-*` agent nodes post one structured comment each through the jira
+# actor's post_comment verb: `stage-dispatch` when the fix is about to start
+# and `stage-pr-open` when the fix completed and a merge decision is pending.
+# The comment's first line is machine-readable -- `culture-nodes:stage=<stage>`
+# -- and the sweep reads such a line as a stage RECORD
+# (pr_upkeep_jira.jira_stage_record). The sweep itself gains no
+# Jira write; the nodes are the write path. Only a Jira-shaped work item can
+# carry a stage: the `keyed` route reaches `stage-dispatch`, and the
+# `fix.completed` edges are guarded on the work item's shape, so an orphan run
+# (gh: form; its ticket is created in this same run) skips both nodes and the
+# next, keyed fact for the PR carries its stages. A stage comment cannot name
+# the run or the PR (a binding is a pointer or a constant, never a composition,
+# and a URL in graph text fails the portability guard), so the comment names
+# the stage and the ticket it sits on is the work item.
+#
+# The enum is {intake, spec, dispatch, pr-open, merged, cleanup} and lives in
+# one place, examples/pr-upkeep/pr_upkeep_jira.py `STAGES`; the other two
+# stages this repo writes are `intake` (examples/jira-intake) and `merged` +
+# `cleanup` (examples/cleanup). `spec` is reserved for the spec-chain lane and
+# is not written by any graph yet. docs/drive-from-jira.md has the table a
+# board reader needs.
+#
+# `maxAttempts: 2` on both, unlike `intake-orphan`: a retried stage comment is
+# at worst a duplicate record (latest wins), while a failed one would stall
+# the fix behind bookkeeping.
+#
+# Two literals below are deployment configuration this file would rather not
+# carry -- `project` and the `repo:` label -- and carries anyway, because a
+# binding is a pointer or a constant (no templating) and the bridge's
+# exact-key allowlist refuses any fifth key that could carry the repository
+# separately. Loading this graph into another deployment means editing those
+# two values; that is a recorded exception to this file's own rule, not
+# drift.
+#
+# ---------------------------------------------------------------------------
+# ANALYSIS BEFORE FIX (issue #309, claim c5; plan loop-closure task t14)
+# ---------------------------------------------------------------------------
+# A finding is not a defect until somebody has read the thread under it. Three
+# things were being bought a full developer session each: a finding whose
+# review thread the owner had already resolved, a finding the owner had
+# explicitly pushed back on, and each of thirteen instances of one SonarCloud
+# rule in one file.
+#
+# `analyse` sits between the routes and `fix` and answers, per finding,
+# FIX / PUSHBACK / DUPLICATE / SKIP with a one-line reason, then bundles the
+# findings it would FIX into `packages` keyed by (rule, file). `fix` binds
+# `packages` instead of the raw event payload's findings list and works the
+# FIRST package as ONE change, so thirteen instances of one rule are one
+# session, one PR update and one approval.
+#
+# Three consequences worth stating because they are easy to misread:
+#
+# 1. An analysis that packages nothing takes `no_fix` straight to `finish`.
+#    No session is dispatched and no stage comment claims one was -- which is
+#    why `analyse` is BEFORE `stage-dispatch` on the keyed route rather than
+#    after it.
+# 2. Deferral is a STATED RULE, not a second dedupe. The findings on a file
+#    that this run does not package are stale the moment the fix pushes (their
+#    lines moved), so the instruction says to leave them to the post-push
+#    re-scan and the sweep's existing head_sha clause is what enforces it
+#    (`pr_upkeep_emit.undispatched_findings`). Nothing here re-implements it.
+# 3. `finish` returns the ANALYSIS, not the run input. An end node's output is
+#    a single pointer, and the pushbacks are the part of this run a person
+#    outside the control plane needs: the sweep reads them back off the run
+#    listing and names them in the tick summary for the PR owner.
+#
+# The emitted fact changed shape with this node and did NOT change contract:
+# `findings` is still an array with minItems 1, so no republish was forced by
+# the payload -- it now carries every undispatched finding on the
+# highest-priority finding's FILE rather than exactly one. That is the middle
+# of three positions; the whole-PR fact (#268) and the one-finding fact both
+# have their own defect, and pr_upkeep_emit.FINDING_PACKAGE_KEY carries the
+# argument.
+# ---------------------------------------------------------------------------
+# MERGE-GATE READINESS (issue #317, claim c10, honesty h19; plan loop-closure
+# task t18)
+# ---------------------------------------------------------------------------
+# The merge decision used to arrive carrying two unresolved pointers, and the
+# readiness behind it -- CI, SonarCloud, review threads, un-confirmed devague
+# records -- was assembled by an operator running `workflow.sh status` by hand
+# beside the task. That is a hand-turn per merge, and it is the one the
+# approver most needs not to be doing.
+#
+# It could not be fixed with a `presentation` field. The compiler LIFTS
+# presentation metadata out of the executable spec (internal/compiler), so it
+# never reaches a run, and `internal/engine/humantask.go` writes a task's
+# `context_refs` as POINTERS -- the node's input binding exactly as authored,
+# never a payload the engine resolved. A readiness block therefore has to be
+# some node's OUTPUT.
+#
+# `readiness` is that node: a deterministic code node, stdlib Python
+# (examples/pr-upkeep/readiness.py), fetched by digest like every other code
+# node here, sitting between the fix (or its `pr-open` stage comment) and the
+# approval. It assembles five fields -- CI check states, the SonarCloud gate
+# and its open-issue and hotspot counts, the unresolved/total review-thread
+# tally, the proposed devague records in the checkout, and the failing
+# evidence records -- and `human-merges-pr` binds them as
+# `readiness: /nodes/readiness/output`.
+#
+# Two consequences worth stating because they are the whole point:
+#
+# 1. The approval is reachable from `readiness` AND FROM NOWHERE ELSE. "The
+#    task is not presented before the collector completed" is therefore a
+#    property of the edges, checked by the compiler, rather than a habit
+#    somebody keeps. Both former routes into the approval -- the keyed path's
+#    `stage-pr-open.comment_posted` and the orphan path's guarded
+#    `fix.completed` -- now land on `readiness` instead, with the SAME two
+#    mutually exclusive guards for the same normalized-edge-order reason.
+# 2. BOTH of the collector's outcomes reach the person. A collector that
+#    could not produce a block at all still routes to `human-merges-pr`,
+#    because the merge authority is a human (PRD 10.4) and a run that ended
+#    instead would have turned a missing measurement into a dropped decision.
+#    Which of the two happened is recorded as the node run's outcome, and an
+#    unread SOURCE (rather than an unrunnable node) is `null` plus a named
+#    entry in the block's `failures` -- never a fabricated zero. That is the
+#    merge gate's `measurement_incomplete` doctrine one node earlier.
+#
+# The program calls the GitHub and SonarCloud HTTP APIs directly. It reuses
+# the SHAPE of `.claude/skills/cicd/scripts/pr-status.sh` -- the same three
+# Sonar queries with the same filters, the same `reviewThreads`/`isResolved`
+# read -- and none of its shell: `gh` and `devex` are operator tools on an
+# operator's PATH, and this runs in a runner image.
+#
+# ---------------------------------------------------------------------------
+# Deployment configuration for the readiness node -- what it needs from
+# outside this file. Loading this example elsewhere means supplying these; it
+# never means editing the graph.
+#
+#   RUNNER REGISTRY (id in `uses:`):
+#     runner://headspace/pr-upkeep-readiness
+#                                         a runner service whose image can
+#                                         reach GitHub and SonarCloud and
+#                                         whose workspace carries the
+#                                         checkout the devague records live
+#                                         in.
+#
+#   PR_UPKEEP_READINESS_SOURCE_URL        where readiness.py is fetched from.
+#   PR_UPKEEP_READINESS_SOURCE_SHA256     the digest the bootstrap refuses to
+#                                         run without.
+#
+#   Stamped by deploy/prod/lanes/runner-env-write.sh, from the same shipped
+#   revision as the sweep's, and named in grant-check.sh's allowlist so the
+#   deploy that first grants them is not refused by its own preflight. They
+#   were NOT, for one review round: the node was published on the only path
+#   into `human-merges-pr` while nothing granted it, and the runner boundary
+#   refuses an operation whose ref is unset -- which is a merge decision
+#   presented without the block this node exists to carry, not a node that
+#   quietly does not run. Qodo named that on PR #326 and it is wired now. The
+#   cleanup example's CLEANUP_SOURCE_URL/SHA256 remain in the older state:
+#   that node is not on any approval's only path.
+#   PR_UPKEEP_READINESS_GITHUB_API        the GitHub REST base; empty means
+#                                         the public API. The GraphQL
+#                                         endpoint is `<base>/graphql`.
+#   PR_UPKEEP_READINESS_SONAR_API         the SonarCloud base; empty means the
+#                                         public one.
+#   PR_UPKEEP_READINESS_SONAR_COMPONENT   the Sonar project key; empty means
+#                                         the `<owner>_<repo>` convention
+#                                         pr-status.sh derives.
+#   PR_UPKEEP_READINESS_DEVAGUE_ROOT      the checkout's `.devague` directory;
+#                                         empty means `.devague` under the
+#                                         working directory.
+#   PR_UPKEEP_READINESS_DEVAGUE_SLUG      optional: read only the documents
+#                                         with this slug. Empty reads every
+#                                         document and the block says so.
+#
+#   "Empty means the default" on those five is a statement about readiness.py,
+#   not about the runner: `resolveEnv` asks os.LookupEnv, so an EMPTY grant
+#   resolves and an UNSET one refuses the whole operation by name. The lane
+#   therefore grants all five, empty, rather than omitting them.
+#   GITHUB_TOKEN                          the read credential. The REST reads
+#                                         degrade to anonymous without it; the
+#                                         GraphQL thread read does not work at
+#                                         all without one, and says so rather
+#                                         than reporting zero threads.
+#   SONAR_TOKEN                           optional; taken as the BASIC
+#                                         username with an empty password.
+#
 apiVersion: nodes.culture.dev/v1alpha1
 kind: Workflow
 
 metadata:
   name: pr-upkeep
-  version: 2.1.0
+  version: 2.6.0
   ownerRef: team/platform-ai
 
 spec:
-  entry: fix
+  entry: route
 
   # Publishing a newer pr-upkeep version without this declaration disables
   # future starts. A delivered event remains in signal_events either way.
@@ -47,10 +262,19 @@ spec:
     # former sweep report: repository, PR identity, and prioritized findings
     # are now durable event data and are queryable even when the condition
     # above declines the handler.
+    #
+    # `work_item` is the key of the work item this fact belongs to (issue
+    # #310, decision c41): the correlated Jira key, else the transient
+    # `gh:<owner>/<repo>#<n>` form that never survives intake (`route` sends
+    # it through `intake-orphan` + `stamp-pr` above, decision c42). The engine
+    # stamps the minted run's own `work_item` column from this payload field,
+    # so GET /v1alpha1/runs?work_item=KEY finds the run without a second
+    # write. It is NOT `subject` -- a pr-upkeep.pr fact still carries none
+    # (#268) -- and it is not `category`, which stays untouched.
     input:
       schema:
         type: object
-        required: [source, repository, number, head_sha, findings]
+        required: [source, repository, number, head_sha, findings, work_item]
         additionalProperties: false
         properties:
           source: {const: github_pr}
@@ -58,16 +282,304 @@ spec:
           number: {type: integer, minimum: 1}
           head_sha: {type: string, minLength: 1}
           findings: {type: array, minItems: 1}
+          work_item: {type: string, minLength: 1}
     output:
       schema: {type: object}
 
+  # Two numbers, and they are different on purpose.
+  #
+  # The longest paths a run can actually TAKE are seven transitions each:
+  # route -> intake-orphan -> stamp-pr -> analyse -> fix -> readiness ->
+  # human-merges-pr -> finish, and route -> analyse -> stage-dispatch -> fix ->
+  # stage-pr-open -> readiness -> human-merges-pr -> finish. Both are one
+  # longer than 2.5.0's, since every route into the approval now passes the
+  # readiness collector.
+  #
+  # The bound has to cover the longest path through the EDGE SET with the
+  # guards ignored, which is nine: the orphan intake pair followed by both
+  # stage nodes. No run takes it -- an orphan run's work item starts with
+  # `gh:`, so `analyse.packaged` sends it past `stage-dispatch`, and the
+  # guards are mutually exclusive -- but a budget that assumes a guard is what
+  # keeps a run inside it is a budget the engine cannot check. 9 is that
+  # bound, and it still hides no loop: every node id is distinct and
+  # maxVisitsPerNode is 1.
   limits:
     maxDuration: 168h
-    maxTransitions: 8
+    maxTransitions: 9
     maxVisitsPerNode: 1
     maxParallelTokens: 1
 
   nodes:
+    # Which shape the work item has. A decision node computes nothing: its
+    # output IS its resolved input, so the ports read `output.work_item`.
+    # First match wins; the unconditional `keyed` port is declared last.
+    route:
+      kind: decision
+      ownerRef: team/platform-ai
+      input:
+        bindings:
+          work_item: /run/input/work_item
+      select:
+        - outcome: orphan
+          when: output.work_item.startsWith("gh:")
+        - outcome: keyed
+          when: "true"
+
+    # The orphan ticket. Exact-key input for adapters/jira create_issue.parse:
+    # {verb, project, summary} plus optional {description, issue_type, labels};
+    # any other key is refused at the bridge. `summary` is the gh: work item,
+    # which names the repository and PR number exactly; `description` is a
+    # literal because a binding cannot compose a URL (and a URL in graph text
+    # is what tests/lint's portability guard refuses), so it tells a reader
+    # how to open the PR from the summary instead of linking it.
+    #
+    # maxAttempts: 1 is load-bearing. A retried create is a second ticket:
+    # the bridge's write is not idempotent and nothing here could tell the
+    # two apart. A technical failure fails the run visibly instead.
+    intake-orphan:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: create_issue
+          project:
+            literal: SCRUM
+          summary: /run/input/work_item
+          description:
+            literal: >-
+              Auto-created by the pr-upkeep loop for a pull request that had
+              no Jira ticket. The summary names the repository and the PR
+              number as gh:<owner>/<repo>#<n>; open pull request <n> of
+              <owner>/<repo> on GitHub. The loop wrote this key into the PR
+              body so later findings on the PR arrive keyed to this ticket.
+          labels:
+            literal: [orphan, auto-created, source:github, repo:agentculture/culture-nodes]
+      contract:
+        outcomes:
+          # The name is the BRIDGE's (create_issue.result reports
+          # `issue_created`), as jira-intake learned the hard way for
+          # `issue_transitioned`.
+          issue_created:
+            schema:
+              type: object
+              required: [issue, id]
+              properties:
+                issue: {type: string, minLength: 1}
+                id: {type: string}
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 1
+
+    # The channel that makes the next tick idempotent: the developer actor is
+    # the one registered actor with a GitHub write path, so it puts the key
+    # where the sweep's correlation reads it. One extra session per orphan
+    # PR, once in the PR's lifetime; every later fact for the PR skips both
+    # intake nodes.
+    stamp-pr:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          instruction:
+            literal: |
+              A Jira ticket was just created for the pull request described
+              by `pr` below (repository and number), because the PR had no
+              ticket. Its key is bound as `ticket`.
+
+              Add one line to the PR BODY, at the top, of exactly this form:
+
+                  Jira: <ticket>
+
+              Use the GitHub REST API (PATCH /repos/{owner}/{repo}/pulls/{n}
+              with the existing body plus the new line) or `gh pr edit
+              --body`. Do not change anything else about the PR, do not push
+              commits, do not comment. If the body already names that key,
+              change nothing and say so.
+
+              Report the PR you edited and the line you added.
+          ticket: /nodes/intake-orphan/output/issue
+          pr: /run/input
+      contract:
+        outcomes:
+          stamped:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: {type: string}
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 1
+
+    # Stage `dispatch`, keyed path only (the `keyed` route is what reaches
+    # it). Exact-key input for adapters/jira post_comment.parse: {verb,
+    # issue, comment} plus optional question_id; `issue` is the work item,
+    # which on this path IS the Jira key. The bridge appends its own
+    # jira-actor marker to every comment it posts -- that marker is what the
+    # sweep's self-echo filter trusts, so this graph must never write one
+    # itself.
+    stage-dispatch:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/work_item
+          comment:
+            literal: |-
+              culture-nodes:stage=dispatch
+              The pr-upkeep loop analysed the open findings on this ticket's pull request and dispatched a developer session for the highest-priority package of them; the run, its per-finding verdicts and its ledger are in the culture-nodes control plane under this ticket's key.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # The judgment the loop was skipping. Read-only: it opens no branch and
+    # pushes nothing, so `maxAttempts: 2` is safe here where `intake-orphan`
+    # and `stamp-pr` cannot afford it -- and it is not merely safe, it is
+    # load-bearing. A failed analysis leaves this file's findings marked as
+    # worked at this head sha by the sweep's own dedupe, so they would sit
+    # untouched until somebody pushed; one free retry is cheaper than that.
+    #
+    # `pr` is the whole event payload: the repository and number to read the
+    # review threads of, the head sha they are anchored at, and the findings
+    # themselves. No instruction key names a URL (the portability guard) and
+    # no binding composes one.
+    analyse:
+      kind: agent
+      ownerRef: team/developer-experience
+      uses: actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          instruction:
+            literal: |
+              Judge the findings in `pr.findings` BEFORE any of them is
+              fixed. They are all on the same file of the same pull request,
+              which `pr` names by repository, number and head sha.
+
+              For EVERY finding, read the review thread it sits under on
+              that pull request -- its replies and whether it is marked
+              resolved -- and give it exactly one verdict:
+
+                FIX       nobody has answered it and it is a real defect
+                PUSHBACK  a human replied declining it; quote why, briefly
+                DUPLICATE another finding in this same list is the same
+                          defect under a different rule or tool
+                SKIP      its thread is resolved, or it is already fixed at
+                          this head sha, or it is a false positive
+
+              Every finding gets a verdict and a ONE-LINE reason. A finding
+              you did not judge is not a finding you may fix.
+
+              Then bundle the FIX verdicts into `packages`: one package per
+              (rule, file) pair, listing that pair's finding ids. Thirteen
+              instances of one rule in one file are ONE package, because one
+              edit answers all thirteen. Order the packages so the one
+              carrying the highest-priority finding is first; the fix node
+              works that one and only that one.
+
+              Do NOT package findings you would only reach after that fix
+              lands. The moment it pushes, every remaining finding on this
+              file is anchored to lines that moved, and the sweep re-scans
+              the file at the new head sha and dispatches them again with
+              current positions. Leaving them to that post-push re-scan is
+              the correct answer, not an omission.
+
+              Change no code and push nothing. If NO finding earns FIX,
+              report `no_fix` with the verdicts and an empty `packages`
+              list: a session nobody needed is the thing this node exists to
+              avoid buying.
+          pr: /run/input
+      contract:
+        outcomes:
+          # `packaged` and `no_fix` carry the SAME verdict list and differ
+          # only in whether anything is left to fix, because the verdicts are
+          # the record either way -- a run that fixes nothing still has to say
+          # why it fixed nothing, and its pushbacks still reach the tick
+          # summary through `finish`.
+          packaged:
+            schema:
+              type: object
+              required: [verdicts, packages]
+              properties:
+                verdicts:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [id, verdict, reason]
+                    properties:
+                      id: {type: string, minLength: 1}
+                      verdict: {enum: [FIX, PUSHBACK, DUPLICATE, SKIP]}
+                      # One line, and gated as one: a reason that runs to a
+                      # paragraph is a session summary, and the sweep prints
+                      # this verbatim in the tick summary.
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 240
+                        pattern: '^[^\n]+$'
+                packages:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [rule, file, finding_ids]
+                    properties:
+                      rule: {type: string}
+                      file: {type: string}
+                      finding_ids:
+                        type: array
+                        minItems: 1
+                        items: {type: string, minLength: 1}
+          no_fix:
+            schema:
+              type: object
+              required: [verdicts, packages]
+              properties:
+                verdicts:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [id, verdict, reason]
+                    properties:
+                      id: {type: string, minLength: 1}
+                      verdict: {enum: [PUSHBACK, DUPLICATE, SKIP]}
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 240
+                        pattern: '^[^\n]+$'
+                packages:
+                  type: array
+                  maxItems: 0
+      policy:
+        timeout: 30m
+        retry:
+          maxAttempts: 2
+
     fix:
       kind: agent
       ownerRef: team/developer-experience
@@ -89,34 +601,43 @@ spec:
       # when that names exactly one repository, and refuses when the choice is
       # ambiguous.
       #
-      # `finding` carries the event payload. Every non-transport key arrives
-      # in the session as a verbatim "Bound inputs" block, so the findings are
-      # read by the actor without this graph reformatting them.
+      # `package` is what this node WORKS; `pr` is where it works. The raw
+      # findings list is deliberately no longer the selection surface (task
+      # t14): choosing among findings is `analyse`'s job, done once, with the
+      # review threads read -- and a node that could still see the unfiltered
+      # list would be invited to second-guess a verdict a human wrote.
+      # Every non-transport key arrives in the session as a verbatim "Bound
+      # inputs" block, so both are read without this graph reformatting them.
       input:
         bindings:
           instruction:
             literal: |
-              Take the HIGHEST-PRIORITY item from the prioritised `findings`
-              list bound below and work only that one item.
+              Take the FIRST entry of the `packages` list bound below and
+              work only that package. `pr` names the repository, the pull
+              request number and the head sha to work against.
 
-              The list is already ordered across three vocabularies —
-              SonarCloud severities, Qodo severities, and failed CI checks —
-              so the first entry is the item to work. Do not re-rank it, and
-              do not batch several items into one change.
+              A package is one rule in one file, and every finding id in it
+              is answered by ONE change — thirteen instances of a literal
+              duplication are one constant, not thirteen commits. Do not
+              re-rank the packages, do not merge two of them, and do not
+              touch findings outside the one you took: the analysis already
+              decided that the rest of this file waits for the re-scan after
+              your push, when their line numbers are current again.
 
               Implement the fix on a branch and open or update a pull request
               for it. NEVER merge anything: this graph's merge step is a
               separate human-approval node, and an agent merging here would
               bypass it.
 
-              If the item is not actually a defect — a false positive, a
-              finding already fixed, or one whose fix would be wrong — say so
-              plainly and submit `no_change` with the reason. A stated
-              non-fix is a better outcome than a manufactured one.
+              If the package is not actually a defect — a false positive, or
+              one whose fix would be wrong — say so plainly and submit
+              `no_change` with the reason. A stated non-fix is a better
+              outcome than a manufactured one.
 
-              Report which finding you took, what you changed, and the PR you
+              Report which package you took, what you changed, and the PR you
               opened or updated.
-          finding: /run/input
+          package: /nodes/analyse/output/packages
+          pr: /run/input
       contract:
         outcomes:
           completed:
@@ -136,6 +657,113 @@ spec:
       ledger:
         propose: [claim]
 
+    # Stage `pr-open`: the fix completed and a merge decision is pending.
+    # Reached from `fix.completed` only when the work item is Jira-shaped
+    # (edge guard below); the orphan path goes straight to the approval.
+    stage-pr-open:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/work_item
+          comment:
+            literal: |-
+              culture-nodes:stage=pr-open
+              The developer session finished and its fix is on a pull request awaiting a platform maintainer's merge decision; the approval task is in the culture-nodes control plane under this ticket's key.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # The readiness block the merge decision is made on (issue #317, claim
+    # c10). Deterministic and stdlib-only, because a readiness block an LLM
+    # composed is a proposed claim, and what an approver needs here is a
+    # measurement.
+    #
+    # `pr` is the whole run input: the repository and number the CI checks,
+    # the Sonar analysis and the review threads all key on, and the head sha
+    # the check-runs endpoint is keyed by. No binding composes a URL and no
+    # key names one (the portability guard); every endpoint is a granted
+    # environment value with a public default.
+    #
+    # maxAttempts: 2, for the same reason `analyse` gets two: the node writes
+    # nothing anywhere, so a retry costs a few HTTP reads, and a merge
+    # decision arriving without its block because one API blinked is the
+    # outcome this node exists to remove.
+    readiness:
+      kind: code
+      ownerRef: team/platform-ai
+      uses: runner://headspace/pr-upkeep-readiness@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+      operation:
+        image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+        # `full` for the same reason the sweep and the cleanup node give: the
+        # granted origin the program is fetched from, plus the two APIs it
+        # reads. An egress allowlist is not yet expressible (#50).
+        network: full
+        environmentRefs:
+          - PR_UPKEEP_READINESS_SOURCE_URL
+          - PR_UPKEEP_READINESS_SOURCE_SHA256
+          - PR_UPKEEP_READINESS_GITHUB_API
+          - PR_UPKEEP_READINESS_SONAR_API
+          - PR_UPKEEP_READINESS_SONAR_COMPONENT
+          - PR_UPKEEP_READINESS_DEVAGUE_ROOT
+          - PR_UPKEEP_READINESS_DEVAGUE_SLUG
+          - GITHUB_TOKEN
+          - SONAR_TOKEN
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, os, subprocess, sys, tempfile, urllib.request
+            want = os.environ["PR_UPKEEP_READINESS_SOURCE_SHA256"]
+            body = urllib.request.urlopen(os.environ["PR_UPKEEP_READINESS_SOURCE_URL"], timeout=60).read()
+            if hashlib.sha256(body).hexdigest() != want:
+                sys.exit("readiness: fetched bytes do not match the granted digest; refusing to run unverified code")
+            path = os.path.join(tempfile.mkdtemp(), "readiness.py")
+            open(path, "wb").write(body)
+            sys.exit(subprocess.run([sys.executable, path]).returncode)
+      input:
+        bindings:
+          pr: /run/input
+      contract:
+        # `passed` / `failed` are the names internal/worker/code.go's
+        # conventional resolver recognises; a node whose ports it cannot map
+        # is refused before the runner is invoked. Exit 0 -> passed: the block
+        # was written, INCLUDING when a source could not be read (that is a
+        # null field and a named `failures` entry, which is the honest answer
+        # rather than a fabricated zero). Nonzero -> failed: there was no
+        # block to write at all, and the approver is told that instead.
+        outcomes:
+          passed:
+            schema: {type: object}
+          failed:
+            schema: {type: object}
+      ledger:
+        observe: [evidence]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
+    # Reachable from `readiness` and from nowhere else, which is what makes
+    # "no merge decision is presented without its readiness block" a
+    # compiler-checked property of this graph rather than a habit.
+    #
+    # `readiness` is a POINTER, like the other two: `context_refs` on a human
+    # task carries the binding as authored, and the surface presenting the
+    # task resolves it. What it points at is the code node's output document,
+    # whose `artifacts.stdout_ref` is the block itself.
     human-merges-pr:
       kind: approval
       ownerRef: team/platform-ai
@@ -146,16 +774,87 @@ spec:
         bindings:
           finding: /run/input
           fix: /nodes/fix/output
+          readiness: /nodes/readiness/output
 
+    # The run's output IS the analysis document (task t14). An end node's
+    # output is a single pointer, and of the two candidates the analysis is
+    # the one carrying something no other surface has: the PUSHBACK verdicts,
+    # which are a person's objection on a PR thread. The run input is not
+    # lost by this -- it is the run's own `input` column, readable on the same
+    # listing row -- whereas an unrecorded pushback is re-proposed next tick.
     finish:
       kind: end
       ownerRef: team/platform-ai
       output:
-        from: /run/input
+        from: /nodes/analyse/output
 
   edges:
+    - from: route.orphan
+      to: intake-orphan
+    # Both routes reach `analyse` first. On the keyed route that is a change
+    # of ORDER, not of membership: `stage-dispatch` still posts before the
+    # fix, but after the analysis has decided there is one -- a stage comment
+    # saying a developer session was dispatched must not be the loop's answer
+    # to a PR whose every finding a human already declined.
+    - from: route.keyed
+      to: analyse
+    - from: intake-orphan.issue_created
+      to: stamp-pr
+    - from: stamp-pr.stamped
+      to: analyse
+    # The same two mutually exclusive guards as `fix.completed` below, and for
+    # the same reason: the engine picks the first eligible edge in the
+    # COMPILER's normalized order (source, outcome, TARGET, guard text), and
+    # `fix` sorts before `stage-dispatch`, so an unguarded edge to `fix` would
+    # win before the stage guard was ever evaluated.
+    #
+    # The orphan path skips the stage and rejoins at `fix`: its ticket was
+    # created in THIS run, so the work item in the run's input is still the
+    # gh: form and there is no key to bind. The next, keyed fact for the PR
+    # carries the stages.
+    - from: analyse.packaged
+      to: stage-dispatch
+      when: '!input.work_item.startsWith("gh:")'
+    - from: analyse.packaged
+      to: fix
+      when: 'input.work_item.startsWith("gh:")'
+    # Nothing to fix, so nothing to approve. The run ends carrying the
+    # verdicts that say why -- which is the whole return on this node: a tick
+    # that reads three findings, finds all three already answered, and buys no
+    # session at all still leaves a record a person can read.
+    - from: analyse.no_fix
+      to: finish
+    - from: stage-dispatch.comment_posted
+      to: fix
+    # Both `fix.completed` edges carry a guard, and that is not redundancy.
+    # The engine selects the first eligible edge in the COMPILER's normalized
+    # order -- source, outcome, TARGET, guard text (normalizeEdges) -- not in
+    # the order this document lists them. `readiness` sorts before
+    # `stage-pr-open`, so an unguarded edge to the collector would win before
+    # the stage guard was ever evaluated and no ticket would ever see
+    # `pr-open`. Two mutually exclusive guards is the only shape that does not
+    # depend on how the target nodes happen to be named.
     - from: fix.completed
+      to: stage-pr-open
+      when: '!input.work_item.startsWith("gh:")'
+    - from: fix.completed
+      to: readiness
+      when: 'input.work_item.startsWith("gh:")'
+    - from: stage-pr-open.comment_posted
+      to: readiness
+    # Both of the collector's outcomes reach the person (task t18). A run that
+    # ended on a collector failure would have turned a missing measurement
+    # into a dropped merge decision, and the decision is a human's to make
+    # (PRD 10.4). Which of the two happened is the node run's own outcome, and
+    # a source the collector could not read is a `null` field plus a named
+    # entry in the block -- never a zero nobody measured.
+    - from: readiness.passed
       to: human-merges-pr
+    - from: readiness.failed
+      to: human-merges-pr
+    # A `no_change` outcome opened no pull request, so there is no `pr-open`
+    # to record: the honest board history is silence, not a stage comment for
+    # a merge decision that will never be pending.
     - from: fix.no_change
       to: finish
     - from: human-merges-pr.approved

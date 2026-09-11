@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/agentculture/culture-nodes/internal/compiler"
 	"github.com/agentculture/culture-nodes/internal/engine"
@@ -28,6 +31,11 @@ type createRunRequest struct {
 	Name           string          `json:"name,omitempty"`
 	Description    string          `json:"description,omitempty"`
 	Category       string          `json:"category,omitempty"`
+	// WorkItem is the key of the work item this run belongs to (a Jira
+	// issue key such as SCRUM-9; migrations/0057, decision c41). Optional
+	// and additive like the three above; it is its OWN run column and list
+	// filter, never written into Category, and never retaggable via PATCH.
+	WorkItem string `json:"work_item,omitempty"`
 }
 
 // handleCreateRun is POST /v1alpha1/runs. It resolves the pinned,
@@ -66,7 +74,8 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) error {
 	// unknown-success window a post-commit UPDATE opened — a retry after
 	// that 5xx would have created a duplicate run).
 	run, err := s.Engine.CreateRun(ctx, cw, req.Input,
-		engine.WithRunMetadata(req.Name, req.Description, req.Category))
+		engine.WithRunMetadata(req.Name, req.Description, req.Category),
+		engine.WithRunWorkItem(req.WorkItem))
 	if err != nil {
 		return classify(err)
 	}
@@ -114,6 +123,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) error {
 		State:        state,
 		Subject:      r.URL.Query().Get("subject"),
 		WorkflowKey:  r.URL.Query().Get("workflow_key"),
+		WorkItem:     r.URL.Query().Get("work_item"),
 		Cursor:       cursor,
 		Limit:        parseLimit(r, 50, 500),
 		UpdatedSince: updatedSince,
@@ -202,9 +212,18 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// handleCancelRun is POST /v1alpha1/runs/{id}/cancel.
+// handleCancelRun is POST /v1alpha1/runs/{id}/cancel. The body is optional
+// (cancelreason.go): absent, the operator cancel records no reason exactly as
+// before; present, an allowlisted reason rides the cancelRunGuarded seam
+// into runs.reason and the run.cancelled event, and an optional `parked_at`
+// rides it as a precondition re-checked inside the cancel transaction.
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) error {
-	run, err := s.cancelRun(r.Context(), r.PathValue("id"))
+	req, err := readCancelRequest(r)
+	if err != nil {
+		return err
+	}
+	run, err := s.cancelRunGuarded(
+		r.Context(), r.PathValue("id"), req.Reason, cancelDetail(req.Reason), req.ParkedAt)
 	if err != nil {
 		return err
 	}
@@ -246,21 +265,21 @@ func (s *Server) handlePatchRun(w http.ResponseWriter, r *http.Request) error {
 			"description is set at run creation only and cannot be changed afterward (frame decision q4) — remove it from the request body",
 			"PATCH /v1alpha1/runs/%s: description is immutable", id)
 	}
-	categoryRaw, ok := raw["category"]
-	if !ok {
-		return badRequest("send a JSON body matching PatchRunRequest: {category}", "PATCH /v1alpha1/runs/%s requires category", id)
-	}
-	var category string
-	if err := json.Unmarshal(categoryRaw, &category); err != nil {
-		return badRequest("category must be a JSON string", "decode category: %v", err)
-	}
-
+	// work_item (migrations/0057, decision c41) is set once, when the run is
+	// minted for its work item — by POST /v1alpha1/runs or by the trigger
+	// from the event payload — and is not a retag. The ONE exception is the
+	// orphan intake's re-key (decision c42, task t4): a run minted for the
+	// transient `gh:<owner>/<repo>#<n>` form may move to the Jira key the
+	// intake created for it, exactly once, and only to something shaped like
+	// a Jira key. rekeyWorkItem enforces that; anything else about work_item
+	// in a PATCH body is refused, not silently dropped by a typed decode.
 	ctx := r.Context()
-	if err := s.setRunCategory(ctx, id, category); err != nil {
-		if errors.Is(err, postgres.ErrNotFound) {
-			return notFound("check the run id", "no run with id %s", id)
-		}
-		return internalError(err)
+	patch, apiErr := decodeRunPatch(id, raw)
+	if apiErr != nil {
+		return apiErr
+	}
+	if apiErr := s.applyRunPatch(ctx, id, patch); apiErr != nil {
+		return apiErr
 	}
 
 	run, err := s.engineStore.Run(ctx, id)
@@ -277,6 +296,133 @@ func (s *Server) handlePatchRun(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeJSON(w, http.StatusOK, runOut(run, usage, meta))
 	return nil
+}
+
+// jiraKeyPattern is the shape a re-keyed work item must have: a Jira issue
+// key, project prefix then a number — the same shape pr_upkeep_emit's
+// correlation reads off a branch or a PR body. It is deliberately NOT the
+// transient gh: form, and not arbitrary text: the whole point of the
+// transition is that the gh: form does not survive intake.
+var jiraKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9]+-[0-9]+$`)
+
+// orphanWorkItemPrefix marks the transient work-item form a run may be
+// re-keyed FROM (pr_upkeep_emit.work_item_for_pull).
+const orphanWorkItemPrefix = "gh:"
+
+// runPatch is a PATCH body after every field it carries has been decoded and
+// validated, and BEFORE anything has been written. Decoding both fields up
+// front, and writing both in one transaction (applyRunPatch), is what keeps
+// a refused PATCH from having moved the work item anyway: the re-key is a
+// once-only transition, so when the two writes were sequential and
+// independent, a body whose work_item was good and whose category was not —
+// or a category UPDATE the database refused — answered 400/500 to a caller
+// whose run had nevertheless already moved to its Jira key. The obvious
+// repair, sending the same PATCH again with the category fixed, is then
+// refused 409 by the re-key that half-applied, and nothing the caller can
+// send sets the category afterwards. Either the whole body lands or none of
+// it does.
+type runPatch struct {
+	workItem string
+	rekey    bool
+	category string
+	retag    bool
+}
+
+// decodeRunPatch validates everything the body asks for without writing any
+// of it: an unusable category has to be refused BEFORE the work_item write,
+// not after it.
+func decodeRunPatch(id string, raw map[string]json.RawMessage) (runPatch, *apiError) {
+	var patch runPatch
+	workItemRaw, rekey := raw["work_item"]
+	categoryRaw, retag := raw["category"]
+	if !rekey && !retag {
+		return patch, badRequest("send a JSON body matching PatchRunRequest: {category} and/or {work_item}",
+			"PATCH /v1alpha1/runs/%s requires category or work_item", id)
+	}
+	if rekey {
+		if err := json.Unmarshal(workItemRaw, &patch.workItem); err != nil {
+			return patch, badRequest("work_item must be a JSON string", "decode work_item: %v", err)
+		}
+		if !jiraKeyPattern.MatchString(patch.workItem) {
+			return patch, badRequest(
+				"work_item can only be re-keyed to a Jira issue key such as SCRUM-7 (the transient gh: form never survives intake)",
+				"PATCH /v1alpha1/runs/%s: work_item %q is not a Jira issue key", id, patch.workItem)
+		}
+		patch.rekey = true
+	}
+	if retag {
+		if err := json.Unmarshal(categoryRaw, &patch.category); err != nil {
+			return patch, badRequest("category must be a JSON string", "decode category: %v", err)
+		}
+		patch.retag = true
+	}
+	return patch, nil
+}
+
+// applyRunPatch writes the decoded patch inside a single transaction, so a
+// failure on the second field rolls back the first — see runPatch for why
+// that matters more here than the usual tidiness argument.
+func (s *Server) applyRunPatch(ctx context.Context, id string, patch runPatch) *apiError {
+	tx, err := s.Store.Pool().Begin(ctx)
+	if err != nil {
+		return internalError(fmt.Errorf("api: run %s: patch: begin: %w", id, err))
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
+
+	if patch.rekey {
+		if apiErr := s.rekeyWorkItem(ctx, tx, id, patch.workItem); apiErr != nil {
+			return apiErr
+		}
+	}
+	if patch.retag {
+		if err := s.setRunCategory(ctx, tx, id, patch.category); err != nil {
+			if errors.Is(err, postgres.ErrNotFound) {
+				return notFound("check the run id", "no run with id %s", id)
+			}
+			return internalError(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return internalError(fmt.Errorf("api: run %s: patch: commit: %w", id, err))
+	}
+	return nil
+}
+
+// rekeyWorkItem performs the single allowed work_item transition: gh: form
+// -> Jira key. The state check and the write are one conditional UPDATE, so
+// two concurrent re-keys cannot both succeed; a zero-row result is then
+// disambiguated by reading the run — a missing run is 404, a run whose
+// work_item is not the gh: form (already keyed, or never keyed) is 409,
+// because the request was well-formed and the run's state is what refused it.
+// Both statements run on the caller's transaction, and so does that read: the
+// row this reports on must be the row the UPDATE just refused, not one a
+// concurrent writer changed in between.
+func (s *Server) rekeyWorkItem(ctx context.Context, tx pgx.Tx, id, key string) *apiError {
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs SET work_item = $2, updated_at = now()
+		 WHERE id = $1 AND namespace_id = $3 AND work_item LIKE $4`,
+		id, key, s.NamespaceID, orphanWorkItemPrefix+"%",
+	)
+	if err != nil {
+		return internalError(fmt.Errorf("api: run %s: re-key work_item: %w", id, err))
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	var current string
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE(work_item, '') FROM runs WHERE id = $1 AND namespace_id = $2`,
+		id, s.NamespaceID,
+	).Scan(&current)
+	if err != nil {
+		if isNoRowsErr(err) {
+			return notFound("check the run id", "no run with id %s", id)
+		}
+		return internalError(fmt.Errorf("api: run %s: re-key work_item: %w", id, err))
+	}
+	return conflict(
+		"only a run minted for the transient gh:<owner>/<repo>#<n> work item can be re-keyed, and only once — this run's work_item is set at creation and is not retaggable",
+		"PATCH /v1alpha1/runs/%s: work_item %q is not the transient gh: form", id, current)
 }
 
 // hintCandidateKeys is deriveDisplayHint's priority-ordered list of exact
@@ -369,7 +515,7 @@ func truncateHint(s string) string {
 	return strings.TrimSpace(string(r[:displayHintMaxLen])) + "…"
 }
 
-// cancelRun consumes every active token, marks every non-terminal node run
+// cancelRunGuarded consumes every active token, marks every non-terminal node run
 // and every leasable work item cancelled, and moves the run to cancelled,
 // all in one transaction under the run's advisory lock — the same
 // ledger.RunLockKey(runID) the engine's own §12.5 completion transaction
@@ -412,19 +558,22 @@ func truncateHint(s string) string {
 // which the worker's engine.ErrStaleClaim / engine.TerminalNodeRunError
 // handling already treats as a documented, tested no-op rather than an
 // error it needs new handling for.
-func (s *Server) cancelRun(ctx context.Context, runID string) (engine.Run, error) {
-	return s.cancelRunWithReason(ctx, runID, "", "cancelled via POST /v1alpha1/runs/{id}/cancel")
-}
-
-// cancelRunWithReason is cancelRun with the two things a caller other than
-// the cancel endpoint needs to say: a durable run-level `reason`
-// (migrations/0052, rendered as RunOut.Reason) and the `detail` string the
-// run.cancelled audit event and its outbox row carry. An empty reason
-// leaves runs.reason untouched -- the operator's own POST
-// /v1alpha1/runs/{id}/cancel records no machine-readable reason because
-// there is none to record; the human who pressed it is the reason, and the
-// event's detail says so.
-func (s *Server) cancelRunWithReason(ctx context.Context, runID, reason, detail string) (engine.Run, error) {
+//
+// Its two caller-supplied extras: `reason`, a durable run-level cause
+// (migrations/0052, rendered as RunOut.Reason) written alongside the `detail`
+// string the run.cancelled audit event and its outbox row carry -- an empty
+// reason leaves runs.reason untouched, which is the operator's own POST
+// /v1alpha1/runs/{id}/cancel, because there is no machine-readable cause to
+// record and the event's detail says so; and `parkedAt`, the one thing a
+// caller that decided from a SEPARATE read needs. Empty means no
+// precondition -- every pre-t13 caller. Non-empty names the node id the
+// caller observed the run sitting at, and is re-checked here, inside the
+// transaction that already holds ledger.RunLockKey(runID) -- the same lock
+// the human-decision advance takes (engine/humandecision.go). That closes
+// the read-then-cancel race rather than narrowing it: a run that left the
+// node between the caller's read and this call is a 412 and keeps running,
+// instead of losing the downstream nodes the advance just made live.
+func (s *Server) cancelRunGuarded(ctx context.Context, runID, reason, detail, parkedAt string) (engine.Run, error) {
 	tx, err := s.Store.Pool().Begin(ctx)
 	if err != nil {
 		return engine.Run{}, internalError(fmt.Errorf("cancel run: begin: %w", err))
@@ -445,6 +594,9 @@ func (s *Server) cancelRunWithReason(ctx context.Context, runID, reason, detail 
 	}
 	if engine.RunState(status).Terminal() {
 		return engine.Run{}, conflict("the run has already reached a terminal state", "run %s is already %s", runID, status)
+	}
+	if err := checkParkedAt(ctx, tx, runID, parkedAt); err != nil {
+		return engine.Run{}, err
 	}
 
 	if _, err := tx.Exec(ctx,

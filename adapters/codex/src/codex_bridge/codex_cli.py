@@ -42,12 +42,15 @@ shells out to it (stdlib-only reference bridge, matching
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from typing import Any
 
+from codex_bridge import liveness
 from codex_bridge.config import Config
 
 #: `codex exec --sandbox` accepts exactly these three values
@@ -446,3 +449,144 @@ def spawn(
         )
     except OSError as exc:
         raise SpawnError(f"could not start {cfg.codex_bin!r}: {exc}") from exc
+
+
+# --- lane liveness (issue #308, task t9) ------------------------------------
+#
+# Two things, both about the one failure the codex lanes have already paid
+# for twice: a spent refresh token behind a healthy-looking bridge.
+#
+# `liveness_probe` is the CHECK-mode measurement (spec decision c24): the
+# cheapest `codex exec` that still has to refresh the token — read-only, no
+# repo, a one-line instruction, bounded at `Config.liveness_probe_timeout_
+# seconds`. `codex login status` is deliberately not consulted: whether it
+# says "Logged in" while the refresh token is spent was the open question
+# (spec v1), and a dry exec answers the question the router actually asks.
+#
+# `with_credential_refusal` is the LOCK-mode hook and the class the control
+# plane reads: the live failure printed the sentence to STDERR and emitted no
+# terminal turn event, so `parse_session` alone says "no parseable result" and
+# mapping reports a generic execution failure. Attaching the refusal to the
+# task result before mapping sees it is what makes `credential_spent` a
+# class of its own without teaching `mapping.py` about stderr.
+
+#: One line, one token's worth of work. Not a shell command: `--sandbox
+#: read-only` confines whatever the model does with it anyway.
+LIVENESS_PROBE_INSTRUCTION = "Reply with exactly: OK"
+
+
+def liveness_probe_argv(cwd: str) -> list[str]:
+    """The dry probe's argv, minus the binary. `--skip-git-repo-check`
+    because the probe runs in an empty scratch directory: it measures the
+    session, not a checkout."""
+    return [
+        "exec",
+        "--json",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-C",
+        cwd,
+        LIVENESS_PROBE_INSTRUCTION,
+    ]
+
+
+def liveness_probe(cfg: Config, *, timeout_seconds: float | None = None) -> dict[str, Any]:
+    """Measure this lane's session with one dry exec; never raises.
+
+    A completed turn is `session_ok=true`; the spent-credential sentence
+    anywhere in the output is `session_ok=false reason=refresh_token_spent`;
+    a never-logged-in lane's `401 Unauthorized: Missing bearer` is
+    `session_ok=false reason=not_logged_in` (code-review finding 8 — it
+    carries none of the spent-token phrasing, so it used to read as an
+    unclassified failure and every reader was free to call the lane live);
+    a timeout, a missing binary, or any other failure is `null` with a
+    reason that says so — a probe that could not run is not evidence the
+    lane is dead, and a false negative parks a lane that works.
+    """
+    mode = liveness.parse_mode(cfg.liveness_mode)
+    budget = cfg.liveness_probe_timeout_seconds if timeout_seconds is None else timeout_seconds
+    with tempfile.TemporaryDirectory(prefix="codex-liveness-") as scratch:
+        try:
+            completed = subprocess.run(  # noqa: S603 - the sanctioned subprocess boundary
+                [cfg.codex_bin, *liveness_probe_argv(scratch)],
+                cwd=scratch,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                env=_subprocess_env(cfg),
+                text=True,
+                timeout=budget,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return liveness.liveness_fact(
+                session_ok=None, reason=liveness.REASON_PROBE_TIMEOUT, mode=mode
+            )
+        except OSError:
+            return liveness.liveness_fact(
+                session_ok=None, reason=liveness.REASON_PROBE_FAILED, mode=mode
+            )
+    if liveness.credential_spent(completed.stdout, completed.stderr):
+        return liveness.liveness_fact(
+            session_ok=False, reason=liveness.REASON_REFRESH_TOKEN_SPENT, mode=mode
+        )
+    task_result = parse_session(completed.stdout)
+    if task_result is not None and task_result.get("status") == "ok":
+        return liveness.liveness_fact(session_ok=True, reason=liveness.REASON_OK, mode=mode)
+    # No completed turn. A 401 is a measured verdict — this lane has no
+    # session — while anything else stays the honest non-answer.
+    if liveness.not_logged_in(
+        str((task_result or {}).get("error") or ""), completed.stdout, completed.stderr
+    ):
+        return liveness.liveness_fact(
+            session_ok=False, reason=liveness.REASON_NOT_LOGGED_IN, mode=mode
+        )
+    return liveness.liveness_fact(session_ok=None, reason=liveness.REASON_PROBE_FAILED, mode=mode)
+
+
+def _spent_sentence(*texts: str) -> str:
+    """The line that carried the sentence, so the message a human reads is
+    the engine's own words rather than this bridge's paraphrase."""
+    for text in texts:
+        for line in (text or "").splitlines():
+            if liveness.credential_spent(line):
+                return line.strip()
+    return "codex refused the session: the refresh token is spent"
+
+
+def credential_refusal(
+    task_result: dict[str, Any] | None,
+    *texts: str,
+    liveness_state: "liveness.LivenessState | None" = None,
+) -> dict[str, Any] | None:
+    """Return *task_result* rewritten as a `status: error` whose `error` is
+    the spent-credential sentence when *texts* (stdout, stderr) or the
+    result's own error carry it; otherwise *task_result* unchanged. A
+    completed turn is never rewritten. Locks *liveness_state* when given —
+    the LOCK-mode half of decision q7, and the OR that CHECK mode keeps.
+    """
+    if task_result is not None and task_result.get("status") == "ok":
+        return task_result
+    own_error = str((task_result or {}).get("error") or "")
+    if not liveness.credential_spent(own_error, *texts):
+        return task_result
+    if liveness_state is not None:
+        liveness_state.lock(liveness.REASON_REFRESH_TOKEN_SPENT)
+    refused = dict(
+        task_result or {"summary": "", "changed_files": [], "usage": {}, "task_id": None}
+    )
+    refused["status"] = "error"
+    refused["error"] = _spent_sentence(own_error, *texts)
+    return refused
+
+
+def with_credential_refusal(
+    result: SyncRunResult, *, liveness_state: "liveness.LivenessState | None" = None
+) -> SyncRunResult:
+    """`credential_refusal` over a foreground run's captured output."""
+    refused = credential_refusal(
+        result.task_result, result.stdout, result.stderr, liveness_state=liveness_state
+    )
+    if refused is result.task_result:
+        return result
+    return dataclasses.replace(result, task_result=refused)

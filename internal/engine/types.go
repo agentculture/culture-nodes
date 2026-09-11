@@ -103,6 +103,30 @@ type Run struct {
 	// cancelled" beside the state itself. Today's one writer is the ticket
 	// freeze (internal/api/ticketfreeze.go, reason "ticket_frozen").
 	Reason string
+
+	// WorkItem is the key of the work item this run belongs to -- a Jira
+	// issue key such as SCRUM-9 (migrations/0057, plan
+	// loop-closure plan t1, decision c41). It is its OWN column, not
+	// an overload of Category (the stats slicing dimension) or Subject (the
+	// one-active-run-per-subject correlation key, which pr-upkeep facts
+	// deliberately omit): GET /v1alpha1/runs?work_item=KEY answers "which
+	// runs belong to this item" without changing what either of those means.
+	//
+	// Set once, when the run is minted: by POST /v1alpha1/runs' optional
+	// work_item (WithRunWorkItem), or by the event->run trigger from the
+	// payload's string `work_item` field (createTriggeredRunTx). Empty means
+	// none was declared; InsertRun stores NULL. The engine never branches
+	// on it; unlike Name/Description/Category it IS populated by the read
+	// path so a projection can render it beside the run.
+	WorkItem string
+}
+
+// WithRunWorkItem sets the run's work-item key (migrations/0057) at
+// creation, atomically with the insert. Empty means absent.
+func WithRunWorkItem(workItem string) RunOption {
+	return func(r *Run) {
+		r.WorkItem = workItem
+	}
 }
 
 // RunOption adjusts the Run a CreateRun call is about to persist, inside

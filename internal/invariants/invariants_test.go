@@ -286,6 +286,11 @@ var authorityAllowlists = []struct {
 				"emphatically not confirmed: the routing decides where a failure GOES, and a human deciding to merge " +
 				"remains that human's own transaction. It is not proposed either — nothing here is anybody's " +
 				"suggestion, and the record carries no field a caller could use to argue with the bound",
+			"internal/repair/liveness.go": "validator-origin writer (plan loop-closure t10, decision c43): a lane-liveness " +
+				"routing is a PURE FUNCTION of already-recorded facts — the persisted actor_liveness row (session_ok, " +
+				"checked_at, locked), the freshness constant, and the actor's registered fallback_actor. Same row, same " +
+				"route, every time (§10.4). Not proposed: no actor suggested the reroute, a rule applied. Not confirmed: " +
+				"the human's lane out of a lock is POST /actors/{id}/resume, which is their own transaction, not this record",
 			"internal/devague/deliverables.go": "engine-origin writer: pre-batch devague import derives delivery summaries",
 			"internal/preflight/records.go":    "engine-origin writer: the clarify-then-commit gate's briefing is a deterministic composition of advertised host state and the pinned task declaration (issue #67, task t14)",
 			"internal/engine/humantaskexpiry.go": "engine-origin writer (task t11, spec c6): expiring a human task " +
@@ -319,6 +324,7 @@ var deterministicOriginByFile = map[string]string{
 	"internal/handover/verdict.go":      "OriginValidator",
 	"internal/handover/gate.go":         "OriginValidator",
 	"internal/repair/route.go":          "OriginValidator",
+	"internal/repair/liveness.go":       "OriginValidator",
 	"internal/devague/deliverables.go":  "OriginEngine",
 	"internal/preflight/records.go":     "OriginEngine",
 	"internal/store/postgres/remint.go": "OriginEngine",

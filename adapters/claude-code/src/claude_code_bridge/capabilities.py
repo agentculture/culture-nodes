@@ -20,7 +20,7 @@ import pwd
 import sys
 from typing import Any, Callable, Sequence
 
-from claude_code_bridge import deployment, preflight
+from claude_code_bridge import deployment, liveness, preflight
 from claude_code_bridge.config import Config
 
 
@@ -101,9 +101,14 @@ def host_facts(
     locate: Callable[[str], tuple[str | None, bool]] = preflight.locate_toolchain,
     version: Callable[[str], str | None] = preflight.toolchain_version,
     git_probe: Callable[[Any], bool] | None = preflight.probe_git_metadata_write,
+    now: float | None = None,
 ) -> dict[str, Any]:
     """Measure this host and return the `host` block for its capability
     surface.
+
+    *now* is the clock the `liveness` fact compares the credential's
+    `expiresAt` against (issue #308, task t9); injectable so a test can
+    assert both an expired and a live credential without waiting for one.
 
     *probes* is accepted, and passed through, for one reason: the signature
     is the same on all four bridges. Nothing claude-code dispatches depends
@@ -168,4 +173,47 @@ def host_facts(
         deployment=deployment.deployment_facts(
             sys.modules[__package__], "culture-nodes-claude-code-bridge"
         ),
+        liveness=liveness_fact(cfg, now=now),
     )
+
+
+def liveness_fact(cfg: Config, *, now: float | None = None) -> dict[str, Any]:
+    """This lane's `liveness` fact, per its configured mode (issue #308).
+
+    CHECK measures whether the OAuth access token `claude` holds has
+    expired: read from `cfg.credentials_path` (`~/.claude/.credentials.json`,
+    the file `claude` itself writes) at `claudeAiOauth.expiresAt`, a
+    millisecond epoch that nothing read before this task. A past value is
+    `session_ok=false reason=credential_expired` — the claude-code shape of
+    the codex lanes' spent refresh token (#303), where a healthy bridge
+    fronts a session that cannot start. No file, no field, or not an integer
+    is `unmeasured`: on this backend the file's absence can mean a
+    differently configured home as easily as a logged-out account, and a
+    guess would park a lane that works.
+
+    LOCK probes nothing, here exactly as on codex, and so reports
+    `unmeasured` — this backend hangs no `liveness.LivenessState` off a run's
+    output (nothing here classifies engine text the way `codex_bridge.
+    mapping` does), so a LOCK lane has no latch to report and measures
+    nothing at all. That is why CHECK is this bridge's default where LOCK is
+    codex's: the file read costs nothing, so the mode that spends a session
+    on the other backend spends nothing on this one.
+
+    The mode is not a preference about how strictly a reader should treat
+    the lane — it states HOW the fact was derived, and the router reads it
+    that way (`internal/store/postgres/actorliveness.go`, `Live`): a
+    LOCK-mode `session_ok=false` refuses leases at ANY age, because a
+    latch's `checked_at` is frozen at the moment it caught the failure,
+    while a CHECK-mode one ages out of `LivenessFreshness` because a
+    re-measuring bridge would have repeated it. This bridge re-derives on
+    every surface read, so its false fact has a moving `checked_at` and is
+    CHECK's shape; labelling it LOCK let one stale read park a usable claude
+    lane permanently, which is the defect this branch fixes.
+
+    Never raises — this runs inside every capability read.
+    """
+    mode = liveness.parse_mode(cfg.liveness_mode)
+    if mode == liveness.MODE_LOCK:
+        return liveness.unmeasured(mode)
+    expires_at_ms = liveness.read_json_int(cfg.credentials_path, "claudeAiOauth", "expiresAt")
+    return liveness.from_expiry(expires_at_ms, mode=mode, now=now)

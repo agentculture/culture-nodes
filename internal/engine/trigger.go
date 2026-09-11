@@ -372,7 +372,8 @@ func (e *Engine) createTriggeredRunTx(ctx context.Context, tx Tx, wf *Workflow, 
 	}
 	run := Run{ID: e.newID(), NamespaceID: e.store.NamespaceID(), WorkflowDigest: candidate.Digest,
 		State: RunRunning, Input: jsonOrNull(ev.Payload), CreatedAt: now, UpdatedAt: now,
-		ActorAffinity: affinityJSON(affinity), Subject: ev.Subject, TriggerEventID: ev.ID}
+		ActorAffinity: affinityJSON(affinity), Subject: ev.Subject, TriggerEventID: ev.ID,
+		WorkItem: workItemFromPayload(ev.Payload)}
 	format := candidate.SourceFormat
 	if format != string(compiler.FormatJSON) {
 		format = string(compiler.FormatYAML)
@@ -423,4 +424,30 @@ func (e *Engine) createTriggeredRunTx(ctx context.Context, tx Tx, wf *Workflow, 
 		_, err = tx.AppendEvent(ctx, run.ID, event(TypeNodeRunReady, map[string]any{"run_id": run.ID, "node_run_id": nr.ID, "node_id": nr.NodeID, "token_id": token.ID, "work_id": workID, "visit": 1}))
 	}
 	return run, err
+}
+
+// workItemFromPayload reads the triggering event payload's top-level
+// `work_item` field, the key of the work item the fact belongs to
+// (migrations/0057, decision c41), so a sweep-emitted pr-upkeep.pr fact
+// mints a run that GET /v1alpha1/runs?work_item=KEY finds without a second
+// write. Only a non-empty JSON string counts: a missing field, a non-object
+// payload, or a work_item of any other type stamps nothing -- the run is
+// still created, it simply carries no key, exactly as an operator-created
+// run that passed none. The field is never removed from the payload; it
+// stays in run.input like every other input field.
+func workItemFromPayload(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var fields struct {
+		WorkItem json.RawMessage `json:"work_item"`
+	}
+	if err := json.Unmarshal(payload, &fields); err != nil || len(fields.WorkItem) == 0 {
+		return ""
+	}
+	var key string
+	if err := json.Unmarshal(fields.WorkItem, &key); err != nil {
+		return ""
+	}
+	return key
 }

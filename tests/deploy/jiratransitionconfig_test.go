@@ -62,6 +62,11 @@ deploy_jira "` + thorFake + `"
 		"UNRELATED":                      "keep-this-too",
 		"JIRA_TRANSITION_TARGETS":        "In Progress,Pending,In Review,Done",
 		"JIRA_TRANSITION_PROJECT_PREFIX": "SCRUM-",
+		// The pr-upkeep orphan intake node creates into SCRUM with
+		// maxAttempts 1, and the bridge's create_issue allowlist is read
+		// only from this key -- an empty allowlist refuses every creation,
+		// so the lane must write the default beside the transition keys.
+		"JIRA_CREATE_PROJECTS": "SCRUM",
 	} {
 		if got := env.values[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
@@ -69,6 +74,49 @@ deploy_jira "` + thorFake + `"
 	}
 	if strings.Contains(stdout+stderr, "In Progress,Pending,In Review,Done") || strings.Contains(stdout+stderr, "SCRUM-") {
 		t.Errorf("deploy output exposed transition configuration values:\n%s%s", stdout, stderr)
+	}
+}
+
+// TestDeployJiraCarriesAnExportedCreateProjectsAllowlist: the default is a
+// safe one (an ordinary deploy restores SCRUM), so an operator that exports
+// a wider allowlist is carried the same way the transition keys are.
+func TestDeployJiraCarriesAnExportedCreateProjectsAllowlist(t *testing.T) {
+	c := newFakeCluster(t)
+	path := jiraBridgeJiraEnvPath(t, c, thorFake)
+	seedFile(t, path, "JIRA_ACCOUNT_EMAIL=robot@example.invalid\nJIRA_API_TOKEN=keep-this-token\n")
+	seedFile(t, filepath.Join(c.hostHome(t, thorFake), ".culture-nodes", "jira-bridge-auth.env"), "TOKEN=present\n")
+
+	snippet := `set -euo pipefail
+REMOTE_DIR=culture-nodes-prod
+JIRA_SITE=team.example.invalid
+JIRA_CREATE_PROJECTS=SCRUM,OPS
+say() { printf '==> %s\n' "$*"; }
+resolve_actor_row_id() { printf 'actor-row-id\n'; }
+assert_unit_healthy() { :; }
+ssh() {
+  host=$1
+  shift
+  case "$*" in
+    *"uv tool install"*|*"systemctl --user"*) return 0 ;;
+    *"command -v jira-bridge"*) printf '/usr/bin/true\n'; return 0 ;;
+  esac
+  command ssh "$host" "$@"
+}
+` + jiraDeployFunction(t) + `
+deploy_jira "` + thorFake + `"
+`
+	stdout, stderr, code := runSnippet(t, c, snippet)
+	if code != 0 {
+		t.Fatalf("deploy_jira exited %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	env := readEnvFile(t, path)
+	if got := env.values["JIRA_CREATE_PROJECTS"]; got != "SCRUM,OPS" {
+		t.Errorf("JIRA_CREATE_PROJECTS = %q, want the exported allowlist %q", got, "SCRUM,OPS")
+	}
+	// The value travels over ssh stdin, not the deploy's own output.
+	if strings.Contains(stdout+stderr, "SCRUM,OPS") {
+		t.Errorf("deploy output exposed the creation allowlist:\n%s%s", stdout, stderr)
 	}
 }
 

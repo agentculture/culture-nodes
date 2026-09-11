@@ -26,6 +26,24 @@
 # dispatch resolves its checkout from. Both are facts about the deployment, not
 # about the graph or the agent -- which is why they live here.
 #
+# `--metadata fallback_actor=<actor_key>` (issue #308, loop-closure t11) names
+# the lane the worker routes a dispatch to when THIS actor's newest liveness
+# fact reads session_ok=false or locked=true (parsed by the worker after t10;
+# until then it is carried, not read). The value is an actor_key, so it passes
+# the metadata value grammar below (`/` is allowed). Point the two codex lanes
+# at each other:
+#
+#   register-actor.sh company/codex-thor http://<thor-ip>:8086 \
+#     NODES_ACTOR_CODEX_THOR_TOKEN --metadata fallback_actor=company/codex-orin
+#   register-actor.sh company/codex-orin http://<orin-ip>:8086 \
+#     NODES_ACTOR_CODEX_ORIN_TOKEN --metadata fallback_actor=company/codex-thor
+#
+# A fallback is only ever another live lane, never a retry into the dead one;
+# a lane nobody measured (session_ok=null, `unmeasured`) is not dead (c26).
+# How a lane derives the fact is bridge configuration, not registry metadata:
+# `liveness_mode` in the bridge's config JSON, or env CODEX_BRIDGE_LIVENESS_MODE
+# (LOCK: latch on the first spent-credential run; CHECK: probe before dispatch).
+#
 # `--os-user NAME` is sugar for `--metadata os_user=NAME`: it is a first-class
 # metadata key (issue #204) that records the dedicated Unix account a bridge
 # actually runs as (e.g. `culture-codex`, `culture-claude`, `culture-qwen`),
@@ -63,6 +81,8 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
                         [--metadata KEY=VALUE]... [--os-user NAME]
        register-actor.sh --engine <actor_id>
        register-actor.sh --human <actor_key> [--metadata KEY=VALUE]...
+       register-actor.sh --runner-account <actor_key> --os-user NAME \
+                         [--metadata KEY=VALUE]...
 
   actor_key       e.g. company/codex-thor              (env: ACTOR_KEY)
   endpoint_url    must have a numeric IPv4 host, e.g.
@@ -85,6 +105,14 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
                   Access-protected page, never dispatched to, so the row
                   carries protocol 'none' and a NULL endpoint. Bind the
                   person's SSO subject to it with scripts/bind-identity.sh.
+  --runner-account
+                  register an actor whose work the host RUNNER executes as a
+                  Unix account (the land node, loop-closure t5 / #315):
+                  kind 'agent', protocol 'runner', NULL endpoint -- nothing
+                  is dispatched to it over HTTP. --os-user is REQUIRED (the
+                  account IS the actor), and handover_remote names the
+                  account checkout the runner fetches from, e.g.
+                  --metadata handover_remote=ssh://culture-land@thor/home/culture-land/git/culture-nodes-land
 
 Env overrides:
   PSQL_CMD           full command used to reach Postgres (default: the
@@ -103,6 +131,7 @@ METADATA_VALUES=()
 POSITIONAL=()
 ENGINE_ACTOR=""
 HUMAN_ACTOR=""
+RUNNER_ACCOUNT_ACTOR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --metadata)
@@ -159,6 +188,11 @@ while [ $# -gt 0 ]; do
       HUMAN_ACTOR=$2
       shift 2
       ;;
+    --runner-account)
+      [ $# -ge 2 ] || { echo "register-actor: --runner-account needs an actor key" >&2; exit 1; }
+      RUNNER_ACCOUNT_ACTOR=$2
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
     -*) echo "register-actor: unknown flag '$1'" >&2; usage; exit 1 ;;
@@ -170,9 +204,22 @@ ACTOR_KEY=${POSITIONAL[0]:-${ACTOR_KEY:-}}
 ENDPOINT_URL=${POSITIONAL[1]:-${ENDPOINT_URL:-}}
 AUTH_TOKEN_ENV=${POSITIONAL[2]:-${AUTH_TOKEN_ENV:-}}
 
-if [ -n "$ENGINE_ACTOR" ] && [ -n "$HUMAN_ACTOR" ]; then
-  echo "register-actor: --engine and --human are mutually exclusive" >&2
+shapes=0
+for s in "$ENGINE_ACTOR" "$HUMAN_ACTOR" "$RUNNER_ACCOUNT_ACTOR"; do [ -n "$s" ] && shapes=$((shapes + 1)); done
+if [ "$shapes" -gt 1 ]; then
+  echo "register-actor: --engine, --human and --runner-account are mutually exclusive" >&2
   exit 1
+fi
+if [ -n "$RUNNER_ACCOUNT_ACTOR" ]; then
+  [ ${#POSITIONAL[@]} -eq 0 ] || { echo "register-actor: --runner-account does not accept endpoint arguments (the runner executes it as an account; nothing is dispatched to it over HTTP)" >&2; exit 1; }
+  # The account IS the actor: a runner-account row without os_user is a row
+  # nothing can execute, so the lane tag is required rather than optional.
+  has_os_user=""
+  for key in "${METADATA_KEYS[@]+"${METADATA_KEYS[@]}"}"; do [ "$key" = os_user ] && has_os_user=1; done
+  [ -n "$has_os_user" ] || { echo "register-actor: --runner-account requires --os-user NAME (the Unix account the runner executes this actor as, e.g. culture-land)" >&2; echo "hint: register-actor.sh --runner-account $RUNNER_ACCOUNT_ACTOR --os-user culture-land --metadata handover_remote=ssh://culture-land@<host>/home/culture-land/git/culture-nodes-land" >&2; exit 1; }
+  ACTOR_KEY=$RUNNER_ACCOUNT_ACTOR
+  ENDPOINT_URL=""
+  AUTH_TOKEN_ENV=""
 fi
 if [ -n "$ENGINE_ACTOR" ]; then
   [ ${#POSITIONAL[@]} -eq 0 ] || { echo "register-actor: --engine does not accept endpoint arguments" >&2; exit 1; }
@@ -186,10 +233,10 @@ if [ -n "$HUMAN_ACTOR" ]; then
   ENDPOINT_URL=""
   AUTH_TOKEN_ENV=""
 fi
-# NO_ENDPOINT covers both endpoint-less shapes so the endpoint checks below
-# read as one condition rather than two.
+# NO_ENDPOINT covers the three endpoint-less shapes so the endpoint checks
+# below read as one condition rather than three.
 NO_ENDPOINT=""
-if [ -n "$ENGINE_ACTOR" ] || [ -n "$HUMAN_ACTOR" ]; then NO_ENDPOINT=1; fi
+if [ -n "$ENGINE_ACTOR" ] || [ -n "$HUMAN_ACTOR" ] || [ -n "$RUNNER_ACCOUNT_ACTOR" ]; then NO_ENDPOINT=1; fi
 
 if [ -z "$ACTOR_KEY" ] || { [ -z "$NO_ENDPOINT" ] && [ -z "$ENDPOINT_URL" ]; }; then
   usage
@@ -358,6 +405,11 @@ else
     run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'engine', 'internal', NULL, '$overlay_json'::jsonb)" >/dev/null
   elif [ -n "$HUMAN_ACTOR" ]; then
     run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'human', 'none', NULL, '$overlay_json'::jsonb)" >/dev/null
+  elif [ -n "$RUNNER_ACCOUNT_ACTOR" ]; then
+    # kind 'agent' (its records enter the ledger through the agent authority
+    # path, proposed until a human decides), protocol 'runner' (the host
+    # runner executes it as the os_user account; no HTTP endpoint exists).
+    run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'runner', NULL, '$overlay_json'::jsonb)" >/dev/null
   else
     run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$overlay_json'::jsonb)" >/dev/null
   fi

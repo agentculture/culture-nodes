@@ -58,6 +58,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from codex_bridge.liveness import credential_spent
+
 #: The session-classification vocabulary `codex_cli.parse_session` produces
 #: (mirrors colleague contract v1's `TaskResult.status` values).
 STATUS_OK = "ok"
@@ -74,6 +76,12 @@ CLASS_EXECUTION = "execution"
 CLASS_TIMEOUT = "timeout"
 CLASS_ACTOR_REJECTED_INPUT = "actor_rejected_input"
 CLASS_CAPACITY_EXHAUSTED = "capacity_exhausted"
+#: The engine's credential is spent (issue #308): the refresh token was
+#: already used or revoked and only an interactive re-login restores the
+#: lane. Distinct from `capacity_exhausted` (a wait fixes that) and from
+#: `execution` (a retry might): nothing this bridge can do fixes this one,
+#: so the control plane routes around the lane and locks it (decision q7).
+CLASS_CREDENTIAL_SPENT = "credential_spent"
 
 #: Mirrors claude_code_bridge.mapping._CAPACITY_SIGNALS exactly (the same
 #: provider-side vocabulary; codex hands this bridge the same kind of free
@@ -210,6 +218,12 @@ def classify(
         # standalone `error` event's message are the only channel
         # (codex_cli.parse_session captures both into task_result["error"]).
         error_text = str(task_result.get("error") or "")
+        # #308: checked BEFORE capacity, because the spent-token sentence
+        # contains none of the capacity signals and a retry never fixes it.
+        if credential_spent(error_text):
+            return Classification(
+                domain=False, message=error_text, error_class=CLASS_CREDENTIAL_SPENT
+            )
         if _is_capacity_exhausted(error_text):
             return Classification(
                 domain=False,

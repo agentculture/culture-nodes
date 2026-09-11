@@ -140,6 +140,7 @@ def _stub_sweep(
     comments=None,
     running_findings=None,
     worked_by_head=None,
+    pushbacks=None,
 ):
     """Stub every network call main() makes; return the per-source call log.
 
@@ -148,8 +149,10 @@ def _stub_sweep(
     `comments` maps PR number -> its GitHub issue comments (default none).
     `running_findings` seeds the finding ids a still-running pr-upkeep run
     already carries, which is what the emission dedupe reads (task t12).
-    The third element of the stubbed answer is `dedupe_truncated`, always
-    False here: these tests read a complete listing.
+    `pushbacks` seeds the PUSHBACK verdicts the same run listing carries on
+    its run OUTPUTS (task t14), which the tick summary reports. The last
+    element of the stubbed answer is `dedupe_truncated`, always False here:
+    these tests read a complete listing.
     `worked_by_head` seeds {head_sha: ids already dispatched at that head} —
     the second dedupe clause, which is what stops a finding whose run has
     ENDED being re-dispatched at the same commit (issue #268).
@@ -158,7 +161,7 @@ def _stub_sweep(
     monkeypatch.setattr(
         sweep, "fetch_open_pulls", lambda token, repository: [dict(p) for p in pulls]
     )
-    monkeypatch.setattr(sweep, "fetch_merged_pulls", lambda token, repository: [])
+    monkeypatch.setattr(sweep, "fetch_closed_pulls", lambda token, repository: [])
     calls = {"sonar": [], "qodo": [], "checks": [], "events": []}
 
     def fake_sonar(component, pr=None):
@@ -188,6 +191,7 @@ def _stub_sweep(
         lambda *_a, **_kw: (
             set(running_findings or ()),
             {head: set(ids) for head, ids in (worked_by_head or {}).items()},
+            list(pushbacks or ()),
             False,
         ),
     )
@@ -445,9 +449,11 @@ class TestFetchOpenPulls:
         # Unsorted; main() sorts before capping. One request serves BOTH the
         # per-PR SonarCloud/Qodo fetches (which need the number) and the
         # check-runs fetch (which needs the head sha).
+        # `head.ref` and `body` ride along too, for the work-item correlation
+        # (tests/test_pr_upkeep_sweep_work_item.py); absent ones are empty.
         assert sweep.fetch_open_pulls(None, "agentculture/culture-nodes") == [
-            {"number": 42, "head_sha": "cafe1234"},
-            {"number": 7, "head_sha": ""},
+            {"number": 42, "head_sha": "cafe1234", "head": {"ref": ""}, "body": ""},
+            {"number": 7, "head_sha": "", "head": {"ref": ""}, "body": ""},
         ]
 
 

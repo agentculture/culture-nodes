@@ -70,8 +70,9 @@ design into confirmed, planned work.
 `backend: colleague`, pinned Qwen model. The colleague resident's prompt file
 is `AGENTS.colleague.md` — **not** this file; a colleague-backend agent never
 loads CLAUDE.md, so mesh-agent behavior rules belong there. `nodes doctor`
-reports **four** checks — `uv run teken cli doctor . --strict` asserts
-`checks=4`, so this count is gated, not prose:
+reports **five** checks — `uv run teken cli doctor . --strict` reports
+`checks=5` and `tests/test_doctor_lane_liveness.py` pins the count, so it is
+gated, not prose:
 
 1. `prompt_file_present` — the backend → prompt-file mapping (`claude` →
    `CLAUDE.md`, `colleague` → `AGENTS.colleague.md`, `acp` → `AGENTS.md`,
@@ -87,8 +88,25 @@ reports **four** checks — `uv run teken cli doctor . --strict` asserts
    a bwrap-backed actor sandbox can start on this host at all. That is the
    fact a codex `--sandbox workspace-write` dispatch needs *before* it
    silently loses every file write while still running shell commands (#63).
+5. `lane_liveness` — reads `GET /v1alpha1/actors` and names every actor
+   whose newest revision carries `liveness.session_ok=false` or
+   `liveness.locked=true`, by key and reason (`refresh_token_spent`,
+   `not_logged_in`, `credential_expired`). This is the fact the 2026-09-07
+   incident lacked: both codex bridges answered `/healthz` 200 and `codex
+   login status` said "Logged in" minutes before every dispatch failed on a
+   revoked refresh token (#308). An unreachable API, or a listing with no
+   `liveness` field yet, reads `unmeasured` — never a verdict. So does a
+   lane whose fact IS present but whose `session_ok` is `null`
+   (`probe_timeout`, `probe_failed`, `unmeasured`): the check reports
+   `N live, M unmeasured, K dead` and names the unmeasured lanes with their
+   reason, because `null` is not `true` — it never counts toward an
+   all-clear. A lane with `session_ok=false` is not in a split plan.
+   The reason vocabulary is closed and lives in the shared bridge module
+   (`adapters/*/src/*/liveness.py`, byte-identical across all seven); the
+   table of what each reason measured and what restores the lane is in
+   `adapters/codex/README.md`.
 
-Checks 2–4 are `warning` severity: they can fail without flipping `healthy`
+Checks 2–5 are `warning` severity: they can fail without flipping `healthy`
 or the exit code. Doctor is read-only and probes sysctls directly — it never
 shells out to `bwrap`, and it is not what verifies userns on a deploy host.
 

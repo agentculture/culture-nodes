@@ -233,7 +233,8 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 	p := routePolicy{role: auth.RoleNamespaceAdministrator}
 	switch {
 	case strings.Contains(path, "/human-tasks/") && strings.HasSuffix(path, "/decision"),
-		strings.Contains(path, "/reviews"), strings.Contains(path, "/tickets/"), strings.HasSuffix(path, "/grades"):
+		strings.Contains(path, "/reviews"), strings.Contains(path, "/tickets/"), strings.HasSuffix(path, "/grades"),
+		path == "/v1alpha1/hand-turns", path == "/v1alpha1/hand-turn-definitions":
 		p.role, p.secret = auth.RoleApprover, "decision"
 		// A ticket frame is the developer lane's own devague snapshot, posted
 		// under the lane's own credential (task t11); a person still needs the

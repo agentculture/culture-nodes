@@ -52,6 +52,11 @@ def _lane_env(tmp_path: Path, *, shell_api_url: str | None = None) -> dict[str, 
         "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256": "b" * 64,
         "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL": "https://example.test/emit.py",
         "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256": "c" * 64,
+        # Overridden for the same reason the sweep's are: REVISION here is a
+        # fake sha, so leaving these unset would send the lane's default
+        # derivation to `git show` for an object no repository has.
+        "PR_UPKEEP_READINESS_SOURCE_URL": "https://example.test/readiness.py",
+        "PR_UPKEEP_READINESS_SOURCE_SHA256": "d" * 64,
     }
     if shell_api_url is not None:
         env["NODES_API_URL"] = shell_api_url

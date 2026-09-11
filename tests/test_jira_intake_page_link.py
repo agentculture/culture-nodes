@@ -10,15 +10,22 @@ MARKER = "culture-nodes:ticket-page-link"
 def test_intake_leaves_page_link_comment_to_the_engine():
     source = WORKFLOW.read_text()
     document = yaml.safe_load(source)
-    post_comment_nodes = [
-        node
-        for node in document["spec"]["nodes"].values()
+    post_comment_nodes = {
+        node_id: node
+        for node_id, node in document["spec"]["nodes"].items()
         if ((node.get("input") or {}).get("bindings") or {}).get("verb", {}).get("literal")
         == "post_comment"
-    ]
+    }
     instruction = document["spec"]["nodes"]["intake"]["input"]["bindings"]["instruction"]["literal"]
-    assert len(post_comment_nodes) == 1
+    # The graph posts exactly two comments, and neither is the ticket page
+    # link: the drafted intake comment, and the machine-readable stage record
+    # the sweep reads back as this ticket's watermark (task t17). The page
+    # link is posted once per TICKET by the engine, not once per run by a
+    # graph, which is why no node here may carry its marker.
+    assert set(post_comment_nodes) == {"post-comment", "stage-intake"}
     assert MARKER not in source
+    stage = post_comment_nodes["stage-intake"]["input"]["bindings"]["comment"]["literal"]
+    assert stage.startswith("culture-nodes:stage=intake\n")
     assert "acknowledge pickup" in instruction
     assert "clarifying question" in instruction
 

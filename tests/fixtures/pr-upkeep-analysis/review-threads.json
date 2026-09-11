@@ -1,0 +1,48 @@
+{
+  "_recorded": "Shape of GitHub's GraphQL pullRequest.reviewThreads(first:100) answer -- the ONE surface that reports a thread's resolution state (the REST review-comments endpoint does not). Hand-built for PR 412 of the analysis fixture, not a live recording: this repo has never carried a thread that was pushed back and one that was resolved on the same file at the same time.",
+  "repository": "agentculture/culture-nodes",
+  "number": 412,
+  "owner": "ori",
+  "reviewThreads": [
+    {
+      "id": "PRRT_kwthread-qodo-1",
+      "isResolved": false,
+      "isOutdated": false,
+      "path": "culture_nodes/cli/_output.py",
+      "line": 31,
+      "finding_id": "pr412-qodo-1",
+      "comments": [
+        {
+          "author": "qodo-code-review[bot]",
+          "createdAt": "2026-09-08T09:14:02Z",
+          "body": "Error rendering drops the hint line when --json is set. Suggested fix: always emit `hint`."
+        },
+        {
+          "author": "ori",
+          "createdAt": "2026-09-08T10:02:41Z",
+          "body": "No - this is deliberate. `--json` output is a machine contract and the hint line is prose for a human reading stderr; adding it to the JSON envelope would break every consumer. Please leave this alone."
+        }
+      ]
+    },
+    {
+      "id": "PRRT_kwthread-sonar-resolved",
+      "isResolved": true,
+      "isOutdated": false,
+      "path": "culture_nodes/cli/_output.py",
+      "line": 44,
+      "finding_id": "AZm412-resolved",
+      "comments": [
+        {
+          "author": "sonarqubecloud[bot]",
+          "createdAt": "2026-09-08T09:15:10Z",
+          "body": "Cognitive Complexity of this function is 21 which is greater than 15 allowed."
+        },
+        {
+          "author": "ori",
+          "createdAt": "2026-09-09T07:41:55Z",
+          "body": "Split out in 4f21ac9 - the render helper is its own function now. Resolving."
+        }
+      ]
+    }
+  ]
+}

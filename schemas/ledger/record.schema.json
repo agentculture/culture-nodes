@@ -199,6 +199,36 @@
       "then": {
         "$ref": "dispatch_acknowledgement.schema.json"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "hand_turn"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "hand_turn.schema.json"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "hand_turn_definition"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "$ref": "hand_turn_definition.schema.json"
+      }
     }
   ]
 }

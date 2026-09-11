@@ -176,14 +176,10 @@ func (r *DBRegistry) Resolve(ctx context.Context, ref string) (actors.Endpoint, 
 // "actor://company/verifier@sha256:…" yields "company/verifier". A bare key
 // is returned unchanged, so a registry can be queried by either form.
 func actorKeyOf(ref string) string {
-	trimmed := ref
-	if _, rest, ok := strings.Cut(trimmed, "://"); ok {
-		trimmed = rest
-	}
-	if key, _, ok := strings.Cut(trimmed, "@"); ok {
-		trimmed = key
-	}
-	return strings.Trim(trimmed, "/")
+	// One parser for the worker's gates and both lock paths
+	// (internal/actors/lanelock.go), so a lock and the gate that reads it
+	// agree on what the lane is called.
+	return actors.ActorKeyOf(ref)
 }
 
 // AuthTokenEnvOf is authTokenEnvOf for callers outside this package. The api
@@ -232,6 +228,23 @@ func repositoryIdentityOf(metadata []byte) string {
 		return ""
 	}
 	return fields.RepositoryIdentity
+}
+
+// fallbackActorOf reads metadata.fallback_actor the same partial way
+// authTokenEnvOf reads its key: the metadata column is deliberately open.
+// The value is an actor reference or bare key ("company/other"), resolved
+// through the same registry the node's own reference is.
+func fallbackActorOf(metadata []byte) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var fields struct {
+		FallbackActor string `json:"fallback_actor"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return ""
+	}
+	return fields.FallbackActor
 }
 
 // ActorRowID resolves a reference to the actors-table row id of its current

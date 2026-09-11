@@ -12,14 +12,18 @@
 // runtime); and statically, by asserting the script's own source text
 // never spells any other subcommand next to a codex_bin invocation.
 //
-// Each of the six checks the script brief names (codex_bin
+// Each of the checks the script brief names (codex_bin
 // exists+executable, `--version` runs and parses, `login status` reports
 // authenticated, every repo_allowlist entry is a git checkout, state_dir is
-// writable, host non-loopback implies auth_token) gets its own refusal
-// test here, each asserting a DISTINCT one-line "preflight: ..." message on
-// stderr plus a non-zero exit -- distinct messages are the whole reason an
-// operator can tell six failure classes apart from a CI log without
-// re-running anything interactively.
+// writable, host non-loopback implies auth_token) gets its own test here.
+// The refusing ones each assert a DISTINCT one-line "preflight: ..." message
+// on stderr plus a non-zero exit -- distinct messages are the whole reason an
+// operator can tell the failure classes apart from a CI log without
+// re-running anything interactively. `login status` (check 3) is the
+// exception since loop-closure t11 (issue #308): it WARNS and continues,
+// because on 2026-09-07 both codex lanes printed "Logged in using ChatGPT"
+// minutes before every dispatch failed on a revoked refresh token -- the
+// substring is not the fact, the bridge's `liveness` probe is.
 package deploytest
 
 import (
@@ -418,13 +422,36 @@ func TestPreflightRefusesWhenVersionOutputUnparseable(t *testing.T) {
 	requireFailure(t, err, stderr, "does not contain a parseable version")
 }
 
-func TestPreflightRefusesWhenNotLoggedIn(t *testing.T) {
+// TestPreflightWarnsButSucceedsWhenNotLoggedIn: check 3 is advisory since
+// loop-closure t11 (issue #308). The 2026-09-07 incident is the evidence:
+// `codex login status` printed "Logged in using ChatGPT" on both lanes
+// minutes before every dispatch failed with "refresh token was revoked", so
+// the substring proves nothing about whether a session can run. The fact
+// that does is the bridge's `liveness` (CHECK probe), read by `nodes doctor`
+// and the deploy's detector tail; a preflight that refused on this signal
+// would block the very deploy that ships the probe. The negative is still
+// printed, loudly, as a warning.
+func TestPreflightWarnsButSucceedsWhenNotLoggedIn(t *testing.T) {
 	dir := t.TempDir()
 	cfg := baseConfig(t, dir)
 	configPath := writeConfig(t, dir, cfg)
 
-	_, stderr, err := runPreflight(t, configPath, "FAKE_LOGIN_BEHAVIOR=fail")
-	requireFailure(t, err, stderr, "did not report an authenticated session")
+	stdout, stderr, err := runPreflight(t, configPath, "FAKE_LOGIN_BEHAVIOR=fail")
+	if err != nil {
+		t.Fatalf("expected success (check 3 is advisory), got error %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "did not report an authenticated session") {
+		t.Errorf("stderr = %q, want the not-logged-in warning still printed", stderr)
+	}
+	if !strings.Contains(stderr, "advisory") {
+		t.Errorf("stderr = %q, want the warning to say it is advisory", stderr)
+	}
+	if !strings.Contains(stderr, "liveness") {
+		t.Errorf("stderr = %q, want the warning to point at the authoritative fact (the bridge's liveness)", stderr)
+	}
+	if !strings.Contains(stdout, "preflight: ok") {
+		t.Errorf("stdout = %q, want the success line: an advisory check does not fail the deploy", stdout)
+	}
 }
 
 func TestPreflightRefusesRepoAllowlistEntryNotAGitCheckout(t *testing.T) {
@@ -683,7 +710,6 @@ func TestPreflightRefusalMessagesAreAllDistinct(t *testing.T) {
 		}},
 		{name: "version fails", env: []string{"FAKE_VERSION_BEHAVIOR=fail"}},
 		{name: "version unparseable", env: []string{"FAKE_VERSION_BEHAVIOR=unparseable"}},
-		{name: "not logged in", env: []string{"FAKE_LOGIN_BEHAVIOR=fail"}},
 		{name: "repo not a checkout", mutate: func(dir string, cfg *preflightConfig) {
 			notARepo := filepath.Join(dir, "plain-dir-2")
 			if err := os.MkdirAll(notARepo, 0o755); err != nil {

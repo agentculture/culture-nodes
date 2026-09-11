@@ -6,6 +6,7 @@
 #                                              # + culture-colleague
 #   deploy/prod/bootstrap-accounts.sh orin     # culture-codex + culture-qwen + culture-pi
 #   deploy/prod/bootstrap-accounts.sh thor     # culture-codex + culture-qwen + culture-pi
+#                                              # + culture-land (loop-closure t5, #315)
 #                                              # (thor is NOPASSWD today, so
 #                                              # deploy.sh thor can also do it)
 #
@@ -29,6 +30,13 @@
 # runs the root script in place and the operator types it (#298). Nothing in
 # the deploy lane creates culture-colleague on its own.
 #
+# thor also carries culture-land (loop-closure t5, #315): the account the
+# land node runs as -- runner-executed code that lands handover refs on PR
+# branches. It has no engine binary and no model credential; its two git
+# tokens come from install-secrets.sh (lanes/land-secrets.sh). Creating it
+# is THIS root step and stays a counted hand-turn: cutover.sh thor land
+# never performs it and refuses by name until it has been typed.
+#
 # Each invocation is an operator hand-turn: record it as a comment on the
 # tracking issue (CLAUDE.md, "Every piece of operator work opens or updates
 # an issue").
@@ -41,7 +49,8 @@ LANE="$SCRIPT_DIR/lanes/unix-user.sh"
 
 case "$HOST" in
   spark) ENGINES="claude qwen colleague" ;;
-  orin|thor) ENGINES="codex qwen pi" ;;
+  orin) ENGINES="codex qwen pi" ;;
+  thor) ENGINES="codex qwen pi land" ;;
   *) echo "error: unknown host $HOST" >&2; echo "hint: one of spark, orin, thor" >&2; exit 1 ;;
 esac
 

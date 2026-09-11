@@ -75,7 +75,7 @@ kind: Workflow
 
 metadata:
   name: jira-intake
-  version: 1.7.0
+  version: 1.8.0
   ownerRef: team/platform-ai
 
 spec:
@@ -107,7 +107,8 @@ spec:
     output:
       schema: {type: object}
 
-  # Longest path: intake -> post-comment -> transition -> picked-up (4 hops);
+  # Longest path: intake -> post-comment -> transition -> stage-intake ->
+  # picked-up (5 hops);
   # 8 leaves headroom without hiding a loop — there is none: every node id is
   # distinct and visited at most once by construction.
   limits:
@@ -238,6 +239,52 @@ spec:
         retry:
           maxAttempts: 1
 
+    # The stage write-back (issue #311, decision c9; plan loop-closure task
+    # t17). The board now says where the work item IS without anyone asking
+    # the operator: one structured comment per stage transition, posted by a
+    # GRAPH NODE through this same narrow post_comment verb -- never by the
+    # sweep, which has no Jira write path by design. This graph owns the first
+    # stage of the vocabulary ({intake, spec, dispatch, pr-open, merged,
+    # cleanup}, defined once in examples/pr-upkeep/pr_upkeep_jira.py
+    # `STAGES`); `dispatch` and `pr-open` are examples/pr-upkeep's and
+    # `merged` + `cleanup` are examples/cleanup's.
+    #
+    # It comes AFTER the board move, not before it, so the comment is a
+    # statement about something that already happened: the ticket was picked
+    # up, acknowledged and moved to In Progress. The first line is
+    # machine-readable -- `culture-nodes:stage=intake` -- and the sweep reads
+    # such a line as a stage RECORD: a record later on the ticket's timeline
+    # than the To Do transition closes it, so a ticket the loop already picked
+    # up does not re-fire pickup every tick (pr_upkeep_jira's
+    # STAGE_DRIVEN_BY). A retried comment is at worst a
+    # duplicate record and the newest wins, so unlike the two nodes above
+    # this one may retry rather than fail the run over bookkeeping.
+    stage-intake:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      ledger:
+        propose: [claim]
+      input:
+        bindings:
+          verb:
+            literal: post_comment
+          issue: /run/input/id
+          comment:
+            literal: |-
+              culture-nodes:stage=intake
+              culture-nodes picked this ticket up: an intake comment is on the ticket above and the board has been moved to In Progress. The run and its ledger are in the culture-nodes control plane under this ticket's key.
+      contract:
+        outcomes:
+          comment_posted:
+            schema:
+              type: object
+              required: [issue, comment_id]
+      policy:
+        timeout: 10m
+        retry:
+          maxAttempts: 2
+
     # -------------------------------------------------------------------------
     # NAMED ENDINGS — a run whose output does not name why it stopped is the
     # illegible failure this repo's example graphs are against.
@@ -255,5 +302,26 @@ spec:
       to: post-comment
     - from: post-comment.comment_posted
       to: transition
+    # Only a Jira-shaped work item can carry a stage: a `gh:<owner>/<repo>#<n>`
+    # item is a pull request with no ticket, and there is nothing to comment
+    # on. This graph's own contract pins `source: {const: jira}` and takes the
+    # ticket key as `id`, so the guard cannot fail today -- it is declared
+    # because the contract constrains the field's TYPE and not its shape, and
+    # a re-keyed item reaching this graph must not post a stage onto a `gh:`
+    # string.
+    #
+    # Both edges carry a guard, and that is not redundancy. The engine selects
+    # the first eligible edge in the COMPILER's normalized order -- source,
+    # outcome, TARGET, guard text (internal/compiler/normalize.go
+    # normalizeEdges) -- not in the order this document lists them.
+    # `picked-up` sorts before `stage-intake`, so an unguarded end edge would
+    # win before the stage guard was ever evaluated and no ticket would ever
+    # see `intake`.
     - from: transition.issue_transitioned
+      to: stage-intake
+      when: '!input.id.startsWith("gh:")'
+    - from: transition.issue_transitioned
+      to: picked-up
+      when: 'input.id.startsWith("gh:")'
+    - from: stage-intake.comment_posted
       to: picked-up

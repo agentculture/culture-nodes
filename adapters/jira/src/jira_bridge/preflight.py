@@ -1,8 +1,8 @@
 """The preflight capability surface a bridge advertises (issue #67, task
 t15) — the shared, backend-agnostic half.
 
-**This file is byte-identical in all four bridges** (`claude_code_bridge`,
-`codex_bridge`, `colleague_bridge`, `notify_bridge`) and a Go lint test
+**This file is byte-identical in every bridge that ships it** (seven today;
+`tests/lint/preflightsurface_test.go` names them) and a Go lint test
 (`tests/lint/preflightsurface_test.go`) fails the build if it stops being.
 That is the whole point of it existing: the protocol is ONE contract, and
 four adapters each inlining their own version of it is exactly the
@@ -123,6 +123,9 @@ CAPABILITIES_PATH = "/v1/capabilities"
 #:   the bridges and nothing reported what it shipped, so "is the fleet
 #:   current?" needed an ssh. Omitted by a bridge that cannot locate its own
 #:   package.
+#: * ``liveness`` — whether this lane's engine SESSION is live: ``{session_ok,
+#:   reason, checked_at, mode}`` as ``liveness.py`` defines (issue #308).
+#:   Omitted by a bridge that measures no session credential.
 HOST_KEYS = (
     "hostname",
     "sandbox_modes",
@@ -136,6 +139,7 @@ HOST_KEYS = (
     "dispatch_grants",
     "toolchains",
     "deployment",
+    "liveness",
 )
 
 ARTIFACT_PUBLISH_VALUES = frozenset(

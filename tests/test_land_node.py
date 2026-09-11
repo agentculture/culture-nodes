@@ -543,7 +543,8 @@ def test_a_rerun_after_push_adds_no_second_commit(
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == tip
     assert git(origin, "rev-list", "--count", tip) == count
     by = steps(records)
-    assert by["rebase"]["outcome"] == "skipped" and by["rebase"]["reason"] == "already_on_branch"
+    assert by["rebase"]["outcome"] == "skipped"
+    assert by["rebase"]["reason"] == "already_on_branch"
     assert by["push"]["outcome"] == "skipped" and by["push"]["reason"] == "already_on_branch"
     assert result(records)["landed_commit"] == tip
 

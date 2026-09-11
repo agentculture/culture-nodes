@@ -649,7 +649,8 @@ def test_a_missing_reply_token_stops_the_landing_after_the_push(
     assert by["push"]["outcome"] == "ok"
     assert by["reply"]["outcome"] == "refused"
     assert by["reply"]["credential"] == "GITHUB_TOKEN_LAND_PR"
-    assert "resolve" not in by and "reset" not in by
+    assert "resolve" not in by
+    assert "reset" not in by
     assert result(records)["outcome"] == "environment"
     assert "GITHUB_TOKEN_LAND_PR" in result(records)["error"]
     assert fake_github.posts() == []

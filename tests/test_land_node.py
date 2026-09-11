@@ -294,7 +294,8 @@ def test_a_ref_lands_as_one_commit_on_the_branch(
     assert by["lease"]["outcome"] == "ok"
     assert by["lease"]["scope"] == "target_branch"
     assert by["rebase"]["outcome"] == "ok"
-    assert by["push"]["outcome"] == "ok" and by["push"]["rounds"] == 1
+    assert by["push"]["outcome"] == "ok"
+    assert by["push"]["rounds"] == 1
     assert by["push"]["credential"] == "not_required"
     assert by["gate"]["outcome"] == "stubbed", by["gate"]
     # t8's steps are wired; with no control plane configured they say so.

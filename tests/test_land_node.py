@@ -297,7 +297,8 @@ def test_a_ref_lands_as_one_commit_on_the_branch(
     assert by["gate"]["outcome"] == "stubbed", by["gate"]
     # t8's steps are wired; with no control plane configured they say so.
     for hook in ("reply", "resolve"):
-        assert by[hook]["outcome"] == "skipped" and by[hook]["reason"] == "no_control_plane"
+        assert by[hook]["outcome"] == "skipped"
+        assert by[hook]["reason"] == "no_control_plane"
     assert by["checkout_lease"]["outcome"] == "ok"
     assert by["reset"]["outcome"] == "ok"
     # Every record names the join key and both runs.

@@ -873,7 +873,8 @@ def test_workflow_declares_the_inputs_and_routes_every_exit_code():
     assert land_node["ledger"]["observe"] == ["evidence"]
     assert land_node["policy"]["retry"]["maxAttempts"] == 1
     argv = " ".join(land_node["operation"]["argv"])
-    assert "LAND_SOURCE_URL" in argv and "LAND_SOURCE_SHA256" in argv
+    assert "LAND_SOURCE_URL" in argv
+    assert "LAND_SOURCE_SHA256" in argv
     for ref in ("LAND_SOURCE_URL", "LAND_SOURCE_SHA256", "GITHUB_TOKEN_WORKER", "NODES_API_URL"):
         assert ref in land_node["operation"]["environmentRefs"]
     # Every module land.py reaches for is fetched beside it, by granted digest.

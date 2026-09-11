@@ -433,7 +433,8 @@ def test_findings_without_a_thread_collapse_into_one_pr_comment(fake_github):
     assert CHECK["id"] in body, body
     assert QODO["id"] not in body, "a finding with a thread is answered on the thread"
     assert body.rstrip().endswith(land_reply.SIGNATURE)
-    assert reply["pr_comment"] == "posted" and reply["replies_posted"] == 1
+    assert reply["pr_comment"] == "posted", reply
+    assert reply["replies_posted"] == 1, reply
     comment_records = [r for r in ctx.records.of("reply") if r.get("kind") == "pr_comment"]
     assert len(comment_records) == 1
     assert sorted(comment_records[0]["findings"]) == sorted([SONAR["id"], CHECK["id"]])

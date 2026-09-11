@@ -227,7 +227,8 @@ def test_the_probe_reads_capabilities_as_the_account_with_a_bearer_and_never_pri
     assert result.returncode == 0, result.stderr
     log = h.log.read_text()
     ssh_lines = [ln for ln in log.splitlines() if ln.startswith("ssh[")]
-    assert ssh_lines and all(f"culture-codex@{THOR}" in ln for ln in ssh_lines), log
+    assert ssh_lines, log
+    assert all(f"culture-codex@{THOR}" in ln for ln in ssh_lines), log
     curl_lines = [ln for ln in log.splitlines() if ln.startswith("curl[")]
     assert len(curl_lines) == 1, log
     assert "127.0.0.1:8086/v1/capabilities" in curl_lines[0]

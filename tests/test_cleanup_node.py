@@ -409,7 +409,8 @@ def test_a_fact_with_neither_merged_nor_closed_timestamp_is_refused(remote, api,
     del payload["merged_at"]
     proc, _ = run_cleanup(bare, api, payload, tmp_path)
     assert proc.returncode == 1
-    assert "merged_at" in proc.stderr and "closed_at" in proc.stderr
+    assert "merged_at" in proc.stderr
+    assert "closed_at" in proc.stderr
     assert remote_refs(bare) == before
     assert api.cancels == []
 

@@ -606,7 +606,9 @@ def test_a_landing_replies_and_resolves_through_the_hooks(
     assert by["resolve"]["resolved"] == 1
     assert by["reset"]["outcome"] == "ok"
     body = fake_github.threads[0]["comments"][-1]["body"]
-    assert landed in body and QODO["id"] in body and land_reply.SIGNATURE in body
+    assert landed in body
+    assert QODO["id"] in body
+    assert land_reply.SIGNATURE in body
     assert SONAR["id"] in fake_github.issue_comments[0]["body"]
     per_finding = [r for r in records if r.get("step") == "reply" and r.get("finding")]
     assert per_finding and all(r["work_item"] == WORK_ITEM for r in per_finding)

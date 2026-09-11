@@ -441,7 +441,8 @@ def test_findings_without_a_thread_collapse_into_one_pr_comment(fake_github):
     # Nothing to resolve for a finding with no thread, and the record says so.
     no_thread = [r for r in ctx.records.of("resolve") if r.get("reason") == "no_review_thread"]
     assert {r["finding"] for r in no_thread} == {SONAR["id"], CHECK["id"]}
-    assert resolve["no_thread"] == 2 and resolve["resolved"] == 1
+    assert resolve["no_thread"] == 2, resolve
+    assert resolve["resolved"] == 1, resolve
 
 
 # ---------------------------------------------------------------------------

@@ -463,7 +463,8 @@ def test_a_missing_token_is_a_refusal_by_name_and_posts_nothing(fake_github, mon
     assert "land-pr.env" in excinfo.value.hint
     assert fake_github.posts() == []
     refused = ctx.records.of("reply")
-    assert len(refused) == 1 and refused[0]["outcome"] == "refused"
+    assert len(refused) == 1, refused
+    assert refused[0]["outcome"] == "refused", refused
     assert refused[0]["credential"] == "GITHUB_TOKEN_LAND_PR"
 
     with pytest.raises(StubRefusal):

@@ -598,7 +598,8 @@ def test_a_rebase_conflict_routes_to_a_human_and_pushes_nothing(
     by = steps(records)
     assert by["rebase"]["outcome"] == "routed"
     assert by["rebase"]["conflicted_paths"] == ["feature.txt"]
-    assert "push" not in by and "reset" not in by
+    assert "push" not in by
+    assert "reset" not in by
 
     routing = [r for r in records if r.get("record") == "routing"]
     assert len(routing) == 1

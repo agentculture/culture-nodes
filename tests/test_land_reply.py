@@ -599,7 +599,8 @@ def test_a_landing_replies_and_resolves_through_the_hooks(
     landed = result(records)["landed_commit"]
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == landed
     by = steps(records)
-    assert by["reply"]["outcome"] == "ok" and by["reply"]["replies_posted"] == 1
+    assert by["reply"]["outcome"] == "ok"
+    assert by["reply"]["replies_posted"] == 1
     assert by["reply"]["pr_comment"] == "posted"
     assert by["resolve"]["outcome"] == "ok" and by["resolve"]["resolved"] == 1
     assert by["reset"]["outcome"] == "ok"

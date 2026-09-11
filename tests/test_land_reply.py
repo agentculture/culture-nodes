@@ -408,7 +408,8 @@ def test_an_already_resolved_thread_is_not_resolved_again(fake_github):
 
     assert reply["replies_posted"] == 1, "a resolved thread still gets its reply"
     assert fake_github.resolves() == []
-    assert resolve["already_resolved"] == 1 and resolve["resolved"] == 0
+    assert resolve["already_resolved"] == 1, resolve
+    assert resolve["resolved"] == 0, resolve
 
 
 # ---------------------------------------------------------------------------

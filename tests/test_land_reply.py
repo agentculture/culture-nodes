@@ -522,9 +522,8 @@ def test_a_producing_run_without_pr_findings_is_a_recorded_skip(fake_github):
     reply, resolve = run_both(ctx)
     assert reply["outcome"] == "skipped", reply
     assert reply["reason"] == "no_pr_findings_on_producing_run", reply
-    assert (
-        resolve["outcome"] == "skipped" and resolve["reason"] == "no_pr_findings_on_producing_run"
-    )
+    assert resolve["outcome"] == "skipped", resolve
+    assert resolve["reason"] == "no_pr_findings_on_producing_run", resolve
     assert fake_github.posts() == []
 
 

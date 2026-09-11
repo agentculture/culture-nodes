@@ -531,7 +531,8 @@ def test_no_control_plane_is_a_recorded_skip_not_a_guess(monkeypatch):
     monkeypatch.delenv("NODES_API_URL", raising=False)
     ctx = landing_stub()
     reply = land_reply.reply_step(ctx, refusal=StubRefusal)
-    assert reply["outcome"] == "skipped" and reply["reason"] == "no_control_plane"
+    assert reply["outcome"] == "skipped", reply
+    assert reply["reason"] == "no_control_plane", reply
 
 
 def test_an_unreadable_control_plane_is_an_environment_refusal(fake_github):

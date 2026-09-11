@@ -289,7 +289,8 @@ def test_a_ref_lands_as_one_commit_on_the_branch(
     by = steps(records)
     for name in land.STEPS:
         assert name in by, f"no record for step {name}: {sorted(by)}"
-    assert by["fetch"]["outcome"] == "ok" and by["fetch"]["commit"] == sha
+    assert by["fetch"]["outcome"] == "ok"
+    assert by["fetch"]["commit"] == sha
     assert by["lease"]["outcome"] == "ok" and by["lease"]["scope"] == "target_branch"
     assert by["rebase"]["outcome"] == "ok"
     assert by["push"]["outcome"] == "ok" and by["push"]["rounds"] == 1

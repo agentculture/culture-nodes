@@ -398,7 +398,8 @@ def test_a_rebase_stale_twice_routes_to_a_human_and_pushes_nothing(
     assert code == land.EXIT_ROUTED_HUMAN, records
     assert result(records)["outcome"] == "routed_human"
     push = steps(records)["push"]
-    assert push["outcome"] == "routed" and push["rounds"] == land.MAX_LAND_ROUNDS == 2
+    assert push["outcome"] == "routed"
+    assert push["rounds"] == land.MAX_LAND_ROUNDS == 2
     routing = [r for r in records if r.get("record") == "routing"]
     assert len(routing) == 1
     assert routing[0]["data"]["reason"] == land.REASON_STALE_AFTER_RETRY

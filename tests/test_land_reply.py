@@ -360,7 +360,8 @@ def test_a_rerun_posts_nothing_new(fake_github):
     reply, resolve = run_both(second)
 
     assert fake_github.posts() == [], "the re-run posted or resolved something"
-    assert reply["outcome"] == "ok" and reply["replies_posted"] == 0
+    assert reply["outcome"] == "ok", reply
+    assert reply["replies_posted"] == 0, reply
     assert reply["replies_existing"] == 1 and reply["pr_comment"] == "existing"
     assert resolve["outcome"] == "ok" and resolve["resolved"] == 0
     assert resolve["already_resolved"] == 1

@@ -297,7 +297,8 @@ def test_each_landed_finding_gets_one_reply_and_one_resolve(fake_github):
 
     reply, resolve = run_both(ctx)
 
-    assert reply["outcome"] == "ok" and reply["replies_posted"] == 2, reply
+    assert reply["outcome"] == "ok", reply
+    assert reply["replies_posted"] == 2, reply
     assert resolve["outcome"] == "ok" and resolve["resolved"] == 2, resolve
     posted = [p for m, p in fake_github.posts() if p.endswith("/replies")]
     assert len(posted) == 2, fake_github.posts()

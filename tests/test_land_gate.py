@@ -845,7 +845,8 @@ def test_a_handover_that_already_bumps_the_version_is_not_bumped_again(
 
 def test_the_gate_never_pushes_forces_or_merges():
     code = code_only(GATE_SCRIPT.read_text(encoding="utf-8"))
-    assert '"push"' not in code and "'push'" not in code, "only land.py pushes"
+    assert '"push"' not in code, "only land.py pushes"
+    assert "'push'" not in code, "only land.py pushes"
     assert "--force" not in code
     assert not re.search(r"/pulls/[^\n\"']*/merge", code)
     assert "api.github.com" not in code

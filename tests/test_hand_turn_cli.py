@@ -133,7 +133,8 @@ def test_hand_turn_missing_token_and_actor_are_structured_errors(capsys, monkeyp
     rc = main(["hand-turn", "x", "--stage", "land", "--work-item", "SCRUM-9", "--token", "t"])
     captured = capsys.readouterr()
     assert rc == 1
-    assert "no actor" in captured.err and "NODES_HAND_TURN_ACTOR_ID" in captured.err
+    assert "no actor" in captured.err
+    assert "NODES_HAND_TURN_ACTOR_ID" in captured.err
     rc = main(["hand-turn", "x", "--stage", "land", "--work-item", "SCRUM-9", "--as", "a"])
     captured = capsys.readouterr()
     assert rc == 1

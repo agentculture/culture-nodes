@@ -379,7 +379,8 @@ def test_a_stale_rebase_refetches_once_then_lands(
 
     assert code == land.EXIT_LANDED, records
     push = steps(records)["push"]
-    assert push["outcome"] == "ok" and push["rounds"] == 2
+    assert push["outcome"] == "ok"
+    assert push["rounds"] == 2
     tip = git(origin, "rev-parse", f"refs/heads/{TARGET}")
     assert log_subjects(origin, tip)[:2] == ["t6: add a", "race 0"]
 

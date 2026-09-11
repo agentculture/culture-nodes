@@ -428,7 +428,9 @@ def test_findings_without_a_thread_collapse_into_one_pr_comment(fake_github):
     assert len(comments) == 1, fake_github.posts()
     assert len(fake_github.issue_comments) == 1
     body = fake_github.issue_comments[0]["body"]
-    assert SHA in body and SONAR["id"] in body and CHECK["id"] in body
+    assert SHA in body, body
+    assert SONAR["id"] in body, body
+    assert CHECK["id"] in body, body
     assert QODO["id"] not in body, "a finding with a thread is answered on the thread"
     assert body.rstrip().endswith(land_reply.SIGNATURE)
     assert reply["pr_comment"] == "posted" and reply["replies_posted"] == 1

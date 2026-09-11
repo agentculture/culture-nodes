@@ -804,7 +804,8 @@ def test_a_rerun_after_the_landing_bumps_nothing_again(
     assert code == land.EXIT_LANDED, records
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == tip, "a re-run moved the branch"
     gate = steps(records)["gate"]
-    assert gate["outcome"] == "skipped" and gate["reason"] == "already_on_branch"
+    assert gate["outcome"] == "skipped", gate
+    assert gate["reason"] == "already_on_branch", gate
     assert gate_log(tmp_path) == [], "a re-run re-ran the chain on a landed commit"
     assert show(origin, tip, "CHANGELOG.md").count("## [") == 2
 

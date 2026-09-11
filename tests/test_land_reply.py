@@ -364,7 +364,8 @@ def test_a_rerun_posts_nothing_new(fake_github):
     assert reply["replies_posted"] == 0, reply
     assert reply["replies_existing"] == 1, reply
     assert reply["pr_comment"] == "existing", reply
-    assert resolve["outcome"] == "ok" and resolve["resolved"] == 0
+    assert resolve["outcome"] == "ok", resolve
+    assert resolve["resolved"] == 0, resolve
     assert resolve["already_resolved"] == 1
     assert [r["outcome"] for r in second.records.of("reply")] == [
         "skipped_existing",

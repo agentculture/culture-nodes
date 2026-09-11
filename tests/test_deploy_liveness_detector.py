@@ -151,9 +151,10 @@ def test_deploy_sources_the_lane_and_calls_it_after_doctor_on_both_hosts():
         doctor_at = case.index("nodes doctor")
         detector_at = case.index('lane_liveness_detector "$HOST"')
         assert doctor_at < detector_at, "the liveness line follows the doctor detector"
-        # A detector, not a gate: the call is never joined to an exit.
+        # A detector, not a gate: the call is joined neither to an exit nor to a `||`.
         call_line = [ln for ln in case.splitlines() if 'lane_liveness_detector "$HOST"' in ln][0]
-        assert "exit" not in call_line and "||" not in call_line
+        assert "exit" not in call_line
+        assert "||" not in call_line
 
 
 def test_live_lane_prints_one_line_with_the_fact(tmp_path):

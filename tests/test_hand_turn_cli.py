@@ -123,7 +123,8 @@ def test_hand_turn_requires_stage_and_work_item(capsys) -> None:
         main(["hand-turn", "x", "--work-item", "SCRUM-9"])
     assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert err.startswith("error:") and "hint:" in err
+    assert err.startswith("error:")
+    assert "hint:" in err
 
 
 def test_hand_turn_missing_token_and_actor_are_structured_errors(capsys, monkeypatch) -> None:

@@ -477,7 +477,8 @@ def test_two_refs_on_one_branch_land_in_sequence_with_the_second_waiting(
     assert code == land.EXIT_WAITING, records
     assert result(records)["outcome"] == "waiting"
     lease = steps(records)["lease"]
-    assert lease["outcome"] == "waiting" and lease["scope"] == "target_branch"
+    assert lease["outcome"] == "waiting"
+    assert lease["scope"] == "target_branch"
     assert lease["holder"]["land_run_id"] == "01M0OTHERLANDER"
     assert "push" not in steps(records), "nothing past the lease ran"
     assert git(origin, "rev-parse", f"refs/heads/{TARGET}") == after_a

@@ -138,7 +138,8 @@ def test_hand_turn_missing_token_and_actor_are_structured_errors(capsys, monkeyp
     rc = main(["hand-turn", "x", "--stage", "land", "--work-item", "SCRUM-9", "--as", "a"])
     captured = capsys.readouterr()
     assert rc == 1
-    assert "hint:" in captured.err and "NODES_HUMAN_DECISION_TOKEN" in captured.err
+    assert "hint:" in captured.err
+    assert "NODES_HUMAN_DECISION_TOKEN" in captured.err
 
 
 def test_hand_turn_relays_api_404_verbatim(fake_api, capsys) -> None:

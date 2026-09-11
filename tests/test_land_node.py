@@ -545,7 +545,8 @@ def test_a_rerun_after_push_adds_no_second_commit(
     by = steps(records)
     assert by["rebase"]["outcome"] == "skipped"
     assert by["rebase"]["reason"] == "already_on_branch"
-    assert by["push"]["outcome"] == "skipped" and by["push"]["reason"] == "already_on_branch"
+    assert by["push"]["outcome"] == "skipped"
+    assert by["push"]["reason"] == "already_on_branch"
     assert result(records)["landed_commit"] == tip
 
 

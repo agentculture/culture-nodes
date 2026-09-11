@@ -338,7 +338,8 @@ class TestATickAgainstARecordedStage:
         assert sweep.main() == 0
         capsys.readouterr()
         upkeep = [event for event in calls["events"] if event[0] == "pr-upkeep.pr"]
-        assert len(upkeep) == 1 and upkeep[0][1]["work_item"] == "SCRUM-9"
+        assert len(upkeep) == 1
+        assert upkeep[0][1]["work_item"] == "SCRUM-9"
 
     def test_a_replayed_tick_re_emits_the_same_source_key_and_watermark(self, monkeypatch, capsys):
         """What makes a replay a no-op is the control plane, not the sweep.

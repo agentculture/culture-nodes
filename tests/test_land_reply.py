@@ -336,7 +336,8 @@ def test_a_finding_may_name_its_thread_or_comment_directly(fake_github):
 
     reply, resolve = run_both(ctx)
 
-    assert reply["replies_posted"] == 2 and resolve["resolved"] == 2
+    assert reply["replies_posted"] == 2, reply
+    assert resolve["resolved"] == 2, resolve
     assert QODO["id"] in fake_github.threads[0]["comments"][-1]["body"]
     assert SONAR["id"] in fake_github.threads[1]["comments"][-1]["body"]
 

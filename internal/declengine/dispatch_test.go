@@ -30,9 +30,34 @@ func TestWorkerEnvelopeUsesExistingPaths(t *testing.T) {
 			if err := json.Unmarshal(input, &values); err != nil {
 				t.Fatal(err)
 			}
-			if values["origin_marker"] != "signed-marker" {
+			if values[MarkerInputKey] != "signed-marker" {
 				t.Fatal("marker not passed to bridge")
 			}
 		})
+	}
+}
+
+// The engine owns the marker key: an unmarked firing sends none (a bridge
+// answers 400 to a present-but-malformed marker, and "" is malformed), and an
+// author-written value never reaches the bridge in place of the minted one.
+func TestWorkerEnvelopeOwnsTheMarkerKey(t *testing.T) {
+	with := json.RawMessage(`{"uses":"actor://test/worker@sha256:aaaaaa","input":{"text":"hello","marker":"cn1:forged"}}`)
+	for _, minted := range []string{"", "signed-marker"} {
+		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "agent.work", With: with}, Marker: minted}
+		_, input, err := workerEnvelope(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var values map[string]any
+		if err := json.Unmarshal(input, &values); err != nil {
+			t.Fatal(err)
+		}
+		got, present := values[MarkerInputKey]
+		if minted == "" && present {
+			t.Fatalf("unmarked firing sent %q=%v", MarkerInputKey, got)
+		}
+		if minted != "" && got != minted {
+			t.Fatalf("%q=%v, want the minted marker", MarkerInputKey, got)
+		}
 	}
 }

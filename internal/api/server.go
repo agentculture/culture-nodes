@@ -536,6 +536,21 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /v1alpha1/declarations/{name}/evaluations", s.wrap(s.handleGetDeclarationEvaluation))
 
+	// Declaration API routes (task t19, #328; spec c27, honesty h21):
+	// declare/publish, validate, link, alias (create, move/nest), activate,
+	// deactivate, show and list. See declarations.go's package doc for the
+	// security posture -- every write below resolves the request principal
+	// from the authenticated identity, never the request body.
+	mux.HandleFunc("POST /v1alpha1/declarations/validate", s.wrap(s.handleValidateDeclaration))
+	mux.HandleFunc("POST /v1alpha1/declarations", s.wrap(s.handlePublishDeclaration))
+	mux.HandleFunc("GET /v1alpha1/declarations", s.wrap(s.handleListDeclarations))
+	mux.HandleFunc("POST /v1alpha1/declarations/aliases", s.wrap(s.handleCreateDeclarationAlias))
+	mux.HandleFunc("POST /v1alpha1/declarations/aliases/{name}/move", s.wrap(s.handleMoveDeclarationAlias))
+	mux.HandleFunc("GET /v1alpha1/declarations/{name}", s.wrap(s.handleGetDeclaration))
+	mux.HandleFunc("POST /v1alpha1/declarations/{name}/links", s.wrap(s.handleLinkDeclaration))
+	mux.HandleFunc("POST /v1alpha1/declarations/{name}/activate", s.wrap(s.handleActivateDeclaration))
+	mux.HandleFunc("POST /v1alpha1/declarations/{name}/deactivate", s.wrap(s.handleDeactivateDeclaration))
+
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
 	mux.HandleFunc("GET /v1alpha1/mesh", s.wrap(s.handleMesh))

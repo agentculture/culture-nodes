@@ -106,6 +106,65 @@ func (s *Store) GetDeclarationVersion(ctx context.Context, id string) (Declarati
 	return v, err
 }
 
+// ListDeclarations returns the newest version of every declaration in the
+// namespace, one row per declaration entity (task t19, #328: the API's
+// GET /v1alpha1/declarations list route). Ordered by name for a stable,
+// human-readable page -- this is a phase-1 listing, not a paged query.
+func (s *Store) ListDeclarations(ctx context.Context, namespaceID string) ([]DeclarationVersion, error) {
+	rows, err := s.pool.Query(ctx, `SELECT v.id,v.namespace_id,v.declaration_id,d.name,v.version,v.digest,v.body,v.author,v.created_at
+		FROM declaration_versions v
+		JOIN declarations d ON d.id = v.declaration_id
+		JOIN (SELECT declaration_id, max(version) AS max_version FROM declaration_versions WHERE namespace_id=$1 GROUP BY declaration_id) latest
+		  ON latest.declaration_id = v.declaration_id AND latest.max_version = v.version
+		WHERE v.namespace_id=$1
+		ORDER BY d.name`, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeclarationVersion
+	for rows.Next() {
+		var v DeclarationVersion
+		if err := rows.Scan(&v.ID, &v.NamespaceID, &v.DeclarationID, &v.Name, &v.Version, &v.Digest, &v.Body, &v.Author, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// DeclarationActivationStatus reports whether declarationID's most recent
+// activate/deactivate history entry -- across any of its published
+// versions -- is an 'activate', and which version it names. found is false
+// when the declaration has never been activated or deactivated at all
+// (active is then meaningless, not "false").
+func (s *Store) DeclarationActivationStatus(ctx context.Context, namespaceID, declarationID string) (active bool, versionID string, found bool, err error) {
+	var kind string
+	err = s.pool.QueryRow(ctx, `SELECT h.kind, h.target_version_id FROM declaration_history h
+		JOIN declaration_versions v ON v.id = h.target_version_id
+		WHERE h.namespace_id=$1 AND v.declaration_id=$2 AND h.kind IN ('activate','deactivate')
+		ORDER BY h.seq DESC LIMIT 1`, namespaceID, declarationID).Scan(&kind, &versionID)
+	if err == pgx.ErrNoRows {
+		return false, "", false, nil
+	}
+	if err != nil {
+		return false, "", false, err
+	}
+	return kind == "activate", versionID, true, nil
+}
+
+// DeclarationName resolves a declaration_id to its name -- links are
+// stored by id (LinkDeclarations); the API renders them back into the
+// name-addressed shape it uses everywhere else.
+func (s *Store) DeclarationName(ctx context.Context, declarationID string) (string, error) {
+	var name string
+	err := s.pool.QueryRow(ctx, `SELECT name FROM declarations WHERE id=$1`, declarationID).Scan(&name)
+	if err == pgx.ErrNoRows {
+		return "", ErrNotFound
+	}
+	return name, err
+}
+
 type DeclarationLink struct{ FromDeclarationID, ToDeclarationID, Kind string }
 
 func (s *Store) LinkDeclarations(ctx context.Context, namespaceID, fromID, toID, kind string) error {

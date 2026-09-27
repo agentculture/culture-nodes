@@ -1,0 +1,1 @@
+{"name":"sample","trigger":{"kind":"timer"},"action":{"kind":"discord.post"},"start_node":{"name":"root","deadline":"none"},"landing_node":{"name":"waiting","deadline":"1h"}}

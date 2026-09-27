@@ -29,7 +29,7 @@ const BaseURI = "https://nodes.culture.dev/schemas/"
 // FS holds the schema definitions, keyed by paths such as
 // "ledger/envelope.schema.json".
 //
-//go:embed ledger workflow runner
+//go:embed ledger workflow runner declaration
 var FS embed.FS
 
 // ExamplesFS holds reference documents that are valid under those schemas —

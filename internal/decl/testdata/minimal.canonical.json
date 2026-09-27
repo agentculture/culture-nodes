@@ -1,0 +1,1 @@
+{"action":{"kind":"discord.post"},"condition":"true","landing_node":{"deadline":"1h","name":"waiting"},"name":"sample","start_node":{"deadline":"none","name":"root"},"trigger":{"hop_limit":20,"kind":"timer","rate_ceiling":"30/h","reentry_limit":3}}

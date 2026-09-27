@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodes.culture.dev/schemas/declaration/declaration.schema.json",
+  "title": "Trigger-condition-action declaration",
+  "description": "One named declaration with one trigger, one CEL condition and one action, connecting a start node to a landing node.",
+  "type": "object",
+  "required": ["name", "trigger", "action", "start_node", "landing_node"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"$ref": "#/$defs/name"},
+    "trigger": {"$ref": "#/$defs/trigger"},
+    "condition": {"type": "string", "minLength": 1, "default": "true", "description": "CEL expression; compiled at publish."},
+    "action": {"$ref": "#/$defs/action"},
+    "start_node": {"$ref": "#/$defs/node"},
+    "landing_node": {"$ref": "#/$defs/node"}
+  },
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128},
+    "node": {
+      "type": "object",
+      "required": ["name", "deadline"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "deadline": {"oneOf": [{"const": "none"}, {"type": "string", "pattern": "^([0-9]+(ms|s|m|h))+$"}], "description": "An explicit absence of expiry, or a Go-style duration."}
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "with": {"type": "object"},
+        "reentry_limit": {"type": "integer", "minimum": 0, "default": 3},
+        "hop_limit": {"type": "integer", "minimum": 1, "default": 20},
+        "rate_ceiling": {"type": "string", "pattern": "^[1-9][0-9]*/h$", "default": "30/h"},
+        "allow_self_retrigger": {"type": "boolean", "default": false}
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "with": {"type": "object"}
+      }
+    }
+  }
+}

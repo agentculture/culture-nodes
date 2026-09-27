@@ -271,6 +271,16 @@ func advertisesStamping(raw []byte) bool {
 	return false
 }
 
+// MarkerInputKey is the action-input key a firing's minted cn1 marker rides
+// under to the actor. It is the key every bridge's byte-identical
+// adapters/*/src/*/stamping.py reads (`read_marker`: `raw_input.get("marker")`,
+// documented there as `input.marker`), and the key the jira, github, notify
+// and human-inbox servers read directly -- so the bridges are the fixed side
+// and this constant follows them. It was `origin_marker` until task t29, which
+// no bridge read: every marked dispatch reached its bridge unstamped.
+// tests/conformance/declactions/declactions_test.go pins both halves.
+const MarkerInputKey = "marker"
+
 // workerEnvelope translates only the action into the existing worker contract.
 // Action.with contains uses/input/operation (or approver_ref for human.ask).
 // The supplied input is already template-rendered by the declaration engine.
@@ -288,7 +298,14 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	if with.Input == nil {
 		with.Input = map[string]any{}
 	}
-	with.Input["origin_marker"] = r.Marker
+	// The engine owns this key: an author-supplied value is dropped so a
+	// declaration cannot hand a bridge a marker the engine never minted, and
+	// an unmarked firing sends none at all (a bridge refuses a present but
+	// malformed marker, and "" is malformed).
+	delete(with.Input, MarkerInputKey)
+	if r.Marker != "" {
+		with.Input[MarkerInputKey] = r.Marker
+	}
 	input, err := json.Marshal(with.Input)
 	if err != nil {
 		return nil, nil, err

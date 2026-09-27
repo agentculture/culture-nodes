@@ -117,7 +117,7 @@ func workerFiring(t *testing.T, authority ledger.Authority) (*postgres.Store, st
 		}
 		var input map[string]any
 		_ = json.Unmarshal(req.Input, &input)
-		if input["origin_marker"] == nil || input["text"] != "hello" {
+		if input[MarkerInputKey] == nil || input["text"] != "hello" {
 			t.Errorf("worker input lost the rendered action or the marker: %s", req.Input)
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -57,3 +57,19 @@ block. For a remote actor that address must be reachable — pass
 `-callback-base-url` with whatever does reach it (a tunnel, a LAN address, a
 port-forward). An author who cannot arrange that still gets every synchronous
 check; the asynchronous ones skip with an explanation rather than failing.
+
+## Declaration action kinds through the real registry
+
+`declactions/declactions_test.go` (issue #328, task t29) is a second suite,
+in its own package so the adapter workflows that run this kit do not start a
+database for it: one contract test per declaration action kind — `agent.work`,
+`discord.post`, `github.comment`, `github.review_reply`, `jira.comment`,
+`jira.transition`, `jira.create` and `code.run` — each fired by the real
+declaration engine through `declengine.WorkerDispatcher`, resolved by the real
+actors-table registry (or the runner-service registry for `runner://`), and
+executed by the real worker against a fake bridge or runner endpoint. Each case
+asserts that the request reaches exactly the named actor with the rendered
+input and the minted cn1 marker under `declengine.MarkerInputKey` (`marker`,
+the key every bridge's `stamping.py` reads), and that the result comes back
+into the firing. These cases need PostgreSQL: set `NODES_TEST_DATABASE_URL`,
+or let `pgtest` start a `postgres:17-alpine` container; with neither they skip.

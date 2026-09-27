@@ -12,6 +12,7 @@ import IdentityGate from "./components/IdentityGate";
 import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
 import Decisions from "./routes/Decisions";
+import Declarations from "./routes/Declarations";
 import Design from "./routes/Design";
 import DesignCanvas from "./routes/DesignCanvas";
 import GenerateWorkflow from "./routes/GenerateWorkflow";
@@ -73,6 +74,10 @@ export function titleForPath(pathname: string): string {
   if (ticket) return `Ticket ${decodeURIComponent(ticket[1])} · ${APP_TITLE}`;
   const plan = /^\/plan\/([^/]+)$/.exec(pathname);
   if (plan) return `Plan ${decodeURIComponent(plan[1])} · ${APP_TITLE}`;
+  const declaration = /^\/declarations\/([^/]+)$/.exec(pathname);
+  if (declaration) {
+    return `Declaration ${decodeURIComponent(declaration[1])} · ${APP_TITLE}`;
+  }
 
   const matches = ROUTE_TITLES.filter(
     ([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -200,6 +205,12 @@ export function App() {
           <Route path="/runs/:id" element={<RunView />} />
           <Route path="/runs/:id/ledger" element={<LedgerView />} />
           <Route path="/tickets/:id" element={<TicketView />} />
+          {/* One declaration, or a chain (alias), rendered as a focus graph
+              (task t22, #328) — the same route serves both, per c24. There
+              is no declarations LIST view yet (a separate task's scope), so
+              this is reached by name/URL rather than from the header nav —
+              the same pattern RunView and TicketView already use. */}
+          <Route path="/declarations/:name" element={<Declarations />} />
           <Route
             path="*"
             element={

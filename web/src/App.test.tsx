@@ -97,6 +97,9 @@ describe("titleForPath", () => {
     expect(titleForPath("/plan/economy-discord-graphs")).toBe(
       "Plan economy-discord-graphs · Culture Nodes",
     );
+    expect(titleForPath("/declarations/build")).toBe(
+      "Declaration build · Culture Nodes",
+    );
   });
 
   it("decodes a percent-encoded subject rather than showing the escape", () => {

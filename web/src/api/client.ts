@@ -2,6 +2,11 @@ import type {
   ActorList,
   CommitReviewRequest,
   CreateReviewRequest,
+  DeclarationAliasDetail,
+  DeclarationFocus,
+  DeclarationFocusDirection,
+  DeclarationFocusLinkFilter,
+  DeclarationShow,
   HumanTaskDecisionRequest,
   HumanTaskDecisionResult,
   HumanTaskList,
@@ -567,3 +572,44 @@ export const getVersion = (signal?: AbortSignal) =>
  */
 export const getWhoami = (signal?: AbortSignal) =>
   getJson<Whoami>("/whoami", signal);
+
+// --- Declarations (task t22, #328) -----------------------------------------
+
+/** `GET /v1alpha1/declarations/{name}/focus` query parameters. */
+export interface DeclarationFocusParams {
+  distance?: number;
+  direction?: DeclarationFocusDirection;
+  link?: DeclarationFocusLinkFilter;
+}
+
+/**
+ * `GET /v1alpha1/declarations/{name}/focus` (task t20/t22, #328): a
+ * distance-N neighborhood of the one global declaration graph, centered on
+ * a declaration OR a declaration alias (chain) name. `direction` and
+ * `link` are applied server-side (internal/api/declgraph.go's
+ * handleDeclarationFocus) — there is no broader payload to narrow
+ * client-side.
+ */
+export const getDeclarationFocus = (
+  name: string,
+  params?: DeclarationFocusParams,
+  signal?: AbortSignal,
+) =>
+  getJson<DeclarationFocus>(
+    `/declarations/${encodeURIComponent(name)}/focus${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
+
+/** `GET /v1alpha1/declarations/{name}` — one declaration's show payload. */
+export const getDeclaration = (name: string, signal?: AbortSignal) =>
+  getJson<DeclarationShow>(`/declarations/${encodeURIComponent(name)}`, signal);
+
+/**
+ * `GET /v1alpha1/declaration-aliases/{name}` (task t21b, #328): a chain
+ * alias's parent, direct member declarations, and direct child aliases.
+ */
+export const getDeclarationAlias = (name: string, signal?: AbortSignal) =>
+  getJson<DeclarationAliasDetail>(
+    `/declaration-aliases/${encodeURIComponent(name)}`,
+    signal,
+  );

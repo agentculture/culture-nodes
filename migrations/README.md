@@ -440,6 +440,7 @@ collector write reports `session_ok = true` (c43's AND). The router treats a
 fresh (< 5 min) false row, or a locked row of any age, as "not live" and
 routes to the actor's registered `metadata.fallback_actor`. `session_ok` is
 nullable: NULL is "unmeasured", never true or false.
+
 - `0059_declarations.sql` — trigger-condition-action declarations (#328
   t6): `declarations` (unique name per namespace), immutable
   `declaration_versions` (content digest, author), `declaration_links`
@@ -448,3 +449,11 @@ nullable: NULL is "unmeasured", never true or false.
   of activations, deactivations and alias moves (corrections append with
   `supersedes_id`). Versions, declarations and history are immutable by
   trigger.
+- `0060_firings.sql` — declaration execution state (#328 t7):
+  `declaration_firings` (pinning the trigger, condition and action digests
+  each firing evaluated), `declaration_lineage_edges`,
+  `declaration_minted_markers` (with the recorded artifact id),
+  `declaration_nodes` and their `declaration_node_frozen_events`, and
+  per-match `declaration_evaluations`. An initial firing is unique per
+  `(namespace_id, event_id, declaration_id)`; a re-mint keeps the original
+  lineage and canonical firing id.

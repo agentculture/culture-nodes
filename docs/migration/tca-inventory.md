@@ -105,6 +105,7 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | `internal/engine/testdata/parallel-transitions.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |
 | `internal/engine/testdata/parallel.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |
 | `internal/engine/testdata/technical-route.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |
+| `internal/engine/testdata/trigger-declengine.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |
 | `internal/engine/testdata/trigger-subject-concurrency.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |
 | `internal/engine/testdata/trigger-subject.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |
 | `internal/engine/testdata/unbounded.workflow.yaml` | Trigger, lineage and node lifecycle fixture with equivalent outcome | pending |

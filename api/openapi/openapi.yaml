@@ -1026,6 +1026,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/declaration-aliases/{name}:
+    get:
+      operationId: getDeclarationAlias
+      tags: [declarations]
+      summary: Read one declaration alias (chain) by name -- its parent, member declarations, and child aliases.
+      description: >-
+        Task t21b (#328; spec h23/c31: "a chain alias resolves by name in
+        every verb that accepts a chain"). Alias create/move (above) were
+        writes with no matching read route -- `culture-nodes chain show`
+        and `GET .../focus` on a real alias name both 404'd on the
+        declaration-only routes before this. The path is
+        `/v1alpha1/declaration-aliases/{name}`, not nested under
+        `/v1alpha1/declarations/aliases` like the write routes above:
+        `net/http.ServeMux` refuses to register a literal `aliases` third
+        path segment alongside the existing four-segment
+        `GET .../{name}/focus`, `.../{name}/suggestions` and
+        `.../{name}/evaluations` routes (a genuine, unresolvable pattern
+        conflict, not a preference -- see `internal/api/declarations.go`'s
+        `handleGetDeclarationAlias` doc comment). Only direct members and
+        direct children are returned; nested descendants are not walked
+        (that is what `GET .../focus` does when `{name}` is an alias).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The alias's name.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The alias's identity, nesting, direct members, and direct children.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationAliasDetail'
+        '404':
+          description: No alias of that name exists in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/declarations/{name}:
     get:
       operationId: getDeclaration
@@ -1235,11 +1277,19 @@ paths:
         only so a graph can be drawn. This is the SAME response shape
         (DeclarationFocus, c24) at any distance, including 0 -- the single-
         declaration view and the chain view are one payload.
+
+        `{name}` also resolves as a declaration ALIAS (task t21b, #328;
+        spec h23/c31): when no declaration named `{name}` exists but an
+        alias does, distance 0 is every declaration that is a direct
+        member of that alias or a member of any alias nested under it
+        (recursively) -- not just the alias's own direct members. A
+        declaration named `{name}` always wins over an alias of the same
+        name.
       parameters:
         - name: name
           in: path
           required: true
-          description: The declaration's name.
+          description: The declaration's name, or a declaration alias's name (task t21b, #328).
           schema:
             type: string
         - name: distance
@@ -1277,7 +1327,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: No declaration with this name.
+          description: No declaration or alias with this name.
           content:
             application/json:
               schema:
@@ -6698,6 +6748,28 @@ components:
         declarations:
           type: array
           items: {type: string}
+
+    DeclarationAliasDetail:
+      type: object
+      description: >-
+        GET /v1alpha1/declaration-aliases/{name}'s payload (task t21b,
+        #328). declarations and aliases are both DIRECT only -- neither
+        descends into a nested child alias's own members or children.
+      required: [id, name, declarations, aliases]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        parent:
+          type: string
+          description: The parent alias's name. Absent (or empty) at the root.
+        declarations:
+          type: array
+          items: {type: string}
+          description: Direct member declaration names.
+        aliases:
+          type: array
+          items: {type: string}
+          description: Direct child alias names.
 
     MoveDeclarationAliasRequest:
       type: object

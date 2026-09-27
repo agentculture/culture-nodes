@@ -1334,6 +1334,42 @@
         ],
         "type": "object"
       },
+      "DeclarationAliasDetail": {
+        "description": "GET /v1alpha1/declaration-aliases/{name}'s payload (task t21b, #328). declarations and aliases are both DIRECT only -- neither descends into a nested child alias's own members or children.",
+        "properties": {
+          "aliases": {
+            "description": "Direct child alias names.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "declarations": {
+            "description": "Direct member declaration names.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent": {
+            "description": "The parent alias's name. Absent (or empty) at the root.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "declarations",
+          "aliases"
+        ],
+        "type": "object"
+      },
       "DeclarationEngineSwitch": {
         "description": "GET/POST /v1alpha1/declaration-engine/switch's payload (task t38, issue #328, spec c80).",
         "properties": {
@@ -5562,6 +5598,49 @@
         ]
       }
     },
+    "/v1alpha1/declaration-aliases/{name}": {
+      "get": {
+        "description": "Task t21b (#328; spec h23/c31: \"a chain alias resolves by name in every verb that accepts a chain\"). Alias create/move (above) were writes with no matching read route -- `culture-nodes chain show` and `GET .../focus` on a real alias name both 404'd on the declaration-only routes before this. The path is `/v1alpha1/declaration-aliases/{name}`, not nested under `/v1alpha1/declarations/aliases` like the write routes above: `net/http.ServeMux` refuses to register a literal `aliases` third path segment alongside the existing four-segment `GET .../{name}/focus`, `.../{name}/suggestions` and `.../{name}/evaluations` routes (a genuine, unresolvable pattern conflict, not a preference -- see `internal/api/declarations.go`'s `handleGetDeclarationAlias` doc comment). Only direct members and direct children are returned; nested descendants are not walked (that is what `GET .../focus` does when `{name}` is an alias).",
+        "operationId": "getDeclarationAlias",
+        "parameters": [
+          {
+            "description": "The alias's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationAliasDetail"
+                }
+              }
+            },
+            "description": "The alias's identity, nesting, direct members, and direct children."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No alias of that name exists in this namespace."
+          }
+        },
+        "summary": "Read one declaration alias (chain) by name -- its parent, member declarations, and child aliases.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/declaration-engine/open-runs": {
       "get": {
         "description": "Task t17 (issue #328, spec c94, ADR 0014 \"Consequences\", honesty h63): flipping the engine switch (internal/declengine/switch.go) to `after` DRAINS the graph engine, it does not strand it -- new trigger events stop starting graph runs from the flip onward, but a run already open keeps running on the graph engine until it ends, including every reaction it is waiting for (callbacks, waits, approvals). The graph engine retires only once this count reaches zero, so this route is what makes that fact checkable from outside the process instead of merely asserted.",
@@ -6202,11 +6281,11 @@
     },
     "/v1alpha1/declarations/{name}/focus": {
       "get": {
-        "description": "Task t20 (#328; spec c25/c62/c63, honesty h19). Distance 0 is only the named declaration; distance 1 adds the declarations directly connected to it across declaration_links; distance 2 the next ring, and so on. Distance counts hops in BOTH directions across BOTH must and can links by default, and is filterable by `direction` (`up`: toward the declarations this one depends on; `down`: toward the declarations that depend on it) and by `link` kind. Declarations count as hops; the start/landing waiting-state nodes carried in the response never do (c63) -- they are included only so a graph can be drawn. This is the SAME response shape (DeclarationFocus, c24) at any distance, including 0 -- the single- declaration view and the chain view are one payload.",
+        "description": "Task t20 (#328; spec c25/c62/c63, honesty h19). Distance 0 is only the named declaration; distance 1 adds the declarations directly connected to it across declaration_links; distance 2 the next ring, and so on. Distance counts hops in BOTH directions across BOTH must and can links by default, and is filterable by `direction` (`up`: toward the declarations this one depends on; `down`: toward the declarations that depend on it) and by `link` kind. Declarations count as hops; the start/landing waiting-state nodes carried in the response never do (c63) -- they are included only so a graph can be drawn. This is the SAME response shape (DeclarationFocus, c24) at any distance, including 0 -- the single- declaration view and the chain view are one payload.\n`{name}` also resolves as a declaration ALIAS (task t21b, #328; spec h23/c31): when no declaration named `{name}` exists but an alias does, distance 0 is every declaration that is a direct member of that alias or a member of any alias nested under it (recursively) -- not just the alias's own direct members. A declaration named `{name}` always wins over an alias of the same name.",
         "operationId": "getDeclarationFocus",
         "parameters": [
           {
-            "description": "The declaration's name.",
+            "description": "The declaration's name, or a declaration alias's name (task t21b,",
             "in": "path",
             "name": "name",
             "required": true,
@@ -6282,7 +6361,7 @@
                 }
               }
             },
-            "description": "No declaration with this name."
+            "description": "No declaration or alias with this name."
           }
         },
         "summary": "A distance-N neighborhood of the one global declaration graph.",

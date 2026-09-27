@@ -248,8 +248,13 @@ credential.
 ## show and focus accept a chain (alias) name
 
 `name` may name either a declaration or a declaration alias (spec c31/h23,
-see `culture-nodes explain chain`) — this module forwards it unchanged as
-the API's `{name}` path segment.
+see `culture-nodes explain chain`). `focus` forwards it unchanged as the
+API's `{name}` path segment — the server itself resolves a pure alias name
+(one with no declaration of the same name) to its recursive member
+declarations as the distance-0 set (task t21b, #328). `show` (`decl show`,
+the same route `chain show` calls) has no alias fallback of its own; a pure
+alias name 404s from `decl show` — use `chain show` for a name that might
+be an alias.
 
 ## validate
 
@@ -264,10 +269,14 @@ _CHAIN = """\
 
 Thin REST client over the declaration-alias (chain) API
 (`api/openapi/openapi.yaml`, `declarations` tag): `alias` names a chain
-(`POST /v1alpha1/declarations/aliases`), `show` displays one
-(`GET /v1alpha1/declarations/{name}` — the same show route
-`culture-nodes decl show` uses). No alias logic lives here (spec decision
-c28, honesty h24); naming and name resolution happen server-side.
+(`POST /v1alpha1/declarations/aliases`), `show` displays one. `show` tries
+the declaration route first (`GET /v1alpha1/declarations/{name}` — the
+same show route `culture-nodes decl show` uses); when that 404s, it falls
+back to the alias route (`GET /v1alpha1/declaration-aliases/{name}`, task
+t21b, #328) before giving up, so a pure alias name (one with no
+declaration of the same name) resolves too. No alias logic lives here
+(spec decision c28, honesty h24); naming and name resolution happen
+server-side — this module only tries the two routes in order.
 
 ## Usage
 
@@ -281,7 +290,12 @@ credential the same way `culture-nodes decl declare` does (see
 ## chain (alias) names
 
 `show`'s `name` accepts either a chain (alias) name or an ordinary
-declaration name (spec c31/h23) — this module forwards it unchanged.
+declaration name (spec c31/h23). A name that is both resolves as the
+declaration — the declaration route is tried first, and its success means
+the alias route is never reached. A declaration's `show` renders name,
+declaration id, version, digest, active status, and links; an alias's
+renders name, id, parent (or `none` at the root), member declaration
+names, and child alias names.
 """
 
 _RUN = """\

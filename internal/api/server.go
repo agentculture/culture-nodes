@@ -549,6 +549,17 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/declarations", s.wrap(s.handlePublishDeclaration))
 	mux.HandleFunc("GET /v1alpha1/declarations", s.wrap(s.handleListDeclarations))
 	mux.HandleFunc("POST /v1alpha1/declarations/aliases", s.wrap(s.handleCreateDeclarationAlias))
+	// GET .../declaration-aliases/{name}, not .../declarations/aliases/{name}
+	// (task t21b, #328): net/http.ServeMux refuses to register a literal
+	// "aliases" third segment alongside the existing {name}/focus,
+	// {name}/suggestions and {name}/evaluations four-segment GET routes --
+	// none of those four-segment patterns uniformly dominates the other for
+	// a hypothetical alias literally named "focus" et al., which
+	// ServeMux.HandleFunc treats as a genuine, unresolvable conflict and
+	// panics on at startup. A distinct second-level resource name sidesteps
+	// the ambiguity entirely; see declarations.go's handleGetDeclarationAlias
+	// doc comment.
+	mux.HandleFunc("GET /v1alpha1/declaration-aliases/{name}", s.wrap(s.handleGetDeclarationAlias))
 	mux.HandleFunc("POST /v1alpha1/declarations/aliases/{name}/move", s.wrap(s.handleMoveDeclarationAlias))
 	mux.HandleFunc("GET /v1alpha1/declarations/{name}", s.wrap(s.handleGetDeclaration))
 	mux.HandleFunc("POST /v1alpha1/declarations/{name}/links", s.wrap(s.handleLinkDeclaration))

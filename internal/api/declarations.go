@@ -434,6 +434,59 @@ func (s *Server) handleCreateDeclarationAlias(w http.ResponseWriter, r *http.Req
 	return nil
 }
 
+// declarationAliasDetailOut is components.schemas.DeclarationAliasDetail.
+type declarationAliasDetailOut struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Parent       string   `json:"parent,omitempty"`
+	Declarations []string `json:"declarations"`
+	Aliases      []string `json:"aliases"`
+}
+
+// handleGetDeclarationAlias is GET /v1alpha1/declaration-aliases/{name}
+// (task t21b, #328; spec h23/c31: "a chain alias resolves by name in every
+// verb that accepts a chain"). This is the missing read route: alias
+// create/move already exist as writes, but nothing could previously read
+// an alias back by name -- `nodes chain show` and `nodes decl focus` on a
+// real alias name both 404'd on the declaration-only routes.
+//
+// The path is /v1alpha1/declaration-aliases/{name}, not the more obvious
+// /v1alpha1/declarations/aliases/{name} nested under the existing
+// POST .../declarations/aliases collection: net/http.ServeMux's pattern
+// conflict check refuses that nesting outright at server startup (a
+// literal "aliases" third path segment cannot coexist with the existing
+// four-segment GET .../{name}/focus, .../{name}/suggestions and
+// .../{name}/evaluations routes -- none of those patterns uniformly
+// dominates the other for a hypothetical alias literally named "focus" et
+// al., so ServeMux calls it an unresolvable conflict, not a routing
+// preference, and panics registering it). A distinct second-level resource
+// name sidesteps that ambiguity entirely; server.go's route registration
+// carries the same note. Unauthenticated, matching the other GET
+// declaration routes (declarations.go's unauthorized doc comment, spec
+// decision c45).
+func (s *Server) handleGetDeclarationAlias(w http.ResponseWriter, r *http.Request) error {
+	name := r.PathValue("name")
+	detail, err := s.Store.GetDeclarationAliasDetail(r.Context(), s.NamespaceID, name)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return notFound("check the alias name", "no alias named %q", name)
+		}
+		return internalError(err)
+	}
+	out := declarationAliasDetailOut{
+		ID: detail.ID, Name: detail.Name, Parent: detail.ParentName,
+		Declarations: detail.Declarations, Aliases: detail.Children,
+	}
+	if out.Declarations == nil {
+		out.Declarations = []string{}
+	}
+	if out.Aliases == nil {
+		out.Aliases = []string{}
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
 // moveDeclarationAliasRequest is components.schemas.MoveDeclarationAliasRequest.
 // One route serves both "move" (change an existing parent) and "nest"
 // (assign a parent for the first time) -- they are the same store

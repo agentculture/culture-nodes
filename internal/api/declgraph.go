@@ -30,6 +30,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,6 +130,31 @@ func neighborIDs(id, direction string, byFrom, byTo map[string][]postgres.Declar
 	return out
 }
 
+// resolveFocusCenters resolves {name} to the distance-0 declaration id set
+// GET .../focus starts its BFS from (task t21b, #328; spec c31/h23: "a
+// chain alias resolves by name in every verb that accepts a chain"). A
+// declaration named {name} always wins over an alias of the same name
+// (documented behavior, not an ambiguity): only when no declaration named
+// {name} exists is {name} looked up as an alias, whose distance-0 set is
+// every declaration that is a direct member of it OR a member of any alias
+// nested under it (DeclarationAliasMemberIDsRecursive). Neither existing
+// names {name} at all is a 404 naming both possibilities.
+func (s *Server) resolveFocusCenters(ctx context.Context, name string) ([]string, *apiError) {
+	if v, err := s.Store.LatestDeclarationVersion(ctx, s.NamespaceID, name); err == nil {
+		return []string{v.DeclarationID}, nil
+	} else if !errors.Is(err, postgres.ErrNotFound) {
+		return nil, internalError(err)
+	}
+	ids, err := s.Store.DeclarationAliasMemberIDsRecursive(ctx, s.NamespaceID, name)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return nil, notFound("check the declaration or alias name", "no declaration or alias named %q", name)
+		}
+		return nil, internalError(err)
+	}
+	return ids, nil
+}
+
 // handleDeclarationFocus is GET /v1alpha1/declarations/{name}/focus.
 func (s *Server) handleDeclarationFocus(w http.ResponseWriter, r *http.Request) error {
 	name := r.PathValue("name")
@@ -147,12 +173,9 @@ func (s *Server) handleDeclarationFocus(w http.ResponseWriter, r *http.Request) 
 		return apiErr
 	}
 
-	center, err := s.Store.LatestDeclarationVersion(ctx, s.NamespaceID, name)
-	if err != nil {
-		if errors.Is(err, postgres.ErrNotFound) {
-			return notFound("check the declaration name", "no declaration named %q", name)
-		}
-		return internalError(err)
+	centerIDs, apiErr := s.resolveFocusCenters(ctx, name)
+	if apiErr != nil {
+		return apiErr
 	}
 
 	links, err := s.Store.ListNamespaceDeclarationLinks(ctx, s.NamespaceID)
@@ -179,9 +202,18 @@ func (s *Server) handleDeclarationFocus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Declarations count as hops; nodes never do (c63) -- this BFS walks
-	// declaration_links only.
-	distanceOf := map[string]int{center.DeclarationID: 0}
-	frontier := []string{center.DeclarationID}
+	// declaration_links only. Distance 0 may hold several ids at once (an
+	// alias center's member declarations, spec c31/h23) instead of the
+	// single declaration a plain declaration name resolves to.
+	distanceOf := map[string]int{}
+	frontier := make([]string, 0, len(centerIDs))
+	for _, id := range centerIDs {
+		if _, seen := distanceOf[id]; seen {
+			continue
+		}
+		distanceOf[id] = 0
+		frontier = append(frontier, id)
+	}
 	for hop := 1; hop <= distance && len(frontier) > 0; hop++ {
 		var next []string
 		for _, id := range frontier {

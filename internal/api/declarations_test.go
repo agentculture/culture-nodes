@@ -561,3 +561,116 @@ func TestCreateAliasWithAnUnknownMemberWritesNothing(t *testing.T) {
 		t.Fatalf("the refused request left the alias behind: status = %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// declarationAliasDetailResp mirrors declarationAliasDetailOut
+// (declarations.go), GET /v1alpha1/declaration-aliases/{name}'s response
+// shape.
+type declarationAliasDetailResp struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Parent       string   `json:"parent"`
+	Declarations []string `json:"declarations"`
+	Aliases      []string `json:"aliases"`
+}
+
+// TestGetDeclarationAliasDetail is the task t21b (#328) read route pinned
+// against honesty h23 ("a chain alias resolves by name in every verb that
+// accepts a chain") and spec c31 (chains named like an alias; aliases are
+// movable and nestable, and do not lock versions). A parent alias with one
+// direct member and one nested child alias, whose own member is a second
+// declaration: the parent's detail names its member declaration and its
+// child alias; the child's detail names its own member and its parent, but
+// none of the parent's members (declarations, not aliases, is direct-only,
+// matching GetDeclarationAliasDetail's doc comment). An unknown name still
+// 404s, and another namespace's alias of the same name is invisible.
+func TestGetDeclarationAliasDetail(t *testing.T) {
+	srv, _, token, _ := newDeclarationHumanFixture(t)
+
+	for _, name := range []string{"parent-member", "child-member"} {
+		rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations", token,
+			declarationSourceReq{Format: "json", Source: ordinaryDeclSource(name, "")}, nil)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("publish %s: status = %d: %s", name, rr.Code, rr.Body.String())
+		}
+	}
+
+	var parentAlias struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases", token,
+		map[string]any{"name": "detail-parent", "declarations": []string{"parent-member"}}, &parentAlias)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create parent alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases", token,
+		map[string]any{"name": "detail-child", "declarations": []string{"child-member"}}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create child alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var childMemberShown declarationShowResp
+	doAccess(t, srv, http.MethodGet, "/v1alpha1/declarations/child-member", "", nil, &childMemberShown)
+
+	var moved map[string]any
+	rr = doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases/detail-child/move", token,
+		map[string]string{"parent": "detail-parent", "declaration_version_id": childMemberShown.ID}, &moved)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("nest child alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var parentDetail declarationAliasDetailResp
+	rr = doAccess(t, srv, http.MethodGet, "/v1alpha1/declaration-aliases/detail-parent", "", nil, &parentDetail)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get parent alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if parentDetail.Name != "detail-parent" || parentDetail.ID != parentAlias.ID {
+		t.Fatalf("parent detail identity: %+v", parentDetail)
+	}
+	if parentDetail.Parent != "" {
+		t.Fatalf("parent detail parent = %q, want root (no parent)", parentDetail.Parent)
+	}
+	if len(parentDetail.Declarations) != 1 || parentDetail.Declarations[0] != "parent-member" {
+		t.Fatalf("parent detail declarations = %+v, want [parent-member]", parentDetail.Declarations)
+	}
+	if len(parentDetail.Aliases) != 1 || parentDetail.Aliases[0] != "detail-child" {
+		t.Fatalf("parent detail aliases = %+v, want [detail-child]", parentDetail.Aliases)
+	}
+
+	var childDetail declarationAliasDetailResp
+	rr = doAccess(t, srv, http.MethodGet, "/v1alpha1/declaration-aliases/detail-child", "", nil, &childDetail)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get child alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if childDetail.Parent != "detail-parent" {
+		t.Fatalf("child detail parent = %q, want detail-parent", childDetail.Parent)
+	}
+	if len(childDetail.Declarations) != 1 || childDetail.Declarations[0] != "child-member" {
+		t.Fatalf("child detail declarations = %+v, want [child-member] (direct members only)", childDetail.Declarations)
+	}
+	if len(childDetail.Aliases) != 0 {
+		t.Fatalf("child detail aliases = %+v, want none", childDetail.Aliases)
+	}
+
+	// An unknown alias name still 404s.
+	rr = doAccess(t, srv, http.MethodGet, "/v1alpha1/declaration-aliases/no-such-alias", "", nil, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown alias: status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+
+	// Another namespace's alias of the SAME name is invisible: created
+	// directly through the store (no HTTP server bound to that namespace in
+	// this test), then read through THIS namespace's server.
+	s := requireStore(t)
+	otherNS := pgtest.MustNamespace(t, s, "decl-alias-other-ns").ID
+	if _, err := s.CreateDeclarationAlias(context.Background(), otherNS, "detail-parent"); err != nil {
+		t.Fatalf("create alias in other namespace: %v", err)
+	}
+	rr = doAccess(t, srv, http.MethodGet, "/v1alpha1/declaration-aliases/detail-parent", "", nil, &parentDetail)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("re-read same-namespace alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if parentDetail.ID != parentAlias.ID {
+		t.Fatalf("cross-namespace leak: got alias id %q, want this namespace's %q", parentDetail.ID, parentAlias.ID)
+	}
+}

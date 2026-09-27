@@ -149,20 +149,22 @@ def test_chain_show_text(fake_api, capsys) -> None:
     assert "link: must -> one" in out
 
 
-def test_chain_show_accepts_an_alias_name(fake_api) -> None:
-    """The chain-defining acceptance criterion (spec h23): ``chain show``
-    accepts an alias name -- the CLI forwards it unchanged to the same show
-    route ``decl show`` uses (c31), never resolving it itself (h24)."""
-    seen = {}
+def test_chain_show_accepts_a_declaration_name_without_touching_the_alias_route(
+    fake_api,
+) -> None:
+    """A name that resolves as a declaration is rendered as a declaration --
+    the alias route is never reached (declaration wins, spec c31/h23's
+    documented precedence; same order ``GET .../focus`` uses server-side)."""
+    seen = {"alias_route_hit": False}
 
-    def handler(h, m, q, b):
+    def decl_handler(h, m, q, b):
         seen["path"] = h.path
         h.send_json(
             200,
             {
                 "id": "dv-1",
                 "declaration_id": "decl-1",
-                "name": "chain-a",
+                "name": "two",
                 "version": 1,
                 "digest": "sha256:abc",
                 "author": "a",
@@ -173,14 +175,107 @@ def test_chain_show_accepts_an_alias_name(fake_api) -> None:
             },
         )
 
-    fake_api.route("GET", r"/v1alpha1/declarations/(?P<name>[^/]+)$", handler)
+    def alias_handler(h, m, q, b):
+        seen["alias_route_hit"] = True
+        h.send_json(200, {"id": "al-1", "name": "two", "declarations": [], "aliases": []})
+
+    fake_api.route("GET", r"/v1alpha1/declarations/(?P<name>[^/]+)$", decl_handler)
+    fake_api.route("GET", r"/v1alpha1/declaration-aliases/(?P<name>[^/]+)$", alias_handler)
+    fake_api.start()
+    rc = main(["chain", "show", "two", "--api-url", fake_api.base_url])
+    assert rc == 0
+    assert seen["path"] == "/v1alpha1/declarations/two"
+    assert seen["alias_route_hit"] is False
+
+
+def test_chain_show_falls_back_to_the_alias_route_for_a_pure_alias_name(fake_api, capsys) -> None:
+    """The chain-defining acceptance criterion (task t21b, #328; spec h23):
+    ``chain show`` accepts a NAME THAT IS ONLY AN ALIAS, not a declaration --
+    the declaration route 404s and ``show`` falls back to
+    ``GET /v1alpha1/declaration-aliases/{name}`` before giving up, and
+    renders the alias's parent, member declarations, and child aliases."""
+    seen: dict = {}
+
+    def decl_handler(h, m, q, b):
+        h.send_json(
+            404,
+            {
+                "code": 1,
+                "message": 'no declaration named "chain-a"',
+                "remediation": "check the declaration name",
+            },
+        )
+
+    def alias_handler(h, m, q, b):
+        seen["path"] = h.path
+        h.send_json(
+            200,
+            {
+                "id": "al-1",
+                "name": "chain-a",
+                "parent": "chain-parent",
+                "declarations": ["one"],
+                "aliases": ["chain-a-child"],
+            },
+        )
+
+    fake_api.route("GET", r"/v1alpha1/declarations/(?P<name>[^/]+)$", decl_handler)
+    fake_api.route("GET", r"/v1alpha1/declaration-aliases/(?P<name>[^/]+)$", alias_handler)
     fake_api.start()
     rc = main(["chain", "show", "chain-a", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
     assert rc == 0
-    assert seen["path"] == "/v1alpha1/declarations/chain-a"
+    assert seen["path"] == "/v1alpha1/declaration-aliases/chain-a"
+    assert "name: chain-a" in out
+    assert "parent: chain-parent" in out
+    assert "declarations: one" in out
+    assert "aliases: chain-a-child" in out
 
 
-def test_chain_show_404(fake_api, capsys) -> None:
+def test_chain_show_json_passthrough_on_alias_fallback(fake_api, capsys) -> None:
+    """``--json`` passthrough still works on the alias-fallback path -- the
+    raw alias-route response body, unmodified, not the text rendering."""
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/declarations/(?P<name>[^/]+)$",
+        lambda h, m, q, b: h.send_json(
+            404,
+            {
+                "code": 1,
+                "message": 'no declaration named "chain-a"',
+                "remediation": "check the declaration name",
+            },
+        ),
+    )
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/declaration-aliases/(?P<name>[^/]+)$",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "id": "al-1",
+                "name": "chain-a",
+                "parent": "chain-parent",
+                "declarations": ["one"],
+                "aliases": ["chain-a-child"],
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["chain", "show", "chain-a", "--json", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    parsed = json.loads(out)
+    assert parsed == {
+        "id": "al-1",
+        "name": "chain-a",
+        "parent": "chain-parent",
+        "declarations": ["one"],
+        "aliases": ["chain-a-child"],
+    }
+
+
+def test_chain_show_404_when_neither_a_declaration_nor_an_alias(fake_api, capsys) -> None:
     fake_api.route(
         "GET",
         r"/v1alpha1/declarations/(?P<name>[^/]+)$",
@@ -193,8 +288,50 @@ def test_chain_show_404(fake_api, capsys) -> None:
             },
         ),
     )
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/declaration-aliases/(?P<name>[^/]+)$",
+        lambda h, m, q, b: h.send_json(
+            404,
+            {
+                "code": 1,
+                "message": 'no alias named "bogus"',
+                "remediation": "check the alias name",
+            },
+        ),
+    )
     fake_api.start()
     rc = main(["chain", "show", "bogus", "--api-url", fake_api.base_url])
     captured = capsys.readouterr()
     assert rc == 1
-    assert "no declaration named" in captured.err
+    assert "no alias named" in captured.err
+
+
+def test_chain_show_does_not_mask_a_non_404_failure_with_the_alias_route(fake_api, capsys) -> None:
+    # A refused credential on the declaration route is the answer; the alias
+    # route must not be tried, or its 404 would hide the real 401.
+    alias_hits = []
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/declarations/(?P<name>[^/]+)$",
+        lambda h, m, q, b: h.send_json(
+            401,
+            {
+                "code": 1,
+                "message": "declarations require an authenticated principal",
+                "remediation": "set NODES_ACTOR_TOKEN or NODES_OP_COOKIE",
+            },
+        ),
+    )
+
+    def alias(h, m, q, b):
+        alias_hits.append(1)
+        h.send_json(404, {"code": 1, "message": "no alias", "remediation": ""})
+
+    fake_api.route("GET", r"/v1alpha1/declaration-aliases/(?P<name>[^/]+)$", alias)
+    fake_api.start()
+    rc = main(["chain", "show", "chain-a", "--api-url", fake_api.base_url])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "authenticated principal" in captured.err
+    assert alias_hits == []

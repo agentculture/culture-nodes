@@ -328,6 +328,65 @@ func TestDeclarationFocusUnknownDeclaration404s(t *testing.T) {
 	}
 }
 
+// TestDeclarationFocusOnAliasName is task t21b (#328), spec c31/h23: "a
+// chain alias resolves by name in every verb that accepts a chain" --
+// GET .../focus on an alias name that is NOT itself a declaration must not
+// 404. A parent alias directly names one declaration and nests a child
+// alias that names a second; focusing on the PARENT alias's name at
+// distance 0 must return both member declarations (nested child included),
+// each at distance 0, with no center-vs-alias artifact leaking into the
+// response shape.
+func TestDeclarationFocusOnAliasName(t *testing.T) {
+	srv, token := declFocusFixture(t)
+
+	for _, name := range []string{"chain-parent-member", "chain-child-member"} {
+		rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations", token,
+			declarationSourceReq{Format: "json", Source: ordinaryDeclSource(name, "")}, nil)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("publish %s: status = %d: %s", name, rr.Code, rr.Body.String())
+		}
+	}
+	rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases", token,
+		map[string]any{"name": "focus-parent", "declarations": []string{"chain-parent-member"}}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create parent alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases", token,
+		map[string]any{"name": "focus-child", "declarations": []string{"chain-child-member"}}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create child alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var childMemberShown declarationShowResp
+	doAccess(t, srv, http.MethodGet, "/v1alpha1/declarations/chain-child-member", "", nil, &childMemberShown)
+	var moved map[string]any
+	rr = doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases/focus-child/move", token,
+		map[string]string{"parent": "focus-parent", "declaration_version_id": childMemberShown.ID}, &moved)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("nest child alias: status = %d: %s", rr.Code, rr.Body.String())
+	}
+
+	out := focus(t, srv, token, "focus-parent", "")
+	got := names(out.Declarations)
+	want := map[string]int{"chain-parent-member": 0, "chain-child-member": 0}
+	if len(got) != len(want) {
+		t.Fatalf("focus on parent alias declarations = %+v, want %+v", got, want)
+	}
+	for name, dist := range want {
+		if got[name] != dist {
+			t.Fatalf("focus on parent alias declarations = %+v, want %+v", got, want)
+		}
+	}
+	if out.Center != "focus-parent" {
+		t.Fatalf("focus center = %q, want the alias name echoed back", out.Center)
+	}
+
+	// An unknown name -- neither a declaration nor an alias -- still 404s.
+	rr = doAccess(t, srv, http.MethodGet, "/v1alpha1/declarations/no-such-name-or-alias/focus", "", nil, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("focus of unknown name: status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestDeclarationFocusRejectsInvalidQuery(t *testing.T) {
 	srv, token := declFocusFixture(t)
 	cases := []string{"?distance=-1", "?distance=banana", "?direction=sideways", "?link=maybe"}

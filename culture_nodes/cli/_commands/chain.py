@@ -17,8 +17,14 @@ read-only GET and never requires one.
 
 ``show`` accepts an alias name exactly as it accepts a declaration name
 (spec c31/h23) -- this module forwards whatever string is given as the
-``{name}`` path segment unchanged; it never distinguishes the two kinds of
-name itself.
+``{name}`` path segment unchanged, but a name is not always a declaration:
+when ``GET /v1alpha1/declarations/{name}`` 404s, ``show`` falls back to
+``GET /v1alpha1/declaration-aliases/{name}`` (task t21b, #328) before
+giving up, so a pure alias name (one with no declaration of the same name)
+resolves too, not just a declaration name. A name that is both a
+declaration and an alias always resolves as the declaration -- the
+declaration route is tried first and, on success, the alias route is never
+reached (the same precedence ``GET .../focus`` documents server-side).
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import argparse
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
 from culture_nodes.cli._commands.decl import auth_headers
+from culture_nodes.cli._errors import CliError
 from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
 
 _NAME_HELP = "The chain (alias) name -- or an ordinary declaration name."
@@ -65,12 +72,42 @@ def cmd_chain_alias(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_chain_alias_text(payload: dict) -> str:
+    lines = [
+        f"name: {payload.get('name', '')}",
+        f"id: {payload.get('id', '')}",
+        f"parent: {payload.get('parent', '') or 'none'}",
+    ]
+    declarations = payload.get("declarations") or []
+    lines.append(f"declarations: {', '.join(declarations) if declarations else 'none'}")
+    aliases = payload.get("aliases") or []
+    lines.append(f"aliases: {', '.join(aliases) if aliases else 'none'}")
+    return "\n".join(lines)
+
+
 def cmd_chain_show(args: argparse.Namespace) -> int:
     client = client_from_args(args)
-    resp = client.request(
-        "GET", f"{API_PREFIX}/declarations/{args.name}", headers=auth_headers(args)
-    )
+    headers = auth_headers(args)
     json_mode = bool(getattr(args, "json", False))
+    try:
+        resp = client.request("GET", f"{API_PREFIX}/declarations/{args.name}", headers=headers)
+    except CliError as exc:
+        # Only "no such declaration" (404) falls through to the alias route
+        # (spec c31/h23: a chain alias resolves by name in every verb that
+        # accepts a chain). Any other failure -- a refused credential, a
+        # server error, an unreachable API -- is the answer and is relayed
+        # as is, never masked by a second request. When neither resolves,
+        # the alias route's 404 is the error shown.
+        if exc.http_status != 404:
+            raise
+        resp = client.request(
+            "GET", f"{API_PREFIX}/declaration-aliases/{args.name}", headers=headers
+        )
+        if json_mode:
+            emit_json_passthrough(resp.raw)
+        else:
+            emit_result(_render_chain_alias_text(resp.payload or {}), json_mode=False)
+        return 0
     if json_mode:
         emit_json_passthrough(resp.raw)
     else:

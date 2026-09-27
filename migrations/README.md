@@ -464,3 +464,10 @@ nullable: NULL is "unmeasured", never true or false.
   `declaration_evaluations.variables` (set only on a `fired` evaluation:
   what that firing exposes to later declarations in its lineage) and the
   two indexes lineage resolution reads through.
+- `0065_declaration_node_lifecycle.sql` — the node lifecycle's two extra
+  facts (#328 t12): `declaration_nodes.reactor_declaration_id` /
+  `reactor_declaration_version`, snapshotted at open time so a later
+  silence at that node can be told apart as either reactor-less-by-design
+  or orphaned by an upgrade that removed or changed the reactor (naming
+  both versions); and `declaration_nodes.deadline_notified_at`, stamped by
+  the exactly-once `node.expired` emission.

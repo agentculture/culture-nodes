@@ -457,3 +457,10 @@ nullable: NULL is "unmeasured", never true or false.
   per-match `declaration_evaluations`. An initial firing is unique per
   `(namespace_id, event_id, declaration_id)`; a re-mint keeps the original
   lineage and canonical firing id.
+- `0064_declaration_firing_fks.sql` — the catalog foreign keys 0060
+  deferred (#328 t9): `declaration_firings` now references `declarations`
+  by `(namespace_id, declaration_id)` and a version *of that same
+  declaration* in `declaration_versions`. Also adds the nullable
+  `declaration_evaluations.variables` (set only on a `fired` evaluation:
+  what that firing exposes to later declarations in its lineage) and the
+  two indexes lineage resolution reads through.

@@ -551,6 +551,16 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/declarations/{name}/activate", s.wrap(s.handleActivateDeclaration))
 	mux.HandleFunc("POST /v1alpha1/declarations/{name}/deactivate", s.wrap(s.handleDeactivateDeclaration))
 
+	// Declaration graph routes (task t20, #328; spec c25/c62/c63, c41,
+	// honesty h19/h29): read-only focus-distance and link-suggestion
+	// views over the one global declaration graph. See declgraph.go's
+	// package doc. Neither collides with the /{name} or /evaluations
+	// routes above -- net/http's ServeMux (Go 1.22+) prefers the more
+	// specific literal segment ("focus"/"suggestions") over the {name}
+	// wildcard regardless of registration order.
+	mux.HandleFunc("GET /v1alpha1/declarations/{name}/focus", s.wrap(s.handleDeclarationFocus))
+	mux.HandleFunc("GET /v1alpha1/declarations/{name}/suggestions", s.wrap(s.handleDeclarationSuggestions))
+
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
 	mux.HandleFunc("GET /v1alpha1/mesh", s.wrap(s.handleMesh))

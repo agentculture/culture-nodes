@@ -45,6 +45,13 @@ tags:
       Cross-run node run listings — the "jobs timeline" (self-hosted
       phase-2 cycle, task t11), distinct from the tokens/node_runs nested
       under one run's Run-view payload above.
+  - name: declarations
+    description: >-
+      The declaration engine (docs/adr/0014, spec c88): explainability read
+      surface for trigger-condition-action declarations. Currently a single
+      route, "why did (or didn't) declaration X fire for event E" — every
+      other declaration-engine operation (publish, activate, list) is not
+      yet exposed over this API.
   - name: events
     description: >-
       Server-Sent Events streams of committed run events (PRD §15.1): one
@@ -759,6 +766,64 @@ paths:
                 $ref: '#/components/schemas/NodeRunList'
         '400':
           description: updated_since, updated_until, or cursor is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/{name}/evaluations:
+    get:
+      operationId: getDeclarationEvaluation
+      tags: [declarations]
+      summary: Why did (or didn't) a declaration fire for an event?
+      description: >-
+        Task t13 (#328; spec c88, honesty h61): the firing loop
+        (internal/declengine/engine.go's Handle/evaluate) appends one
+        declaration_evaluations row per pipeline step for every declaration
+        whose trigger matched an event — matched, lineage checked, condition
+        true/false, dispatching, and a terminal outcome: fired, condition
+        false, lineage missing, loop-limited, deferred, shadow,
+        budget-blocked, overlap-suppressed (the last two are defined but not
+        yet produced by any task — see t11 and t14). This route returns the
+        newest (terminal) row recorded for the named declaration's
+        evaluation of `event_id`.
+
+
+        A declaration whose trigger never matched `event_id` at all leaves
+        no row to return — the firing loop records nothing for a
+        non-match — so that case is 404, the same as an unknown declaration
+        name or event id.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration's name (stable across every published version).
+          schema:
+            type: string
+        - name: event_id
+          in: query
+          required: true
+          description: The signal event to explain this declaration's evaluation of.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The newest recorded evaluation of event_id by this declaration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationEvaluation'
+        '400':
+          description: event_id is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: >-
+            No recorded evaluation: the declaration name is unknown in this
+            namespace, the event id does not exist, or this declaration's
+            trigger never matched that event.
           content:
             application/json:
               schema:
@@ -5882,6 +5947,46 @@ components:
         note:
           type: string
           description: Free text from the acknowledging party. Documentary.
+
+    DeclarationEvaluation:
+      type: object
+      description: >-
+        GET /v1alpha1/declarations/{name}/evaluations' payload (task t13,
+        spec c88): the terminal declaration_evaluations row for one
+        declaration's evaluation of one event.
+      required:
+        [event_id, declaration_id, declaration_name, declaration_version, outcome, reason]
+      properties:
+        event_id:
+          type: string
+        declaration_id:
+          type: string
+          description: The declaration's stable id, shared by every published version.
+        declaration_name:
+          type: string
+        declaration_version:
+          type: string
+          description: The specific version this evaluation pinned.
+        outcome:
+          type: string
+          description: >-
+            One of: matched, lineage missing, lineage checked, loop-limited,
+            condition error, condition false, condition true, evaluation
+            failed, duplicate, dispatching, dispatch failed, fired,
+            deferred, shadow, budget-blocked, overlap-suppressed. This route
+            always returns the newest row, i.e. the terminal outcome of the
+            declaration's evaluation of the event. budget-blocked and
+            overlap-suppressed are defined but not yet produced by any task
+            (t11, t14 respectively).
+        reason:
+          type: string
+          description: Prose explaining the outcome.
+        firing_id:
+          type: string
+          description: >-
+            Present once a firing was claimed for this evaluation (fired,
+            shadow, and any outcome that reused an already-claimed firing);
+            absent for an outcome decided before a firing was claimed.
 
     DispatchRateList:
       type: object

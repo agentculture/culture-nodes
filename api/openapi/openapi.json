@@ -1250,6 +1250,46 @@
         ],
         "type": "object"
       },
+      "DeclarationEvaluation": {
+        "description": "GET /v1alpha1/declarations/{name}/evaluations' payload (task t13, spec c88): the terminal declaration_evaluations row for one declaration's evaluation of one event.",
+        "properties": {
+          "declaration_id": {
+            "description": "The declaration's stable id, shared by every published version.",
+            "type": "string"
+          },
+          "declaration_name": {
+            "type": "string"
+          },
+          "declaration_version": {
+            "description": "The specific version this evaluation pinned.",
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "firing_id": {
+            "description": "Present once a firing was claimed for this evaluation (fired, shadow, and any outcome that reused an already-claimed firing); absent for an outcome decided before a firing was claimed.",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "One of: matched, lineage missing, lineage checked, loop-limited, condition error, condition false, condition true, evaluation failed, duplicate, dispatching, dispatch failed, fired, deferred, shadow, budget-blocked, overlap-suppressed. This route always returns the newest row, i.e. the terminal outcome of the declaration's evaluation of the event. budget-blocked and overlap-suppressed are defined but not yet produced by any task (t11, t14 respectively).",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Prose explaining the outcome.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "declaration_id",
+          "declaration_name",
+          "declaration_version",
+          "outcome",
+          "reason"
+        ],
+        "type": "object"
+      },
       "DeliverEventRequest": {
         "properties": {
           "emitter": {
@@ -4993,6 +5033,68 @@
         ]
       }
     },
+    "/v1alpha1/declarations/{name}/evaluations": {
+      "get": {
+        "description": "Task t13 (#328; spec c88, honesty h61): the firing loop (internal/declengine/engine.go's Handle/evaluate) appends one declaration_evaluations row per pipeline step for every declaration whose trigger matched an event — matched, lineage checked, condition true/false, dispatching, and a terminal outcome: fired, condition false, lineage missing, loop-limited, deferred, shadow, budget-blocked, overlap-suppressed (the last two are defined but not yet produced by any task — see t11 and t14). This route returns the newest (terminal) row recorded for the named declaration's evaluation of `event_id`.\n\nA declaration whose trigger never matched `event_id` at all leaves no row to return — the firing loop records nothing for a non-match — so that case is 404, the same as an unknown declaration name or event id.",
+        "operationId": "getDeclarationEvaluation",
+        "parameters": [
+          {
+            "description": "The declaration's name (stable across every published version).",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The signal event to explain this declaration's evaluation of.",
+            "in": "query",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationEvaluation"
+                }
+              }
+            },
+            "description": "The newest recorded evaluation of event_id by this declaration."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "event_id is missing."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No recorded evaluation: the declaration name is unknown in this namespace, the event id does not exist, or this declaration's trigger never matched that event."
+          }
+        },
+        "summary": "Why did (or didn't) a declaration fire for an event?",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/dial-in-presence": {
       "get": {
         "description": "Task t6 (issues #136, #121): the read-only answer to the question a stored participant address used to answer. Every bridge dials OUT and the control plane records no address, so \"is this bridge reachable?\" becomes \"is this bridge dialled in right now?\" — and until this operation existed nothing answered it outside dispatch resolution, so an un-dialled bridge was discovered by a failing dispatch.\nNothing is dispatched and nothing is probed. Presence is a fact PostgreSQL already holds: a bridge polling `POST /v1alpha1/inbound/poll` refreshes its own `last_seen_at`, and this operation reads it. The control plane holds no address for a participant, so there is nothing to probe — reintroducing a probe would reintroduce the address.\n`connected` means a poll within `window_seconds`, which is the SAME window dispatch resolution applies when it decides whether an actor is reachable through the durable mailbox. One definition, published in the response, so a reader can see what the claim means and the view can never say connected while dispatch says otherwise.\nThe spine is the actors table, not the presence table: an actor that has never dialled in has no presence row at all and would otherwise be silently missing from exactly the view an operator consults when a bridge is missing. `connected == items.length` is the check the cutover's fallback-disable step makes.",
@@ -8363,6 +8465,10 @@
     {
       "description": "Cross-run node run listings — the \"jobs timeline\" (self-hosted phase-2 cycle, task t11), distinct from the tokens/node_runs nested under one run's Run-view payload above.",
       "name": "node-runs"
+    },
+    {
+      "description": "The declaration engine (docs/adr/0014, spec c88): explainability read surface for trigger-condition-action declarations. Currently a single route, \"why did (or didn't) declaration X fire for event E\" — every other declaration-engine operation (publish, activate, list) is not yet exposed over this API.",
+      "name": "declarations"
     },
     {
       "description": "Server-Sent Events streams of committed run events (PRD §15.1): one per-run, one cross-run (task t17) fan-in feeding the live-mesh view.",

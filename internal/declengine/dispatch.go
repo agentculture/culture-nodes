@@ -45,6 +45,14 @@ type DispatchResult struct {
 	ArtifactID string
 	// Async is true when the action is still executing.
 	Async bool
+	// Shadowed is true when this Dispatch never actually invoked an
+	// action -- switch.go's ShadowGate sets it for the namespace's engine
+	// switch (c80) being 'before' or 'shadow' -- so evaluate() (engine.go)
+	// records the firing's terminal outcome as OutcomeShadow instead of
+	// OutcomeFired (t13, spec c88). A Dispatcher that always really
+	// dispatches (WorkerDispatcher, any test dispatchFunc) leaves this
+	// false by construction.
+	Shadowed bool
 }
 
 // Dispatcher hands a claimed firing's action to an executor. The firing

@@ -239,7 +239,11 @@ func (g ShadowGate) Dispatch(ctx context.Context, r DispatchRequest) (DispatchRe
 		}
 		return g.Underlying.Dispatch(ctx, r)
 	}
-	// before or shadow: dispatch zero actions (h53).
+	// before or shadow: dispatch zero actions (h53). Shadowed:true tells
+	// evaluate() (engine.go) to record this firing's terminal outcome as
+	// OutcomeShadow rather than OutcomeFired (t13, spec c88) -- the
+	// declaration_evaluations trail must say a firing never really acted,
+	// not just that it claimed and opened a landing node.
 	if g.GraphRuns != nil && g.ShadowLine != nil {
 		runID, err := g.GraphRuns.RunForEvent(ctx, r.Firing.NamespaceID, r.Firing.EventID)
 		if err != nil {
@@ -251,7 +255,7 @@ func (g ShadowGate) Dispatch(ctx context.Context, r DispatchRequest) (DispatchRe
 			}
 		}
 	}
-	return DispatchResult{}, nil
+	return DispatchResult{Shadowed: true}, nil
 }
 
 // PrepareOrigin makes ShadowGate satisfy the optional interface engine.go's

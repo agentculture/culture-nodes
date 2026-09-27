@@ -45,6 +45,28 @@ const (
 	// already met for this event's subject, so it was queued instead of
 	// claimed -- never dropped, and never counted as a firing.
 	OutcomeDeferred = "deferred"
+	// OutcomeShadow is what evaluate() records in place of OutcomeFired
+	// when the dispatch went through switch.go's ShadowGate while the
+	// namespace's engine switch (c80) is 'before' or 'shadow': every check
+	// up to and including the condition passed and a firing was claimed --
+	// the landing node opens exactly as it would for a real firing -- but
+	// the action itself was never dispatched (h53). Recording it under its
+	// own outcome, rather than reusing OutcomeFired, is what t13/c88 needs
+	// to keep "did X actually act on event E" answerable without cross-
+	// referencing engine_switch_history for every read.
+	OutcomeShadow = "shadow"
+	// OutcomeBudgetBlocked is t11's (not yet built) spending-cap backstop:
+	// a declaration whose action would exceed a configured budget is
+	// recorded here rather than dispatched. Defined now so t13's explain
+	// surface (spec c88) already understands the outcome vocabulary t11
+	// will start producing; this task implements no budget logic.
+	OutcomeBudgetBlocked = "budget-blocked"
+	// OutcomeOverlapSuppressed is t14's (not yet built) overlapping-firing
+	// backstop: a declaration whose would-be firing overlaps one already in
+	// flight for the same scope is recorded here instead of claimed.
+	// Defined now for the same reason as OutcomeBudgetBlocked above; this
+	// task implements no overlap-detection logic.
+	OutcomeOverlapSuppressed = "overlap-suppressed"
 )
 
 // Config carries the deployment's engine settings. MarkerKeyEnv names the
@@ -345,7 +367,15 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 		vars[k] = v
 	}
 	evaluation.Variables = vars
+	// h53/c88: a dispatch the switch gate shadowed still claims the firing
+	// and still opens the landing node (that trail already IS c80's
+	// would-fire record -- see switch.go's ShadowGate doc comment), but its
+	// terminal outcome must say so rather than claim a real dispatch that
+	// never happened.
 	evaluation.Outcome, evaluation.Reason = OutcomeFired, "action dispatched and landing node "+a.Declaration.LandingNode.Name+" opened"
+	if result.Shadowed {
+		evaluation.Outcome, evaluation.Reason = OutcomeShadow, "engine switch is before/shadow; action not dispatched, landing node "+a.Declaration.LandingNode.Name+" opened as a would-fire record"
+	}
 	if err := e.backend.Finish(ctx, Landing{NamespaceID: event.NamespaceID, FiringID: firing.ID, Node: a.Declaration.LandingNode, Deadline: deadline}, evaluation); err != nil {
 		return err
 	}
@@ -468,8 +498,12 @@ func (p PostgresBackend) Finish(ctx context.Context, l Landing, evaluation Evalu
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "decl-finish:"+l.NamespaceID+":"+l.FiringID); err != nil {
 		return err
 	}
+	// done checks the same outcome Finish is about to write, not just
+	// OutcomeFired: a shadowed firing (evaluation.Outcome==OutcomeShadow)
+	// retried through Finish must be recognized as already-finished the
+	// same way a real one is, so "at most once per firing" holds for both.
 	var done bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM declaration_evaluations WHERE namespace_id=$1 AND firing_id=$2 AND outcome='fired')`, l.NamespaceID, l.FiringID).Scan(&done); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM declaration_evaluations WHERE namespace_id=$1 AND firing_id=$2 AND outcome=$3)`, l.NamespaceID, l.FiringID, evaluation.Outcome).Scan(&done); err != nil {
 		return err
 	}
 	if done {
@@ -480,7 +514,7 @@ func (p PostgresBackend) Finish(ctx context.Context, l Landing, evaluation Evalu
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO declaration_evaluations(id,namespace_id,event_id,declaration_id,declaration_version,outcome,reason,firing_id,variables)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		store.NewULID(), evaluation.NamespaceID, evaluation.EventID, evaluation.DeclarationID, evaluation.VersionID, OutcomeFired, evaluation.Reason, evaluation.FiringID, vars); err != nil {
+		store.NewULID(), evaluation.NamespaceID, evaluation.EventID, evaluation.DeclarationID, evaluation.VersionID, evaluation.Outcome, evaluation.Reason, evaluation.FiringID, vars); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

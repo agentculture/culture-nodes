@@ -562,3 +562,21 @@ def test_a_repository_identity_rides_in_extra_input_and_not_in_the_instruction(b
     assert task is not None
     assert task.instruction == "approve the release"
     assert task.extra_input == {"repository_identity": "agentculture/culture-nodes"}
+
+
+def test_marked_task_embeds_marker_and_returns_task_id(bridge, receiver):
+    marker = "cn1:firing-a:human.task:" + "ab" * 24 + ":" + "cd" * 32
+    base, cfg = bridge
+    status, body = _invoke(base, receiver, idem_key="stamp-1", marker=marker)
+    assert status == 202
+    assert body["artifact_id"] == body["invocation_id"]
+    assert body["marker"] == marker
+    task = TaskStore(cfg.state_dir).get(body["invocation_id"])
+    assert task is not None and task.instruction.endswith(marker)
+    status, unmarked = _invoke(base, receiver, idem_key="stamp-2")
+    assert status == 202
+    assert "artifact_id" not in unmarked
+    task = TaskStore(cfg.state_dir).get(unmarked["invocation_id"])
+    assert task is not None and task.instruction == "approve the release"
+    status, capability = _request(base, "/v1/capabilities", method="GET", headers=AUTH)
+    assert status == 200 and capability["stamping"] == {"marker": "cn1", "version": 1}

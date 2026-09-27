@@ -536,7 +536,11 @@ def _remote_prefix(repo: str, remote: str) -> tuple[str | None, str | None]:
 
 
 def _handover_message(
-    reason: str, run_id: str, node_run_id: str | None, attempt_id: str | None
+    reason: str,
+    run_id: str,
+    node_run_id: str | None,
+    attempt_id: str | None,
+    marker: str | None = None,
 ) -> str:
     lines = [
         "culture-nodes: handover",
@@ -549,6 +553,10 @@ def _handover_message(
         lines.append(f"node_run_id: {node_run_id}")
     if attempt_id:
         lines.append(f"attempt_id: {attempt_id}")
+    if marker is not None:
+        from . import stamping
+
+        lines.extend(("", stamping.validate_marker(marker)))
     return "\n".join(lines) + "\n"
 
 
@@ -576,6 +584,7 @@ def handover_ref(
     node_run_id: str | None,
     attempt_id: str | None,
     reason: str,
+    marker: str | None = None,
 ) -> HandoverResult:
     """Publish this session's workspace changes as a `git_ref` HANDLE the next
     node can read from another machine (task t6, spec decision q9): a runner's
@@ -639,7 +648,7 @@ def handover_ref(
         )
 
     commit_sha, error = _commit_plumbing(
-        repo, head, _handover_message(reason, run_id, node_run_id, attempt_id)
+        repo, head, _handover_message(reason, run_id, node_run_id, attempt_id, marker)
     )
     if commit_sha is None:
         return _unavailable(MISSING_WORKSPACE_EXPORT, error or "the handover commit failed")
@@ -666,3 +675,57 @@ def handover_ref(
             "media_type": HANDOVER_MEDIA_TYPE,
         },
     )
+
+
+def finish_handover(
+    response: Any,
+    repo: str,
+    measured: dict[str, Any],
+    *,
+    enabled: bool,
+    remote: str,
+    run_id: str,
+    node_run_id: str | None,
+    attempt_id: str | None,
+    marker: str | None = None,
+) -> HandoverResult | None:
+    """Evaluate and attach a post-dispatch handover to *response* in place."""
+    # t9 / #90: the OTHER half of the handover opt-in, and the half that
+    # had no caller in any bridge — `preserve.handover_ref` was written
+    # and unit-tested everywhere and invoked nowhere, so no dispatch in
+    # any backend had ever created a handover ref. A dispatch that asked
+    # for one, and SUCCEEDED, creates it here and reports it in the body,
+    # which is what gives the control plane a ref to fetch and measure
+    # (t10, issue #13) instead of an agent's account of its own work.
+    #
+    # Success only, and mutually exclusive with the preserve hook above
+    # by construction (that one gates on != 200, this on == 200): a
+    # failed session's changes belong on a preserve branch, and handing
+    # them over as a ref would offer the graph a deliverable the session
+    # never finished.
+    #
+    # `enabled` is passed rather than checked here so the opt-in stays
+    # declared in one place — handover_ref's own documented contract —
+    # and a dispatch that asked for nothing runs no git command at all.
+    # The block is attached only when something was actually attempted,
+    # so an ordinary dispatch's response is byte-for-byte unchanged.
+    if response.status_code != 200:
+        return None
+    handover_result = handover_ref(
+        repo,
+        measured,
+        enabled=enabled,
+        remote=remote,
+        run_id=run_id,
+        node_run_id=node_run_id,
+        attempt_id=attempt_id,
+        reason=handover_success_reason(response.body.get("outcome")),
+        marker=marker,
+    )
+    if handover_result.attempted:
+        response.body["handover"] = handover_result.to_dict()
+        if marker is not None and handover_result.created:
+            from . import stamping
+
+            response.body["output"].update(stamping.artifact_result(handover_result.ref, marker))
+    return handover_result

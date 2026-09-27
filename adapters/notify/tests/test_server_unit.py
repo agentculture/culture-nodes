@@ -410,3 +410,28 @@ def test_a_silent_client_does_not_block_the_next_request(monkeypatch, tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_marked_dispatch_stamps_post_and_returns_message_id(bridge, monkeypatch):
+    from notify_bridge.webhook import PostResult
+
+    marker = "cn1:firing-a:discord.message:" + "ab" * 24 + ":" + "cd" * 32
+    seen = []
+
+    def fake_post(_url, body, *, return_message_id=False):
+        seen.append((json.loads(body), return_message_id))
+        return (PostResult.POSTED, 200, "987") if return_message_id else (PostResult.POSTED, 204)
+
+    monkeypatch.setattr(server, "webhook_post", fake_post)
+    base, _cfg = bridge
+    status, body = _invoke(base, idem_key="stamp-1", marker=marker)
+    assert status == 200
+    assert marker in json.dumps(seen[-1][0])
+    assert seen[-1][1] is True
+    assert body["output"]["artifact_id"] == "987"
+    assert body["output"]["marker"] == marker
+    status, body = _invoke(base, idem_key="stamp-2")
+    assert status == 200
+    assert marker not in json.dumps(seen[-1][0])
+    assert seen[-1][1] is False
+    assert "artifact_id" not in body["output"]

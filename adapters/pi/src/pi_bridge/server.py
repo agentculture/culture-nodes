@@ -55,6 +55,7 @@ from pi_bridge import (
     preserve,
     repositories,
     scope_guard,
+    stamping,
     workspace,
 )
 from pi_bridge.async_runner import AsyncRunner
@@ -346,7 +347,13 @@ class Handler(BaseHTTPRequestHandler):
         """
         if not self._require_auth():
             return
-        self._write_json(200, preflight.capability_block(capabilities.host_facts(self.bridge.cfg)))
+        self._write_json(
+            200,
+            {
+                **preflight.capability_block(capabilities.host_facts(self.bridge.cfg)),
+                **stamping.CAPABILITY,
+            },
+        )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
         try:
@@ -436,6 +443,12 @@ class Handler(BaseHTTPRequestHandler):
 
         raw_input = body.get("input")
         raw_input = raw_input if isinstance(raw_input, dict) else {}
+        marker, marker_invalid = stamping.read_marker(raw_input)
+        if marker_invalid:
+            self._write_json(
+                400, {"error": "invalid cn1 marker", "class": mapping.CLASS_ACTOR_REJECTED_INPUT}
+            )
+            return
 
         instruction = raw_input.get("instruction")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -671,6 +684,7 @@ class Handler(BaseHTTPRequestHandler):
                 sandbox,
                 mode,
                 handover=handover,
+                marker=marker,
                 session_key=session_key,
                 held=held,
                 forked=forked,
@@ -687,6 +701,7 @@ class Handler(BaseHTTPRequestHandler):
             mode,
             raw_input=raw_input,
             handover=handover,
+            marker=marker,
             session_key=session_key,
             held=held,
             forked=forked,
@@ -704,6 +719,7 @@ class Handler(BaseHTTPRequestHandler):
         *,
         raw_input: dict[str, Any] | None = None,
         handover: bool = False,
+        marker: str | None = None,
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
@@ -789,38 +805,17 @@ class Handler(BaseHTTPRequestHandler):
                 reason=str(response.body.get("error") or "bridge reported a non-success status"),
             )
             response.body["preserve"] = preserve_result.to_dict()
-        # t9 / #90: the OTHER half of the handover opt-in, and the half that
-        # had no caller in any bridge — `preserve.handover_ref` was written
-        # and unit-tested everywhere and invoked nowhere, so no dispatch in
-        # any backend had ever created a handover ref. A dispatch that asked
-        # for one, and SUCCEEDED, creates it here and reports it in the body,
-        # which is what gives the control plane a ref to fetch and measure
-        # (t10, issue #13) instead of an agent's account of its own work.
-        #
-        # Success only, and mutually exclusive with the preserve hook above
-        # by construction (that one gates on != 200, this on == 200): a
-        # failed session's changes belong on a preserve branch, and handing
-        # them over as a ref would offer the graph a deliverable the session
-        # never finished.
-        #
-        # `enabled` is passed rather than checked here so the opt-in stays
-        # declared in one place — handover_ref's own documented contract —
-        # and a dispatch that asked for nothing runs no git command at all.
-        # The block is attached only when something was actually attempted,
-        # so an ordinary dispatch's response is byte-for-byte unchanged.
-        if response.status_code == 200:
-            handover_result = preserve.handover_ref(
-                repo,
-                measured,
-                enabled=handover,
-                remote=cfg.handover_remote,
-                run_id=ctx.run_id,
-                node_run_id=ctx.node_run_id,
-                attempt_id=ctx.attempt_id,
-                reason=preserve.handover_success_reason(response.body.get("outcome")),
-            )
-            if handover_result.attempted:
-                response.body["handover"] = handover_result.to_dict()
+        preserve.finish_handover(
+            response,
+            repo,
+            measured,
+            enabled=handover,
+            remote=cfg.handover_remote,
+            run_id=ctx.run_id,
+            node_run_id=ctx.node_run_id,
+            attempt_id=ctx.attempt_id,
+            marker=marker,
+        )
         # A real dispatch happened (pi was actually invoked) — durably
         # remember the outcome so a redelivered attempt replays it instead
         # of running pi a second time (PRD §20.3). A pre-dispatch
@@ -855,6 +850,7 @@ class Handler(BaseHTTPRequestHandler):
         mode: str | None,
         *,
         handover: bool = False,
+        marker: str | None = None,
         session_key: str | None = None,
         held: bool = False,
         forked: bool = False,
@@ -885,6 +881,7 @@ class Handler(BaseHTTPRequestHandler):
                 continuation_ref=ctx.continuation_ref,
                 writable_git=handover,
                 handover=handover,
+                marker=marker,
                 ctx=ctx,
                 callback_url=callback_url,
                 callback_token=callback_token,

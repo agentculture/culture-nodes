@@ -124,3 +124,46 @@ def test_http_actor_enforces_allowlist_and_emits_proposed_record(monkeypatch):
 
     assert invoke("acme/repo")[1]["ledger_records"][0]["authority"] == "proposed"
     assert invoke("other/repo")[0] == 400
+
+
+def test_marked_dispatch_stamps_both_verbs_and_returns_created_id(monkeypatch):
+    from github_bridge import stamping
+
+    marker = "cn1:firing-a:github.comment:" + "ab" * 24 + ":" + "cd" * 32
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    seen = []
+
+    def post(*args):
+        seen.append(args[-2])
+        return client.PostResult(True, 201, "42")
+
+    monkeypatch.setattr(client, "post_comment", post)
+    monkeypatch.setattr(client, "reply_to_review_thread", post)
+
+    def invoke(verb, marked):
+        handler = Handler.__new__(Handler)
+        handler.server = type("Server", (), {"cfg": Config(repositories=("acme/repo",))})()
+        handler.path = "/v1/invocations"
+        input_ = {"verb": verb, "repository": "acme/repo", "number": 7, "comment": "Done"}
+        if verb == "reply_to_review_thread":
+            input_["comment_id"] = 19
+        if marked:
+            input_["marker"] = marker
+        body = json.dumps({"input": input_}).encode()
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        answers = []
+        handler._json = lambda status, payload: answers.append((status, payload))
+        handler.do_POST()
+        return answers[0]
+
+    for verb in mapping.VERBS:
+        status, body = invoke(verb, True)
+        assert status == 200
+        assert seen[-1] == stamping.stamp_text("Done", marker)
+        assert body["output"]["artifact_id"] == "42"
+        assert body["output"]["marker"] == marker
+        status, body = invoke(verb, False)
+        assert status == 200
+        assert seen[-1] == "Done"
+        assert "artifact_id" not in body["output"]

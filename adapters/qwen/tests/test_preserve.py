@@ -498,3 +498,19 @@ def test_mint_handover_ref_sanitizes_unsafe_characters():
     name = preserve.mint_handover_ref("run one/two", None, None)
     assert " " not in name
     assert name.startswith("refs/culture-nodes/run-one-two/")
+
+
+def test_marked_handover_commit_has_trailer_and_unmarked_stays_unchanged(tmp_path):
+    from qwen_bridge import stamping
+
+    marker = "cn1:firing-a:git.ref:" + "ab" * 24 + ":" + "cd" * 32
+    repo, measured = _repo_with_remote(
+        tmp_path, "https://github.com/agentculture/culture-nodes.git"
+    )
+    marked = _handover(repo, measured, marker=marker)
+    assert marked.created
+    assert stamping.artifact_result(marked.ref, marker)["artifact_id"] == marked.ref
+    assert _git_output(repo, "show", "-s", "--format=%B", marked.commit).rstrip().endswith(marker)
+    plain = _handover(repo, measured)
+    assert plain.created
+    assert marker not in _git_output(repo, "show", "-s", "--format=%B", plain.commit)

@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from human_inbox_bridge import identity, mapping
+from human_inbox_bridge import identity, mapping, stamping
 from human_inbox_bridge.callbacks import CallbackConfig, CallbackEmitter
 from human_inbox_bridge.config import Config
 from human_inbox_bridge.idempotency import IdempotencyStore
@@ -264,6 +264,11 @@ class Handler(BaseHTTPRequestHandler):
             if split.path == "/healthz":
                 self._write_json(200, {"status": "ok"})
                 return
+            if split.path == "/v1/capabilities":
+                if not self._require_auth():
+                    return
+                self._write_json(200, {"stamping": {"marker": "cn1", "version": 1}})
+                return
             if split.path == IDENTITY_PATH:
                 self._handle_identity()
                 return
@@ -393,6 +398,16 @@ class Handler(BaseHTTPRequestHandler):
 
         raw_input = body.get("input")
         raw_input = raw_input if isinstance(raw_input, dict) else {}
+        marker = raw_input.get("marker")
+        if marker is not None:
+            try:
+                stamping.validate_marker(marker)
+            except ValueError:
+                self._write_json(
+                    400,
+                    {"error": "invalid cn1 marker", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+                )
+                return
 
         instruction = raw_input.get("instruction")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -429,7 +444,9 @@ class Handler(BaseHTTPRequestHandler):
             invocation_id=invocation_id,
             status=STATUS_PENDING,
             created_at=_now_iso(),
-            instruction=instruction,
+            instruction=(
+                stamping.stamp_text(instruction, marker) if marker is not None else instruction
+            ),
             run_id=str(body.get("run_id") or ""),
             node_run_id=body.get("node_run_id") or None,
             attempt_id=body.get("attempt_id") or None,
@@ -444,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
             # reads by name — never prompt text appended to what the human is
             # asked to do, so the "Bound inputs" leak the three checkout
             # bridges exclude the key from cannot happen here.
-            extra_input={k: v for k, v in raw_input.items() if k != "instruction"},
+            extra_input={k: v for k, v in raw_input.items() if k not in {"instruction", "marker"}},
         )
         # Durably parked BEFORE the 202 is written: a crash after this line
         # loses nothing a restart cannot list and complete.
@@ -455,6 +472,8 @@ class Handler(BaseHTTPRequestHandler):
             "heartbeat_after_seconds": cfg.heartbeat_after_seconds,
             "supports_cancellation": True,
         }
+        if marker is not None:
+            accepted_body.update(stamping.artifact_result(invocation_id, marker))
         self.bridge.idempotency.put(idem_key, 202, accepted_body, request_fingerprint=instruction)
         self._write_json(202, accepted_body)
 

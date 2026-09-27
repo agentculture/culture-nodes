@@ -41,12 +41,13 @@ import logging
 import os
 import re
 import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
-from notify_bridge import capabilities, mapping, payload, preflight
+from notify_bridge import capabilities, mapping, payload, preflight, stamping
 from notify_bridge.config import Config
 from notify_bridge.idempotency import IdempotencyStore
 from notify_bridge.webhook import post as webhook_post
@@ -316,6 +317,16 @@ class Handler(BaseHTTPRequestHandler):
 
         raw_input = body.get("input")
         raw_input = raw_input if isinstance(raw_input, dict) else {}
+        marker = raw_input.get("marker")
+        if marker is not None:
+            try:
+                stamping.validate_marker(marker)
+            except ValueError:
+                self._write_json(
+                    400,
+                    {"error": "invalid cn1 marker", "class": mapping.CLASS_ACTOR_REJECTED_INPUT},
+                )
+                return
         # `input.repository_identity` (task t2, issue #125) is deliberately
         # NOT resolved here, and that is the all-backends rule satisfied
         # rather than skipped: this bridge has no `repo_allowlist`, checks
@@ -341,8 +352,17 @@ class Handler(BaseHTTPRequestHandler):
         # The one place the URL is ever read: resolved fresh, held only in
         # this local, never logged, never returned in any response.
         raw_url, _enabled = resolve_webhook()
-        message_body = payload.build_message(raw_url, parsed.message)
-        post_result, status_code = webhook_post(raw_url, message_body)
+        message = parsed.message
+        if marker is not None:
+            content = payload.trim(message.content, payload.MAX_CONTENT_CHARS - len(marker) - 2)
+            message = replace(message, content=stamping.stamp_text(content, marker))
+        message_body = payload.build_message(raw_url, message)
+        posted = (
+            webhook_post(raw_url, message_body, return_message_id=True)
+            if marker is not None
+            else webhook_post(raw_url, message_body)
+        )
+        post_result, status_code = posted[:2]
 
         result_body = mapping.result_for(
             post_result,
@@ -352,6 +372,8 @@ class Handler(BaseHTTPRequestHandler):
             actor_id=self.bridge.cfg.actor_id,
             created_at=_now_iso(),
         )
+        if marker is not None and len(posted) == 3 and posted[2]:
+            result_body["output"].update(stamping.artifact_result(posted[2], marker))
         self.bridge.idempotency.put(idem_key, 200, result_body, request_fingerprint=idem_key)
         self._write_json(200, result_body)
 
@@ -366,7 +388,13 @@ class Handler(BaseHTTPRequestHandler):
         """
         if not self._require_auth():
             return
-        self._write_json(200, preflight.capability_block(capabilities.host_facts(self.bridge.cfg)))
+        self._write_json(
+            200,
+            {
+                **preflight.capability_block(capabilities.host_facts(self.bridge.cfg)),
+                "stamping": {"marker": "cn1", "version": 1},
+            },
+        )
 
     def _handle_cancel(self, invocation_id: str) -> None:
         if not self._require_auth():

@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import enum
 import ipaddress
+import json
 import os
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 #: The only two places the webhook URL is ever read from. Both are
 #: environment variables, matching `internal/notify/webhook.go`'s
@@ -171,7 +172,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_NoRedirect)
 
 
-def post(raw_url: str, body: bytes) -> tuple[PostResult, int | None]:
+def post(raw_url: str, body: bytes, *, return_message_id: bool = False):
     """Send *body* (already-shaped JSON -- see `payload.build_message`) to
     *raw_url* as a single bounded POST. Never raises.
 
@@ -196,6 +197,12 @@ def post(raw_url: str, body: bytes) -> tuple[PostResult, int | None]:
     if not is_http_url(trimmed):
         return PostResult.FAILED, None
 
+    if return_message_id and is_discord_url(trimmed):
+        parts = urlsplit(trimmed)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["wait"] = "true"
+        trimmed = urlunsplit(parts._replace(query=urlencode(query)))
+
     req = urllib.request.Request(
         trimmed,
         data=body,
@@ -214,8 +221,9 @@ def post(raw_url: str, body: bytes) -> tuple[PostResult, int | None]:
             # reset instead of a clean finish. Bounded, because a fail-open
             # notifier must not be turned into a slow-loris target by a
             # webhook host that streams forever.
+            response_body = b""
             try:
-                resp.read(_MAX_DRAIN_BYTES)
+                response_body = resp.read(_MAX_DRAIN_BYTES)
             except OSError:
                 pass
     except urllib.error.HTTPError as exc:
@@ -226,5 +234,11 @@ def post(raw_url: str, body: bytes) -> tuple[PostResult, int | None]:
         return PostResult.FAILED, None
 
     if 200 <= status < 300:
+        if return_message_id:
+            try:
+                message_id = str(json.loads(response_body).get("id", ""))
+            except (ValueError, AttributeError):
+                message_id = ""
+            return PostResult.POSTED, status, message_id
         return PostResult.POSTED, status
     return PostResult.FAILED, status

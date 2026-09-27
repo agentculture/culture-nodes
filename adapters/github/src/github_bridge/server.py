@@ -8,7 +8,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import capabilities, client, mapping, preflight
+from . import capabilities, client, mapping, preflight, stamping
 from .config import Config
 
 INVOCATIONS_PATH = "/v1/invocations"
@@ -101,6 +101,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     **preflight.capability_block(capabilities.host_facts(self.cfg)),
+                    "stamping": {"marker": "cn1", "version": 1},
                     "verbs": list(mapping.VERBS),
                     "custody": {"repositories": list(self.cfg.repositories)},
                 },
@@ -142,8 +143,17 @@ class Handler(BaseHTTPRequestHandler):
                 400, {"error": "request body is not valid JSON", "class": "actor_rejected_input"}
             )
             return
+        raw_input = request.get("input") if isinstance(request, dict) else None
+        marker = raw_input.get("marker") if isinstance(raw_input, dict) else None
+        if marker is not None:
+            try:
+                stamping.validate_marker(marker)
+            except ValueError:
+                self._json(400, {"error": "invalid cn1 marker", "class": "actor_rejected_input"})
+                return
+            raw_input = {key: value for key, value in raw_input.items() if key != "marker"}
         parsed, refusal = mapping.parse(
-            request.get("input") if isinstance(request, dict) else None,
+            raw_input,
             self.cfg.repositories,
         )
         if refusal:
@@ -156,22 +166,25 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         assert parsed is not None
+        comment_text = (
+            stamping.stamp_text(parsed.comment, marker) if marker is not None else parsed.comment
+        )
         if parsed.verb == "post_comment":
-            posted = client.post_comment(parsed.repository, parsed.number, parsed.comment, token)
+            posted = client.post_comment(parsed.repository, parsed.number, comment_text, token)
         else:
             assert parsed.comment_id is not None
             posted = client.reply_to_review_thread(
-                parsed.repository, parsed.number, parsed.comment_id, parsed.comment, token
+                parsed.repository, parsed.number, parsed.comment_id, comment_text, token
             )
         if not posted.ok:
             self._json(502, {"error": posted.error, "class": "execution"})
             return
-        self._json(
-            200,
-            mapping.result(
-                parsed.verb, parsed.repository, parsed.number, posted.comment_id, self.cfg.actor_id
-            ),
+        result = mapping.result(
+            parsed.verb, parsed.repository, parsed.number, posted.comment_id, self.cfg.actor_id
         )
+        if marker is not None:
+            result["output"].update(stamping.artifact_result(posted.comment_id, marker))
+        self._json(200, result)
 
     def do_DELETE(self) -> None:  # noqa: N802
         if self._refuse_oversized_body():

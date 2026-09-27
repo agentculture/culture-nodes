@@ -110,6 +110,7 @@ class AsyncInvocation:
     #: because it is a per-dispatch opt-in the caller makes and not a
     #: property of the host this bridge runs on.
     handover: bool = False
+    marker: str | None = None
     #: t6 (c44/h37): the session_key slot this invocation holds, and the
     #: registry to release it from once codex's turn actually finishes.
     #: Both None when this invocation forked or session serialization
@@ -156,6 +157,7 @@ class AsyncRunner:
         # codex sandbox flag and exists in no other bridge, while creating
         # the ref is the part every backend does.
         handover: bool = False,
+        marker: str | None = None,
         session_registry: SessionRegistry | None = None,
         session_key: str | None = None,
         session_holder: str | None = None,
@@ -196,6 +198,7 @@ class AsyncRunner:
             ctx=ctx,
             workspace_handle=handle,
             handover=handover,
+            marker=marker,
             session_registry=session_registry,
             session_key=session_key,
             session_holder=session_holder,
@@ -334,9 +337,16 @@ class AsyncRunner:
                 node_run_id=inv.ctx.node_run_id,
                 attempt_id=inv.ctx.attempt_id,
                 reason=preserve.handover_success_reason(ev.payload.get("outcome")),
+                marker=inv.marker,
             )
             if handover_result.attempted:
                 ev.payload["handover"] = handover_result.to_dict()
+                if inv.marker is not None and handover_result.created:
+                    from . import stamping
+
+                    ev.payload["output"].update(
+                        stamping.artifact_result(handover_result.ref, inv.marker)
+                    )
         emitter.send(ev.kind, ev.payload)
         with self._lock:
             inv.done = True

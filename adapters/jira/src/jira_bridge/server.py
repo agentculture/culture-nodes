@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import hmac
+from dataclasses import replace
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import capabilities, client, create_issue, mapping, preflight, read_issue, transition_issue
+from . import (
+    capabilities,
+    client,
+    create_issue,
+    mapping,
+    preflight,
+    read_issue,
+    stamping,
+    transition_issue,
+)
 from .config import Config
 
 INVOCATIONS_PATH = "/v1/invocations"
@@ -65,6 +75,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     **preflight.capability_block(capabilities.host_facts(self.cfg)),
+                    "stamping": {"marker": "cn1", "version": 1},
                     "verbs": [
                         mapping.VERB,
                         transition_issue.VERB,
@@ -127,6 +138,14 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         input_ = request.get("input") if isinstance(request, dict) else None
+        marker = input_.get("marker") if isinstance(input_, dict) else None
+        if marker is not None:
+            try:
+                stamping.validate_marker(marker)
+            except ValueError:
+                self._json(400, {"error": "invalid cn1 marker", "class": "actor_rejected_input"})
+                return
+            input_ = {key: value for key, value in input_.items() if key != "marker"}
         if isinstance(input_, dict) and input_.get("verb") == transition_issue.VERB:
             parsed, refusal = transition_issue.parse(
                 input_,
@@ -170,13 +189,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, read_issue.result(fetched.output, self.cfg.actor_id))
             return
         if isinstance(parsed, create_issue.CreateIssue):
+            if marker is not None:
+                parsed = replace(
+                    parsed, description=stamping.stamp_text(parsed.description, marker)
+                )
             created = create_issue.create(
                 self.cfg.jira_site, parsed, email, token, api_base=self.cfg.api_base
             )
             if not created.ok:
                 self._json(502, {"error": created.error, "class": "execution"})
                 return
-            self._json(200, create_issue.result(created.key, created.issue_id, self.cfg.actor_id))
+            result = create_issue.result(created.key, created.issue_id, self.cfg.actor_id)
+            if marker is not None:
+                result["output"].update(stamping.artifact_result(created.issue_id, marker))
+            self._json(200, result)
             return
         if isinstance(parsed, transition_issue.Transition):
             posted = transition_issue.transition(
@@ -190,12 +216,30 @@ class Handler(BaseHTTPRequestHandler):
             if not posted.ok:
                 self._json(502, {"error": posted.error, "class": "execution"})
                 return
-            self._json(200, transition_issue.result(parsed.issue, parsed.target, self.cfg.actor_id))
+            result = transition_issue.result(parsed.issue, parsed.target, self.cfg.actor_id)
+            if marker is not None:
+                comment = client.post_comment(
+                    self.cfg.jira_site,
+                    parsed.issue,
+                    marker,
+                    email,
+                    token,
+                    api_base=self.cfg.api_base,
+                )
+                if not comment.ok:
+                    self._json(502, {"error": comment.error, "class": "execution"})
+                    return
+                result["output"].update(stamping.artifact_result(comment.comment_id, marker))
+            self._json(200, result)
             return
         posted = client.post_comment(
             self.cfg.jira_site,
             parsed.issue,
-            parsed.marked_text,
+            (
+                stamping.stamp_text(parsed.marked_text, marker)
+                if marker is not None
+                else parsed.marked_text
+            ),
             email,
             token,
             api_base=self.cfg.api_base,
@@ -203,7 +247,10 @@ class Handler(BaseHTTPRequestHandler):
         if not posted.ok:
             self._json(502, {"error": posted.error, "class": "execution"})
             return
-        self._json(200, mapping.result(parsed.issue, posted.comment_id, self.cfg.actor_id))
+        result = mapping.result(parsed.issue, posted.comment_id, self.cfg.actor_id)
+        if marker is not None:
+            result["output"].update(stamping.artifact_result(posted.comment_id, marker))
+        self._json(200, result)
 
 
 def make_server(cfg: Config) -> BridgeHTTPServer:

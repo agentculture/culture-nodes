@@ -224,3 +224,33 @@ def test_post_failed_on_connection_refused():
     result, status = webhook.post("http://127.0.0.1:1/api/webhooks/1/token", b"{}")
     assert result is webhook.PostResult.FAILED
     assert status is None
+
+
+def test_marked_discord_post_requests_message_id(monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    seen = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def read(self, _limit):
+            return b'{"id":"987"}'
+
+    class Opener:
+        def open(self, request, timeout):
+            seen["query"] = parse_qs(urlsplit(request.full_url).query)
+            return Response()
+
+    monkeypatch.setattr(webhook, "is_discord_url", lambda _url: True)
+    monkeypatch.setattr(webhook, "_opener", Opener())
+    assert webhook.post(
+        "https://discord.com/api/webhooks/1/token", b"{}", return_message_id=True
+    ) == (webhook.PostResult.POSTED, 200, "987")
+    assert seen["query"]["wait"] == ["true"]

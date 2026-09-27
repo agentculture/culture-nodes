@@ -374,3 +374,28 @@ def test_the_workspace_snapshot_is_unchanged_by_a_handover(tmp_path):
     after = _git_state(repo)
     assert after[:3] == before[:3]
     assert after[3] == [result.ref]
+
+
+def test_marked_handover_embeds_marker_and_reports_ref(bridge, monkeypatch):
+    base, cfg, repo = bridge
+    marker = "cn1:firing-a:git.ref:" + "ab" * 24 + ":" + "cd" * 32
+
+    def fake_run_sync(
+        cfg_, instruction, repo_, *, model, sandbox, continuation_ref=None, writable_git=False
+    ):
+        return _ok_result()
+
+    monkeypatch.setattr(codex_cli, "run_sync", fake_run_sync)
+    status, body = _request(
+        base,
+        server.INVOCATIONS_PATH,
+        body=_invocation_body(
+            repo, handover=True, marker=marker, sandbox="workspace-write", **{"async": False}
+        ),
+        headers={"Authorization": f"Bearer {cfg.auth_token}", "Idempotency-Key": "att_stamp_sync"},
+    )
+    assert status == 200, body
+    assert body["output"]["artifact_id"] == body["handover"]["ref"]
+    assert body["output"]["marker"] == marker
+    commit_message = _git(repo, "show", "-s", "--format=%B", body["handover"]["commit"]).stdout
+    assert commit_message.rstrip().endswith(marker)

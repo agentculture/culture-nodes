@@ -24,6 +24,12 @@ func principalActor(r *http.Request, field, supplied string) (string, string) {
 	return p.ActorID, ""
 }
 
+// writeJSONWithWarning writes value with status, unless a warning is set:
+// then the response is always 200 with the warning merged in, whatever
+// status the caller passed. That is an established convention callers and
+// tests rely on (TestPrincipalOverridesTicketFrameOriginAndWarns), so a
+// caller that wants the warning path's status to read truthfully passes
+// http.StatusOK itself.
 func writeJSONWithWarning(w http.ResponseWriter, status int, value any, warning string) {
 	if warning == "" {
 		writeJSON(w, status, value)

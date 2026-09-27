@@ -217,6 +217,9 @@ func Activate(ctx context.Context, store *postgres.Store, namespaceID, targetVer
 	if err != nil {
 		return err
 	}
+	if target.NamespaceID != namespaceID {
+		return fmt.Errorf("declengine: activation target version %s is not in namespace %s: %w", targetVersionID, namespaceID, postgres.ErrNotFound)
+	}
 	d, err := decl.Parse(target.Body, decl.FormatJSON)
 	if err != nil {
 		return fmt.Errorf("declengine: activation target version %s: %w", targetVersionID, err)
@@ -286,11 +289,9 @@ func Publish(ctx context.Context, store *postgres.Store, lookup ActivationLookup
 // standing (task t19, #328): every deactivation is attributed to the
 // resolved principal only, never a caller-supplied actor string, and it
 // runs the same append-only history write Activate uses
-// (store.RecordDeclarationActivation, kind "deactivate"). It does not
-// re-run AuthorizeActivation's one-level-deep gate -- that gate bounds who
-// may EXTEND standing activation authority, not who may withdraw it, and
-// the spec places no such restriction on deactivation -- but the principal
-// is still required and still the only source of the recorded actor.
+// (store.RecordDeclarationActivation, kind "deactivate"). It runs the same
+// AuthorizeActivation gate as Activate (owner decision, see below), and the
+// principal is still the only source of the recorded actor.
 func Deactivate(ctx context.Context, store *postgres.Store, namespaceID, targetVersionID string, principal ActivationPrincipal, supersedesID string) error {
 	if principal.Author == "" {
 		return errors.New("declengine: activation principal is required")
@@ -303,6 +304,9 @@ func Deactivate(ctx context.Context, store *postgres.Store, namespaceID, targetV
 	target, err := store.GetDeclarationVersion(ctx, targetVersionID)
 	if err != nil {
 		return err
+	}
+	if target.NamespaceID != namespaceID {
+		return fmt.Errorf("declengine: deactivation target version %s is not in namespace %s: %w", targetVersionID, namespaceID, postgres.ErrNotFound)
 	}
 	d, err := decl.Parse(target.Body, decl.FormatJSON)
 	if err != nil {

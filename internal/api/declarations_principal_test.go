@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/declengine"
@@ -40,5 +41,20 @@ func TestDeclarationPrincipalClassificationIsAnAllowList(t *testing.T) {
 				t.Fatalf("got %+v err=%v, want kind %s", got, apiErr, tc.wantKind)
 			}
 		})
+	}
+}
+
+// TestWriteJSONWithWarningAnswers200 pins the shared convention the cortex
+// review flagged as finding (d2): a response carrying a warning is 200 with
+// the warning merged in, whatever status was passed. Declaration publish
+// passes 200 on that path so the call site says what is sent.
+func TestWriteJSONWithWarningAnswers200(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeJSONWithWarning(rr, http.StatusCreated, map[string]string{"id": "v1"}, "overlap report failed")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `"warning":"overlap report failed"`) {
+		t.Fatalf("body lost the warning: %s", rr.Body.String())
 	}
 }

@@ -3,6 +3,7 @@ package declengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -276,4 +277,24 @@ func TestDeactivateMirrorsActivationRootOfTrust(t *testing.T) {
 		t.Fatalf("agent deactivation of an ordinary declaration must succeed: %v", err)
 	}
 	assertInactive(t, ctx, db, ns, "ordinary")
+}
+
+// TestActivationRefusesAVersionFromAnotherNamespace pins the cortex review
+// finding (b) at the engine: a target version must belong to the namespace
+// the history row is written under.
+func TestActivationRefusesAVersionFromAnotherNamespace(t *testing.T) {
+	db := pgtest.RequireStore(t, markerTestStore)
+	ctx := context.Background()
+	here := pgtest.MustNamespace(t, db, "activation-here").ID
+	there := pgtest.MustNamespace(t, db, "activation-there").ID
+	human := ActivationPrincipal{Kind: PrincipalHuman, Author: "human:alice"}
+
+	foreign := publishOrdinary(t, db, there, "foreign")
+	if err := Activate(ctx, db, here, foreign.ID, human, ""); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("Activate across namespaces: err = %v, want ErrNotFound", err)
+	}
+	if err := Deactivate(ctx, db, here, foreign.ID, human, ""); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("Deactivate across namespaces: err = %v, want ErrNotFound", err)
+	}
+	assertInactive(t, ctx, db, there, "foreign")
 }

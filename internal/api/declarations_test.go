@@ -507,3 +507,57 @@ func TestAgentActivatingActivationDeclarationIsRefused(t *testing.T) {
 		t.Fatalf("agent-rule must not be active after the refused activation attempt: %+v", shown)
 	}
 }
+
+// TestActivateRefusesAVersionOfAnotherDeclaration pins the cortex review
+// finding (b): version_id is a body field, so it may only select a version
+// of the declaration the URL names. Another declaration's version reads as
+// absent and records nothing.
+func TestActivateRefusesAVersionOfAnotherDeclaration(t *testing.T) {
+	srv, _, token, _ := newDeclarationHumanFixture(t)
+
+	var other declarationVersionResp
+	for _, name := range []string{"named", "other"} {
+		rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations", token,
+			declarationSourceReq{Format: "json", Source: ordinaryDeclSource(name, "")}, &other)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("publish %s: status = %d: %s", name, rr.Code, rr.Body.String())
+		}
+	}
+	for _, verb := range []string{"activate", "deactivate"} {
+		rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/named/"+verb, token,
+			map[string]string{"version_id": other.ID}, nil)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("%s named with other's version: status = %d, want 404: %s", verb, rr.Code, rr.Body.String())
+		}
+	}
+	var shown declarationShowResp
+	for _, name := range []string{"named", "other"} {
+		doAccess(t, srv, http.MethodGet, "/v1alpha1/declarations/"+name, "", nil, &shown)
+		if shown.Active {
+			t.Fatalf("%s became active through a mismatched version id: %+v", name, shown)
+		}
+	}
+}
+
+// TestCreateAliasWithAnUnknownMemberWritesNothing pins finding (d3): an
+// unknown member refuses the whole request before the alias exists, so the
+// same alias can then be created cleanly.
+func TestCreateAliasWithAnUnknownMemberWritesNothing(t *testing.T) {
+	srv, _, token, _ := newDeclarationHumanFixture(t)
+
+	rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations", token,
+		declarationSourceReq{Format: "json", Source: ordinaryDeclSource("member", "")}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("publish: status = %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases", token,
+		map[string]any{"name": "half", "declarations": []string{"member", "missing"}}, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("alias with unknown member: status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+	rr = doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/aliases", token,
+		map[string]any{"name": "half", "declarations": []string{"member"}}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("the refused request left the alias behind: status = %d: %s", rr.Code, rr.Body.String())
+	}
+}

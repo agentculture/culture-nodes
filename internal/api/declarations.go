@@ -247,15 +247,18 @@ func (s *Server) handlePublishDeclaration(w http.ResponseWriter, r *http.Request
 
 	out := declarationVersionOutOf(v)
 	if d, parseErr := decl.Parse([]byte(req.Source), decl.Format(req.Format)); parseErr == nil {
+		// The version is already durably written: a failure computing the
+		// advisory reference warnings must not turn that into a 500.
 		warnings, warnErr := s.declarationReferenceWarningsForID(ctx, v.DeclarationID, *d)
 		if warnErr != nil {
-			return internalError(warnErr)
+			s.log.Warn("declaration published; reference warnings unavailable", "declaration_id", v.DeclarationID, "error", warnErr)
+			warnings = append(warnings, "reference warnings could not be computed: "+warnErr.Error())
 		}
 		out.Warnings = warnings
 	}
 
 	if overlapErr != nil {
-		writeJSONWithWarning(w, http.StatusCreated, out, "declaration published; the overlap report failed: "+overlapErr.Error())
+		writeJSONWithWarning(w, http.StatusOK, out, "declaration published; the overlap report failed: "+overlapErr.Error()) // warning responses are 200 by convention
 		return nil
 	}
 	writeJSON(w, http.StatusCreated, out)
@@ -405,10 +408,9 @@ func (s *Server) handleCreateDeclarationAlias(w http.ResponseWriter, r *http.Req
 		return badRequest("name identifies the alias", "name is required")
 	}
 	ctx := r.Context()
-	alias, err := s.Store.CreateDeclarationAlias(ctx, s.NamespaceID, req.Name)
-	if err != nil {
-		return classify(err)
-	}
+	// Resolve every member before writing anything, so an unknown member
+	// refuses the whole request instead of leaving a half-built alias.
+	memberIDs := make([]string, 0, len(req.Declarations))
 	for _, declName := range req.Declarations {
 		v, err := s.Store.LatestDeclarationVersion(ctx, s.NamespaceID, declName)
 		if err != nil {
@@ -417,7 +419,14 @@ func (s *Server) handleCreateDeclarationAlias(w http.ResponseWriter, r *http.Req
 			}
 			return internalError(err)
 		}
-		if err := s.Store.AddDeclarationToAlias(ctx, s.NamespaceID, req.Name, v.DeclarationID); err != nil {
+		memberIDs = append(memberIDs, v.DeclarationID)
+	}
+	alias, err := s.Store.CreateDeclarationAlias(ctx, s.NamespaceID, req.Name)
+	if err != nil {
+		return classify(err)
+	}
+	for _, id := range memberIDs {
+		if err := s.Store.AddDeclarationToAlias(ctx, s.NamespaceID, req.Name, id); err != nil {
 			return internalError(err)
 		}
 	}
@@ -454,6 +463,12 @@ func (s *Server) handleMoveDeclarationAlias(w http.ResponseWriter, r *http.Reque
 	}
 	if req.DeclarationVersionID == "" {
 		return badRequest("declaration_version_id names the version this move concerns", "declaration_version_id is required")
+	}
+	if v, err := s.Store.GetDeclarationVersion(r.Context(), req.DeclarationVersionID); err != nil || v.NamespaceID != s.NamespaceID {
+		if err != nil && !errors.Is(err, postgres.ErrNotFound) {
+			return internalError(err)
+		}
+		return notFound("check the declaration version id", "no declaration version %q", req.DeclarationVersionID)
 	}
 	if err := s.Store.MoveDeclarationAliasWithSupersedes(r.Context(), s.NamespaceID, name, req.Parent, req.DeclarationVersionID, declengine.ResolveAuthor(principal), req.Supersedes); err != nil {
 		return classify(err)
@@ -500,6 +515,13 @@ func (s *Server) resolveTargetVersion(ctx context.Context, name, versionID strin
 				return postgres.DeclarationVersion{}, notFound("check the version id", "no declaration version %q", versionID)
 			}
 			return postgres.DeclarationVersion{}, internalError(err)
+		}
+		// The version id is a body field: it may only select a version of
+		// the declaration the URL names, in this namespace. Anything else
+		// reads as absent, so a caller cannot record history against another
+		// namespace's (or another declaration's) version.
+		if v.NamespaceID != s.NamespaceID || v.Name != name {
+			return postgres.DeclarationVersion{}, notFound("check the version id", "no version %q of declaration %q", versionID, name)
 		}
 		return v, nil
 	}

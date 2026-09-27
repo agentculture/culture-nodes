@@ -391,6 +391,129 @@ func TestPostgresFiringCatalogForeignKeys(t *testing.T) {
 	}
 }
 
+// Acceptance 2 (task t10, spec c84/h57): a burst of events on one subject,
+// capped at K, yields at most K in-flight firings against the real
+// PostgresBackend -- mirroring internal/store/postgres/subjectconcurrency.go's
+// cases (a per-subject floor plus a ceiling, the rest deferred and replayed
+// FIFO) for declaration_firings/declaration_nodes/declaration_subject_deferrals
+// instead of runs/deferred_triggers.
+func TestPostgresSubjectConcurrencyDefersAndDrains(t *testing.T) {
+	db := pgtest.RequireStore(t, markerTestStore)
+	ctx := context.Background()
+	ns := pgtest.MustNamespace(t, db, "tca-subject").ID
+	d := active("subject-cap").Declaration
+	d.Condition = "true"
+	d.Trigger.MaxConcurrentSubject = 2
+	version := publishActive(t, db, ns, d)
+	t.Setenv("TCA_SUBJECT_KEY", strings.Repeat("s", 32))
+	calls := 0
+	e, err := New(Config{MarkerKeyEnv: "TCA_SUBJECT_KEY"}, PostgresBackend{db}, PostgresMarkerStore{db},
+		dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) { calls++; return DispatchResult{}, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fire := func(eventID string) {
+		t.Helper()
+		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "ready", Subject: "ISSUE-1", Variables: map[string]any{"priority": "High"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second, third := deliver(t, db, ns), deliver(t, db, ns), deliver(t, db, ns)
+	fire(first)
+	fire(second)
+	fire(third)
+	if calls != 2 {
+		t.Fatalf("calls=%d, want exactly 2 in-flight firings for cap 2", calls)
+	}
+	if got := outcomes(t, db, ns, third, version.DeclarationID); strings.Join(got, ",") != strings.Join([]string{OutcomeMatched, OutcomeLineageChecked, OutcomeConditionTrue, OutcomeDeferred}, ",") {
+		t.Fatalf("third event's evaluation = %v, want a visible deferred record", got)
+	}
+	var deferredCount int
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_subject_deferrals WHERE namespace_id=$1 AND declaration_id=$2`, ns, version.DeclarationID).Scan(&deferredCount); err != nil || deferredCount != 1 {
+		t.Fatalf("deferred rows=%d err=%v", deferredCount, err)
+	}
+	inFlight, err := (PostgresBackend{db}).SubjectInFlight(ctx, ns, version.DeclarationID, "ISSUE-1")
+	if err != nil || inFlight != 2 {
+		t.Fatalf("in-flight=%d err=%v, want 2", inFlight, err)
+	}
+
+	// A fourth event for the same subject, while the third is still queued,
+	// replaces the queued entry (today's collapse/replace rule) rather than
+	// piling up a second deferred row.
+	fourth := deliver(t, db, ns)
+	fire(fourth)
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_subject_deferrals WHERE namespace_id=$1 AND declaration_id=$2`, ns, version.DeclarationID).Scan(&deferredCount); err != nil || deferredCount != 1 {
+		t.Fatalf("deferred rows after replace=%d err=%v", deferredCount, err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d after the replaced deferral, want still 2", calls)
+	}
+	var queuedEventID string
+	if err := db.Pool().QueryRow(ctx, `SELECT event->>'ID' FROM declaration_subject_deferrals WHERE namespace_id=$1 AND declaration_id=$2`, ns, version.DeclarationID).Scan(&queuedEventID); err != nil || queuedEventID != fourth {
+		t.Fatalf("queued event=%q err=%v, want the newest (%s)", queuedEventID, err, fourth)
+	}
+
+	// Freeing one slot (a node closing -- task t12's job in production) and
+	// draining replays the queued entry, in arrival order, through the
+	// ordinary Handle path: it fires, and the queue is empty again.
+	if _, err := db.Pool().Exec(ctx, `UPDATE declaration_nodes SET state='closed' WHERE namespace_id=$1 AND opening_firing_id IN (SELECT id FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2)`, ns, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DrainSubject(ctx, ns, version.DeclarationID); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatalf("calls=%d after drain, want 3", calls)
+	}
+	// The replay is a second, ordinary evaluation of the same event (its
+	// first pass recorded deferred); its own outcomes are the last five.
+	got := outcomes(t, db, ns, fourth, version.DeclarationID)
+	if want := []string{OutcomeMatched, OutcomeLineageChecked, OutcomeConditionTrue, OutcomeDispatching, OutcomeFired}; len(got) < len(want) || strings.Join(got[len(got)-len(want):], ",") != strings.Join(want, ",") {
+		t.Fatalf("replayed event's evaluation = %v, want it to end in a fired pass", got)
+	}
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_subject_deferrals WHERE namespace_id=$1 AND declaration_id=$2`, ns, version.DeclarationID).Scan(&deferredCount); err != nil || deferredCount != 0 {
+		t.Fatalf("deferred rows after drain=%d err=%v, want 0", deferredCount, err)
+	}
+}
+
+// Acceptance 1 (task t10, spec c93) against PostgreSQL: the rate ceiling
+// reads real declaration_firings rows, and a re-mint never inflates the
+// count RecentFirings answers with.
+func TestPostgresRateCeilingCountsLogicalFiringsOnly(t *testing.T) {
+	db := pgtest.RequireStore(t, markerTestStore)
+	ctx := context.Background()
+	ns := pgtest.MustNamespace(t, db, "tca-rate").ID
+	d := active("rate-cap").Declaration
+	body, _ := d.CanonicalJSON()
+	v, err := db.PublishDeclaration(ctx, postgres.PublishDeclarationInput{NamespaceID: ns, Name: "rate-cap", Body: body, Author: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := PostgresBackend{db}
+	since := time.Now().Add(-time.Hour)
+	for i := 0; i < 3; i++ {
+		eventID := deliver(t, db, ns)
+		in := postgres.DeclarationFiringInput{NamespaceID: ns, EventID: eventID, DeclarationID: v.DeclarationID, DeclarationVersion: v.ID, TriggerDigest: "t", ConditionDigest: "c", ActionDigest: "a"}
+		f, created, err := db.RecordDeclarationFiring(ctx, in)
+		if err != nil || !created {
+			t.Fatalf("firing %d: %v %v", i, created, err)
+		}
+		// A re-mint of the same logical firing must not inflate the rate.
+		in.RemintOfID, in.ParentFiringID = f.ID, ""
+		if _, created, err := db.RecordDeclarationFiring(ctx, in); err != nil || !created {
+			t.Fatalf("remint %d: %v %v", i, created, err)
+		}
+	}
+	count, err := backend.RecentFirings(ctx, ns, v.DeclarationID, since)
+	if err != nil || count != 3 {
+		t.Fatalf("count=%d err=%v, want 3 logical firings despite 3 remints", count, err)
+	}
+	// Outside the window, nothing counts.
+	if count, err := backend.RecentFirings(ctx, ns, v.DeclarationID, time.Now().Add(time.Hour)); err != nil || count != 0 {
+		t.Fatalf("future window count=%d err=%v, want 0", count, err)
+	}
+}
+
 // BenchmarkPostgresLineage10000 is the plan's lineage-lookup-cost risk: the
 // real recursive SQL and indexes over a 10,000-firing chain. depth=10000
 // resolves from its tip (the worst case: every row is an ancestor). Setup is

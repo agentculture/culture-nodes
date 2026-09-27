@@ -18,6 +18,60 @@ type memoryBackend struct {
 	claims    map[string]postgres.DeclarationFiring
 	steps     []Evaluation
 	nodes     []Landing
+	// recentFirings, when non-nil, overrides RecentFirings' count for the
+	// rate-ceiling tests instead of deriving it from claims.
+	recentFirings map[string]int
+	// inFlight, keyed by declarationID+"/"+subject, is SubjectInFlight's
+	// count for the per-subject concurrency tests.
+	inFlight map[string]int
+	deferred []deferredEntry
+}
+
+type deferredEntry struct {
+	id            string
+	declarationID string
+	subject       string
+	event         Event
+}
+
+func (m *memoryBackend) RecentFirings(_ context.Context, _, declarationID string, _ time.Time) (int, error) {
+	if m.recentFirings == nil {
+		return 0, nil
+	}
+	return m.recentFirings[declarationID], nil
+}
+func (m *memoryBackend) SubjectInFlight(_ context.Context, _, declarationID, subject string) (int, error) {
+	if m.inFlight == nil {
+		return 0, nil
+	}
+	return m.inFlight[declarationID+"/"+subject], nil
+}
+func (m *memoryBackend) DeferSubject(_ context.Context, in DeferSubjectInput) error {
+	for i, d := range m.deferred {
+		if d.declarationID == in.DeclarationID && d.subject == in.Subject {
+			m.deferred[i].event = in.Event
+			return nil
+		}
+	}
+	m.deferred = append(m.deferred, deferredEntry{id: fmt.Sprint(len(m.deferred) + 1), declarationID: in.DeclarationID, subject: in.Subject, event: in.Event})
+	return nil
+}
+func (m *memoryBackend) OldestDeferredSubject(_ context.Context, _, declarationID string) (DeferredSubject, bool, error) {
+	for _, d := range m.deferred {
+		if d.declarationID == declarationID {
+			return DeferredSubject{ID: d.id, Event: d.event}, true, nil
+		}
+	}
+	return DeferredSubject{}, false, nil
+}
+func (m *memoryBackend) DeleteDeferredSubject(_ context.Context, _, id string) error {
+	for i, d := range m.deferred {
+		if d.id == id {
+			m.deferred = append(m.deferred[:i], m.deferred[i+1:]...)
+			return nil
+		}
+	}
+	return nil
 }
 
 func (m *memoryBackend) Active(context.Context, string) ([]ActiveDeclaration, error) {
@@ -166,6 +220,11 @@ func TestMustCanAndLineageTemplates(t *testing.T) {
 }
 func TestLiveUpgradePinsComponents(t *testing.T) {
 	a := active("A")
+	// This test's second evaluate() deliberately chains A directly after A
+	// (task t10's self-retrigger backstop, checkSelfRetrigger): opt in, since
+	// what is under test here is version pinning across an upgrade, not the
+	// self-retrigger guard.
+	a.Declaration.Trigger.AllowSelfRetrigger = true
 	m := &memoryBackend{active: []ActiveDeclaration{a}}
 	e := newTestEngine(t, m, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) { return DispatchResult{}, nil }))
 	ev := Event{NamespaceID: "ns", ID: "one", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
@@ -189,6 +248,11 @@ func TestLiveUpgradePinsComponents(t *testing.T) {
 func TestConditionAndCanonicalReentry(t *testing.T) {
 	a := active("A")
 	a.Declaration.Trigger.ReentryLimit = 1
+	// This test's ancestors chain A directly after A on purpose, to exercise
+	// remint collapse and re-entry counting; opt into task t10's
+	// self-retrigger backstop (checkSelfRetrigger) so that guard does not
+	// mask what is under test here.
+	a.Declaration.Trigger.AllowSelfRetrigger = true
 	m := &memoryBackend{}
 	calls := 0
 	e := newTestEngine(t, m, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) { calls++; return DispatchResult{}, nil }))

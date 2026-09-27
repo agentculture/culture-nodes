@@ -55,17 +55,15 @@ const (
 	// to keep "did X actually act on event E" answerable without cross-
 	// referencing engine_switch_history for every read.
 	OutcomeShadow = "shadow"
-	// OutcomeBudgetBlocked is t11's (not yet built) spending-cap backstop:
+	// OutcomeBudgetBlocked is the spending-cap backstop (t11):
 	// a declaration whose action would exceed a configured budget is
-	// recorded here rather than dispatched. Defined now so t13's explain
-	// surface (spec c88) already understands the outcome vocabulary t11
-	// will start producing; this task implements no budget logic.
+	// recorded here rather than dispatched. Produced by budget.go (t11) and
+	// read by the explain surface (spec c88).
 	OutcomeBudgetBlocked = "budget-blocked"
-	// OutcomeOverlapSuppressed is t14's (not yet built) overlapping-firing
-	// backstop: a declaration whose would-be firing overlaps one already in
-	// flight for the same scope is recorded here instead of claimed.
-	// Defined now for the same reason as OutcomeBudgetBlocked above; this
-	// task implements no overlap-detection logic.
+	// OutcomeOverlapSuppressed is reserved for suppressing a firing that
+	// overlaps one already in flight for the same scope. The overlap
+	// detector (overlap.go, t14) REPORTS overlapping declarations; it does
+	// not suppress firings, so nothing produces this outcome yet.
 	OutcomeOverlapSuppressed = "overlap-suppressed"
 )
 

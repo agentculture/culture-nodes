@@ -67,12 +67,10 @@ const (
 // directly by the budget check below, not by EmitActionResults' scan.
 const ActionTriggerBudgetExhausted = "action.budget_exhausted"
 
-// OutcomeBudgetBlocked is this firing's own evaluation outcome when a budget
-// refused it. It is distinct from ActionTriggerBudgetExhausted: that name is
-// what OTHER declarations react to; this one is the record on the blocked
-// firing itself, in the same "outcome + reason" shape every other guard
-// check in this package already uses (OutcomeLoopLimited, OutcomeDeferred).
-const OutcomeBudgetBlocked = "budget exhausted"
+// OutcomeBudgetBlocked (engine.go, spec c88's "budget-blocked") is this
+// firing's own evaluation outcome when a budget refused it. It is distinct
+// from ActionTriggerBudgetExhausted: that name is what OTHER declarations
+// react to; the outcome is the record on the blocked firing itself.
 
 // Budget is one declared budget row, in ADR 0011's exact two units. Zero on
 // a field means that axis is not bounded -- never "zero allowed", mirroring

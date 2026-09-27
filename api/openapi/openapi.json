@@ -2583,6 +2583,24 @@
         ],
         "type": "object"
       },
+      "OpenGraphRunCount": {
+        "description": "GET /v1alpha1/declaration-engine/open-runs' payload (task t17, issue #328, spec c94).",
+        "properties": {
+          "namespace_id": {
+            "type": "string"
+          },
+          "open_runs": {
+            "description": "Graph runs whose state is not yet terminal (not completed, failed, or cancelled). The graph engine retires for this namespace only once this reaches zero.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "namespace_id",
+          "open_runs"
+        ],
+        "type": "object"
+      },
       "PatchRunRequest": {
         "description": "The only body PATCH /v1alpha1/runs/{id} accepts; at least one of the two keys must be present. `name` and `description` are immutable once a run is created (frame decision q4) — a body carrying either is refused with a structured 400, not silently ignored. `work_item` (decision c41) is set at creation and admits exactly ONE transition (decision c42, the orphan intake): from the transient `gh:\u003cowner\u003e/\u003crepo\u003e#\u003cn\u003e` form to a Jira issue key, once. A target that is not a Jira key is a 400; a run whose work_item is not the gh: form (already keyed, or never keyed) is a 409.",
         "properties": {
@@ -4940,6 +4958,38 @@
         "summary": "Read one named attempt artifact.",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/v1alpha1/declaration-engine/open-runs": {
+      "get": {
+        "description": "Task t17 (issue #328, spec c94, ADR 0014 \"Consequences\", honesty h63): flipping the engine switch (internal/declengine/switch.go) to `after` DRAINS the graph engine, it does not strand it -- new trigger events stop starting graph runs from the flip onward, but a run already open keeps running on the graph engine until it ends, including every reaction it is waiting for (callbacks, waits, approvals). The graph engine retires only once this count reaches zero, so this route is what makes that fact checkable from outside the process instead of merely asserted.",
+        "operationId": "getOpenGraphRunCount",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenGraphRunCount"
+                }
+              }
+            },
+            "description": "The current open-run count."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "This deployment has no open-run counter configured."
+          }
+        },
+        "summary": "The graph engine's open-run count for this namespace.",
+        "tags": [
+          "declaration-engine"
         ]
       }
     },
@@ -8361,6 +8411,10 @@
     {
       "description": "Liveness and readiness probes.",
       "name": "operations"
+    },
+    {
+      "description": "The before/shadow/after engine switch's read surface (task t17, issue #328). Currently the graph engine's open-run count, the fact c94's drain guarantee depends on being externally visible.",
+      "name": "declaration-engine"
     }
   ]
 }

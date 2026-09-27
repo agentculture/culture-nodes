@@ -147,6 +147,11 @@ tags:
       migrations/0024_plan_imports.sql.
   - name: operations
     description: Liveness and readiness probes.
+  - name: declaration-engine
+    description: >-
+      The before/shadow/after engine switch's read surface (task t17,
+      issue #328). Currently the graph engine's open-run count, the fact
+      c94's drain guarantee depends on being externally visible.
 
 paths:
   /v1alpha1/namespaces:
@@ -1657,6 +1662,36 @@ paths:
           description: Deleted.
         '404':
           description: No such schedule in this namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declaration-engine/open-runs:
+    get:
+      operationId: getOpenGraphRunCount
+      tags: [declaration-engine]
+      summary: The graph engine's open-run count for this namespace.
+      description: >-
+        Task t17 (issue #328, spec c94, ADR 0014 "Consequences", honesty
+        h63): flipping the engine switch
+        (internal/declengine/switch.go) to `after` DRAINS the graph
+        engine, it does not strand it -- new trigger events stop starting
+        graph runs from the flip onward, but a run already open keeps
+        running on the graph engine until it ends, including every
+        reaction it is waiting for (callbacks, waits, approvals). The
+        graph engine retires only once this count reaches zero, so this
+        route is what makes that fact checkable from outside the process
+        instead of merely asserted.
+      responses:
+        "200":
+          description: The current open-run count.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenGraphRunCount'
+        "503":
+          description: This deployment has no open-run counter configured.
           content:
             application/json:
               schema:
@@ -6662,6 +6697,23 @@ components:
         status:
           type: string
           enum: [ok]
+
+    OpenGraphRunCount:
+      type: object
+      description: >-
+        GET /v1alpha1/declaration-engine/open-runs' payload (task t17,
+        issue #328, spec c94).
+      required: [namespace_id, open_runs]
+      properties:
+        namespace_id:
+          type: string
+        open_runs:
+          type: integer
+          minimum: 0
+          description: >-
+            Graph runs whose state is not yet terminal (not completed,
+            failed, or cancelled). The graph engine retires for this
+            namespace only once this reaches zero.
 
     StoreCapabilityRequirement:
       type: object

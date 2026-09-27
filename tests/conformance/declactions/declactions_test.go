@@ -290,6 +290,39 @@ func newDeclHarness(t *testing.T) *declHarness {
 	return h
 }
 
+// approveWidenings records the owner's approval of every step-0 reference
+// that renders the timer's variables into a wider audience (task t30: e.g.
+// into Discord or GitHub), exactly as the owner would through the
+// sensitivity inbox -- so this test keeps exercising dispatch through the
+// registry rather than the sensitivity gate in front of it.
+func (h *declHarness) approveWidenings(v postgres.DeclarationVersion, d decl.Declaration) {
+	t := h.t
+	t.Helper()
+	refs, err := decl.ActionReferences(d.Action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, target := decl.TriggerSensitivity(d), decl.TargetSensitivity(d.Action.Kind)
+	if !decl.Widens(source, target) {
+		return
+	}
+	for _, ref := range refs {
+		a, err := (declengine.PostgresBackend{Store: h.db}).RequestSensitivityApproval(h.ctx, declengine.SensitivityApprovalRequest{
+			NamespaceID: h.ns, DeclarationID: v.DeclarationID, DeclarationVersionID: v.ID, SourceDeclarationID: v.DeclarationID,
+			SourceVersionID: v.ID, Variable: ref.Name, Owner: v.Author, EventID: "conformance", Source: source, Target: target})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.Status == declengine.SensitivityApproved {
+			continue
+		}
+		if _, err := declengine.DecideSensitivityApproval(h.ctx, h.db, h.ns, a.ID,
+			declengine.ActivationPrincipal{Kind: declengine.PrincipalHuman, Author: v.Author}, declengine.SensitivityApproved, "conformance"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // fire publishes and activates one declaration whose action is kind/with,
 // delivers the event that triggers it, and drives the resulting run to a
 // terminal state through the worker. It returns the firing id.
@@ -311,6 +344,7 @@ func (h *declHarness) fire(kind string, with string) string {
 	if err := h.db.RecordDeclarationActivation(h.ctx, h.ns, v.ID, "activate", "human", ""); err != nil {
 		t.Fatal(err)
 	}
+	h.approveWidenings(v, d)
 	ev, err := h.db.DeliverSignalEvent(h.ctx, postgres.DeliverSignalEventInput{NamespaceID: h.ns, Name: "timer", Emitter: "conformance"})
 	if err != nil {
 		t.Fatal(err)

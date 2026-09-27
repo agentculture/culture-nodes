@@ -512,3 +512,13 @@ nullable: NULL is "unmeasured", never true or false.
   `declaration_subject_deferrals.event`), so a frozen node's stored
   reactions can be replayed through the ordinary `Handle` path in arrival
   order once the engine switch flips back to `after`.
+- `0067_decl_sensitivity_approvals.sql` — variable sensitivity and
+  owner-approved widening (#328 t30; spec q22;
+  `internal/declengine/sensitivity.go`):
+  `declaration_sensitivity_approvals` is one immutable human-inbox task per
+  (declaration version, source version, variable, target system), addressed
+  to the source version's author, opened the first time a firing is
+  `sensitivity-blocked`; `declaration_sensitivity_decisions` holds the
+  append-only `approved` / `refused` answers, each correction superseding
+  the previous head. Not `human_tasks`: that table needs a graph run and is
+  resolved by UPDATE, and a blocked firing has no run.

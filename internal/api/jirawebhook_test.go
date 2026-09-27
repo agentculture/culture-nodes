@@ -78,6 +78,13 @@ func TestJiraReplayMatchesPythonSweepSeam(t *testing.T) {
 	}
 	var normalized []map[string]any
 	for _, fact := range got {
+		// Deviation d1 (#328): the webhook emits jira.issue.created now and
+		// the poller gains it in t31, where pr-upkeep's pinned stage/replay
+		// tests are rewritten anyway. Until then parity is every OTHER fact;
+		// t31 deletes this skip, and the test goes back to exact equality.
+		if fact.Name == "jira.issue.created" {
+			continue
+		}
 		var payload, watermark any
 		_ = json.Unmarshal(fact.Payload, &payload)
 		_ = json.Unmarshal(fact.Watermark, &watermark)

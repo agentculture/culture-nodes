@@ -348,7 +348,7 @@ print(d.get("id", ""), d.get("authority", ""), origin.get("kind", ""),
 assign)
   actor="${1:?usage: assign <codex-thor|codex-orin|developer|planner|verifier|intake|qwen-developer> \"instruction\" [opts]}"; shift
   instruction="${1:?assign needs an instruction}"; shift
-  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""; base_ref=""; devague_write=false
+  sandbox=read-only; timeout=15m; retries=1; outcome=completed; watch=1; category=""; repo_override=""; handover=false; mode=""; model=""; base_ref=""; devague_write=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --sandbox) sandbox="$2"; shift 2;;
@@ -360,6 +360,10 @@ assign)
       # forgetting this flag costs a confusing round trip, not a clear error.
       --mode) mode="$2"; shift 2;;
       --base-ref) base_ref="$2"; shift 2;;
+      # The engine model (codex: `codex exec -m`, e.g. gpt-6-sol). Omitted
+      # when not given, so the account default applies and the run input
+      # never records a choice nobody made.
+      --model) model="$2"; shift 2;;
       --timeout) timeout="$2"; shift 2;;
       --retries) retries="$2"; shift 2;;
       --outcome) outcome="$2"; shift 2;;
@@ -458,10 +462,11 @@ assign)
   # input can satisfy.
   [ -n "$mode" ] || sed -i '/^[[:space:]]*mode: \/run\/input\/mode[[:space:]]*$/d' "$wf"
   [ -n "$base_ref" ] || sed -i '/^[[:space:]]*base_ref: \/run\/input\/base_ref[[:space:]]*$/d' "$wf"
+  [ -n "$model" ] || sed -i '/^[[:space:]]*model: \/run\/input\/model[[:space:]]*$/d' "$wf"
   [ "$devague_write" = true ] || sed -i '/^[[:space:]]*devague_write: \/run\/input\/devague_write[[:space:]]*$/d' "$wf"
   digest=$("$0" publish "$wf")
   [ -n "$digest" ] || { echo "nodes-op: publish returned no digest" >&2; exit 1; }
-  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" "$base_ref" "$devague_write" <<'PYEOF' > "$wf.json"
+  python3 - "$instruction" "$sandbox" "$outcome" "$repo" "$handover" "$mode" "$base_ref" "$devague_write" "$model" <<'PYEOF' > "$wf.json"
 import json, sys
 payload = {"instruction": sys.argv[1], "sandbox": sys.argv[2],
            "success_outcome": sys.argv[3], "repo": sys.argv[4],
@@ -477,6 +482,8 @@ if sys.argv[6]:
     payload["mode"] = sys.argv[6]
 if sys.argv[7]:
     payload["base_ref"] = sys.argv[7]
+if sys.argv[9]:
+    payload["model"] = sys.argv[9]
 print(json.dumps(payload))
 PYEOF
   if [ -n "$category" ]; then
@@ -485,7 +492,7 @@ PYEOF
     out=$(NODES_OP_YES=1 "$0" create "$digest" "$wf.json")
   fi
   run_id=$(echo "$out" | awk '{print $1}')
-  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox${mode:+ mode=$mode} timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}$([ "$devague_write" = true ] && echo " devague_write=true")"
+  echo "assigned: run=$run_id actor=$actor sandbox=$sandbox${mode:+ mode=$mode}${model:+ model=$model} timeout=$timeout${category:+ category=$category}${handover:+ handover=$handover}$([ "$devague_write" = true ] && echo " devague_write=true")"
   # An `if`, not `[ ... ] && ...`: as the arm's last command, a false test
   # in an && list leaves the script's exit status at 1, so every --no-watch
   # dispatch reported failure after succeeding (found by t13's tests).

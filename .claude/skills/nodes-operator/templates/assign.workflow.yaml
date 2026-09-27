@@ -47,6 +47,11 @@ spec:
           # making it required would invalidate every already-published digest.
           mode:
             type: string
+          # The engine model for this dispatch (codex bridge: `codex exec -m`,
+          # adapters/codex server.py reads input.model). Optional for the same
+          # digest-stability reason as mode; absent means the account default.
+          model:
+            type: string
           # t13 / #199: does this package write .devague/? Optional for the
           # same digest-stability reason as the two above; the developer
           # bridge answers it from its own custody declaration.
@@ -80,6 +85,7 @@ spec:
           success_outcome: /run/input/success_outcome
           handover: /run/input/handover
           mode: /run/input/mode
+          model: /run/input/model
           devague_write: /run/input/devague_write
       contract:
         input:

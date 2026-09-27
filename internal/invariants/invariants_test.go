@@ -308,6 +308,14 @@ var authorityAllowlists = []struct {
 				"engine's bound did; and not confirmed: no human transacted it. The write sits inside the same " +
 				"transaction as the TriggerEvent admission so a minted run and its attribution cannot exist without " +
 				"each other",
+			"internal/declengine/dispatch.go": "engine-origin writer (plan trigger-condition-action t9, issue #328): " +
+				"the declaration_firing decision record is a pure composition of the stored firing row — the " +
+				"event id, the declaration id and pinned version, and the trigger/condition/action digests the " +
+				"engine already recorded when it evaluated the CEL condition. Same firing, same record, every " +
+				"time (§10.4). Not proposed: no actor suggested the firing, a declaration matched. Not confirmed: " +
+				"activating a declaration is a human's own transaction (declengine.Activate), not this record. " +
+				"It names the registered producer identity (engine_declaration_engine), so a firing with no " +
+				"accountable producer refuses at append",
 		},
 	},
 }
@@ -328,6 +336,7 @@ var deterministicOriginByFile = map[string]string{
 	"internal/devague/deliverables.go":  "OriginEngine",
 	"internal/preflight/records.go":     "OriginEngine",
 	"internal/store/postgres/remint.go": "OriginEngine",
+	"internal/declengine/dispatch.go":   "OriginEngine",
 }
 
 // TestAuthorityLadderWritersAreAllowlisted is the c17/h15 gate: for each

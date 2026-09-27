@@ -72,3 +72,18 @@ func clone(src []Kind) []Kind {
 	}
 	return out
 }
+
+// Action returns the registered action kind with this name.
+func Action(name string) (Kind, bool) { return find(actions, name) }
+
+// Trigger returns the registered trigger kind with this name.
+func Trigger(name string) (Kind, bool) { return find(triggers, name) }
+
+func find(src []Kind, name string) (Kind, bool) {
+	for _, kind := range src {
+		if kind.Name == name {
+			return clone([]Kind{kind})[0], true
+		}
+	}
+	return Kind{}, false
+}

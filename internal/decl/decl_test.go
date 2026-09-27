@@ -132,3 +132,15 @@ func TestExplicitConditionAndPayloadArePreserved(t *testing.T) {
 		t.Fatalf("payload was not canonicalized: %s", canonical)
 	}
 }
+
+func TestKindsMustBeRegistered(t *testing.T) {
+	base := string(fixture(t, "minimal.json"))
+	for name, source := range map[string]string{
+		"unknown trigger": strings.Replace(base, `"kind":"timer"`, `"kind":"github.pr.teleported"`, 1),
+		"unknown action":  strings.Replace(base, `"kind":"discord.post"`, `"kind":"fax.send"`, 1),
+	} {
+		if _, err := decl.Parse([]byte(source), decl.FormatJSON); err == nil || !strings.Contains(err.Error(), "registered vocabulary") {
+			t.Errorf("%s: err = %v, want a registered-vocabulary refusal", name, err)
+		}
+	}
+}

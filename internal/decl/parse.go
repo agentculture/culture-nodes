@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/agentculture/culture-nodes/internal/contracts"
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"sigs.k8s.io/yaml"
 )
 
@@ -71,6 +72,12 @@ func Parse(source []byte, format Format) (*Declaration, error) {
 	var d Declaration
 	if err := json.Unmarshal(data, &d); err != nil {
 		return nil, fmt.Errorf("declaration decode: %w", err)
+	}
+	if _, ok := kinds.Trigger(d.Trigger.Kind); !ok {
+		return nil, fmt.Errorf("declaration trigger kind %q is not in the registered vocabulary (internal/decl/kinds)", d.Trigger.Kind)
+	}
+	if _, ok := kinds.Action(d.Action.Kind); !ok {
+		return nil, fmt.Errorf("declaration action kind %q is not in the registered vocabulary (internal/decl/kinds)", d.Action.Kind)
 	}
 	if _, ok := shape["condition"]; !ok {
 		d.Condition = "true"

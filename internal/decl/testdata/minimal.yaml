@@ -1,0 +1,11 @@
+landing_node:
+  deadline: 1h
+  name: waiting
+start_node:
+  deadline: none
+  name: root
+action:
+  kind: discord.post
+trigger:
+  kind: timer
+name: sample

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +94,37 @@ func TestJiraIssueKeysAreOrderIndependentAndUnique(t *testing.T) {
 	a := jiraIssueKeys(map[string]any{"issue": map[string]any{"key": "SCRUM-2"}, "other": []any{map[string]any{"issueKey": "SCRUM-1"}, map[string]any{"key": "SCRUM-2"}}})
 	if !reflect.DeepEqual(a, []string{"SCRUM-1", "SCRUM-2"}) {
 		t.Fatalf("keys = %v", a)
+	}
+}
+
+func TestJiraEmissionsAddCreatedAlongsideLegacyNames(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("testdata", "jira_issue.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issue map[string]any
+	if err := json.Unmarshal(body, &issue); err != nil {
+		t.Fatal(err)
+	}
+	facts := jiraEmissions(issue, "team.example.com", "SCRUM", "bot")
+	// Graph workflows still trigger on pr-upkeep.jira.*, so created is added
+	// alongside the legacy names and the synthetic creation transition; the
+	// neutral renames wait for those workflows to migrate (#328 t37).
+	created, legacyCreation := 0, false
+	for _, fact := range facts {
+		switch {
+		case fact.Name == "jira.issue.created":
+			created++
+			if fact.SourceKey != "jira:team.example.com:"+text(issue["key"])+":created" {
+				t.Errorf("created source key = %q", fact.SourceKey)
+			}
+		case strings.HasPrefix(fact.Name, "pr-upkeep.jira.transitioned."):
+			legacyCreation = true
+		case !strings.HasPrefix(fact.Name, "pr-upkeep.jira."):
+			t.Errorf("unexpected fact name %q", fact.Name)
+		}
+	}
+	if created != 1 || !legacyCreation {
+		t.Fatalf("created=%d legacyCreation=%v, want one created fact beside the legacy transition", created, legacyCreation)
 	}
 }

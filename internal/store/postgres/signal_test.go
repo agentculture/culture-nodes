@@ -615,3 +615,36 @@ func TestStartDurableSignalWaitReparkAdoptsOriginalSubscription(t *testing.T) {
 			sub.Status, sub.FiredEventID, ev.ID)
 	}
 }
+
+func TestJiraIssueCreatedFollowsCutoverAndDedupesAcrossSources(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "jira-issue-created")
+	created := func(issue, emitter string) postgres.DeliverSignalEventInput {
+		return postgres.DeliverSignalEventInput{NamespaceID: ns.ID, Name: "jira.issue.created", Emitter: emitter,
+			SourceKey: "jira:team.example.com:" + issue + ":created",
+			Watermark: json.RawMessage(`{"changelog_id":"0","comment_id":""}`)}
+	}
+	// An issue adopted at the history cutover existed before it: its creation
+	// is suppressed exactly as the synthetic creation transition is.
+	if _, err := s.Pool().Exec(ctx, `INSERT INTO jira_history_watermark_cutovers (namespace_id, issue_source_key)
+		VALUES ($1, 'jira:team.example.com:SCRUM-3')`, ns.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AdoptJiraHistoryHead(ctx, ns.ID, "jira:team.example.com:SCRUM-3", json.RawMessage(`{"changelog_id":"10180","comment_id":"10118"}`)); err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.DeliverSignalEvent(ctx, created("SCRUM-3", "jira-webhook"))
+	if err != nil || !old.Suppressed {
+		t.Fatalf("pre-cutover creation = %+v, err=%v; want suppressed", old, err)
+	}
+	// A new issue is delivered once, whichever source sees it first.
+	first, err := s.DeliverSignalEvent(ctx, created("SCRUM-9", "jira-webhook"))
+	if err != nil || first.Suppressed || first.Duplicate || first.Event.ID == "" {
+		t.Fatalf("new issue creation = %+v, err=%v; want delivered", first, err)
+	}
+	second, err := s.DeliverSignalEvent(ctx, created("SCRUM-9", "pr-upkeep-sweep"))
+	if err != nil || !second.Duplicate {
+		t.Fatalf("second source = %+v, err=%v; want duplicate", second, err)
+	}
+}

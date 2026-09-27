@@ -32,6 +32,8 @@ response.
 ## Product verbs (thin API clients)
 
 - `culture-nodes workflow generate|generation-get|validate|publish|list|get`
+- `culture-nodes decl declare|validate|link|show|list|focus|activate`
+- `culture-nodes chain alias|show`
 - `culture-nodes run create|list|get|cancel|events|retag|grade`
 - `culture-nodes node-runs list`
 - `culture-nodes actors list|get|resume|dial-in`
@@ -60,6 +62,8 @@ the `NODES_HUMAN_DECISION_TOKEN` environment variable — never logged.
 - `culture-nodes explain whoami`
 - `culture-nodes explain doctor`
 - `culture-nodes explain workflow`
+- `culture-nodes explain decl`
+- `culture-nodes explain chain`
 - `culture-nodes explain run`
 - `culture-nodes explain node-runs`
 - `culture-nodes explain actors`
@@ -202,6 +206,82 @@ the compiler diagnostics and, for an edit, the diff against `--base-digest`.
 Compiles and stores the document as an immutable version addressed by its
 content digest. Publishing identical content twice is idempotent (HTTP 200
 with the existing version) rather than an error.
+"""
+
+_DECL = """\
+# culture-nodes decl
+
+Thin REST client over the declarations API (`api/openapi/openapi.yaml`,
+`declarations` tag): declare, validate, link, show, list, focus, activate.
+No declaration logic lives here — every verb sends one HTTP request to the
+Culture Nodes control-plane API and renders the response (spec decision
+c28, honesty h24).
+
+## Usage
+
+    culture-nodes decl declare <file.yaml|file.json>
+    culture-nodes decl validate <file.yaml|file.json>
+    culture-nodes decl link <name> --to <target> --kind must|can
+    culture-nodes decl show <name>
+    culture-nodes decl list
+    culture-nodes decl focus <name> [--distance N] [--direction both|up|down] [--link both|must|can]
+    culture-nodes decl activate <name> [--version-id ID]
+
+Every subcommand accepts `--json` (byte-exact passthrough of the API's JSON
+response) and `--api-url` (default: `$NODES_API_URL`, else
+`http://127.0.0.1:8080`).
+
+## Authentication
+
+`declare`, `link` and `activate` require an authenticated principal — a
+human session (Cloudflare Access) or a registered agent actor's own bearer
+(ADR 0014's one-level-deep activation root of trust). This module sends
+whichever credential the environment provides: `$NODES_ACTOR_TOKEN` (an
+agent's own bearer) as `Authorization: Bearer <token>`, or `$NODES_OP_COOKIE`
+(a human's Access session) as `Cookie: CF_Authorization=<value>`. Credentials are
+read from the environment only, never from flags (argv shows up in `ps`
+and shell history). Both credential kinds hit the
+same verb and route; only activation authority differs server-side.
+`validate`, `show`, `list` and `focus` are read-only and never require a
+credential.
+
+## show and focus accept a chain (alias) name
+
+`name` may name either a declaration or a declaration alias (spec c31/h23,
+see `culture-nodes explain chain`) — this module forwards it unchanged as
+the API's `{name}` path segment.
+
+## validate
+
+Compiles the document server-side and reports every diagnostic. An invalid
+document is a domain outcome (`valid: false`), not a technical failure:
+diagnostics print to stdout with exit `1`, never an `error:`/`hint:` stderr
+message.
+"""
+
+_CHAIN = """\
+# culture-nodes chain
+
+Thin REST client over the declaration-alias (chain) API
+(`api/openapi/openapi.yaml`, `declarations` tag): `alias` names a chain
+(`POST /v1alpha1/declarations/aliases`), `show` displays one
+(`GET /v1alpha1/declarations/{name}` — the same show route
+`culture-nodes decl show` uses). No alias logic lives here (spec decision
+c28, honesty h24); naming and name resolution happen server-side.
+
+## Usage
+
+    culture-nodes chain alias <name> [--declarations d1,d2,...]
+    culture-nodes chain show <name>
+
+Both accept `--json` and `--api-url`; `alias` additionally requires a
+credential the same way `culture-nodes decl declare` does (see
+`culture-nodes explain decl`).
+
+## chain (alias) names
+
+`show`'s `name` accepts either a chain (alias) name or an ordinary
+declaration name (spec c31/h23) — this module forwards it unchanged.
 """
 
 _RUN = """\
@@ -686,6 +766,17 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("workflow", "publish"): _WORKFLOW,
     ("workflow", "list"): _WORKFLOW,
     ("workflow", "get"): _WORKFLOW,
+    ("decl",): _DECL,
+    ("decl", "declare"): _DECL,
+    ("decl", "validate"): _DECL,
+    ("decl", "link"): _DECL,
+    ("decl", "show"): _DECL,
+    ("decl", "list"): _DECL,
+    ("decl", "focus"): _DECL,
+    ("decl", "activate"): _DECL,
+    ("chain",): _CHAIN,
+    ("chain", "alias"): _CHAIN,
+    ("chain", "show"): _CHAIN,
     ("run",): _RUN,
     ("run", "create"): _RUN,
     ("run", "list"): _RUN,

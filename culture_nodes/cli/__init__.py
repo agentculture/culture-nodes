@@ -63,7 +63,9 @@ def _argv_has_json(argv: list[str] | None) -> bool:
 
 def _build_parser() -> argparse.ArgumentParser:
     from culture_nodes.cli._commands import actors as _actors_group
+    from culture_nodes.cli._commands import chain as _chain_group
     from culture_nodes.cli._commands import cli as _cli_group
+    from culture_nodes.cli._commands import decl as _decl_group
     from culture_nodes.cli._commands import dispatch as _dispatch_group
     from culture_nodes.cli._commands import doctor as _doctor_cmd
     from culture_nodes.cli._commands import explain as _explain_cmd
@@ -103,6 +105,8 @@ def _build_parser() -> argparse.ArgumentParser:
     # culture_nodes/api_client.py. Zero engine logic lives in this package
     # (spec decision c28).
     _workflow_group.register(sub)
+    _decl_group.register(sub)
+    _chain_group.register(sub)
     _run_group.register(sub)
     _node_runs_group.register(sub)
     _actors_group.register(sub)

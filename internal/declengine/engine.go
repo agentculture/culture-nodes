@@ -144,8 +144,8 @@ func New(cfg Config, backend Backend, markers MarkerStore, dispatcher Dispatcher
 // declaration in its namespace. A failure in one declaration is recorded
 // and joined into the returned error; it never stops the others.
 func (e *Engine) Handle(ctx context.Context, event Event) error {
-	if event.NamespaceID == "" || event.ID == "" || event.Kind == "" || event.Node == "" {
-		return errors.New("declengine: event identity, kind and node required")
+	if event.NamespaceID == "" || event.ID == "" || event.Kind == "" {
+		return errors.New("declengine: event identity and kind required")
 	}
 	event.Origin.NamespaceID, event.Origin.EventID = event.NamespaceID, event.ID
 	// A reaction can arrive before the worker has bound the artifact its
@@ -161,6 +161,19 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	if err != nil {
 		return err
 	}
+	// h40/c82: a reaction's start node is the landing node the parent
+	// firing opened, not whatever the caller happened to pass. A reaction
+	// against a node that has already closed is recorded but never fired.
+	node, nodeFound, cont, err := e.deriveNode(ctx, &event, parent)
+	if err != nil {
+		return err
+	}
+	if !cont {
+		return nil
+	}
+	if event.Node == "" {
+		return errors.New("declengine: event node required (no verified parent firing to derive it from)")
+	}
 	var ancestry []Ancestor
 	if parent != "" {
 		ancestry, err = e.backend.Lineage(ctx, event.NamespaceID, parent)
@@ -173,6 +186,7 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 		return err
 	}
 	var failures []error
+	anyMatched := false
 	for _, a := range active {
 		matched, err := matches(a.Declaration, event)
 		if err != nil {
@@ -182,8 +196,19 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 		if !matched {
 			continue
 		}
+		anyMatched = true
 		if err := e.evaluate(ctx, event, a, parent, ancestry); err != nil {
 			failures = append(failures, err)
+		}
+	}
+	// c49/h33: nothing currently active would ever consume this node's
+	// events, but something did when the node opened -- the reacting
+	// declaration was upgraded or removed out from under an in-flight node.
+	if !anyMatched && nodeFound {
+		if nb, ok := e.backend.(NodeBackend); ok {
+			if err := checkOrphan(ctx, nb, active, event.NamespaceID, event.ID, node); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 	return errors.Join(failures...)
@@ -221,7 +246,13 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 		}
 	}
 	if count > a.Declaration.Trigger.ReentryLimit {
-		return record(OutcomeLoopLimited, fmt.Sprintf("declaration already appears %d times in its lineage; re-entry limit is %d", count, a.Declaration.Trigger.ReentryLimit))
+		if err := record(OutcomeLoopLimited, fmt.Sprintf("declaration already appears %d times in its lineage; re-entry limit is %d", count, a.Declaration.Trigger.ReentryLimit)); err != nil {
+			return err
+		}
+		// h40: a reaction the loop bound stops is a closing path in its
+		// own right, not a node left open forever waiting for one that
+		// will never be allowed to fire.
+		return e.closeNodeOpenedBy(ctx, event.NamespaceID, parent, NodeReasonLoopLimited)
 	}
 	// The c93 backstops: hop limit and self-retrigger read only the
 	// resolved lineage already in hand; the rate ceiling is the one guard
@@ -315,7 +346,17 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	}
 	evaluation.Variables = vars
 	evaluation.Outcome, evaluation.Reason = OutcomeFired, "action dispatched and landing node "+a.Declaration.LandingNode.Name+" opened"
-	return e.backend.Finish(ctx, Landing{NamespaceID: event.NamespaceID, FiringID: firing.ID, Node: a.Declaration.LandingNode, Deadline: deadline}, evaluation)
+	if err := e.backend.Finish(ctx, Landing{NamespaceID: event.NamespaceID, FiringID: firing.ID, Node: a.Declaration.LandingNode, Deadline: deadline}, evaluation); err != nil {
+		return err
+	}
+	// h40/c49: snapshot whichever active declaration reacts to the node
+	// just opened (needed later to tell a genuine terminal node apart from
+	// one orphaned by an upgrade), and close the node THIS reaction
+	// consumed -- the parent firing's own landing node, if any.
+	if err := e.recordReactorIfAny(ctx, event.NamespaceID, firing.ID, a.Declaration.LandingNode.Name); err != nil {
+		return err
+	}
+	return e.closeNodeOpenedBy(ctx, event.NamespaceID, parent, NodeReasonConsumed)
 }
 
 // firingInput pins the exact trigger, condition and action this firing

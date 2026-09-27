@@ -58,6 +58,14 @@ var triggers = []Kind{
 	{Name: "action.timed_out", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},
 	{Name: "action.rejected", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},
 	{Name: "action.capacity_exhausted", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},
+	// action.budget_exhausted (task t11, #328): the trigger a declaration
+	// reacting to a blocked dispatch takes. Unlike the four action.* kinds
+	// above, no run and no actor invocation ever happened -- the firing's
+	// own node/machine/declaration/alias budget check (internal/declengine
+	// /budget.go) refused it before dispatch -- but it shares the family's
+	// signature so a declaration can route it exactly like a technical
+	// action failure.
+	{Name: "action.budget_exhausted", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},
 	{Name: "timer", Version: 1, Consumes: []ArtifactType{ArtifactTimer}, Produces: []ArtifactType{ArtifactTimer}},
 	{Name: "declaration.proposed", Version: 1, Consumes: []ArtifactType{ArtifactDeclaration}, Produces: []ArtifactType{ArtifactDeclaration}},
 	{Name: "declaration.overlap", Version: 1, Consumes: []ArtifactType{ArtifactDeclaration}, Produces: []ArtifactType{ArtifactDeclaration}},

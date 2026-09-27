@@ -344,6 +344,24 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	if err != nil {
 		return fail(OutcomeDispatchFailed, err)
 	}
+	// Task t11: every budget that applies to this firing -- its landing
+	// node, the target machine, the declaration, and every alias containing
+	// it -- must have headroom, checked here on claimed work with the
+	// marker already minted, one step before the actor is invoked (the
+	// position ADR 0011 established for this exact kind of check).
+	ok, reason, err = e.checkBudgets(ctx, event.NamespaceID, a.Declaration.LandingNode.Name, actionMachine(action), a)
+	if err != nil {
+		return fail(OutcomeEvaluationError, err)
+	}
+	if !ok {
+		if err := record(OutcomeBudgetBlocked, reason); err != nil {
+			return err
+		}
+		return e.emitBudgetExhausted(ctx, event.NamespaceID, a.Declaration.LandingNode.Name, reason)
+	}
+	if err := e.chargeBudgetSpend(ctx, event.NamespaceID, firing.ID, a.Declaration.LandingNode.Name, actionMachine(action), a.ID); err != nil {
+		return fail(OutcomeDispatchFailed, err)
+	}
 	if err := record(OutcomeDispatching, "firing claimed with its component digests pinned"); err != nil {
 		return err
 	}

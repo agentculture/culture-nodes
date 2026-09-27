@@ -457,6 +457,19 @@ nullable: NULL is "unmeasured", never true or false.
   per-match `declaration_evaluations`. An initial firing is unique per
   `(namespace_id, event_id, declaration_id)`; a re-mint keeps the original
   lineage and canonical firing id.
+- `0062_decl_concurrency.sql` — loop-guard and per-subject concurrency
+  support for the declaration engine (#328 t10): `declaration_firings`
+  gains a nullable `subject` column (the firing's caller-supplied
+  correlation key, mirroring `runs.subject`) plus a rate-ceiling index over
+  `(namespace_id, declaration_id, created_at)` on logical (non-remint) rows,
+  and a `declaration_firings_subject_idx` for per-subject lookups. New
+  table `declaration_subject_deferrals` is declarations' mirror of `0039`'s
+  `deferred_triggers`: at most one queued entry per `(namespace_id,
+  declaration_id, subject)` (a later event for an already-queued subject
+  replaces it, not a sibling row), storing the whole triggering event as
+  JSON so a drain can replay it through the ordinary firing path. The
+  re-entry limit, hop limit and self-retrigger backstops need no new
+  storage — they read the causal lineage the engine already resolves.
 - `0064_declaration_firing_fks.sql` — the catalog foreign keys 0060
   deferred (#328 t9): `declaration_firings` now references `declarations`
   by `(namespace_id, declaration_id)` and a version *of that same

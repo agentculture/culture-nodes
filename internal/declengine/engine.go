@@ -40,6 +40,11 @@ const (
 	OutcomeDispatching     = "dispatching"
 	OutcomeDispatchFailed  = "dispatch failed"
 	OutcomeFired           = "fired"
+	// OutcomeDeferred is task t10's per-subject concurrency backstop
+	// (spec c84/h57): the declaration's max_concurrent_subject cap was
+	// already met for this event's subject, so it was queued instead of
+	// claimed -- never dropped, and never counted as a firing.
+	OutcomeDeferred = "deferred"
 )
 
 // Config carries the deployment's engine settings. MarkerKeyEnv names the
@@ -65,6 +70,12 @@ type Event struct {
 	NamespaceID, ID, Kind, Node string
 	Variables                   map[string]any
 	Origin                      OriginEvent
+	// Subject is an optional, caller-supplied correlation key (task t10,
+	// spec c84/h57) -- e.g. a Jira issue key or a PR identity -- mirroring
+	// the graph engine's SignalEvent.Subject/runs.subject. It is never
+	// derived from Variables here: the caller (whatever routes an event to
+	// Handle) decides it, exactly as TriggerEvent's caller does today.
+	Subject string
 }
 
 // Evaluation is one recorded step of one declaration's evaluation of one
@@ -92,6 +103,22 @@ type Backend interface {
 	Claim(context.Context, postgres.DeclarationFiringInput) (postgres.DeclarationFiring, bool, error)
 	Record(context.Context, Evaluation) error
 	Finish(context.Context, Landing, Evaluation) error
+	// RecentFirings counts a declaration's logical (non-remint) firings
+	// created at or after since -- the rate-ceiling backstop (c93).
+	RecentFirings(ctx context.Context, namespaceID, declarationID string, since time.Time) (int, error)
+	// SubjectInFlight counts a declaration's canonical firings for one
+	// subject whose landing node is still open -- the per-subject
+	// concurrency ceiling (c84/h57).
+	SubjectInFlight(ctx context.Context, namespaceID, declarationID, subject string) (int, error)
+	// DeferSubject queues (or, per the replace rule, re-points) the one
+	// remembered entry for a (declaration, subject) whose concurrency cap
+	// left no room for event.
+	DeferSubject(ctx context.Context, in DeferSubjectInput) error
+	// OldestDeferredSubject returns the longest-queued deferred entry for a
+	// declaration, across every subject, for DrainSubject to replay.
+	OldestDeferredSubject(ctx context.Context, namespaceID, declarationID string) (DeferredSubject, bool, error)
+	// DeleteDeferredSubject removes a drained (or superseded) entry.
+	DeleteDeferredSubject(ctx context.Context, namespaceID, id string) error
 }
 
 // Engine is the declaration firing loop. It holds no per-event state.
@@ -196,6 +223,24 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	if count > a.Declaration.Trigger.ReentryLimit {
 		return record(OutcomeLoopLimited, fmt.Sprintf("declaration already appears %d times in its lineage; re-entry limit is %d", count, a.Declaration.Trigger.ReentryLimit))
 	}
+	// The c93 backstops: hop limit and self-retrigger read only the
+	// resolved lineage already in hand; the rate ceiling is the one guard
+	// check that needs a backend read. All three share the loop-limited
+	// outcome with the re-entry check above -- t13's explain surface reads
+	// outcome+reason, not a separate kind per limit.
+	if ok, reason := checkHopLimit(a, lineage); !ok {
+		return record(OutcomeLoopLimited, reason)
+	}
+	if ok, reason := checkSelfRetrigger(a, lineage); !ok {
+		return record(OutcomeLoopLimited, reason)
+	}
+	rateOK, reason, err := e.checkRateCeiling(ctx, event.NamespaceID, a)
+	if err != nil {
+		return fail(OutcomeEvaluationError, err)
+	}
+	if !rateOK {
+		return record(OutcomeLoopLimited, reason)
+	}
 	ok, err = condition(a.Declaration.Condition, event.Variables, lineage)
 	if err != nil {
 		return fail(OutcomeConditionError, err)
@@ -205,6 +250,16 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	}
 	if err := record(OutcomeConditionTrue, "condition evaluated to true"); err != nil {
 		return err
+	}
+	// The subject concurrency cap (c84/h57) is checked only once a firing
+	// would otherwise happen: a false condition should never spend a
+	// subject's in-flight slot or queue a replay for nothing.
+	deferred, err := e.checkSubjectConcurrency(ctx, event, a)
+	if err != nil {
+		return fail(OutcomeEvaluationError, err)
+	}
+	if deferred {
+		return record(OutcomeDeferred, fmt.Sprintf("per-subject concurrency cap %d reached for subject %q; queued to run when a slot frees", a.Declaration.Trigger.MaxConcurrentSubject, event.Subject))
 	}
 	// Everything that can reject the firing is checked before it is
 	// claimed, so a dispatched action always has a node to land on.
@@ -267,7 +322,7 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 // evaluated. The digests are over the declared (unrendered) components, so
 // two firings of one version always pin the same three digests.
 func firingInput(event Event, a ActiveDeclaration, parent string) (postgres.DeclarationFiringInput, error) {
-	in := postgres.DeclarationFiringInput{NamespaceID: event.NamespaceID, EventID: event.ID, DeclarationID: a.ID, DeclarationVersion: a.VersionID, ParentFiringID: parent}
+	in := postgres.DeclarationFiringInput{NamespaceID: event.NamespaceID, EventID: event.ID, DeclarationID: a.ID, DeclarationVersion: a.VersionID, ParentFiringID: parent, Subject: event.Subject}
 	for _, c := range []struct {
 		v   any
 		dst *string

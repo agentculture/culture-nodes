@@ -35,7 +35,8 @@
         "reentry_limit": {"type": "integer", "minimum": 0, "default": 3},
         "hop_limit": {"type": "integer", "minimum": 1, "default": 20},
         "rate_ceiling": {"type": "string", "pattern": "^[1-9][0-9]*/h$", "default": "30/h"},
-        "allow_self_retrigger": {"type": "boolean", "default": false}
+        "allow_self_retrigger": {"type": "boolean", "default": false},
+        "max_concurrent_subject": {"type": "integer", "minimum": 1, "description": "Caps in-flight firings of this declaration per subject key; unset means no cap."}
       }
     },
     "action": {

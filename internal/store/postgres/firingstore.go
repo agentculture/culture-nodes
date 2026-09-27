@@ -25,7 +25,11 @@ type DeclarationFiring struct {
 	LineageID          string
 	CanonicalFiringID  string
 	RemintOfID         string
-	CreatedAt          time.Time
+	// Subject is the caller-supplied correlation key (task t10, spec
+	// c84/h57) the per-subject concurrency guard reads back; empty when
+	// the firing's event carried none.
+	Subject   string
+	CreatedAt time.Time
 }
 
 type DeclarationFiringInput struct {
@@ -42,18 +46,21 @@ type DeclarationFiringInput struct {
 	// RemintOfID identifies the prior physical dispatch. A re-mint retains
 	// that firing's canonical entry and lineage and creates no lineage edge.
 	RemintOfID string
+	// Subject is task t10's per-subject concurrency correlation key (spec
+	// c84/h57); empty when the firing's event carried none.
+	Subject string
 }
 
 const declarationFiringColumns = `id,namespace_id,event_id,declaration_id,declaration_version,
 	trigger_digest,condition_digest,action_digest,lineage_id,canonical_firing_id,
-	COALESCE(remint_of_id,''),created_at`
+	COALESCE(remint_of_id,''),COALESCE(subject,''),created_at`
 
 func scanDeclarationFiring(row pgx.Row) (DeclarationFiring, error) {
 	var f DeclarationFiring
 	err := row.Scan(&f.ID, &f.NamespaceID, &f.EventID, &f.DeclarationID,
 		&f.DeclarationVersion, &f.TriggerDigest, &f.ConditionDigest,
 		&f.ActionDigest, &f.LineageID, &f.CanonicalFiringID,
-		&f.RemintOfID, &f.CreatedAt)
+		&f.RemintOfID, &f.Subject, &f.CreatedAt)
 	return f, err
 }
 
@@ -106,12 +113,12 @@ func (s *Store) RecordDeclarationFiring(ctx context.Context, in DeclarationFirin
 
 	const insert = `INSERT INTO declaration_firings
 		(id,namespace_id,event_id,declaration_id,declaration_version,trigger_digest,
-		 condition_digest,action_digest,lineage_id,canonical_firing_id,remint_of_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''))
+		 condition_digest,action_digest,lineage_id,canonical_firing_id,remint_of_id,subject)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''))
 		ON CONFLICT DO NOTHING RETURNING ` + declarationFiringColumns
 	f, err := scanDeclarationFiring(tx.QueryRow(ctx, insert, id, in.NamespaceID, in.EventID,
 		in.DeclarationID, in.DeclarationVersion, in.TriggerDigest, in.ConditionDigest,
-		in.ActionDigest, lineageID, canonicalID, in.RemintOfID))
+		in.ActionDigest, lineageID, canonicalID, in.RemintOfID, in.Subject))
 	created := err == nil
 	if err == pgx.ErrNoRows {
 		if in.RemintOfID != "" {

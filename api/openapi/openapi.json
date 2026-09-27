@@ -72,6 +72,24 @@
         ],
         "type": "object"
       },
+      "ActivateDeclarationRequest": {
+        "description": "POST /v1alpha1/declarations/{name}/activate and .../deactivate's body (task t19, #328). Both fields are optional.",
+        "properties": {
+          "author": {
+            "description": "Accepted and ALWAYS IGNORED; see DeclarationSource.author.",
+            "type": "string"
+          },
+          "supersedes": {
+            "description": "The activation history record id this call corrects, if any.",
+            "type": "string"
+          },
+          "version_id": {
+            "description": "Defaults to the declaration's newest published version.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "Actor": {
         "description": "One `actors` table row (task t15). Actor identity is append-only: a capability or endpoint change is a new row (a new `revision`), never an update to an existing one. `capabilities` and `metadata` are rendered verbatim — neither column ever holds a credential (`metadata.auth_token_env`, when set, names the environment variable a worker reads a token from, never the token value itself), so there is nothing to redact.",
         "properties": {
@@ -780,6 +798,29 @@
         ],
         "type": "object"
       },
+      "CreateDeclarationAliasRequest": {
+        "description": "POST /v1alpha1/declarations/aliases' body (task t19,",
+        "properties": {
+          "author": {
+            "description": "Accepted and ALWAYS IGNORED; see DeclarationSource.author.",
+            "type": "string"
+          },
+          "declarations": {
+            "description": "Already-published declaration names to attach as initial members.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "CreateGateReportRequest": {
         "description": "One merge gate's whole finding. Every gate the workflow declared is listed, including the ones that measured nothing — a gate omitted because it did not apply is a gate the counts cannot report.",
         "properties": {
@@ -1250,6 +1291,49 @@
         ],
         "type": "object"
       },
+      "DeclarationActivation": {
+        "description": "The result of an activate or deactivate call (task t19,",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version_id",
+          "active"
+        ],
+        "type": "object"
+      },
+      "DeclarationAlias": {
+        "description": "A created declaration alias (chain) (task t19,",
+        "properties": {
+          "declarations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "declarations"
+        ],
+        "type": "object"
+      },
       "DeclarationEvaluation": {
         "description": "GET /v1alpha1/declarations/{name}/evaluations' payload (task t13, spec c88): the terminal declaration_evaluations row for one declaration's evaluation of one event.",
         "properties": {
@@ -1287,6 +1371,203 @@
           "declaration_version",
           "outcome",
           "reason"
+        ],
+        "type": "object"
+      },
+      "DeclarationLink": {
+        "description": "A recorded must/can ordering relation (task t19,",
+        "properties": {
+          "kind": {
+            "enum": [
+              "must",
+              "can"
+            ],
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DeclarationLinkRequest": {
+        "description": "POST /v1alpha1/declarations/{name}/links' body (task t19,",
+        "properties": {
+          "author": {
+            "description": "Accepted and ALWAYS IGNORED; see DeclarationSource.author.",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "must",
+              "can"
+            ],
+            "type": "string"
+          },
+          "to": {
+            "description": "The declaration this one depends on.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DeclarationShow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DeclarationVersion"
+          },
+          {
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "active_version_id": {
+                "description": "Present only when active is true.",
+                "type": "string"
+              },
+              "links": {
+                "items": {
+                  "$ref": "#/components/schemas/DeclarationLink"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "active",
+              "links"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "GET /v1alpha1/declarations/{name}'s payload (task t19,",
+        "type": "object"
+      },
+      "DeclarationSource": {
+        "description": "The declaration API's request body (task t19, #328) -- POST /v1alpha1/declarations/validate and POST /v1alpha1/declarations. Mirrors WorkflowSource: format defaults to yaml (authoring sugar over the canonical JSON the declaration schema validates).",
+        "properties": {
+          "author": {
+            "description": "Accepted and ALWAYS IGNORED. The recorded author is the authenticated request principal, never a body claim (c89/h62). This field exists only so a client can be tested against that guarantee.",
+            "type": "string"
+          },
+          "format": {
+            "default": "yaml",
+            "enum": [
+              "yaml",
+              "json"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "description": "The declaration document, in the named format.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      },
+      "DeclarationValidation": {
+        "description": "POST /v1alpha1/declarations/validate's payload (task t19,",
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "description": "Every action.with template reference that may be missing and has no default (c27/h21) -- never a reason valid is false.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "valid",
+          "diagnostics",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "DeclarationVersion": {
+        "description": "One published declaration version (task t19,",
+        "properties": {
+          "author": {
+            "description": "The authenticated principal that published this version -- never a body-supplied value.",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "declaration_id": {
+            "description": "The declaration's stable id",
+            "shared by every version.": null,
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "warnings": {
+            "description": "See DeclarationValidation.warnings; computed against this declaration's current links.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "declaration_id",
+          "name",
+          "version",
+          "digest",
+          "author",
+          "created_at",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "DeclarationVersionList": {
+        "description": "GET /v1alpha1/declarations' payload (task t19,",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeclarationVersion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -2462,6 +2743,31 @@
           "revision",
           "actor_keys",
           "last_seen"
+        ],
+        "type": "object"
+      },
+      "MoveDeclarationAliasRequest": {
+        "description": "POST /v1alpha1/declarations/aliases/{name}/move's body (task t19, #328). Serves both \"move\" (an existing parent changes) and \"nest\" (a parent is assigned for the first time) -- the same operation.",
+        "properties": {
+          "author": {
+            "description": "Accepted and ALWAYS IGNORED; see DeclarationSource.author.",
+            "type": "string"
+          },
+          "declaration_version_id": {
+            "description": "The declaration version this move is recorded against.",
+            "type": "string"
+          },
+          "parent": {
+            "description": "The new parent alias's name. Empty detaches to the root.",
+            "type": "string"
+          },
+          "supersedes": {
+            "description": "The history record id this move corrects, if any.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "declaration_version_id"
         ],
         "type": "object"
       },
@@ -5033,6 +5339,458 @@
         ]
       }
     },
+    "/v1alpha1/declarations": {
+      "get": {
+        "operationId": "listDeclarations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationVersionList"
+                }
+              }
+            },
+            "description": "Every declaration in the namespace, newest version, ordered by name."
+          }
+        },
+        "summary": "List every declaration's newest published version.",
+        "tags": [
+          "declarations"
+        ]
+      },
+      "post": {
+        "description": "Task t19 (#328; spec c27, honesty h21). Parses and validates the submitted source, applies the one-level-deep activation root of trust (ADR 0014, c33/h64), and stores it -- entirely through `declengine.Publish`, the same choke point task t15 built. The recorded author is ALWAYS the authenticated request principal (Cloudflare Access identity or a registered agent actor's own bearer): the request body's `author` field, if sent, is decoded and never read (c89/h62). `warnings` reports every `action.with` template reference that may be missing and has no default -- see `POST /v1alpha1/declarations/validate`. This is never a reason publish fails.\n\nWhen the write succeeds but the post-write overlap report (c78/h42) fails, the response is still success (`201`) with a `warning` field describing the report failure -- the write is never rolled back or reported as failed for that reason.",
+        "operationId": "publishDeclaration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclarationSource"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationVersion"
+                }
+              }
+            },
+            "description": "The declaration version (new, or the existing version at this digest)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request itself is malformed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The document does not parse, fails the declaration schema, or violates the one-level-deep activation root of trust (an activation declaration targeting another activation declaration). Call `POST /v1alpha1/declarations/validate` for the full diagnostic."
+          }
+        },
+        "summary": "Publish a declaration as a new (or repeat, by digest) version.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/aliases": {
+      "post": {
+        "description": "Task t19 (#328). An alias names a chain of declarations (`internal/store/postgres/declstore.go`'s declaration_aliases / declaration_alias_members). `declarations`, if given, must already be published; each is attached as an initial member.",
+        "operationId": "createDeclarationAlias",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeclarationAliasRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationAlias"
+                }
+              }
+            },
+            "description": "The created alias."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request itself is malformed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "One of the named declarations is not published."
+          }
+        },
+        "summary": "Create a named declaration alias (chain), optionally with initial members.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/aliases/{name}/move": {
+      "post": {
+        "description": "Task t19 (#328). One route serves both \"move\" (change an existing parent) and \"nest\" (assign a parent for the first time) -- they are the same store operation (`MoveDeclarationAliasWithSupersedes`); `parent` empty detaches the alias to the root. A cycle (the new parent chain would reach this alias again) is refused and nothing is written.",
+        "operationId": "moveDeclarationAlias",
+        "parameters": [
+          {
+            "description": "The alias's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveDeclarationAliasRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "parent": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The alias's new parent."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed, or the move would create a cycle."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          }
+        },
+        "summary": "Move (nest) an alias under a new parent, or detach it to the root.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/validate": {
+      "post": {
+        "description": "Task t19 (#328; spec c27, honesty h21). Never persists anything -- a document that fails to parse is a documented domain outcome (`valid: false`), not an HTTP error, matching `POST /v1alpha1/workflows/validate`'s posture. `warnings` reports every `action.with` template reference that may be missing and has no default -- it crosses only a 'can' link, names a declaration this one has no link to at all, or is a numeric `{N:...}` reference beyond this declaration's guaranteed ('must') predecessor count. Warnings never affect `valid`.",
+        "operationId": "validateDeclaration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclarationSource"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationValidation"
+                }
+              }
+            },
+            "description": "The document was parsed. `valid` reports whether it parsed cleanly."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request itself is malformed (missing source, unknown format)."
+          }
+        },
+        "summary": "Parse and schema-check a declaration without publishing it.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/{name}": {
+      "get": {
+        "operationId": "getDeclaration",
+        "parameters": [
+          {
+            "description": "The declaration's name (stable across every published version).",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationShow"
+                }
+              }
+            },
+            "description": "The declaration."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No declaration with this name."
+          }
+        },
+        "summary": "Show one declaration's newest version, its links and activation status.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/{name}/activate": {
+      "post": {
+        "description": "Task t19 (#328). Goes entirely through `declengine.Activate`, the one-level-deep root-of-trust choke point (ADR 0014, c33/h64): an agent principal activating an ACTIVATION declaration is refused here regardless of this route's own role policy -- only a human principal may extend that standing. An agent principal may self-activate an ordinary declaration. `version_id` defaults to the declaration's newest published version when omitted.\n\nWhen the activation succeeds but the post-activation overlap report (c78/h42) fails, the response is still success (`200`) with a `warning` field -- never a failure for that reason.",
+        "operationId": "activateDeclaration",
+        "parameters": [
+          {
+            "description": "The declaration's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateDeclarationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationActivation"
+                }
+              }
+            },
+            "description": "The declaration is now active at the named version."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No declaration with this name, or version_id names no version."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Refused by the one-level-deep activation root of trust (an agent principal activating an activation declaration)."
+          }
+        },
+        "summary": "Activate a declaration version.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/{name}/deactivate": {
+      "post": {
+        "description": "Task t19 (#328). Goes entirely through the new `declengine .Deactivate` choke point, symmetric with Activate: the recorded actor is always the authenticated principal, and the append-only `declaration_history` row is written nowhere else. `version_id` defaults to the declaration's newest published version when omitted.",
+        "operationId": "deactivateDeclaration",
+        "parameters": [
+          {
+            "description": "The declaration's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateDeclarationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationActivation"
+                }
+              }
+            },
+            "description": "The declaration is now inactive at the named version."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No declaration with this name, or version_id names no version."
+          }
+        },
+        "summary": "Deactivate a declaration version.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/declarations/{name}/evaluations": {
       "get": {
         "description": "Task t13 (#328; spec c88, honesty h61): the firing loop (internal/declengine/engine.go's Handle/evaluate) appends one declaration_evaluations row per pipeline step for every declaration whose trigger matched an event — matched, lineage checked, condition true/false, dispatching, and a terminal outcome: fired, condition false, lineage missing, loop-limited, deferred, shadow, budget-blocked, overlap-suppressed (the last two are defined but not yet produced by any task — see t11 and t14). This route returns the newest (terminal) row recorded for the named declaration's evaluation of `event_id`.\n\nA declaration whose trigger never matched `event_id` at all leaves no row to return — the firing loop records nothing for a non-match — so that case is 404, the same as an unknown declaration name or event id.",
@@ -5090,6 +5848,79 @@
           }
         },
         "summary": "Why did (or didn't) a declaration fire for an event?",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/{name}/links": {
+      "post": {
+        "description": "Task t19 (#328). Both declarations must already be published. `kind` is `must` (the target is a required predecessor -- publish's warning analysis treats a numeric step reference within this declaration's guaranteed 'must' count as safe) or `can` (optional -- a named reference crossing a 'can' link always warns at publish, c27/h21).",
+        "operationId": "linkDeclaration",
+        "parameters": [
+          {
+            "description": "The declaration this link is FROM.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclarationLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationLink"
+                }
+              }
+            },
+            "description": "The link."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed, or kind is neither must nor can."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The from or to declaration is not published."
+          }
+        },
+        "summary": "Record a must/can ordering relation from this declaration to another.",
         "tags": [
           "declarations"
         ]

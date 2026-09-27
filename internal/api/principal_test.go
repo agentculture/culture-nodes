@@ -46,6 +46,11 @@ func TestPrincipalGateRefusesNoPrincipalAndViewer(t *testing.T) {
 		{http.MethodPost, "/v1alpha1/preflights/pre_x/acknowledge"}, {http.MethodPost, "/v1alpha1/store/entries"}, {http.MethodPost, "/v1alpha1/store/entries/pull"},
 		{http.MethodPost, "/v1alpha1/store/entries/entry_x/bindings"}, {http.MethodPost, "/v1alpha1/store/entries/entry_x/publish"}, {http.MethodPost, "/v1alpha1/plan-imports"},
 		{http.MethodPost, "/v1alpha1/runs/run_x/reviews"}, {http.MethodPost, "/v1alpha1/reviews/rev_x/commit"}, {http.MethodPost, "/v1alpha1/runs/run_x/grades"}, {http.MethodPost, "/v1alpha1/human-tasks/ht_x/decision"},
+		// Declaration API (task t19, #328): every mutating route resolves
+		// the request principal the same way, no legacy bearer fallback.
+		{http.MethodPost, "/v1alpha1/declarations"}, {http.MethodPost, "/v1alpha1/declarations/validate"}, {http.MethodPost, "/v1alpha1/declarations/dx/links"},
+		{http.MethodPost, "/v1alpha1/declarations/aliases"}, {http.MethodPost, "/v1alpha1/declarations/aliases/ax/move"},
+		{http.MethodPost, "/v1alpha1/declarations/dx/activate"}, {http.MethodPost, "/v1alpha1/declarations/dx/deactivate"},
 	}
 	for _, route := range mutating {
 		for _, tc := range []struct {

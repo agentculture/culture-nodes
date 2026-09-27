@@ -829,6 +829,393 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/declarations/validate:
+    post:
+      operationId: validateDeclaration
+      tags: [declarations]
+      summary: Parse and schema-check a declaration without publishing it.
+      description: >-
+        Task t19 (#328; spec c27, honesty h21). Never persists anything -- a
+        document that fails to parse is a documented domain outcome (`valid:
+        false`), not an HTTP error, matching `POST
+        /v1alpha1/workflows/validate`'s posture. `warnings` reports every
+        `action.with` template reference that may be missing and has no
+        default -- it crosses only a 'can' link, names a declaration this
+        one has no link to at all, or is a numeric `{N:...}` reference
+        beyond this declaration's guaranteed ('must') predecessor count.
+        Warnings never affect `valid`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeclarationSource'
+      responses:
+        '200':
+          description: The document was parsed. `valid` reports whether it parsed cleanly.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationValidation'
+        '400':
+          description: The request itself is malformed (missing source, unknown format).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations:
+    post:
+      operationId: publishDeclaration
+      tags: [declarations]
+      summary: Publish a declaration as a new (or repeat, by digest) version.
+      description: >-
+        Task t19 (#328; spec c27, honesty h21). Parses and validates the
+        submitted source, applies the one-level-deep activation root of
+        trust (ADR 0014, c33/h64), and stores it -- entirely through
+        `declengine.Publish`, the same choke point task t15 built. The
+        recorded author is ALWAYS the authenticated request principal
+        (Cloudflare Access identity or a registered agent actor's own
+        bearer): the request body's `author` field, if sent, is decoded and
+        never read (c89/h62). `warnings` reports every `action.with`
+        template reference that may be missing and has no default -- see
+        `POST /v1alpha1/declarations/validate`. This is never a reason
+        publish fails.
+
+
+        When the write succeeds but the post-write overlap report
+        (c78/h42) fails, the response is still success (`201`) with a
+        `warning` field describing the report failure -- the write is never
+        rolled back or reported as failed for that reason.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeclarationSource'
+      responses:
+        '201':
+          description: The declaration version (new, or the existing version at this digest).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationVersion'
+        '400':
+          description: The request itself is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: >-
+            The document does not parse, fails the declaration schema, or
+            violates the one-level-deep activation root of trust (an
+            activation declaration targeting another activation
+            declaration). Call `POST /v1alpha1/declarations/validate` for
+            the full diagnostic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: listDeclarations
+      tags: [declarations]
+      summary: List every declaration's newest published version.
+      responses:
+        '200':
+          description: Every declaration in the namespace, newest version, ordered by name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationVersionList'
+
+  /v1alpha1/declarations/aliases:
+    post:
+      operationId: createDeclarationAlias
+      tags: [declarations]
+      summary: Create a named declaration alias (chain), optionally with initial members.
+      description: >-
+        Task t19 (#328). An alias names a chain of declarations
+        (`internal/store/postgres/declstore.go`'s declaration_aliases /
+        declaration_alias_members). `declarations`, if given, must already
+        be published; each is attached as an initial member.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeclarationAliasRequest'
+      responses:
+        '201':
+          description: The created alias.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationAlias'
+        '400':
+          description: The request itself is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: One of the named declarations is not published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/aliases/{name}/move:
+    post:
+      operationId: moveDeclarationAlias
+      tags: [declarations]
+      summary: Move (nest) an alias under a new parent, or detach it to the root.
+      description: >-
+        Task t19 (#328). One route serves both "move" (change an existing
+        parent) and "nest" (assign a parent for the first time) -- they are
+        the same store operation
+        (`MoveDeclarationAliasWithSupersedes`); `parent` empty detaches the
+        alias to the root. A cycle (the new parent chain would reach this
+        alias again) is refused and nothing is written.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The alias's name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveDeclarationAliasRequest'
+      responses:
+        '200':
+          description: The alias's new parent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: {type: string}
+                  parent: {type: string}
+        '400':
+          description: The request is malformed, or the move would create a cycle.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/{name}:
+    get:
+      operationId: getDeclaration
+      tags: [declarations]
+      summary: Show one declaration's newest version, its links and activation status.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration's name (stable across every published version).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The declaration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationShow'
+        '404':
+          description: No declaration with this name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/{name}/links:
+    post:
+      operationId: linkDeclaration
+      tags: [declarations]
+      summary: Record a must/can ordering relation from this declaration to another.
+      description: >-
+        Task t19 (#328). Both declarations must already be published.
+        `kind` is `must` (the target is a required predecessor -- publish's
+        warning analysis treats a numeric step reference within this
+        declaration's guaranteed 'must' count as safe) or `can` (optional --
+        a named reference crossing a 'can' link always warns at publish,
+        c27/h21).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration this link is FROM.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeclarationLinkRequest'
+      responses:
+        '201':
+          description: The link.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationLink'
+        '400':
+          description: The request is malformed, or kind is neither must nor can.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The from or to declaration is not published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/{name}/activate:
+    post:
+      operationId: activateDeclaration
+      tags: [declarations]
+      summary: Activate a declaration version.
+      description: >-
+        Task t19 (#328). Goes entirely through `declengine.Activate`, the
+        one-level-deep root-of-trust choke point (ADR 0014, c33/h64): an
+        agent principal activating an ACTIVATION declaration is refused
+        here regardless of this route's own role policy -- only a human
+        principal may extend that standing. An agent principal may
+        self-activate an ordinary declaration. `version_id` defaults to the
+        declaration's newest published version when omitted.
+
+
+        When the activation succeeds but the post-activation overlap
+        report (c78/h42) fails, the response is still success (`200`) with
+        a `warning` field -- never a failure for that reason.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration's name.
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateDeclarationRequest'
+      responses:
+        '200':
+          description: The declaration is now active at the named version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationActivation'
+        '400':
+          description: The request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: >-
+            Refused by the one-level-deep activation root of trust (an
+            agent principal activating an activation declaration).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No declaration with this name, or version_id names no version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/{name}/deactivate:
+    post:
+      operationId: deactivateDeclaration
+      tags: [declarations]
+      summary: Deactivate a declaration version.
+      description: >-
+        Task t19 (#328). Goes entirely through the new `declengine
+        .Deactivate` choke point, symmetric with Activate: the recorded
+        actor is always the authenticated principal, and the append-only
+        `declaration_history` row is written nowhere else. `version_id`
+        defaults to the declaration's newest published version when
+        omitted.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration's name.
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateDeclarationRequest'
+      responses:
+        '200':
+          description: The declaration is now inactive at the named version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationActivation'
+        '400':
+          description: The request is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No declaration with this name, or version_id names no version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/attempts/{attemptID}/artifacts:
     get:
       operationId: listAttemptArtifacts
@@ -5987,6 +6374,193 @@ components:
             Present once a firing was claimed for this evaluation (fired,
             shadow, and any outcome that reused an already-claimed firing);
             absent for an outcome decided before a firing was claimed.
+
+    DeclarationSource:
+      type: object
+      description: >-
+        The declaration API's request body (task t19, #328) -- POST
+        /v1alpha1/declarations/validate and POST /v1alpha1/declarations.
+        Mirrors WorkflowSource: format defaults to yaml (authoring sugar
+        over the canonical JSON the declaration schema validates).
+      required: [source]
+      properties:
+        format:
+          type: string
+          enum: [yaml, json]
+          default: yaml
+        source:
+          type: string
+          description: The declaration document, in the named format.
+        author:
+          type: string
+          description: >-
+            Accepted and ALWAYS IGNORED. The recorded author is the
+            authenticated request principal, never a body claim (c89/h62).
+            This field exists only so a client can be tested against that
+            guarantee.
+
+    DeclarationValidation:
+      type: object
+      description: POST /v1alpha1/declarations/validate's payload (task t19, #328).
+      required: [valid, diagnostics, warnings]
+      properties:
+        valid:
+          type: boolean
+        name:
+          type: string
+        digest:
+          type: string
+        diagnostics:
+          type: array
+          items: {type: string}
+        warnings:
+          type: array
+          items: {type: string}
+          description: >-
+            Every action.with template reference that may be missing and
+            has no default (c27/h21) -- never a reason valid is false.
+
+    DeclarationVersion:
+      type: object
+      description: One published declaration version (task t19, #328).
+      required: [id, declaration_id, name, version, digest, author, created_at, warnings]
+      properties:
+        id: {type: string}
+        declaration_id: {type: string, description: The declaration's stable id, shared by every version.}
+        name: {type: string}
+        version: {type: integer}
+        digest: {type: string}
+        author:
+          type: string
+          description: The authenticated principal that published this version -- never a body-supplied value.
+        created_at: {type: string, format: date-time}
+        warnings:
+          type: array
+          items: {type: string}
+          description: See DeclarationValidation.warnings; computed against this declaration's current links.
+
+    DeclarationVersionList:
+      type: object
+      description: GET /v1alpha1/declarations' payload (task t19, #328).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationVersion'
+
+    DeclarationLinkRequest:
+      type: object
+      description: POST /v1alpha1/declarations/{name}/links' body (task t19, #328).
+      required: [to, kind]
+      properties:
+        to:
+          type: string
+          description: The declaration this one depends on.
+        kind:
+          type: string
+          enum: [must, can]
+        author:
+          type: string
+          description: Accepted and ALWAYS IGNORED; see DeclarationSource.author.
+
+    DeclarationLink:
+      type: object
+      description: A recorded must/can ordering relation (task t19, #328).
+      required: [to, kind]
+      properties:
+        to: {type: string}
+        kind: {type: string, enum: [must, can]}
+
+    DeclarationShow:
+      type: object
+      description: GET /v1alpha1/declarations/{name}'s payload (task t19, #328).
+      allOf:
+        - $ref: '#/components/schemas/DeclarationVersion'
+        - type: object
+          required: [active, links]
+          properties:
+            active:
+              type: boolean
+            active_version_id:
+              type: string
+              description: Present only when active is true.
+            links:
+              type: array
+              items:
+                $ref: '#/components/schemas/DeclarationLink'
+
+    CreateDeclarationAliasRequest:
+      type: object
+      description: POST /v1alpha1/declarations/aliases' body (task t19, #328).
+      required: [name]
+      properties:
+        name:
+          type: string
+        declarations:
+          type: array
+          items: {type: string}
+          description: Already-published declaration names to attach as initial members.
+        author:
+          type: string
+          description: Accepted and ALWAYS IGNORED; see DeclarationSource.author.
+
+    DeclarationAlias:
+      type: object
+      description: A created declaration alias (chain) (task t19, #328).
+      required: [id, name, declarations]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        declarations:
+          type: array
+          items: {type: string}
+
+    MoveDeclarationAliasRequest:
+      type: object
+      description: >-
+        POST /v1alpha1/declarations/aliases/{name}/move's body (task t19,
+        #328). Serves both "move" (an existing parent changes) and "nest"
+        (a parent is assigned for the first time) -- the same operation.
+      required: [declaration_version_id]
+      properties:
+        parent:
+          type: string
+          description: The new parent alias's name. Empty detaches to the root.
+        declaration_version_id:
+          type: string
+          description: The declaration version this move is recorded against.
+        supersedes:
+          type: string
+          description: The history record id this move corrects, if any.
+        author:
+          type: string
+          description: Accepted and ALWAYS IGNORED; see DeclarationSource.author.
+
+    ActivateDeclarationRequest:
+      type: object
+      description: >-
+        POST /v1alpha1/declarations/{name}/activate and .../deactivate's
+        body (task t19, #328). Both fields are optional.
+      properties:
+        version_id:
+          type: string
+          description: Defaults to the declaration's newest published version.
+        supersedes:
+          type: string
+          description: The activation history record id this call corrects, if any.
+        author:
+          type: string
+          description: Accepted and ALWAYS IGNORED; see DeclarationSource.author.
+
+    DeclarationActivation:
+      type: object
+      description: The result of an activate or deactivate call (task t19, #328).
+      required: [name, version_id, active]
+      properties:
+        name: {type: string}
+        version_id: {type: string}
+        active: {type: boolean}
 
     DispatchRateList:
       type: object

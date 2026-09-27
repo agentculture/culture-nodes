@@ -84,6 +84,16 @@ func agentMayWrite(method, path string) bool {
 		// a human surface.
 		return true
 	}
+	if strings.HasPrefix(path, "/v1alpha1/declarations") {
+		// Declaration writes (task t19, #328, spec c27): an agent may
+		// publish, link, alias and self-activate an ordinary declaration
+		// under its own bearer -- "an agent may self-activate when such a
+		// declaration allows it" (ADR 0014). declengine.AuthorizeActivation
+		// is the actual root-of-trust check: it refuses an agent principal
+		// activating an ACTIVATION declaration regardless of this route
+		// being open to it.
+		return true
+	}
 	return strings.Contains(path, "/tickets/") && strings.HasSuffix(path, "/frame")
 }
 

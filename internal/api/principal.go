@@ -248,6 +248,14 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 		p.secret = "store"
 	case strings.HasPrefix(path, "/v1alpha1/inbound/credentials"):
 		p.secret = "inbound"
+	case strings.HasPrefix(path, "/v1alpha1/declarations"):
+		// Declaration writes (task t19, #328, spec c27): no legacy bearer
+		// secret -- declarationPrincipal (declarations.go) refuses
+		// outright when no principal is present. An agent actor's own
+		// bearer may write here too (agentMayWrite); declengine
+		// .AuthorizeActivation is what actually bounds what an agent may
+		// activate, not this route policy.
+		p.agents = agentMayWrite(method, path)
 	}
 	return p, true
 }

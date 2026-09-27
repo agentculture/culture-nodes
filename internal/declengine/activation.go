@@ -282,6 +282,35 @@ func Publish(ctx context.Context, store *postgres.Store, lookup ActivationLookup
 	return v, nil
 }
 
+// Deactivate is the choke point that mirrors Activate for withdrawing
+// standing (task t19, #328): every deactivation is attributed to the
+// resolved principal only, never a caller-supplied actor string, and it
+// runs the same append-only history write Activate uses
+// (store.RecordDeclarationActivation, kind "deactivate"). It does not
+// re-run AuthorizeActivation's one-level-deep gate -- that gate bounds who
+// may EXTEND standing activation authority, not who may withdraw it, and
+// the spec places no such restriction on deactivation -- but the principal
+// is still required and still the only source of the recorded actor.
+func Deactivate(ctx context.Context, store *postgres.Store, namespaceID, targetVersionID string, principal ActivationPrincipal, supersedesID string) error {
+	if principal.Author == "" {
+		return errors.New("declengine: activation principal is required")
+	}
+	switch principal.Kind {
+	case PrincipalHuman, PrincipalAgent:
+	default:
+		return fmt.Errorf("declengine: unrecognized activation principal kind %q", principal.Kind)
+	}
+	if err := store.RecordDeclarationActivation(ctx, namespaceID, targetVersionID, "deactivate", ResolveAuthor(principal), supersedesID); err != nil {
+		return err
+	}
+	// c78/h42: the active set changed, so the overlap report is refreshed
+	// here too, same as Activate.
+	if _, err := ReportOverlaps(ctx, store, namespaceID); err != nil {
+		return fmt.Errorf("%w: %w", ErrOverlapReportFailed, err)
+	}
+	return nil
+}
+
 // ErrOverlapReportFailed marks an error from the overlap report that runs
 // AFTER a publish or activation has already been written. The write stands;
 // only the report failed, so a caller must not read it as "publish failed"

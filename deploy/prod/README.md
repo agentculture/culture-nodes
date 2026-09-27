@@ -402,7 +402,7 @@ belongs in the other file.
 
 | Grant | File | Who writes it |
 | --- | --- | --- |
-| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
+| `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
 | `PR_UPKEEP_READINESS_SOURCE_URL` / `_SHA256`, and `PR_UPKEEP_READINESS_GITHUB_API` / `_SONAR_API` / `_SONAR_COMPONENT` / `_DEVAGUE_ROOT` / `_DEVAGUE_SLUG` | `~/.culture-nodes/runner.env` | the same lane, same deploy. The two source values default to the shipped revision's `readiness.py`; the other five are granted **empty** — see below |
 | `JIRA_ACCOUNT_EMAIL` + `JIRA_API_TOKEN` | `~/.culture-nodes/runner-secrets.env` | `install-secrets.sh`'s Jira lane, **merged** — it replaces these two keys and no other |
 | `GITHUB_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |

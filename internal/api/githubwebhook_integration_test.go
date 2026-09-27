@@ -23,7 +23,7 @@ func TestGitHubApprovedWebhookRedeliveryIsDeduplicated(t *testing.T) {
 	}
 	access := httptest.NewServer(srv.AccessHandler())
 	defer access.Close()
-	body := `{"action":"submitted","repository":{"full_name":"acme/widgets"},"pull_request":{"number":17,"html_url":"https://github.com/acme/widgets/pull/17","title":"Fix it","user":{"login":"alice"}},"review":{"state":"approved","user":{"login":"bob"}}}`
+	body := `{"action":"submitted","repository":{"full_name":"acme/widgets"},"pull_request":{"number":17,"html_url":"https://github.com/acme/widgets/pull/17","title":"Fix it","user":{"login":"alice"}},"review":{"id":412,"state":"approved","user":{"login":"bob"}}}`
 	mac := hmac.New(sha256.New, []byte("webhook-secret"))
 	_, _ = mac.Write([]byte(body))
 	post := func() (int, struct {

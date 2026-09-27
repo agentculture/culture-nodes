@@ -721,10 +721,10 @@ class TestStdlibOnlyImports:
         # Exactly the sibling modules the runner is granted a URL + digest
         # for. A fourth name here means a module the bootstrap would not
         # fetch, so the sweep would import something that is not on disk.
-        assert non_stdlib == {"pr_upkeep_emit", "pr_upkeep_jira"}
+        assert non_stdlib == {"pr_upkeep_emit", "pr_upkeep_jira", "pr_upkeep_github"}
 
         # ...and each of those is itself stdlib-only, for the same reason.
-        for sibling in ("pr_upkeep_emit.py", "pr_upkeep_jira.py"):
+        for sibling in ("pr_upkeep_emit.py", "pr_upkeep_jira.py", "pr_upkeep_github.py"):
             tree = ast.parse((EXAMPLE_DIR / sibling).read_text())
             roots = {
                 (node.module or "").split(".")[0]

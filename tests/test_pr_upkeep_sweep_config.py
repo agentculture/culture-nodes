@@ -10,7 +10,7 @@ from tests.test_pr_upkeep_sweep import EXAMPLE_DIR, FIXTURES, _stub_sweep, sweep
 #: Every module the sweep-cycle bootstrap fetches, verifies and places next to
 #: sweep.py. The guards below scan ALL of them, so a new sibling cannot become
 #: a place where an unsanctioned environment read hides.
-GRANTED_SOURCES = ("sweep.py", "pr_upkeep_jira.py", "pr_upkeep_emit.py")
+GRANTED_SOURCES = ("sweep.py", "pr_upkeep_jira.py", "pr_upkeep_emit.py", "pr_upkeep_github.py")
 
 
 def test_the_granted_sources_are_every_module_the_bootstrap_fetches():
@@ -182,5 +182,7 @@ class TestTheSweptRepoIsDeploymentGrantedAndSaysSo:
             "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
             "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL",
             "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256",
+            "PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL",
+            "PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256",
         ):
             assert ref in readme, f"the README never names the granted value {ref}"

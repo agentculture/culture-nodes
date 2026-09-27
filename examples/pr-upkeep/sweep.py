@@ -44,14 +44,16 @@ from base64 import b64encode
 # Exactly what this module calls. The Jira vocabulary — event names, self-echo,
 # watermarks, transition slugs — is pr_upkeep_jira's to own; re-exporting it
 # here made the sweep look like it had opinions about Jira that it does not.
-from pr_upkeep_emit import (
+import pr_upkeep_github
+from pr_upkeep_emit import (  # noqa: E501,F401 - main() routes via closed_pull_event; tests reach it here
     RUNS_MAX_PAGES,
     RUNS_PAGE_LIMIT,
+    approved_pr_event,
     closed_pull_event,
     dispatched_finding_ids,
     emission_watermark,
     finding_package,
-    merged_pr_fact,  # noqa: F401 - main() routes via closed_pull_event; tests reach it here
+    merged_pr_fact,
     newest_comment_timestamp,
     next_run_cursor,
     opened_pr_fact,
@@ -571,30 +573,13 @@ def fetch_sonar_issues(component: str, pr: int | None = None) -> dict:
 
 
 def fetch_open_pulls(token: str | None, repository: str) -> list[dict]:
-    """Every currently open PR as ``{"number", "head_sha", "head": {"ref"},
-    "body"}``, unfiltered. The cap lives with the caller (`main`) so the SAME swept set
-    feeds all three per-PR queries — the SonarCloud per-PR query, the Qodo
-    comment fetch, and the check-runs fetch below, one request per PR each —
-    rather than independently-capped (and possibly diverging) sets.
+    """Every open PR; the read lives in pr_upkeep_github (see its docstring)."""
+    return pr_upkeep_github.fetch_open_pulls(_get_json, GITHUB_API, token, repository)
 
-    The head sha rides along from this ONE list request because the
-    check-runs endpoint is keyed by commit: fetching it per PR instead would
-    double this source's request cost for nothing. A PR object that arrives
-    without a head sha keeps its entry with an empty one; `main` reports it
-    rather than dropping it quietly."""
-    pulls = _get_json(f"{GITHUB_API}/repos/{repository}/pulls?state=open&per_page=50", token)
-    open_pulls = []
-    for pull in pulls:
-        if not isinstance(pull.get("number"), int):
-            continue
-        head = pull.get("head") or {}
-        # `head.ref` + `body` ride along for the work-item correlation (branch,
-        # then body); without them every PR falls to the transient gh: form.
-        open_pulls.append(
-            {"number": pull["number"], "head_sha": head.get("sha") or ""}
-            | {"head": {"ref": head.get("ref") or ""}, "body": pull.get("body") or ""}
-        )
-    return open_pulls
+
+def fetch_pr_reviews(token: str | None, repository: str, number: int) -> list[dict]:
+    """Every REST review of one PR; the read lives in pr_upkeep_github (see its docstring)."""
+    return pr_upkeep_github.fetch_pr_reviews(_get_json, GITHUB_API, token, repository, number)
 
 
 MERGED_PR_LOOKBACK_DAYS = 30
@@ -845,6 +830,19 @@ def main() -> int:
         # keeps saying WHICH reason a finding is not in flight (#268).
         deferred_findings = []
         for pull in swept:
+            # t24: github.pr.approved per approved review (pr_upkeep_github reads them).
+            full = all(field in pull for field in ("title", "html_url", "user"))
+            with attempting(f"reading reviews for #{pull['number']} (GitHub)"):
+                reviews = fetch_pr_reviews(token, github_repo, pull["number"]) if full else []
+            for name, payload, key, mark in filter(
+                None, (approved_pr_event(pull, r, github_repo) for r in reviews)
+            ):
+                with attempting(f"emitting {name} for #{pull['number']} (control plane)"):
+                    emitted.append(
+                        raise_event(
+                            name, payload, key, mark, subject=f"{github_repo}#{pull['number']}"
+                        )
+                    )
             fact = opened_pr_fact(pull, github_repo, repository.get("jira_project"))
             if fact is None:
                 continue

@@ -166,6 +166,31 @@ def closed_pr_fact(pull: dict, repository: str, jira_project: str | None = None)
     return fact
 
 
+def approved_pr_event(
+    pull: dict, review: dict, repository: str
+) -> tuple[str, dict, str, dict] | None:
+    """One REST approved review using the webhook's event identity."""
+    review_id = review.get("id")
+    if review.get("state") != "APPROVED" or not isinstance(review_id, int):
+        return None
+    number = pull["number"]
+    payload = {
+        "source": "github",
+        "repository": repository,
+        "id": str(number),
+        "title": pull.get("title") or "",
+        "url": pull.get("html_url") or "",
+        "author": (pull.get("user") or {}).get("login") or "",
+        "reviewer": (review.get("user") or {}).get("login") or "",
+    }
+    return (
+        "github.pr.approved",
+        payload,
+        f"github:{repository}:pr:{number}:review:{review_id}:approved",
+        {"review_id": str(review_id)},
+    )
+
+
 def closed_pull_event(
     pull: dict, repository: str, jira_project: str | None = None
 ) -> tuple[str, dict, str, dict, str] | None:

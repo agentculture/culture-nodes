@@ -457,6 +457,15 @@ nullable: NULL is "unmeasured", never true or false.
   per-match `declaration_evaluations`. An initial firing is unique per
   `(namespace_id, event_id, declaration_id)`; a re-mint keeps the original
   lineage and canonical firing id.
+- `0061_engine_switch.sql` — the global, per-namespace before/shadow/after
+  engine switch (#328 t16; spec c80, ADR 0014 "Consequences", honesty
+  h53): the append-only `engine_switch_history` (its newest row per
+  namespace is the current mode; a namespace that has never flipped reads
+  as `before` in Go), immutable by the same trigger 0059 uses, and
+  `declaration_shadow_lineage`, one row per would-fire firing linking it to
+  the graph engine's real run for the same event (`runs.trigger_event_id`,
+  migration 0043) — shadow stamps no origin marker, so this is what a later
+  firing in the same chain derives its lineage from instead.
 - `0064_declaration_firing_fks.sql` — the catalog foreign keys 0060
   deferred (#328 t9): `declaration_firings` now references `declarations`
   by `(namespace_id, declaration_id)` and a version *of that same

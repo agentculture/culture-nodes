@@ -479,6 +479,18 @@ nullable: NULL is "unmeasured", never true or false.
   JSON so a drain can replay it through the ordinary firing path. The
   re-entry limit, hop limit and self-retrigger backstops need no new
   storage — they read the causal lineage the engine already resolves.
+- `0063_decl_budgets.sql` — budgets on the declaration engine at four
+  levels (#328 t11; spec "Budgets can be set at four levels: node, machine,
+  declaration and alias"; ADR 0011): `declaration_budgets` declares one row
+  per `(namespace_id, scope, scope_key)` reusing ADR 0011's exact units
+  (`max_sessions`, `max_uncached_input`), and `declaration_budget_spend` /
+  `declaration_budget_spend_aliases` are the declaration engine's own spend
+  ledger — one row per dispatched firing, since every declaration firing
+  opens a brand-new run and so is unconditionally one cold-start session
+  (unlike a graph run's node-by-node warm/cold decision, migration 0023's
+  `run_sessions` does not apply here). `max_uncached_input` spend is read
+  through `firing_id` (== `runs.id`) straight into the same
+  `node_runs`/`attempts` rows ADR 0011's own query reads.
 - `0064_declaration_firing_fks.sql` — the catalog foreign keys 0060
   deferred (#328 t9): `declaration_firings` now references `declarations`
   by `(namespace_id, declaration_id)` and a version *of that same

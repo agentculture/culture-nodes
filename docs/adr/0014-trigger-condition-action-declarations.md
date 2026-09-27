@@ -73,14 +73,20 @@ with an "orphaned by upgrade" record. It is never silently dropped.
 ### 3. Activation is itself declared (extends PRD §10.4)
 
 A declaration becomes active when an activation declaration fires for it.
-Activation declarations are the root of trust:
+Activation declarations are the root of trust, and the chain is one level
+deep:
 
-- none can activate itself, or another activation declaration by the same
-  author;
-- the first ones are activated by a human principal;
+- only a human principal can activate an activation declaration;
+- an activation declaration may only activate ordinary declarations, never
+  another activation declaration;
 - the recorded author is always the authenticated request principal.
 
-This keeps the §10.4 rule: no actor promotes its own proposal.
+This keeps the §10.4 rule: no actor promotes its own proposal. An earlier
+draft allowed human-activated rules to activate other activation declarations
+by different authors. The PR #329 review showed that an agent could then
+propose "activate everything" under a broader human rule, or two agents could
+activate each other's rules. The owner accepts the one-level rule as current
+and may relax it later.
 
 ### 4. The run vocabulary is mapped, not dropped (PRD §3.1)
 
@@ -112,10 +118,18 @@ Every consumer of today's run surfaces keeps a read path until it migrates:
 
 ## Consequences
 
-- **A new declaration engine is built on the existing substrate.** It runs in
-  shadow first, recording "would fire" without dispatching, beside the graph
-  engine. A global before/after switch flips only after recorded parity.
-  Flipping back freezes open nodes rather than dropping them.
+- **A new declaration engine is built on the existing substrate, and the
+  cutover is staged:**
+  - **Shadow:** the new engine records "would fire" without dispatching,
+    beside the graph engine. Shadow stamps no markers, so it derives lineage
+    from the graph engine's real runs. Parity is compared hop by hop, each
+    shadow firing against the graph step that handled the same event.
+  - **Flip:** a global switch goes to "after" only after recorded parity. It
+    drains rather than strands: new events go to the declaration engine,
+    while graph runs already open finish on the graph engine.
+  - **Rollback:** flipping back freezes open declaration nodes. Events that
+    arrive for a frozen node are stored and its deadline is paused; on
+    flip-forward the node replays them in order.
 - **Everything migrates:**
   - all workflows;
   - schedules, notifier posts, repair routing, hand-turns and affinity;
@@ -125,8 +139,12 @@ Every consumer of today's run surfaces keeps a read path until it migrates:
 - **New surfaces:**
   - a GitHub webhook and a GitHub messaging actor;
   - `jira.issue.created`;
-  - signed origin markers in every bridge (all-backends rule);
-  - loop limits, per-subject concurrency, budgets at node, machine,
+  - signed origin markers in every bridge (all-backends rule). A marker is a
+    MAC over (firing id, artifact kind, nonce). The created artifact's id is
+    recorded from the action's result and must match on the incoming event,
+    because providers assign that id only after creation;
+  - loop limits (N re-entries, default 3, 0 = none; hop limit 20; 30 firings
+    per declaration per hour), per-subject concurrency, budgets at node, machine,
     declaration and alias level;
   - variable sensitivity marking;
   - overlap detection;

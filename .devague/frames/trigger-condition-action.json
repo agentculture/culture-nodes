@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-27T17:07:29Z",
-  "updated": "2026-09-27T18:37:30Z",
+  "updated": "2026-09-27T18:51:13Z",
   "claims": [
     {
       "id": "c1",
@@ -431,7 +431,7 @@
           "id": "h15",
           "text": "An ADR records the departures from the PRD: declarations replace the node/edge graph, per-firing replaces per-run pinning, and activation-by-declaration.",
           "status": "confirmed",
-          "instruction": "docs/adr/00NN-trigger-condition-action.md committed in the spec PR and cited by issue #328."
+          "instruction": "docs/adr/0014-trigger-condition-action-declarations.md, committed in the spec PR and cited by issue #328."
         }
       ],
       "hard_questions": [],
@@ -643,15 +643,21 @@
     {
       "id": "c33",
       "kind": "boundary",
-      "text": "Activation policy is itself a set of declarations (q13), and those activation declarations are the root of trust: an activation declaration cannot activate itself or another activation declaration it authored, and the first ones are activated by a human. Without this, an agent could declare 'activate everything I propose', self-activate it, and hold standing authority to post, comment, dispatch or run code with no human ever having granted it (PRD \u00a710.4: no actor promotes its own proposal).",
+      "text": "Activation declarations are the root of trust, and the chain is one level deep: only a human principal can activate an activation declaration, and an activation declaration may only activate ordinary declarations, never another activation declaration. Without this, an agent could propose 'activate everything' and have it activated by a broader human-activated rule, or two agents could activate each other's rules, holding standing authority to post, comment, dispatch or run code that no human granted (PRD \u00a710.4). The owner accepts this as the current rule and may relax it later.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h25",
           "text": "An activation declaration cannot activate itself or another activation declaration by the same author, and the first activation declaration can only be activated by a human principal.",
-          "status": "confirmed",
+          "status": "rejected",
           "instruction": "Engine tests for each refusal, with the refusal recorded as a visible record."
+        },
+        {
+          "id": "h64",
+          "text": "No path lets an activation declaration become active except a human principal's activate call, and no activation declaration's action can target an activation declaration.",
+          "status": "confirmed",
+          "instruction": "Engine and API tests: an agent-authored activation declaration stays inactive under an 'activate everything' rule; an activation declaration targeting another is refused at publish; human activation succeeds."
         }
       ],
       "hard_questions": [],
@@ -662,6 +668,11 @@
           "text": "An agent-authored declaration lands proposed and does not fire until a human activates it; a human may activate directly. A declaration is standing authority to act (post, comment, dispatch, run code) on future triggers, so an agent enabling its own declaration would be an actor promoting its own proposal (PRD \u00a710.4). This mirrors /v1alpha1/workflow-generations, where an actor drafts source and the response returns a diff and digest without publishing.",
           "kind": "boundary",
           "reason": "q13 decided: activation is itself TCA; the boundary moves to the root of trust"
+        },
+        {
+          "text": "Activation policy is itself a set of declarations (q13), and those activation declarations are the root of trust: an activation declaration cannot activate itself or another activation declaration it authored, and the first ones are activated by a human. Without this, an agent could declare 'activate everything I propose', self-activate it, and hold standing authority to post, comment, dispatch or run code with no human ever having granted it (PRD \u00a710.4: no actor promotes its own proposal).",
+          "kind": "boundary",
+          "reason": "PR #329 code review: finding 6, same-author check was bypassable"
         }
       ]
     },
@@ -853,19 +864,25 @@
     {
       "id": "c45",
       "kind": "assumption",
-      "text": "The q15 answer suggests an interpretation of q2 in lineage terms: 'B must appear after A' means B fires only on an event whose causal lineage contains a run of A, so A's variables are guaranteed; 'B can appear after A' means B fires either way and A's variables are present only when the lineage contains A. Pending the user's confirmation.",
+      "text": "'B must appear after A' means B fires only on an event whose causal lineage contains a firing of A, so A's variables are guaranteed; 'B can appear after A' means B fires either way and A's variables are present only when the lineage contains A.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The q15 answer suggests an interpretation of q2 in lineage terms: 'B must appear after A' means B fires only on an event whose causal lineage contains a run of A, so A's variables are guaranteed; 'B can appear after A' means B fires either way and A's variables are present only when the lineage contains A. Pending the user's confirmation.",
+          "kind": "assumption",
+          "reason": "PR #329 code review: finding 8, stale 'pending confirmation' text"
+        }
+      ]
     },
     {
       "id": "c46",
       "kind": "requirement",
-      "text": "Loop protection works on causal lineage (c40, c43). The re-entry limit (c51) is declared on the trigger, defaulting to 3 appearances of the same declaration in one lineage, with 0 meaning the declaration may not re-appear in its own lineage. Backstops: a hop limit on total lineage depth, no self-retrigger unless the declaration opts in, and a per-declaration rate ceiling. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. Generalizes jira_comment_is_self_echo, maxTransitions/maxVisitsPerNode, the repair bound (internal/repair) and subject deferral (deferred_triggers).",
+      "text": "Loop protection works on causal lineage (c40, c43). The re-entry limit (c51) is declared on the trigger: N re-entries allowed (N+1 appearances), default 3, 0 = no re-entry. Backstops (c93): hop limit 20 on total lineage depth, no self-retrigger unless the declaration opts in, and 30 firings per declaration per hour. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. Generalizes jira_comment_is_self_echo, maxTransitions/maxVisitsPerNode, the repair bound (internal/repair) and subject deferral (deferred_triggers).",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -884,6 +901,11 @@
           "text": "Loop protection works on causal lineage, in layers: (1) a hop limit on lineage depth; (2) a per-lineage re-entry limit (the same declaration may appear at most N times in one lineage); (3) an event caused by a declaration's own action does not retrigger that declaration unless it opts in; (4) a per-declaration rate ceiling. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. This generalizes what exists today: jira_comment_is_self_echo (examples/pr-upkeep/pr_upkeep_jira.py), limits.maxTransitions / maxVisitsPerNode, the repair bound of 2 attempts per 24 h (internal/repair), and one active run per subject with deferral (internal/engine/trigger.go deferred_triggers).",
           "kind": "requirement",
           "reason": "q17 decided: re-entry default 3, 0 = none, set on the trigger"
+        },
+        {
+          "text": "Loop protection works on causal lineage (c40, c43). The re-entry limit (c51) is declared on the trigger, defaulting to 3 appearances of the same declaration in one lineage, with 0 meaning the declaration may not re-appear in its own lineage. Backstops: a hop limit on total lineage depth, no self-retrigger unless the declaration opts in, and a per-declaration rate ceiling. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. Generalizes jira_comment_is_self_echo, maxTransitions/maxVisitsPerNode, the repair bound (internal/repair) and subject deferral (deferred_triggers).",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 5, off-by-one wording"
         }
       ]
     },
@@ -945,14 +967,20 @@
     {
       "id": "c51",
       "kind": "decision",
-      "text": "The loop limit is a re-entry limit on causal lineage: default 3 appearances of the same declaration in one lineage, 0 = no re-appearance at all. It is set per context, depending on the trigger.",
+      "text": "The loop limit counts re-entries on causal lineage: a limit of N lets the same declaration re-enter its own lineage N times (N+1 appearances in total). Default 3; 0 means it appears once and never re-enters. It is set per context, depending on the trigger.",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The loop limit is a re-entry limit on causal lineage: default 3 appearances of the same declaration in one lineage, 0 = no re-appearance at all. It is set per context, depending on the trigger.",
+          "kind": "decision",
+          "reason": "PR #329 code review: finding 5, owner chose re-entries"
+        }
+      ]
     },
     {
       "id": "c52",
@@ -1221,7 +1249,7 @@
     {
       "id": "c70",
       "kind": "success_signal",
-      "text": "Side-by-side parity: pr-upkeep and jira-intake, migrated to declarations, run with the toggle on 'after' against the same inputs as the graph engine and produce the same domain outcomes and ledger record kinds (a recorded comparison, not a claim).",
+      "text": "Parity in shadow: with pr-upkeep and jira-intake migrated to declarations and the switch on 'shadow', every shadow firing matches the graph step that handled the same event (same declaration outcome, same rendered variables, same ledger record kinds), across a recorded window of real traffic, before the switch flips to 'after'. A recorded comparison, not a claim.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -1235,7 +1263,13 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Side-by-side parity: pr-upkeep and jira-intake, migrated to declarations, run with the toggle on 'after' against the same inputs as the graph engine and produce the same domain outcomes and ledger record kinds (a recorded comparison, not a claim).",
+          "kind": "success_signal",
+          "reason": "PR #329 code review: finding 7, parity cannot run with the switch on 'after'"
+        }
+      ]
     },
     {
       "id": "c71",
@@ -1378,7 +1412,7 @@
     {
       "id": "c79",
       "kind": "requirement",
-      "text": "Origin markers are unforgeable: each marker carries a MAC over (firing id, artifact kind, artifact id) keyed by the control plane, and an event inherits lineage only when its marker verifies; where the provider reports authorship, the artifact must also be authored by the bridge's own account. Anything else is treated as unmarked. Today's markers are plain text (adapters/jira/src/jira_bridge/mapping.py marked_text), so anyone who can edit a PR body or comment could copy one to inherit another chain's variables, satisfy a 'must appear after', and make actions fire.",
+      "text": "Origin markers are unforgeable: at dispatch the control plane mints a marker carrying a MAC over (firing id, artifact kind, random nonce), and the bridge stamps it into what it creates. The action's result reports the created artifact's id (PR number, comment id, message id, commit SHA), which the control plane records against the firing. An incoming event inherits lineage only when its marker's MAC verifies AND its artifact id equals the one recorded for that firing; where the provider reports authorship, the artifact must also be authored by the bridge's own account. Anything else is treated as unmarked. (The artifact id cannot be inside the MAC: providers assign it only after creation, and a commit cannot contain its own SHA.) Today's markers are plain text (adapters/jira/src/jira_bridge/mapping.py marked_text), so anyone who can edit a PR body or comment could copy one to inherit another chain's variables.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -1392,12 +1426,18 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Origin markers are unforgeable: each marker carries a MAC over (firing id, artifact kind, artifact id) keyed by the control plane, and an event inherits lineage only when its marker verifies; where the provider reports authorship, the artifact must also be authored by the bridge's own account. Anything else is treated as unmarked. Today's markers are plain text (adapters/jira/src/jira_bridge/mapping.py marked_text), so anyone who can edit a PR body or comment could copy one to inherit another chain's variables, satisfy a 'must appear after', and make actions fire.",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 1, the MAC covered an id that does not exist at creation time"
+        }
+      ]
     },
     {
       "id": "c80",
       "kind": "requirement",
-      "text": "Migration runs the declaration engine in shadow first: it evaluates triggers and conditions and records 'would fire' firings without dispatching actions, while the graph engine still acts. Parity (c70) compares shadow firings against graph runs. Only after parity does a scope switch to 'after', so no Jira comment, Discord post or agent session is ever produced twice.",
+      "text": "Migration runs the declaration engine in shadow first: it evaluates triggers and conditions and records 'would fire' firings without dispatching actions, while the graph engine still acts. Because shadow dispatches nothing, it stamps no markers, so shadow derives lineage from the graph engine's real run instead (graph run id -> shadow lineage) and parity is compared hop by hop: each shadow firing against the graph step that handled the same event, with the same variables. Only after parity does the switch go to 'after', so no Jira comment, Discord post or agent session is ever produced twice.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -1411,12 +1451,18 @@
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Migration runs the declaration engine in shadow first: it evaluates triggers and conditions and records 'would fire' firings without dispatching actions, while the graph engine still acts. Parity (c70) compares shadow firings against graph runs. Only after parity does a scope switch to 'after', so no Jira comment, Discord post or agent session is ever produced twice.",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 2, shadow could not see lineage without markers"
+        }
+      ]
     },
     {
       "id": "c81",
       "kind": "requirement",
-      "text": "Flipping a scope back from 'after' to 'before' is safe: open declaration nodes are frozen with a visible record (not dispatched and not dropped) and resume if the scope is flipped forward again; the graph engine never adopts declaration nodes. Rollback is a supported, tested path, not an emergency improvisation.",
+      "text": "Flipping back from 'after' to 'before' is safe: open declaration nodes are frozen with a visible record (not dispatched and not dropped). Events that arrive for a frozen node are stored against it, and its deadline is paused. When the switch flips forward again, the node resumes and replays its stored events in arrival order, so nothing depends on the provider redelivering (a redelivered event id is deduplicated, c75). The graph engine never adopts declaration nodes. Rollback is a supported, tested path.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -1424,13 +1470,19 @@
           "id": "h54",
           "text": "A flip back and forward again loses no open node and dispatches no action twice.",
           "status": "confirmed",
-          "instruction": "Test: open a node, flip back, deliver its reaction (recorded, not fired), flip forward, redeliver: one firing."
+          "instruction": "Test: open a node, flip back, deliver its reaction (stored, not fired), flip forward: the node replays it and fires once; a redelivery of the same event id fires nothing."
         }
       ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "Flipping a scope back from 'after' to 'before' is safe: open declaration nodes are frozen with a visible record (not dispatched and not dropped) and resume if the scope is flipped forward again; the graph engine never adopts declaration nodes. Rollback is a supported, tested path, not an emergency improvisation.",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 4, rollback relied on redelivery that dedup discards"
+        }
+      ]
     },
     {
       "id": "c82",
@@ -1627,6 +1679,25 @@
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c94",
+      "kind": "requirement",
+      "text": "Flipping to 'after' drains, it does not strand: new trigger events go to the declaration engine from the flip onward, while graph runs already open keep running on the graph engine until they end (including reactions they are waiting for). The graph engine retires only when its open-run count is zero, and that count is visible.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h63",
+          "text": "No graph run open at the flip is left without an engine: each ends on the graph engine, and new events never start graph runs after the flip.",
+          "status": "confirmed",
+          "instruction": "Test: open a graph run waiting on a callback, flip to 'after', deliver the callback (graph engine completes it) and a new trigger (declaration engine fires)."
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -2080,6 +2151,15 @@
       "seam": "focus API",
       "behavior": "Returns exactly the declarations within N hops in both directions across must and can links, filterable by direction and link type; nodes are not hops.",
       "source_text": "Q11 proposal: distance counts hops in both directions (what leads here and what follows), across both must and can links, with filters for direction and link type. Distance is measured over declarations; nodes are drawn but do not count as hops.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o19",
+      "claim_id": "c33",
+      "seam": "activation API + activation declarations",
+      "behavior": "Only a human principal activates an activation declaration; an activation declaration's action may target only ordinary declarations, refused at publish otherwise.",
+      "source_text": "Activation declarations are the root of trust, and the chain is one level deep: only a human principal can activate an activation declaration, and an activation declaration may only activate ordinary declarations, never another activation declaration. Without this, an agent could propose 'activate everything' and have it activated by a broader human-activated rule, or two agents could activate each other's rules, holding standing authority to post, comment, dispatch or run code that no human granted (PRD \u00a710.4). The owner accepts this as the current rule and may relax it later.",
       "origin": "llm",
       "status": "approved"
     }

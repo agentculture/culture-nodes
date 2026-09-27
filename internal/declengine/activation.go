@@ -224,7 +224,15 @@ func Activate(ctx context.Context, store *postgres.Store, namespaceID, targetVer
 	if err := AuthorizeActivation(principal, IsActivationDeclaration(*d)); err != nil {
 		return err
 	}
-	return store.RecordDeclarationActivation(ctx, namespaceID, targetVersionID, "activate", ResolveAuthor(principal), supersedesID)
+	if err := store.RecordDeclarationActivation(ctx, namespaceID, targetVersionID, "activate", ResolveAuthor(principal), supersedesID); err != nil {
+		return err
+	}
+	// c78/h42: report overlaps among the now-current active set on every
+	// activation, not only at publish.
+	if _, err := ReportOverlaps(ctx, store, namespaceID); err != nil {
+		return fmt.Errorf("%w: %w", ErrOverlapReportFailed, err)
+	}
+	return nil
 }
 
 // PublishInput is what Publish needs to parse, validate and store one
@@ -256,10 +264,26 @@ func Publish(ctx context.Context, store *postgres.Store, lookup ActivationLookup
 	if err != nil {
 		return postgres.DeclarationVersion{}, err
 	}
-	return store.PublishDeclaration(ctx, postgres.PublishDeclarationInput{
+	v, err := store.PublishDeclaration(ctx, postgres.PublishDeclarationInput{
 		NamespaceID: in.NamespaceID,
 		Name:        d.Name,
 		Body:        canonical,
 		Author:      ResolveAuthor(in.Principal),
 	})
+	if err != nil {
+		return v, err
+	}
+	// c78/h42: report overlaps among the currently active declarations at
+	// every publish too -- a publish never itself activates the new
+	// version, but the report reflects what is active right now regardless.
+	if _, err := ReportOverlaps(ctx, store, in.NamespaceID); err != nil {
+		return v, fmt.Errorf("%w: %w", ErrOverlapReportFailed, err)
+	}
+	return v, nil
 }
+
+// ErrOverlapReportFailed marks an error from the overlap report that runs
+// AFTER a publish or activation has already been written. The write stands;
+// only the report failed, so a caller must not read it as "publish failed"
+// (and must not retry the write) -- check errors.Is and surface a warning.
+var ErrOverlapReportFailed = errors.New("declengine: write succeeded but the overlap report failed")

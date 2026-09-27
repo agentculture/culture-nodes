@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/contracts"
@@ -248,6 +249,118 @@ func (s *Store) ListDeclarationAliasMembers(ctx context.Context, namespaceID, al
 	}
 	defer rows.Close()
 	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DeclarationAliasDetail is one alias's identity, its nesting (parent
+// name, empty at the root), its direct member declaration names, and its
+// direct child alias names -- everything GET
+// /v1alpha1/declarations/aliases/{name} renders (task t21b, #328, spec
+// c31/h23). Both Declarations and Children are ordered by name for a
+// stable read; neither descends into nested aliases -- that is
+// DeclarationAliasMemberIDsRecursive's job, used by focus instead.
+type DeclarationAliasDetail struct {
+	ID           string
+	NamespaceID  string
+	Name         string
+	ParentName   string
+	Declarations []string
+	Children     []string
+}
+
+// GetDeclarationAliasDetail resolves an alias by name within a namespace.
+// ErrNotFound when no alias of that name exists in this namespace -- an
+// alias in another namespace is invisible, same as every other
+// namespace-scoped read in this file.
+func (s *Store) GetDeclarationAliasDetail(ctx context.Context, namespaceID, name string) (DeclarationAliasDetail, error) {
+	out := DeclarationAliasDetail{NamespaceID: namespaceID, Name: name}
+	var parentID *string
+	err := s.pool.QueryRow(ctx, `SELECT id,parent_alias_id FROM declaration_aliases WHERE namespace_id=$1 AND name=$2`, namespaceID, name).
+		Scan(&out.ID, &parentID)
+	if err == pgx.ErrNoRows {
+		return DeclarationAliasDetail{}, ErrNotFound
+	}
+	if err != nil {
+		return DeclarationAliasDetail{}, err
+	}
+	if parentID != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT name FROM declaration_aliases WHERE namespace_id=$1 AND id=$2`, namespaceID, *parentID).Scan(&out.ParentName); err != nil {
+			return DeclarationAliasDetail{}, err
+		}
+	}
+
+	memberIDs, err := s.ListDeclarationAliasMembers(ctx, namespaceID, name)
+	if err != nil {
+		return DeclarationAliasDetail{}, err
+	}
+	names := make([]string, 0, len(memberIDs))
+	for _, id := range memberIDs {
+		memberName, err := s.DeclarationName(ctx, id)
+		if err != nil {
+			return DeclarationAliasDetail{}, err
+		}
+		names = append(names, memberName)
+	}
+	sort.Strings(names)
+	out.Declarations = names
+
+	rows, err := s.pool.Query(ctx, `SELECT name FROM declaration_aliases WHERE namespace_id=$1 AND parent_alias_id=$2 ORDER BY name`, namespaceID, out.ID)
+	if err != nil {
+		return DeclarationAliasDetail{}, err
+	}
+	defer rows.Close()
+	children := []string{}
+	for rows.Next() {
+		var childName string
+		if err := rows.Scan(&childName); err != nil {
+			return DeclarationAliasDetail{}, err
+		}
+		children = append(children, childName)
+	}
+	if err := rows.Err(); err != nil {
+		return DeclarationAliasDetail{}, err
+	}
+	out.Children = children
+	return out, nil
+}
+
+// DeclarationAliasMemberIDsRecursive returns every declaration id that is a
+// direct member of the named alias OR a member of any alias nested under
+// it, at any depth (task t21b, #328: this is the distance-0 set GET
+// .../focus uses when {name} names an alias rather than a declaration --
+// c31/h23's "a chain alias resolves by name in every verb that accepts a
+// chain"). ErrNotFound when no alias of that name exists in this namespace.
+func (s *Store) DeclarationAliasMemberIDsRecursive(ctx context.Context, namespaceID, aliasName string) ([]string, error) {
+	var aliasID string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM declaration_aliases WHERE namespace_id=$1 AND name=$2`, namespaceID, aliasName).Scan(&aliasID)
+	if err == pgx.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM declaration_aliases WHERE id=$1
+			UNION ALL
+			SELECT a.id FROM declaration_aliases a JOIN subtree s ON a.parent_alias_id = s.id WHERE a.namespace_id=$2
+		)
+		SELECT DISTINCT m.declaration_id FROM declaration_alias_members m
+		JOIN subtree s ON s.id = m.alias_id
+		WHERE m.namespace_id=$2
+		ORDER BY m.declaration_id`, aliasID, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {

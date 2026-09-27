@@ -30,6 +30,9 @@ class CliError(Exception):
     code: int
     message: str
     remediation: str = ""
+    # The API's HTTP status when this error relays a non-2xx response; None
+    # for every error the CLI raises itself. Not part of to_dict().
+    http_status: int | None = None
 
     def __post_init__(self) -> None:
         super().__init__(self.message)

@@ -174,11 +174,13 @@ def _error_from_body(status: int, raw: bytes) -> CliError:
             code=code,
             message=str(payload["message"]),
             remediation=str(payload.get("remediation", "")),
+            http_status=status,
         )
     return CliError(
         code=EXIT_USER_ERROR if status < 500 else EXIT_ENV_ERROR,
         message=f"nodes API returned HTTP {status} with an unrecognized error body",
         remediation="check the API server logs; this may indicate a client/server version mismatch",
+        http_status=status,
     )
 
 

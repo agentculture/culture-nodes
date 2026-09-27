@@ -440,3 +440,10 @@ collector write reports `session_ok = true` (c43's AND). The router treats a
 fresh (< 5 min) false row, or a locked row of any age, as "not live" and
 routes to the actor's registered `metadata.fallback_actor`. `session_ok` is
 nullable: NULL is "unmeasured", never true or false.
+
+## `0060_firings.sql`
+
+Adds declaration firings, lineage edges, minted markers, waiting nodes and
+their frozen events, and per-match evaluations. Initial firings are unique
+per `(namespace_id, event_id, declaration_id)`; re-mints retain the original
+lineage and canonical firing ID.

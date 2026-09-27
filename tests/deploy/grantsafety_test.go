@@ -272,6 +272,8 @@ func runnerEnvLaneEnv() []string {
 		"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=" + strings.Repeat("b", 64),
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=https://example.invalid/emit.py",
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=" + strings.Repeat("c", 64),
+		"PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL=https://example.invalid/github.py",
+		"PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256=" + strings.Repeat("e", 64),
 		"PR_UPKEEP_READINESS_SOURCE_URL=https://example.invalid/readiness.py",
 		"PR_UPKEEP_READINESS_SOURCE_SHA256=" + strings.Repeat("d", 64),
 	}

@@ -22,6 +22,7 @@ type githubWebhookEvent struct {
 	SourceKey string          `json:"source_key"`
 	Subject   string          `json:"subject"`
 	Payload   json.RawMessage `json:"payload"`
+	Watermark json.RawMessage `json:"-"`
 }
 
 type githubWebhookDelivery struct {
@@ -108,22 +109,25 @@ func githubWebhookFact(event string, body []byte, deliveryID string) (githubWebh
 		"author": text(object(pr["user"])["login"]),
 	}
 	if name == "github.pr.approved" {
-		payload["reviewer"] = text(object(object(p["review"])["user"])["login"])
+		review := object(p["review"])
+		reviewID := text(review["id"])
+		if reviewID == "" {
+			return githubWebhookEvent{}, false, fmt.Errorf("review.id is required for approval")
+		}
+		payload["reviewer"] = text(object(review["user"])["login"])
+		return githubWebhookEvent{
+			Name: name, SourceKey: "github:" + repo + ":pr:" + number + ":review:" + reviewID + ":approved",
+			Subject: repo + "#" + number, Payload: marshal(payload),
+			Watermark: marshal(map[string]string{"review_id": reviewID}),
+		}, true, nil
 	}
-	return githubWebhookEvent{Name: name, SourceKey: "github:" + deliveryID, Subject: repo + "#" + number, Payload: marshal(payload)}, true, nil
+	return githubWebhookEvent{Name: name, SourceKey: "github:" + deliveryID, Subject: repo + "#" + number, Payload: marshal(payload), Watermark: marshal(map[string]string{"source_key": "github:" + deliveryID})}, true, nil
 }
 
 func (s *Server) deliverGitHubFact(ctx context.Context, fact githubWebhookEvent) (EventDeliveryOut, error) {
-	// DeliverSignalEvent takes a source key and a watermark together (the
-	// jira receiver does the same); the delivery-keyed source key carries its
-	// own position, so the watermark records it.
-	watermark, err := json.Marshal(map[string]string{"source_key": fact.SourceKey})
-	if err != nil {
-		return EventDeliveryOut{}, err
-	}
 	d, err := s.Store.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: s.NamespaceID, Name: fact.Name, Payload: fact.Payload,
-		Emitter: "github-webhook", SourceKey: fact.SourceKey, Watermark: watermark, Subject: fact.Subject,
+		Emitter: "github-webhook", SourceKey: fact.SourceKey, Watermark: fact.Watermark, Subject: fact.Subject,
 		Pickup: s.Engine, Trigger: s.Engine,
 	})
 	if err != nil {

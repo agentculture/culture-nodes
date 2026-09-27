@@ -95,6 +95,8 @@ PR_UPKEEP_SWEEP_JIRA_SOURCE_URL=${PR_UPKEEP_SWEEP_JIRA_SOURCE_URL:-"https://raw.
 PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=${PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_jira.py" | sha256sum | cut -d' ' -f1)}
 PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=${PR_UPKEEP_SWEEP_EMIT_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_emit.py"}
 PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=${PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_emit.py" | sha256sum | cut -d' ' -f1)}
+PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL=${PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL:-"https://raw.githubusercontent.com/agentculture/culture-nodes/$REVISION/examples/pr-upkeep/pr_upkeep_github.py"}
+PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256=${PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256:-$(git show "$REVISION:examples/pr-upkeep/pr_upkeep_github.py" | sha256sum | cut -d' ' -f1)}
 # The readiness collector (issue #317) is the same shape, derived the same way
 # from the same shipped revision. One difference decides that it is granted
 # here rather than left for later like the cleanup example's pair: its node is
@@ -141,7 +143,7 @@ case "$PR_UPKEEP_REPOSITORIES" in
 		exit 1
 		;;
 esac
-if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_EMIT_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256" ]; then
+if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_EMIT_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256" ] && [ -n "$PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256" ]; then
 	# Piped over stdin rather than built into the ssh command string: the
 	# repositories value is single-quoted (see above) and interpolating quotes
 	# into a double-quoted remote command is how you get a value that is
@@ -173,6 +175,8 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 		"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256=$PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256" \
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL=$PR_UPKEEP_SWEEP_EMIT_SOURCE_URL" \
 		"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256=$PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256" \
+		"PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL=$PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL" \
+		"PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256=$PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256" \
 		"PR_UPKEEP_READINESS_SOURCE_URL=$PR_UPKEEP_READINESS_SOURCE_URL" \
 		"PR_UPKEEP_READINESS_SOURCE_SHA256=$PR_UPKEEP_READINESS_SOURCE_SHA256" \
 		"PR_UPKEEP_READINESS_GITHUB_API=$PR_UPKEEP_READINESS_GITHUB_API" \

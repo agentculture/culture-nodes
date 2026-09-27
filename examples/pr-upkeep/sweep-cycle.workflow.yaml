@@ -34,6 +34,8 @@
 #   PR_UPKEEP_SWEEP_EMIT_SOURCE_URL        where pr_upkeep_emit.py is fetched.
 #   PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256     its independently verified digest.
 #   PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256     its independently verified digest.
+#   PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL      where pr_upkeep_github.py is fetched.
+#   PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256   its independently verified digest.
 #   PR_UPKEEP_REPOSITORIES                 the swept repositories document
 #                                          (github_repo, sonar_component,
 #                                          optional jira_site/jira_project/
@@ -65,7 +67,7 @@ kind: Workflow
 
 metadata:
   name: pr-upkeep-sweep-cycle
-  version: 1.0.0
+  version: 1.1.0
   ownerRef: team/platform-ai
 
 spec:
@@ -105,6 +107,8 @@ spec:
           - PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256
           - PR_UPKEEP_SWEEP_EMIT_SOURCE_URL
           - PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256
+          - PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL
+          - PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256
           - PR_UPKEEP_REPOSITORIES
           - GITHUB_TOKEN
           - SONAR_TOKEN
@@ -122,6 +126,7 @@ spec:
                 ("sweep.py", "PR_UPKEEP_SWEEP_SOURCE_URL", "PR_UPKEEP_SWEEP_SOURCE_SHA256"),
                 ("pr_upkeep_jira.py", "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL", "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256"),
                 ("pr_upkeep_emit.py", "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL", "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256"),
+                ("pr_upkeep_github.py", "PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL", "PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256"),
             )
             directory = tempfile.mkdtemp()
             for filename, url_ref, digest_ref in sources:

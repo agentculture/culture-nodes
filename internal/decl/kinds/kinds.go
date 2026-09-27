@@ -39,6 +39,12 @@ var actions = []Kind{
 	{Name: "jira.create", Version: 1, Consumes: []ArtifactType{ArtifactNone}, Produces: []ArtifactType{ArtifactJiraIssue}},
 	{Name: "code.run", Version: 1, Consumes: []ArtifactType{ArtifactNone}, Produces: []ArtifactType{ArtifactCodeResult}},
 	{Name: "human.ask", Version: 1, Consumes: []ArtifactType{ArtifactNone}, Produces: []ArtifactType{ArtifactHumanDecision}},
+	// activate is the action of an activation declaration (internal/declengine/activation.go):
+	// it names another declaration to make active. Its own authorization is a
+	// root-of-trust rule (only a human principal, one level deep), not the
+	// produces/consumes signature below, which exists only so the kind is a
+	// registered, versioned citizen of this vocabulary like every other action.
+	{Name: "activate", Version: 1, Consumes: []ArtifactType{ArtifactDeclaration}, Produces: []ArtifactType{ArtifactDeclaration}},
 }
 
 var triggers = []Kind{

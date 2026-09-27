@@ -78,6 +78,23 @@ func (s *Store) PublishDeclaration(ctx context.Context, in PublishDeclarationInp
 	return v, tx.Commit(ctx)
 }
 
+// LatestDeclarationVersion returns the newest published version of the
+// named declaration in a namespace. internal/declengine/activation.go uses
+// it to resolve a fixed activation target at publish time (c33, h64): the
+// one-level-deep root-of-trust check needs the target's CURRENT version,
+// not whichever version happens to be active.
+func (s *Store) LatestDeclarationVersion(ctx context.Context, namespaceID, name string) (DeclarationVersion, error) {
+	var v DeclarationVersion
+	err := s.pool.QueryRow(ctx, `SELECT v.id,v.namespace_id,v.declaration_id,d.name,v.version,v.digest,v.body,v.author,v.created_at
+		FROM declaration_versions v JOIN declarations d ON d.id=v.declaration_id
+		WHERE v.namespace_id=$1 AND d.name=$2 ORDER BY v.version DESC LIMIT 1`, namespaceID, name).
+		Scan(&v.ID, &v.NamespaceID, &v.DeclarationID, &v.Name, &v.Version, &v.Digest, &v.Body, &v.Author, &v.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return v, ErrNotFound
+	}
+	return v, err
+}
+
 func (s *Store) GetDeclarationVersion(ctx context.Context, id string) (DeclarationVersion, error) {
 	var v DeclarationVersion
 	err := s.pool.QueryRow(ctx, `SELECT v.id,v.namespace_id,v.declaration_id,d.name,v.version,v.digest,v.body,v.author,v.created_at

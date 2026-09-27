@@ -1431,7 +1431,7 @@
             "type": "string"
           },
           "outcome": {
-            "description": "One of: matched, lineage missing, lineage checked, loop-limited, condition error, condition false, condition true, evaluation failed, duplicate, dispatching, dispatch failed, stamping refused, fired, deferred, shadow, budget-blocked, overlap-suppressed. This route always returns the newest row, i.e. the terminal outcome of the declaration's evaluation of the event. budget-blocked and overlap-suppressed are defined but not yet produced by any task (t11, t14 respectively).",
+            "description": "One of: matched, lineage missing, lineage checked, loop-limited, condition error, condition false, condition true, evaluation failed, duplicate, dispatching, dispatch failed, stamping refused, fired, deferred, shadow, budget-blocked, sensitivity-blocked, overlap-suppressed. This route always returns the newest row, i.e. the terminal outcome of the declaration's evaluation of the event. budget-blocked and overlap-suppressed are defined but not yet produced by any task (t11, t14 respectively).",
             "type": "string"
           },
           "reason": {
@@ -4150,6 +4150,175 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "SensitivityApproval": {
+        "description": "One sensitivity approval task (task t30,",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_id": {
+            "absent while pending.": null,
+            "description": "The newest decision",
+            "type": "string"
+          },
+          "declaration_id": {
+            "description": "The declaration whose action renders the variable.",
+            "type": "string"
+          },
+          "declaration_version": {
+            "description": "The version the approval covers.",
+            "type": "string"
+          },
+          "first_event_id": {
+            "description": "The event whose firing was first blocked.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "source_audience": {
+            "enum": [
+              "restricted",
+              "operators",
+              "team",
+              "org",
+              "public"
+            ],
+            "type": "string"
+          },
+          "source_declaration_id": {
+            "type": "string"
+          },
+          "source_system": {
+            "type": "string"
+          },
+          "source_version": {
+            "description": "The version that produced the variable; its author is the owner.",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "refused"
+            ],
+            "type": "string"
+          },
+          "target_audience": {
+            "enum": [
+              "restricted",
+              "operators",
+              "team",
+              "org",
+              "public"
+            ],
+            "type": "string"
+          },
+          "target_system": {
+            "type": "string"
+          },
+          "variable": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "declaration_id",
+          "declaration_version",
+          "source_declaration_id",
+          "source_version",
+          "variable",
+          "source_system",
+          "source_audience",
+          "target_system",
+          "target_audience",
+          "owner",
+          "first_event_id",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "SensitivityApprovalList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SensitivityApproval"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SensitivityDecision": {
+        "description": "One append-only decision on a sensitivity approval task.",
+        "properties": {
+          "approval_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decider": {
+            "description": "The authenticated principal; always the owner.",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "refused"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "supersedes": {
+            "absent for the first.": null,
+            "description": "The decision this one replaces",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "approval_id",
+          "decision",
+          "decider",
+          "note",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "SensitivityDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "approved",
+              "refused"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
         ],
         "type": "object"
       },
@@ -8844,6 +9013,144 @@
         "summary": "Enable or disable a schedule.",
         "tags": [
           "schedules"
+        ]
+      }
+    },
+    "/v1alpha1/sensitivity-approvals": {
+      "get": {
+        "description": "Task t30 (#328; spec q22). A firing whose action would render a variable into a system with a wider audience than the variable came from (internal/decl/sensitivity.go's ranking table) is recorded as `sensitivity-blocked` and not dispatched. It opens exactly one approval task per (declaration version, source version, variable, target system), addressed to the variable's owner -- the author of the declaration version that produced it. `status` is the newest append-only decision, or `pending` when there is none.",
+        "operationId": "listSensitivityApprovals",
+        "parameters": [
+          {
+            "description": "Only tasks addressed to this owner.",
+            "in": "query",
+            "name": "owner",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only tasks in this state.",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "refused"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensitivityApprovalList"
+                }
+              }
+            },
+            "description": "The approval tasks, oldest first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "status is not a known state."
+          }
+        },
+        "summary": "The variable owners' sensitivity approval inbox.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/sensitivity-approvals/{id}/decision": {
+      "post": {
+        "description": "Task t30 (#328; spec q22). Appends an immutable decision that supersedes the task's previous one; the newest decision is the task's state. Only the owner, authenticated as a human principal, may decide: an agent actor's bearer and any other human are refused with 403. An approval lets later firings of that declaration version render the variable into the target system; a refusal keeps blocking them.",
+        "operationId": "decideSensitivityApproval",
+        "parameters": [
+          {
+            "description": "The approval task id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensitivityDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensitivityDecision"
+                }
+              }
+            },
+            "description": "The decision was appended."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The request is malformed or the decision is unknown."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The principal is not a human, or is not the owner."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No approval task with this id."
+          }
+        },
+        "summary": "Append the owner's approval or refusal of a widening.",
+        "tags": [
+          "declarations"
         ]
       }
     },

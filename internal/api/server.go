@@ -576,6 +576,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/declarations/{name}/focus", s.wrap(s.handleDeclarationFocus))
 	mux.HandleFunc("GET /v1alpha1/declarations/{name}/suggestions", s.wrap(s.handleDeclarationSuggestions))
 
+	// Sensitivity approval inbox (task t30, #328; spec q22): see
+	// declsensitivity.go.
+	mux.HandleFunc("GET /v1alpha1/sensitivity-approvals", s.wrap(s.handleListSensitivityApprovals))
+	mux.HandleFunc("POST /v1alpha1/sensitivity-approvals/{id}/decision", s.wrap(s.handleDecideSensitivityApproval))
+
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
 	mux.HandleFunc("GET /v1alpha1/mesh", s.wrap(s.handleMesh))

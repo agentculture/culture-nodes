@@ -801,7 +801,14 @@ func (s *Server) declarationReferenceWarningsForID(ctx context.Context, declarat
 			warnings = append(warnings, w)
 		}
 	}
-	return warnings, nil
+	// Task t30 (spec q22): publish also warns -- never refuses -- once per
+	// reference that renders a variable into a wider audience than it came
+	// from; at firing time that render is blocked until the owner approves.
+	sensitivity, err := declengine.SensitivityWarnings(ctx, s.Store, s.NamespaceID, d)
+	if err != nil {
+		return nil, err
+	}
+	return append(warnings, sensitivity...), nil
 }
 
 // declarationHumanProvider names the principal providers that are people:

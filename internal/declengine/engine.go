@@ -71,6 +71,9 @@ const (
 	// stamping, so nothing was dispatched. The reason names actor and
 	// revision.
 	OutcomeStampingRefused = "stamping refused"
+	// OutcomeSensitivityBlocked (task t30) is defined in sensitivity.go:
+	// the action would widen a variable's audience without its owner's
+	// approval, so the firing was refused before it was claimed.
 )
 
 // Config carries the deployment's engine settings. MarkerKeyEnv names the
@@ -322,6 +325,16 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	}
 	if deferred {
 		return record(OutcomeDeferred, fmt.Sprintf("per-subject concurrency cap %d reached for subject %q; queued to run when a slot frees", a.Declaration.Trigger.MaxConcurrentSubject, event.Subject))
+	}
+	// Task t30 (spec q22): a present variable the action would render into
+	// a wider audience than it came from blocks the firing until its owner
+	// approves; the block opens (or reuses) that owner's approval task.
+	blockedReason, err := e.checkSensitivity(ctx, event, a, lineage)
+	if err != nil {
+		return fail(OutcomeEvaluationError, err)
+	}
+	if blockedReason != "" {
+		return record(OutcomeSensitivityBlocked, blockedReason)
 	}
 	// Everything that can reject the firing is checked before it is
 	// claimed, so a dispatched action always has a node to land on.

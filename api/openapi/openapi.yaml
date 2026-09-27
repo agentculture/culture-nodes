@@ -1368,6 +1368,104 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/sensitivity-approvals:
+    get:
+      operationId: listSensitivityApprovals
+      tags: [declarations]
+      summary: The variable owners' sensitivity approval inbox.
+      description: >-
+        Task t30 (#328; spec q22). A firing whose action would render a
+        variable into a system with a wider audience than the variable came
+        from (internal/decl/sensitivity.go's ranking table) is recorded as
+        `sensitivity-blocked` and not dispatched. It opens exactly one
+        approval task per (declaration version, source version, variable,
+        target system), addressed to the variable's owner -- the author of
+        the declaration version that produced it. `status` is the newest
+        append-only decision, or `pending` when there is none.
+      parameters:
+        - name: owner
+          in: query
+          description: Only tasks addressed to this owner.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Only tasks in this state.
+          schema:
+            type: string
+            enum: [pending, approved, refused]
+      responses:
+        '200':
+          description: The approval tasks, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SensitivityApprovalList'
+        '400':
+          description: status is not a known state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/sensitivity-approvals/{id}/decision:
+    post:
+      operationId: decideSensitivityApproval
+      tags: [declarations]
+      summary: Append the owner's approval or refusal of a widening.
+      description: >-
+        Task t30 (#328; spec q22). Appends an immutable decision that
+        supersedes the task's previous one; the newest decision is the
+        task's state. Only the owner, authenticated as a human principal,
+        may decide: an agent actor's bearer and any other human are refused
+        with 403. An approval lets later firings of that declaration version
+        render the variable into the target system; a refusal keeps
+        blocking them.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The approval task id.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SensitivityDecisionRequest'
+      responses:
+        '201':
+          description: The decision was appended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SensitivityDecision'
+        '400':
+          description: The request is malformed or the decision is unknown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: No authenticated principal was presented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The principal is not a human, or is not the owner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No approval task with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/attempts/{attemptID}/artifacts:
     get:
       operationId: listAttemptArtifacts
@@ -6593,7 +6691,7 @@ components:
             condition error, condition false, condition true, evaluation
             failed, duplicate, dispatching, dispatch failed, stamping
             refused, fired, deferred, shadow, budget-blocked,
-            overlap-suppressed. This route
+            sensitivity-blocked, overlap-suppressed. This route
             always returns the newest row, i.e. the terminal outcome of the
             declaration's evaluation of the event. budget-blocked and
             overlap-suppressed are defined but not yet produced by any task
@@ -6855,6 +6953,57 @@ components:
         from: {type: string}
         to: {type: string}
         kind: {type: string, enum: [must, can]}
+
+    SensitivityApproval:
+      type: object
+      description: One sensitivity approval task (task t30, #328; spec q22).
+      required: [id, declaration_id, declaration_version, source_declaration_id, source_version, variable, source_system, source_audience, target_system, target_audience, owner, first_event_id, status, created_at]
+      properties:
+        id: {type: string}
+        declaration_id: {type: string, description: The declaration whose action renders the variable.}
+        declaration_version: {type: string, description: The version the approval covers.}
+        source_declaration_id: {type: string}
+        source_version: {type: string, description: The version that produced the variable; its author is the owner.}
+        variable: {type: string}
+        source_system: {type: string}
+        source_audience: {type: string, enum: [restricted, operators, team, org, public]}
+        target_system: {type: string}
+        target_audience: {type: string, enum: [restricted, operators, team, org, public]}
+        owner: {type: string}
+        first_event_id: {type: string, description: The event whose firing was first blocked.}
+        status: {type: string, enum: [pending, approved, refused]}
+        decision_id: {type: string, description: The newest decision, absent while pending.}
+        created_at: {type: string, format: date-time}
+
+    SensitivityApprovalList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SensitivityApproval'
+
+    SensitivityDecisionRequest:
+      type: object
+      required: [decision]
+      additionalProperties: false
+      properties:
+        decision: {type: string, enum: [approved, refused]}
+        note: {type: string}
+
+    SensitivityDecision:
+      type: object
+      description: One append-only decision on a sensitivity approval task.
+      required: [id, approval_id, decision, decider, note, created_at]
+      properties:
+        id: {type: string}
+        approval_id: {type: string}
+        decision: {type: string, enum: [approved, refused]}
+        decider: {type: string, description: The authenticated principal; always the owner.}
+        note: {type: string}
+        supersedes: {type: string, description: The decision this one replaces, absent for the first.}
+        created_at: {type: string, format: date-time}
 
     DeclarationFocus:
       type: object

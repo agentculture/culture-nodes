@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strconv"
 
 	"github.com/agentculture/culture-nodes/internal/decl"
 	"github.com/agentculture/culture-nodes/internal/decl/template"
@@ -115,20 +114,13 @@ func renderAction(a decl.Action, current map[string]any, lineage []Ancestor) (de
 		return a, err
 	}
 	lookup := func(ref template.Reference) (string, bool) {
-		vars := current
-		if ref.Step != "0" {
-			vars = nil
-			if n, err := strconv.Atoi(ref.Step); err == nil {
-				if n > 0 && n <= len(lineage) {
-					vars = lineage[n-1].Variables
-				}
-			} else {
-				for _, ancestor := range lineage {
-					if ancestor.Name == ref.Step {
-						vars = ancestor.Variables
-						break
-					}
-				}
+		// stepIndex (sensitivity.go) is the one step resolution rendering
+		// and the sensitivity check share, so both read the same variable.
+		var vars map[string]any
+		if idx, ok := stepIndex(ref.Step, lineage); ok {
+			vars = current
+			if idx >= 0 {
+				vars = lineage[idx].Variables
 			}
 		}
 		v, ok := vars[ref.Name]

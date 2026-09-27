@@ -186,6 +186,7 @@ type Server struct {
 	log               *slog.Logger
 	principalVerifier principalVerifier
 	jiraWebhook       jiraWebhookConfig
+	githubWebhook     githubWebhookConfig
 }
 
 // Option configures a Server.
@@ -626,6 +627,7 @@ func (s *Server) routes() http.Handler {
 func (s *Server) accessRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1alpha1/webhooks/jira", s.wrap(s.handleJiraWebhook))
+	mux.HandleFunc("POST /v1alpha1/webhooks/github", s.wrap(s.handleGitHubWebhook))
 	mux.Handle("/", s.routes())
 	return mux
 }

@@ -47,15 +47,34 @@ var testGitHubIsolationPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?:github|GitHub).*Client|github.*API|GitHub.*auth`),
 }
 
+// gitHubHighConfidencePatterns is how many leading entries of
+// testGitHubIsolationPatterns are the high-confidence ones (a GITHUB_TOKEN
+// read, an api.github.com or github.com/repos host). An inbound-webhook
+// exemption below lifts only the loose name heuristic after them.
+const gitHubHighConfidencePatterns = 3
+
+// testGitHubInboundWebhookExceptions narrows the boundary for exactly one
+// kind of file: an INBOUND GitHub webhook receiver. It holds a webhook
+// signing secret (the same shape as the Jira receiver's) and verifies
+// X-Hub-Signature-256 on requests GitHub sends it; it holds no GitHub API
+// credential and makes no outbound call. The owner decided this narrowing
+// for issue #328 task t23 (ADR 0014). Such a file is still held to the
+// high-confidence patterns, so a GITHUB_TOKEN read or an api.github.com call
+// added to it fails this test like anywhere else.
+var testGitHubInboundWebhookExceptions = map[string]string{
+	"internal/api/githubwebhook.go": "inbound GitHub webhook receiver: signing secret only, no API credential, no outbound call (#328 t23)",
+}
+
 // TestGitHubCredentialAndAPIIsolation scans every non-test .go file in
 // internal/ and cmd/ (the control-plane process) and fails if any of them
 // contain patterns suggesting GitHub credential handling or API calls. The
 // tracker and all GitHub-aware code lives in adapters/, outside the
 // deployment (spec claim c13, issue #54).
 //
-// Exceptions (if any exist in the future) are handled inline: if a file must
-// mention GitHub for documentation, add it to testGitHubControlPlaneExceptions
-// and document the exception.
+// The one exception class is an inbound webhook receiver
+// (testGitHubInboundWebhookExceptions), still held to the high-confidence
+// patterns; anything else that must mention GitHub stays out of internal/
+// and cmd/.
 func TestGitHubCredentialAndAPIIsolation(t *testing.T) {
 	repoRoot := repoRoot(t)
 	scanned := 0
@@ -119,8 +138,13 @@ func checkGoFileForGitHubRef(t *testing.T, path, rel string, scanned, violations
 		return fmt.Errorf("read %s: %w", rel, readErr)
 	}
 
-	// Search for each pattern in the file
-	for _, pattern := range testGitHubIsolationPatterns {
+	// Search for each pattern in the file. An inbound-webhook exception is
+	// checked against the high-confidence patterns only.
+	patterns := testGitHubIsolationPatterns
+	if _, ok := testGitHubInboundWebhookExceptions[rel]; ok {
+		patterns = patterns[:gitHubHighConfidencePatterns]
+	}
+	for _, pattern := range patterns {
 		matches := pattern.FindAllString(string(content), -1)
 		for _, match := range matches {
 			*violations++
@@ -132,4 +156,41 @@ func checkGoFileForGitHubRef(t *testing.T, path, rel string, scanned, violations
 		}
 	}
 	return nil
+}
+
+// TestGitHubInboundWebhookExceptionStillForbidsTheAPI proves the narrowing
+// is narrow: an exempted file reading GITHUB_TOKEN or naming api.github.com
+// still fails, while its loose "GitHub ... auth" wording does not.
+func TestGitHubInboundWebhookExceptionStillForbidsTheAPI(t *testing.T) {
+	dir := t.TempDir()
+	rel := "internal/api/githubwebhook.go"
+	for name, body := range map[string]string{
+		"token read": "package api\nvar _ = os.Getenv(\"GITHUB_TOKEN\")\n",
+		"api host":   "package api\nconst host = \"api.github.com\"\n",
+	} {
+		path := filepath.Join(dir, "f.go")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		scanned, violations := 0, 0
+		var list []string
+		if err := checkGoFileForGitHubRef(t, path, rel, &scanned, &violations, &list); err != nil {
+			t.Fatal(err)
+		}
+		if violations == 0 {
+			t.Errorf("%s: exempted webhook file was not flagged", name)
+		}
+	}
+	path := filepath.Join(dir, "g.go")
+	if err := os.WriteFile(path, []byte("package api\nconst hint = \"GitHub webhook auth\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scanned, violations := 0, 0
+	var list []string
+	if err := checkGoFileForGitHubRef(t, path, rel, &scanned, &violations, &list); err != nil {
+		t.Fatal(err)
+	}
+	if violations != 0 {
+		t.Errorf("inbound webhook wording flagged: %v", list)
+	}
 }

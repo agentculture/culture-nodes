@@ -508,6 +508,8 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /v1alpha1/node-runs", s.wrap(s.handleListNodeRuns))
 
+	mux.HandleFunc("GET /v1alpha1/declarations/{name}/evaluations", s.wrap(s.handleGetDeclarationEvaluation))
+
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))
 	mux.HandleFunc("GET /v1alpha1/mesh", s.wrap(s.handleMesh))

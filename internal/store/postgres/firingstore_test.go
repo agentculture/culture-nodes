@@ -8,10 +8,23 @@ import (
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
+// mustDeclarationVersion publishes a declaration named name, because a
+// firing must reference a catalog declaration and one of its versions (0064).
+func mustDeclarationVersion(t *testing.T, s *postgres.Store, namespaceID, name string) postgres.DeclarationVersion {
+	t.Helper()
+	body := []byte(`{"name":"` + name + `","trigger":{"kind":"timer"},"action":{"kind":"agent.work"}}`)
+	v, err := s.PublishDeclaration(context.Background(), postgres.PublishDeclarationInput{NamespaceID: namespaceID, Name: name, Body: body, Author: "test"})
+	if err != nil {
+		t.Fatalf("publish declaration %s: %v", name, err)
+	}
+	return v
+}
+
 func TestDeclarationFiringDeduplicatesEventAndPreservesRemintLineage(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
 	ns := mustNamespace(t, s, "test-declaration-firing")
+	a, b := mustDeclarationVersion(t, s, ns.ID, "declaration-a"), mustDeclarationVersion(t, s, ns.ID, "declaration-b")
 	event, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: ns.ID, Name: "test.firing", Emitter: "test", SourceKey: "test-firing-source", Watermark: []byte(`{"cursor":1}`),
 	})
@@ -19,7 +32,7 @@ func TestDeclarationFiringDeduplicatesEventAndPreservesRemintLineage(t *testing.
 		t.Fatal(err)
 	}
 	first, created, err := s.RecordDeclarationFiring(ctx, postgres.DeclarationFiringInput{
-		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: "declaration-a", DeclarationVersion: "version-a",
+		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: a.DeclarationID, DeclarationVersion: a.ID,
 		TriggerDigest: "trigger-v1", ConditionDigest: "condition-v1", ActionDigest: "action-v1",
 	})
 	if err != nil || !created {
@@ -35,14 +48,14 @@ func TestDeclarationFiringDeduplicatesEventAndPreservesRemintLineage(t *testing.
 		t.Fatalf("redelivery: %+v err=%v", redelivery, err)
 	}
 	second, created, err := s.RecordDeclarationFiring(ctx, postgres.DeclarationFiringInput{
-		NamespaceID: ns.ID, EventID: redelivery.Event.ID, DeclarationID: "declaration-a", DeclarationVersion: "version-a",
+		NamespaceID: ns.ID, EventID: redelivery.Event.ID, DeclarationID: a.DeclarationID, DeclarationVersion: a.ID,
 		TriggerDigest: "trigger-v1", ConditionDigest: "condition-v1", ActionDigest: "action-v1",
 	})
 	if err != nil || created || second.ID != first.ID {
 		t.Fatalf("duplicate firing: %+v created=%v err=%v", second, created, err)
 	}
 	remint, created, err := s.RecordDeclarationFiring(ctx, postgres.DeclarationFiringInput{
-		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: "declaration-a", DeclarationVersion: "version-a",
+		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: a.DeclarationID, DeclarationVersion: a.ID,
 		TriggerDigest: "trigger-v1", ConditionDigest: "condition-v1", ActionDigest: "action-v1", RemintOfID: first.ID,
 	})
 	if err != nil || !created || remint.ID == first.ID || remint.LineageID != first.LineageID || remint.CanonicalFiringID != first.ID {
@@ -53,7 +66,7 @@ func TestDeclarationFiringDeduplicatesEventAndPreservesRemintLineage(t *testing.
 		t.Fatal(err)
 	}
 	child, created, err := s.RecordDeclarationFiring(ctx, postgres.DeclarationFiringInput{
-		NamespaceID: ns.ID, EventID: childEvent.Event.ID, DeclarationID: "declaration-b", DeclarationVersion: "version-b",
+		NamespaceID: ns.ID, EventID: childEvent.Event.ID, DeclarationID: b.DeclarationID, DeclarationVersion: b.ID,
 		TriggerDigest: "trigger-v2", ConditionDigest: "condition-v2", ActionDigest: "action-v2", ParentFiringID: remint.ID,
 	})
 	if err != nil || !created || child.LineageID != first.LineageID {
@@ -73,12 +86,13 @@ func TestDeclarationFiringStorageSurfaces(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
 	ns := mustNamespace(t, s, "test-declaration-surfaces")
+	a := mustDeclarationVersion(t, s, ns.ID, "declaration-a")
 	event, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns.ID, Name: "test.surfaces", Emitter: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f, _, err := s.RecordDeclarationFiring(ctx, postgres.DeclarationFiringInput{
-		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: "declaration-a", DeclarationVersion: "version-a",
+		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: a.DeclarationID, DeclarationVersion: a.ID,
 		TriggerDigest: "trigger-v1", ConditionDigest: "condition-v1", ActionDigest: "action-v1",
 	})
 	if err != nil {
@@ -101,7 +115,7 @@ func TestDeclarationFiringStorageSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Pool().Exec(ctx, `INSERT INTO declaration_evaluations(id,namespace_id,event_id,declaration_id,declaration_version,outcome,reason,firing_id) VALUES('eval-a',$1,$2,'declaration-a','version-a','fired','matched',$3)`, ns.ID, event.Event.ID, f.ID)
+	_, err = s.Pool().Exec(ctx, `INSERT INTO declaration_evaluations(id,namespace_id,event_id,declaration_id,declaration_version,outcome,reason,firing_id) VALUES('eval-a',$1,$2,$4,$5,'fired','matched',$3)`, ns.ID, event.Event.ID, f.ID, a.DeclarationID, a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,8 +27,18 @@ func TestPostgresMarkerBindingAndRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A firing must name a published version of a catalog declaration (0064).
+	first := active("first").Declaration
+	body, err := first.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := markerTestStore.PublishDeclaration(ctx, postgres.PublishDeclarationInput{NamespaceID: ns.ID, Name: "first", Body: body, Author: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	firing, _, err := markerTestStore.RecordDeclarationFiring(ctx, postgres.DeclarationFiringInput{
-		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: "first", DeclarationVersion: "v1",
+		NamespaceID: ns.ID, EventID: event.Event.ID, DeclarationID: version.DeclarationID, DeclarationVersion: version.ID,
 		TriggerDigest: "trigger", ConditionDigest: "condition", ActionDigest: "action",
 	})
 	if err != nil {

@@ -139,6 +139,9 @@ type Options struct {
 	// schedule that came due during a four-hour outage is not something you
 	// wait for.
 	Now func() time.Time
+	// Declarations is the declaration engine's periodic half (task t38; see
+	// declarations.go). Nil leaves the engine out of this scheduler entirely.
+	Declarations DeclarationEngine
 }
 
 // now reads the configured clock, defaulting to time.Now. Every instant this
@@ -326,6 +329,11 @@ func closeHijacked(conn *pgx.Conn) {
 func (sch *Scheduler) runActive(ctx context.Context, conn *pgx.Conn) {
 	sch.setStatus(StatusActive)
 	defer sch.releaseLock(conn)
+	// On becoming active, before the first tick interval: a thaw a crashed
+	// predecessor left half-done is replayed now, not a tick later (t38).
+	if err := sch.driveDeclarations(ctx); err != nil {
+		sch.recordTick(err)
+	}
 
 	ticker := time.NewTicker(sch.opts.tickInterval())
 	defer ticker.Stop()
@@ -427,7 +435,7 @@ func (sch *Scheduler) Tick(ctx context.Context) error {
 			return fmt.Errorf("scheduler: tick: human tasks: %w", err)
 		}
 	}
-	return nil
+	return sch.driveDeclarations(ctx)
 }
 
 // fireOne processes exactly one claimed timer inside exactly one

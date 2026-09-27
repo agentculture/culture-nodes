@@ -65,6 +65,12 @@ const (
 	// detector (overlap.go, t14) REPORTS overlapping declarations; it does
 	// not suppress firings, so nothing produces this outcome yet.
 	OutcomeOverlapSuppressed = "overlap-suppressed"
+	// OutcomeStampingRefused is dispatch.go's StampingRefusal (t27's
+	// engine-side remainder, wired by t38): the firing was claimed and its
+	// marker minted, but the target actor's registration does not advertise
+	// stamping, so nothing was dispatched. The reason names actor and
+	// revision.
+	OutcomeStampingRefused = "stamping refused"
 )
 
 // Config carries the deployment's engine settings. MarkerKeyEnv names the
@@ -226,8 +232,13 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	// declaration was upgraded or removed out from under an in-flight node.
 	if !anyMatched && nodeFound {
 		if nb, ok := e.backend.(NodeBackend); ok {
-			if err := checkOrphan(ctx, nb, active, event.NamespaceID, event.ID, node); err != nil {
+			closed, err := checkOrphan(ctx, nb, active, event.NamespaceID, event.ID, node)
+			if err != nil {
 				failures = append(failures, err)
+			} else if closed {
+				if err := e.drainAfterClose(ctx, event.NamespaceID, node); err != nil {
+					failures = append(failures, err)
+				}
 			}
 		}
 	}
@@ -365,6 +376,10 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	}
 	result, err := e.dispatcher.Dispatch(ctx, DispatchRequest{Firing: firing, Declaration: a.Declaration, Action: action, Marker: marker})
 	if err != nil {
+		var refusal *StampingRefusal
+		if errors.As(err, &refusal) {
+			return fail(OutcomeStampingRefused, err)
+		}
 		return fail(OutcomeDispatchFailed, err)
 	}
 	if result.ArtifactID != "" {

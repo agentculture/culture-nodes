@@ -63,6 +63,9 @@ func (sch *Scheduler) fireDueSchedules(ctx context.Context) error {
 			ProbeInterval: sch.opts.ScheduleProbeInterval,
 			AlertAfter:    sch.opts.ScheduleFailureAlertAfter,
 			BeforeCommit:  sch.opts.Hooks.BeforeScheduleCommit,
+			// Task t38: the fired event reaches the declaration engine only
+			// after FireSchedule's transaction has committed.
+			Declarations: sch.declarationEvents(),
 		})
 	}
 	return nil

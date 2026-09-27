@@ -3,7 +3,9 @@
 // gate that keeps it true. It does not wire the declaration engine into
 // event delivery or gate the graph engine (internal/engine) directly --
 // that is t17's drain hook and t18's freeze/replay -- it only builds the
-// switch primitive and the dispatch gate both attach to.
+// switch primitive and the dispatch gate both attach to. Task t38 wires the
+// engine into delivery and the switch into an API route (deliver.go,
+// internal/api/declswitch.go).
 package declengine
 
 import (

@@ -267,6 +267,13 @@ func actionResultFixture(t *testing.T, handler http.HandlerFunc) (*postgres.Stor
 	if _, err := db.Pool().Exec(ctx, `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol) VALUES($1,$2,'engine/declarations',1,'validator','internal')`, producer, ns.ID); err != nil {
 		t.Fatal(err)
 	}
+	// t38: a dispatch target must advertise cn1 stamping to be dispatched
+	// to -- the action's own actor, and the reactor's ("actor://test").
+	for _, key := range []string{"test/worker", "test"} {
+		if _, err := db.Pool().Exec(ctx, `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol,capabilities) VALUES($1,$2,$3,1,'agent','test','{"stamping":{"marker":"cn1","version":1}}')`, store.NewULID(), ns.ID, key); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	d := declFor("act-f", "ready", "none", "waiting", "1h", "timer", `{"uses":"actor://test/worker@sha256:aaaaaa","input":{"text":"hello"}}`)
 	version := publishActive(t, db, ns.ID, d)

@@ -177,10 +177,13 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 		SourceKey:   req.SourceKey,
 		Watermark:   req.Watermark,
 		Subject:     req.Subject,
+		// Task t38: offered to the declaration engine after the commit.
+		Declarations: s.declarationHandler(),
 	})
 	if err != nil {
 		return internalError(err)
 	}
+	s.logDeclarationErr(delivery)
 
 	ev := delivery.Event
 	// A pr.merged fact IS a ticket freeze — Store.DeliverSignalEvent writes

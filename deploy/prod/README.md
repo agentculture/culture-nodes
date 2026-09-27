@@ -1623,3 +1623,32 @@ submit surface, and the agent bridges expose no GitHub write capability at all.
 A PR-sourced task therefore fans out to Discord only. Widening it is a new
 migration (0051's `channel` CHECK) plus a branch in
 `engine.PlanHumanTaskFanOut`, once a bridge advertises the capability.
+
+## Declaration engine (issue #328, task t38)
+
+The trigger-condition-action declaration engine (`internal/declengine`) runs
+beside the graph engine until the graph engine retires (t37). It is **off**
+unless a process is started with `NODES_DECLARATION_ENGINE=on`, and a process
+that is off behaves exactly as it did before t38. Nothing below is done by
+`deploy.sh`; each row is an operator hand-turn, and each gets an issue like
+every other one.
+
+### What each host must have for it to work
+
+| What | Where | Why |
+| --- | --- | --- |
+| `NODES_DECLARATION_ENGINE=on` | `~/.culture-nodes/prod.env`, for both `nodes serve` and `nodes scheduler` | `serve` offers every event delivery (POST `/v1alpha1/events`, the GitHub and Jira webhooks) to the engine after it commits and lets the switch route flip to `shadow`/`after`; `scheduler` runs node deadlines, `action.*` results, thaw-and-replay, and offers schedule fires to it |
+| `NODES_DECLARATION_MARKER_KEY` | `~/.culture-nodes/prod.env`, **the same value** for every process running the engine | the origin-marker HMAC key, at least 32 bytes. A marker minted by one process is verified by whichever process receives the reaction. With the engine on and the key missing or short, the process **refuses to start** |
+| `engine_declaration_engine` registered | `actors` table | `deploy/prod/register-actor.sh --engine engine_declaration_engine`. Every real (`after`) firing appends one `derived` decision record under this producer and `ledger_records.origin_actor_id` is a foreign key to `actors(id)`. Unregistered, the **first** firing fails loudly — `Handle` returns `ErrProducerNotRegistered`, the evaluation is recorded as `dispatch failed` naming this command, and nothing is queued. Override the id with `NODES_DECLARATION_PRODUCER_ACTOR_ID` |
+| `engine_remint_scheduler` registered | `actors` table | the precedent this row follows: `deploy/prod/register-actor.sh --engine engine_remint_scheduler` (the worker's re-mint producer, `NODES_REMINT_PRODUCER_ACTOR_ID`) |
+| stamping advertised by each dispatch target | the target actor's `actors.capabilities` | a declaration whose action creates an artifact is dispatched only to an actor whose newest registration carries `{"stamping": {"marker": "cn1"}}` (top level, or under `preflight`). Otherwise the firing is recorded `stamping refused`, naming the actor and its revision, and nothing is queued. Re-register a bridge after it starts advertising the capability |
+
+### The switch
+
+`GET /v1alpha1/declaration-engine/switch` reads the namespace's mode;
+`POST` with `{"mode": "before"|"shadow"|"after", "reason": "..."}` flips it,
+as a **person** (Cloudflare Access, or a break-glass credential bound to a
+human) — an agent bearer is refused. A flip to `before` freezes open
+declaration nodes in the same transaction; a flip to `after` replays them once
+it commits, and the scheduler re-runs that replay if the route's attempt did
+not finish. A control plane with the engine off refuses `shadow` and `after`.

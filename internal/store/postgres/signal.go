@@ -366,6 +366,9 @@ type DeliverSignalEventInput struct {
 	// Trigger creates runs from matching handlers in the newest published
 	// workflow versions, in this same delivery transaction.
 	Trigger engine.EventTriggerRunner
+	// Declarations is offered the delivery after it commits (task t38; see
+	// declhook.go). Nil leaves the declaration engine out of this delivery.
+	Declarations DeliveredEventHandler
 }
 
 // JiraHistoryWatermark is the cumulative cursor carried by each fact from
@@ -486,6 +489,7 @@ func (s *Store) DeliverSignalEvent(ctx context.Context, in DeliverSignalEventInp
 	if err := tx.Commit(ctx); err != nil {
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: commit: %w", err)
 	}
+	delivery.DeclarationErr = notifyDelivered(ctx, in.Declarations, delivery, in.Subject)
 	return delivery, nil
 }
 
@@ -732,6 +736,9 @@ type SignalDelivery struct {
 	// Suppressed is a pre-cutover history fact adopted without emission,
 	// rather than an exact redelivery of an already-appended event.
 	Suppressed bool
+	// DeclarationErr is what the post-commit declaration handler returned
+	// (declhook.go). It never fails the delivery; callers log it.
+	DeclarationErr error
 }
 
 func jiraIssueSourceKey(key string) bool {

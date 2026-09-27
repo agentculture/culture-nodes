@@ -90,6 +90,12 @@ func cmdScheduler(args []string, jsonMode bool) (int, error) {
 		return 0, cliErr
 	}
 
+	// Task t38: the declaration engine's periodic half, when enabled.
+	declEngine, cliErr := declarationEngineFromEnv(db)
+	if cliErr != nil {
+		return 0, cliErr
+	}
+
 	sch := scheduler.New(db, scheduler.Options{
 		OwnerID:                   os.Getenv("NODES_SCHEDULER_ID"),
 		TickInterval:              *tickInterval,
@@ -99,6 +105,7 @@ func cmdScheduler(args []string, jsonMode bool) (int, error) {
 		HumanTasks:                humanfanout.New(db, nil),
 		ScheduleProbeInterval:     probeInterval,
 		ScheduleFailureAlertAfter: alertAfter,
+		Declarations:              declarationDriver(db, declEngine),
 	})
 
 	startup := map[string]any{
@@ -156,6 +163,12 @@ several is how the role is made highly available, not a misconfiguration.
                                   schedule (default 3). It is not re-raised
                                   while one is pending, and is raised again
                                   after a human decides it if failures continue.
+    NODES_DECLARATION_ENGINE     on runs the declaration engine's periodic
+                                  half (node deadlines, action.* results,
+                                  thaw-and-replay) and offers schedule fires
+                                  to it; requires NODES_DECLARATION_MARKER_KEY
+                                  (>= 32 bytes, the same as nodes serve's).
+                                  Unset leaves the scheduler as before
     OTEL_EXPORTER_OTLP_ENDPOINT  OTLP collector endpoint; unset disables all
                                   tracing/metrics export (no exporter, no
                                   goroutine, no dial -- see internal/telemetry)

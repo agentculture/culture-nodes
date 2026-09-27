@@ -358,6 +358,12 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 
 	go meshCollector.Run(ctx)
 	opts = append(opts, api.WithMeshCollector(meshCollector))
+	// Task t38: the declaration engine, when NODES_DECLARATION_ENGINE=on.
+	declEngine, cliErr := declarationEngineFromEnv(db)
+	if cliErr != nil {
+		return 0, cliErr
+	}
+	opts = append(opts, api.WithDeclarationEngine(declEngine))
 
 	srv, err := api.NewServer(db, namespaceID, opts...)
 	if err != nil {
@@ -387,7 +393,7 @@ func runServeMode(args []string, verb string, withScheduler bool) (int, error) {
 	var workerErrs chan error
 	if withScheduler {
 		schedulerErrs = make(chan error, 1)
-		sched := scheduler.New(db, scheduler.Options{Telemetry: telemetryProvider})
+		sched := scheduler.New(db, scheduler.Options{Telemetry: telemetryProvider, Declarations: declarationDriver(db, declEngine)})
 		go func() {
 			clifmt.EmitDiagnostic(fmt.Sprintf("nodes %s: scheduler running as %s", verb, sched.OwnerID()))
 			if err := sched.Run(ctx); err != nil && ctx.Err() == nil {

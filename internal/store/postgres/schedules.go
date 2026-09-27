@@ -356,6 +356,10 @@ type FireScheduleInput struct {
 	// whose only consumers are parked signal waits).
 	Pickup  engine.EventPickupRunner
 	Trigger engine.EventTriggerRunner
+	// Declarations is offered the fired event after THIS function's
+	// transaction commits (task t38; see declhook.go) -- never from inside
+	// it, where the schedule row lock and the delivery's run locks are held.
+	Declarations DeliveredEventHandler
 	// ProbeInterval is the floor between mints while this schedule is
 	// suppressed (NODES_SCHEDULE_PROBE_INTERVAL). Zero selects
 	// DefaultScheduleProbeInterval. See schedulebackoff.go.
@@ -526,6 +530,7 @@ func (s *Store) FireSchedule(ctx context.Context, in FireScheduleInput) (Schedul
 	if err := tx.Commit(ctx); err != nil {
 		return ScheduleFireResult{}, fmt.Errorf("postgres: FireSchedule: commit: %w", err)
 	}
+	delivery.DeclarationErr = notifyDelivered(ctx, in.Declarations, delivery, "")
 	return ScheduleFireResult{Schedule: fired, Fired: true, Missed: missed, Delivery: delivery, AlertTaskID: alertTaskID}, nil
 }
 

@@ -1334,6 +1334,45 @@
         ],
         "type": "object"
       },
+      "DeclarationEngineSwitch": {
+        "description": "GET/POST /v1alpha1/declaration-engine/switch's payload (task t38, issue #328, spec c80).",
+        "properties": {
+          "engine_enabled": {
+            "description": "Whether this control plane runs the declaration engine.",
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "before",
+              "shadow",
+              "after"
+            ],
+            "type": "string"
+          },
+          "namespace_id": {
+            "type": "string"
+          },
+          "previous": {
+            "description": "Set on a flip -- the mode it replaced.",
+            "enum": [
+              "before",
+              "shadow",
+              "after"
+            ],
+            "type": "string"
+          },
+          "replay_error": {
+            "description": "Set when a flip to after committed but thawing and replaying frozen nodes failed; the scheduler re-runs the replay.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace_id",
+          "mode",
+          "engine_enabled"
+        ],
+        "type": "object"
+      },
       "DeclarationEvaluation": {
         "description": "GET /v1alpha1/declarations/{name}/evaluations' payload (task t13, spec c88): the terminal declaration_evaluations row for one declaration's evaluation of one event.",
         "properties": {
@@ -1356,7 +1395,7 @@
             "type": "string"
           },
           "outcome": {
-            "description": "One of: matched, lineage missing, lineage checked, loop-limited, condition error, condition false, condition true, evaluation failed, duplicate, dispatching, dispatch failed, fired, deferred, shadow, budget-blocked, overlap-suppressed. This route always returns the newest row, i.e. the terminal outcome of the declaration's evaluation of the event. budget-blocked and overlap-suppressed are defined but not yet produced by any task (t11, t14 respectively).",
+            "description": "One of: matched, lineage missing, lineage checked, loop-limited, condition error, condition false, condition true, evaluation failed, duplicate, dispatching, dispatch failed, stamping refused, fired, deferred, shadow, budget-blocked, overlap-suppressed. This route always returns the newest row, i.e. the terminal outcome of the declaration's evaluation of the event. budget-blocked and overlap-suppressed are defined but not yet produced by any task (t11, t14 respectively).",
             "type": "string"
           },
           "reason": {
@@ -2179,6 +2218,27 @@
           "resumed",
           "picked_up",
           "triggered"
+        ],
+        "type": "object"
+      },
+      "FlipDeclarationEngineSwitchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "before",
+              "shadow",
+              "after"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "description": "Free-text reason recorded with the flip.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
         ],
         "type": "object"
       },
@@ -5529,6 +5589,98 @@
           }
         },
         "summary": "The graph engine's open-run count for this namespace.",
+        "tags": [
+          "declaration-engine"
+        ]
+      }
+    },
+    "/v1alpha1/declaration-engine/switch": {
+      "get": {
+        "description": "Task t38 (issue #328, spec c80). `before` when the namespace has never flipped. `engine_enabled` says whether this control plane runs the declaration engine at all (NODES_DECLARATION_ENGINE=on).",
+        "operationId": "getDeclarationEngineSwitch",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationEngineSwitch"
+                }
+              }
+            },
+            "description": "The current mode."
+          }
+        },
+        "summary": "The namespace's current engine switch mode.",
+        "tags": [
+          "declaration-engine"
+        ]
+      },
+      "post": {
+        "description": "Task t38 (issue #328; spec c80/c81, honesty h53/h54). A flip is a human decision: the principal is classified by the same allow-list the declaration routes use -- a Cloudflare Access identity, or a LAN break-glass credential bound to a person -- and an agent principal is refused (403), a shared transition secret too (401). Every flip is recorded in engine_switch_history, attributed to the authenticated principal.\n\nA flip to `before` freezes every open declaration node inside the flip's own transaction (deadlines paused; events that arrive for a frozen node are stored against it). A flip to `after` commits first and then thaws those nodes and replays their stored events in arrival order; if that replay fails the flip still stands, the failure is reported in `replay_error`, and the scheduler's declaration pass re-runs the replay. A control plane that does not run the declaration engine refuses `shadow` and `after` (409), because flipping to `after` there would drain the graph engine while nothing evaluates declarations; `before` is always accepted.",
+        "operationId": "flipDeclarationEngineSwitch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlipDeclarationEngineSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationEngineSwitch"
+                }
+              }
+            },
+            "description": "The flip was recorded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The body is malformed or the mode is not before, shadow or after."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal, or a shared transition secret."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The principal is an agent (or not a namespace administrator)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The mode is shadow or after and this control plane does not run the declaration engine."
+          }
+        },
+        "summary": "Flip the namespace's engine switch (human only).",
         "tags": [
           "declaration-engine"
         ]
@@ -9679,7 +9831,7 @@
       "name": "operations"
     },
     {
-      "description": "The before/shadow/after engine switch's read surface (task t17, issue #328). Currently the graph engine's open-run count, the fact c94's drain guarantee depends on being externally visible.",
+      "description": "The before/shadow/after engine switch (issue #328): the graph engine's open-run count, the fact c94's drain guarantee depends on being externally visible (task t17), and the switch itself -- read it, and flip it as a human (task t38).",
       "name": "declaration-engine"
     }
   ]

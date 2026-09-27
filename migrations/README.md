@@ -505,3 +505,10 @@ nullable: NULL is "unmeasured", never true or false.
   or orphaned by an upgrade that removed or changed the reactor (naming
   both versions); and `declaration_nodes.deadline_notified_at`, stamped by
   the exactly-once `node.expired` emission.
+- `0066_decl_node_freeze_replay.sql` — rollback freeze and replay (#328
+  t18; spec c81/h54; `internal/declengine/freeze.go`):
+  `declaration_node_frozen_events.event` stores the whole triggering
+  `declengine.Event` as JSON (mirroring 0062's
+  `declaration_subject_deferrals.event`), so a frozen node's stored
+  reactions can be replayed through the ordinary `Handle` path in arrival
+  order once the engine switch flips back to `after`.

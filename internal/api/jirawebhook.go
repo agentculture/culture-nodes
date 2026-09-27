@@ -261,7 +261,14 @@ func jiraEmissions(issue map[string]any, site, project, bot string) []jiraFact {
 		}
 		return historyLess(a.id, b.id)
 	})
-	var facts []jiraFact
+	// jira.issue.created (#328 t25) is emitted alongside, not instead of, the
+	// synthetic creation transition: graph workflows in production still
+	// trigger on pr-upkeep.jira.transitioned.<initial status>, and the
+	// neutral jira.* renames wait for those workflows to migrate (t37). Its
+	// ":created" source key is shared with the poller so the two dedupe.
+	createdPayload := clone(base)
+	createdPayload["created_at"] = text(fields["created"])
+	facts := []jiraFact{{Name: "jira.issue.created", Payload: marshal(createdPayload), SourceKey: "jira:" + jiraSite(site) + ":" + key + ":created", Watermark: marshal(map[string]any{"changelog_id": "0", "comment_id": ""}), Subject: key}}
 	changeID, commentID := "", ""
 	var seen []map[string]any
 	for _, current := range timeline {

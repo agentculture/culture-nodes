@@ -518,7 +518,18 @@ func (in DeliverSignalEventInput) validate() error {
 // It does not commit and does not roll back: the caller owns tx's lifetime,
 // including the rollback that undoes everything this wrote.
 func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) (SignalDelivery, error) {
-	if issueKey, ok := jiraHistoryIssueSourceKey(in.SourceKey); ok {
+	if issueKey, ok := jiraCreatedIssueSourceKey(in.SourceKey); ok {
+		// jira.issue.created (#328 t25) stands where the synthetic creation
+		// transition (changelog "0") stands: an issue adopted at the history
+		// cutover was created before it, so its creation is not news.
+		suppressed, err := suppressPreCutoverJiraHistory(ctx, tx, in.NamespaceID, issueKey, json.RawMessage(`{"changelog_id":"0","comment_id":""}`))
+		if err != nil {
+			return SignalDelivery{}, err
+		}
+		if suppressed {
+			return SignalDelivery{Duplicate: true, Suppressed: true}, nil
+		}
+	} else if issueKey, ok := jiraHistoryIssueSourceKey(in.SourceKey); ok {
 		suppressed, err := suppressPreCutoverJiraHistory(ctx, tx, in.NamespaceID, issueKey, in.Watermark)
 		if err != nil {
 			return SignalDelivery{}, err
@@ -731,6 +742,16 @@ func jiraIssueSourceKey(key string) bool {
 func jiraHistoryIssueSourceKey(key string) (string, bool) {
 	parts := strings.Split(key, ":")
 	if len(parts) != 6 || parts[0] != "jira" || parts[1] == "" || parts[2] == "" || parts[3] != "history" || (parts[4] != "changelog" && parts[4] != "comment") || parts[5] == "" {
+		return "", false
+	}
+	return strings.Join(parts[:3], ":"), true
+}
+
+// jiraCreatedIssueSourceKey recognises the jira.issue.created source key
+// jira:<site>:<issue>:created shared by the webhook and the poller.
+func jiraCreatedIssueSourceKey(key string) (string, bool) {
+	parts := strings.Split(key, ":")
+	if len(parts) != 4 || parts[0] != "jira" || parts[1] == "" || parts[2] == "" || parts[3] != "created" {
 		return "", false
 	}
 	return strings.Join(parts[:3], ":"), true

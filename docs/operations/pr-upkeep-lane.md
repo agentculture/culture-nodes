@@ -22,8 +22,10 @@ schedule (pr-upkeep-sweep-5m, interval_seconds: 300)
     ▼
 sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.py
     │                                              + pr_upkeep_emit.py
+    │                                              + pr_upkeep_github.py
     │  pr-upkeep.pr          (one PR, one finding, one work_item)
     │  pr-upkeep.jira.*      (transitions, comments)
+    │  github.pr.approved    (one per approved review; shares the webhook's key)
     ▼
 workflow.yaml ── analyse ──packaged──▶ fix ──completed──▶ readiness ──▶ human-merges-pr ──▶ finish
                     └─────no_fix─────────────────────────────────────────────────────────────▶ finish
@@ -417,7 +419,7 @@ recipe as the sweep, below.
 
 ## Changing the sweep
 
-The sweep is **not** in the image. The workflow fetches three files at
+The sweep is **not** in the image. The workflow fetches four files at
 dispatch time, each under its own granted URL and digest, and refuses bytes
 whose sha256 does not match:
 
@@ -426,11 +428,12 @@ whose sha256 does not match:
 | `examples/pr-upkeep/sweep.py` | sweeping: which repo, which PRs, which findings, naming the stage a failure happened at — and it is the **sole** writer to the control plane |
 | `examples/pr-upkeep/pr_upkeep_jira.py` | the Jira surface: what a Jira fact *is* (`jira_emissions`), its cursor position and watermark, self-echo, the granted Basic-auth pair (`jira_credentials`), and the granted REST base those two authenticate at (`jira_api_base` — a scoped service-account token is accepted only at the Atlassian gateway; browse links stay on the site host) |
 | `examples/pr-upkeep/pr_upkeep_emit.py` | what goes out this tick: both dedupe clauses (`dispatched_finding_ids`, `undispatched_findings`), the unit one fact carries (`finding_package`, keyed by `FINDING_PACKAGE_KEY`), the cursor it is emitted under (`emission_watermark`, `newest_comment_timestamp`) and what the tick reports back off the run outputs (`pushback_findings`). Pure — no credential, no socket; the sweep hands it the run listing |
+| `examples/pr-upkeep/pr_upkeep_github.py` | GitHub reads beyond what `sweep.py` still owns: the open-pull listing (`fetch_open_pulls`) and each pull's REST reviews (`fetch_pr_reviews`), from which the sweep emits one `github.pr.approved` per approved review under the webhook's `github:<repo>:pr:<n>:review:<id>:approved` key, so the control plane dedupes the two sources (#328 t24). It takes the sweep's authenticated getter as a parameter and holds no credential; it exists because `sweep.py` sits at the 1000-line cap |
 
 That split is enforced, not merely intended: `tests/test_pr_upkeep_sweep_jira.py`
 asserts the Jira module has no control-plane write path, the exact-set
 environment-read guard in `tests/test_pr_upkeep_sweep_config.py` AST-scans
-**both** fetched siblings so a credential read cannot escape coverage by moving
+**every** fetched sibling so a credential read cannot escape coverage by moving
 one file over, and each sibling is asserted stdlib-only — the bootstrap fetches
 exactly the granted set, so an import outside it names a module that will not
 be on disk in production.

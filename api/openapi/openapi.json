@@ -1374,6 +1374,159 @@
         ],
         "type": "object"
       },
+      "DeclarationFocus": {
+        "description": "GET /v1alpha1/declarations/{name}/focus's payload (task t20, #328, c25/c62/c63). The SAME shape (c24) serves the single-declaration view (distance 0) and the chain view (distance \u003e 0).",
+        "properties": {
+          "center": {
+            "type": "string"
+          },
+          "declarations": {
+            "items": {
+              "$ref": "#/components/schemas/DeclarationFocusDeclaration"
+            },
+            "type": "array"
+          },
+          "direction": {
+            "enum": [
+              "both",
+              "up",
+              "down"
+            ],
+            "type": "string"
+          },
+          "distance": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "link": {
+            "enum": [
+              "both",
+              "must",
+              "can"
+            ],
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/DeclarationFocusLink"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/DeclarationFocusNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "center",
+          "distance",
+          "direction",
+          "link",
+          "declarations",
+          "nodes",
+          "links"
+        ],
+        "type": "object"
+      },
+      "DeclarationFocusDeclaration": {
+        "description": "One declaration in a DeclarationFocus payload (task t20, #328), carrying its distance in hops from the center (0 for the center itself).",
+        "properties": {
+          "action_kind": {
+            "type": "string"
+          },
+          "declaration_id": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "distance": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "landing_node": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "start_node": {
+            "type": "string"
+          },
+          "trigger_kind": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "declaration_id",
+          "version",
+          "digest",
+          "distance",
+          "trigger_kind",
+          "action_kind",
+          "start_node",
+          "landing_node"
+        ],
+        "type": "object"
+      },
+      "DeclarationFocusLink": {
+        "description": "A must/can edge between two declarations both present in this focus (task t20,",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "must",
+              "can"
+            ],
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DeclarationFocusNode": {
+        "description": "A drawn start/landing waiting-state node (task t20, #328, c63): never counted as a hop, included only so a graph can be drawn.",
+        "properties": {
+          "deadline": {
+            "type": "string"
+          },
+          "declaration": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "start",
+              "landing"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "declaration",
+          "role",
+          "name",
+          "deadline"
+        ],
+        "type": "object"
+      },
       "DeclarationLink": {
         "description": "A recorded must/can ordering relation (task t19,",
         "properties": {
@@ -1472,6 +1625,48 @@
         },
         "required": [
           "source"
+        ],
+        "type": "object"
+      },
+      "DeclarationSuggestion": {
+        "description": "One candidate predecessor/successor declaration (task t20,",
+        "properties": {
+          "artifact_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "artifact_type"
+        ],
+        "type": "object"
+      },
+      "DeclarationSuggestions": {
+        "description": "GET /v1alpha1/declarations/{name}/suggestions' payload (task t20, #328, c41/h29). predecessors are declarations whose action produces an artifact type this declaration's trigger consumes; successors are declarations whose trigger consumes an artifact type this declaration's action produces. Calling this route never creates a link.",
+        "properties": {
+          "center": {
+            "type": "string"
+          },
+          "predecessors": {
+            "items": {
+              "$ref": "#/components/schemas/DeclarationSuggestion"
+            },
+            "type": "array"
+          },
+          "successors": {
+            "items": {
+              "$ref": "#/components/schemas/DeclarationSuggestion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "center",
+          "predecessors",
+          "successors"
         ],
         "type": "object"
       },
@@ -5853,6 +6048,97 @@
         ]
       }
     },
+    "/v1alpha1/declarations/{name}/focus": {
+      "get": {
+        "description": "Task t20 (#328; spec c25/c62/c63, honesty h19). Distance 0 is only the named declaration; distance 1 adds the declarations directly connected to it across declaration_links; distance 2 the next ring, and so on. Distance counts hops in BOTH directions across BOTH must and can links by default, and is filterable by `direction` (`up`: toward the declarations this one depends on; `down`: toward the declarations that depend on it) and by `link` kind. Declarations count as hops; the start/landing waiting-state nodes carried in the response never do (c63) -- they are included only so a graph can be drawn. This is the SAME response shape (DeclarationFocus, c24) at any distance, including 0 -- the single- declaration view and the chain view are one payload.",
+        "operationId": "getDeclarationFocus",
+        "parameters": [
+          {
+            "description": "The declaration's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Non-negative hop count. Defaults to 0 (only the named declaration).",
+            "in": "query",
+            "name": "distance",
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Which side of the graph to traverse.",
+            "in": "query",
+            "name": "direction",
+            "schema": {
+              "default": "both",
+              "enum": [
+                "both",
+                "up",
+                "down"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which link kind to traverse.",
+            "in": "query",
+            "name": "link",
+            "schema": {
+              "default": "both",
+              "enum": [
+                "both",
+                "must",
+                "can"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationFocus"
+                }
+              }
+            },
+            "description": "The focus neighborhood."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "distance, direction or link is invalid."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No declaration with this name."
+          }
+        },
+        "summary": "A distance-N neighborhood of the one global declaration graph.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/declarations/{name}/links": {
       "post": {
         "description": "Task t19 (#328). Both declarations must already be published. `kind` is `must` (the target is a required predecessor -- publish's warning analysis treats a numeric step reference within this declaration's guaranteed 'must' count as safe) or `can` (optional -- a named reference crossing a 'can' link always warns at publish, c27/h21).",
@@ -5921,6 +6207,49 @@
           }
         },
         "summary": "Record a must/can ordering relation from this declaration to another.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/declarations/{name}/suggestions": {
+      "get": {
+        "description": "Task t20 (#328; spec c41, honesty h29). Lists every OTHER published declaration whose action \"produces\" artifact type (internal/decl/kinds) matches this declaration's trigger \"consumes\" type (a candidate PREDECESSOR), and every declaration whose trigger \"consumes\" type matches this declaration's action \"produces\" type (a candidate SUCCESSOR). Read-only: calling this route never creates a link -- linking is always an explicit `POST /v1alpha1/declarations/{name}/links` call.",
+        "operationId": "getDeclarationSuggestions",
+        "parameters": [
+          {
+            "description": "The declaration's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationSuggestions"
+                }
+              }
+            },
+            "description": "The candidate predecessors and successors."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No declaration with this name."
+          }
+        },
+        "summary": "Suggest candidate predecessor/successor declarations to link.",
         "tags": [
           "declarations"
         ]

@@ -1216,6 +1216,107 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/declarations/{name}/focus:
+    get:
+      operationId: getDeclarationFocus
+      tags: [declarations]
+      summary: A distance-N neighborhood of the one global declaration graph.
+      description: >-
+        Task t20 (#328; spec c25/c62/c63, honesty h19). Distance 0 is only
+        the named declaration; distance 1 adds the declarations directly
+        connected to it across declaration_links; distance 2 the next
+        ring, and so on. Distance counts hops in BOTH directions across
+        BOTH must and can links by default, and is filterable by
+        `direction` (`up`: toward the declarations this one depends on;
+        `down`: toward the declarations that depend on it) and by `link`
+        kind. Declarations count as hops; the start/landing waiting-state
+        nodes carried in the response never do (c63) -- they are included
+        only so a graph can be drawn. This is the SAME response shape
+        (DeclarationFocus, c24) at any distance, including 0 -- the single-
+        declaration view and the chain view are one payload.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration's name.
+          schema:
+            type: string
+        - name: distance
+          in: query
+          description: Non-negative hop count. Defaults to 0 (only the named declaration).
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: direction
+          in: query
+          description: Which side of the graph to traverse.
+          schema:
+            type: string
+            enum: [both, up, down]
+            default: both
+        - name: link
+          in: query
+          description: Which link kind to traverse.
+          schema:
+            type: string
+            enum: [both, must, can]
+            default: both
+      responses:
+        '200':
+          description: The focus neighborhood.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationFocus'
+        '400':
+          description: distance, direction or link is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No declaration with this name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1alpha1/declarations/{name}/suggestions:
+    get:
+      operationId: getDeclarationSuggestions
+      tags: [declarations]
+      summary: Suggest candidate predecessor/successor declarations to link.
+      description: >-
+        Task t20 (#328; spec c41, honesty h29). Lists every OTHER
+        published declaration whose action "produces" artifact type
+        (internal/decl/kinds) matches this declaration's trigger
+        "consumes" type (a candidate PREDECESSOR), and every declaration
+        whose trigger "consumes" type matches this declaration's action
+        "produces" type (a candidate SUCCESSOR). Read-only: calling this
+        route never creates a link -- linking is always an explicit
+        `POST /v1alpha1/declarations/{name}/links` call.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The declaration's name.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The candidate predecessors and successors.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeclarationSuggestions'
+        '404':
+          description: No declaration with this name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/attempts/{attemptID}/artifacts:
     get:
       operationId: listAttemptArtifacts
@@ -6561,6 +6662,99 @@ components:
         name: {type: string}
         version_id: {type: string}
         active: {type: boolean}
+
+    DeclarationFocusDeclaration:
+      type: object
+      description: >-
+        One declaration in a DeclarationFocus payload (task t20, #328),
+        carrying its distance in hops from the center (0 for the center
+        itself).
+      required: [name, declaration_id, version, digest, distance, trigger_kind, action_kind, start_node, landing_node]
+      properties:
+        name: {type: string}
+        declaration_id: {type: string}
+        version: {type: integer}
+        digest: {type: string}
+        distance: {type: integer, minimum: 0}
+        trigger_kind: {type: string}
+        action_kind: {type: string}
+        start_node: {type: string}
+        landing_node: {type: string}
+
+    DeclarationFocusNode:
+      type: object
+      description: >-
+        A drawn start/landing waiting-state node (task t20, #328, c63):
+        never counted as a hop, included only so a graph can be drawn.
+      required: [declaration, role, name, deadline]
+      properties:
+        declaration: {type: string}
+        role: {type: string, enum: [start, landing]}
+        name: {type: string}
+        deadline: {type: string}
+
+    DeclarationFocusLink:
+      type: object
+      description: A must/can edge between two declarations both present in this focus (task t20, #328).
+      required: [from, to, kind]
+      properties:
+        from: {type: string}
+        to: {type: string}
+        kind: {type: string, enum: [must, can]}
+
+    DeclarationFocus:
+      type: object
+      description: >-
+        GET /v1alpha1/declarations/{name}/focus's payload (task t20, #328,
+        c25/c62/c63). The SAME shape (c24) serves the single-declaration
+        view (distance 0) and the chain view (distance > 0).
+      required: [center, distance, direction, link, declarations, nodes, links]
+      properties:
+        center: {type: string}
+        distance: {type: integer, minimum: 0}
+        direction: {type: string, enum: [both, up, down]}
+        link: {type: string, enum: [both, must, can]}
+        declarations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationFocusDeclaration'
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationFocusNode'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationFocusLink'
+
+    DeclarationSuggestion:
+      type: object
+      description: One candidate predecessor/successor declaration (task t20, #328, c41).
+      required: [name, artifact_type]
+      properties:
+        name: {type: string}
+        artifact_type: {type: string}
+
+    DeclarationSuggestions:
+      type: object
+      description: >-
+        GET /v1alpha1/declarations/{name}/suggestions' payload (task t20,
+        #328, c41/h29). predecessors are declarations whose action
+        produces an artifact type this declaration's trigger consumes;
+        successors are declarations whose trigger consumes an artifact
+        type this declaration's action produces. Calling this route never
+        creates a link.
+      required: [center, predecessors, successors]
+      properties:
+        center: {type: string}
+        predecessors:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationSuggestion'
+        successors:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationSuggestion'
 
     DispatchRateList:
       type: object

@@ -47,6 +47,61 @@ func TestDeclarationVersionsAndLinks(t *testing.T) {
 	}
 }
 
+// TestListNamespaceDeclarationLinksReturnsAllEdges is the store-level half
+// of task t20 (#328): the focus route builds the whole graph in memory, so
+// it needs every link in the namespace regardless of which endpoint it was
+// queried by -- unlike ListDeclarationLinks, which is scoped to one "from".
+func TestListNamespaceDeclarationLinksReturnsAllEdges(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ns := mustNamespace(t, s, "declaration-graph-links")
+
+	names := []string{"a", "b", "c"}
+	ids := map[string]string{}
+	for _, name := range names {
+		v, err := s.PublishDeclaration(ctx, postgres.PublishDeclarationInput{NamespaceID: ns.ID, Name: name, Body: []byte(`{"n":"` + name + `"}`), Author: "human:alice"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = v.DeclarationID
+	}
+	if err := s.LinkDeclarations(ctx, ns.ID, ids["a"], ids["b"], "must"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkDeclarations(ctx, ns.ID, ids["c"], ids["b"], "can"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second namespace's links must never leak into the first's listing.
+	other := mustNamespace(t, s, "declaration-graph-links-other")
+	ov, err := s.PublishDeclaration(ctx, postgres.PublishDeclarationInput{NamespaceID: other.ID, Name: "x", Body: []byte(`{}`), Author: "human:alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ov2, err := s.PublishDeclaration(ctx, postgres.PublishDeclarationInput{NamespaceID: other.ID, Name: "y", Body: []byte(`{}`), Author: "human:alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkDeclarations(ctx, other.ID, ov.DeclarationID, ov2.DeclarationID, "must"); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := s.ListNamespaceDeclarationLinks(ctx, ns.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("links: %+v", links)
+	}
+	seen := map[[3]string]bool{}
+	for _, l := range links {
+		seen[[3]string{l.FromDeclarationID, l.ToDeclarationID, l.Kind}] = true
+	}
+	if !seen[[3]string{ids["a"], ids["b"], "must"}] || !seen[[3]string{ids["c"], ids["b"], "can"}] {
+		t.Fatalf("missing expected edges: %+v", links)
+	}
+}
+
 func TestAliasCycleNamesThreeAliases(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()

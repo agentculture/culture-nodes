@@ -176,6 +176,28 @@ func (s *Store) LinkDeclarations(ctx context.Context, namespaceID, fromID, toID,
 	return err
 }
 
+// ListNamespaceDeclarationLinks returns every declaration link recorded in
+// the namespace, from either endpoint (task t20, #328). There is ONE global
+// declaration graph (spec c25/c62), so a focus walk (internal/api/declgraph.go)
+// loads the whole edge set once and traverses it in memory rather than
+// querying per hop.
+func (s *Store) ListNamespaceDeclarationLinks(ctx context.Context, namespaceID string) ([]DeclarationLink, error) {
+	rows, err := s.pool.Query(ctx, `SELECT from_declaration_id,to_declaration_id,kind FROM declaration_links WHERE namespace_id=$1 ORDER BY kind,from_declaration_id,to_declaration_id`, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var links []DeclarationLink
+	for rows.Next() {
+		var link DeclarationLink
+		if err := rows.Scan(&link.FromDeclarationID, &link.ToDeclarationID, &link.Kind); err != nil {
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
+}
+
 func (s *Store) ListDeclarationLinks(ctx context.Context, namespaceID, fromID string) ([]DeclarationLink, error) {
 	rows, err := s.pool.Query(ctx, `SELECT from_declaration_id,to_declaration_id,kind FROM declaration_links WHERE namespace_id=$1 AND from_declaration_id=$2 ORDER BY kind,to_declaration_id`, namespaceID, fromID)
 	if err != nil {

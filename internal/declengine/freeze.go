@@ -145,6 +145,29 @@ func ThawAndReplay(ctx context.Context, e *Engine, fb FreezeBackend, namespaceID
 	if err != nil {
 		return err
 	}
+	// Task t38: thawing commits before any replay, so a process that dies
+	// between the two leaves a node 'open' with stored events nothing would
+	// ever replay -- ThawFrozenNodes only returns nodes it moved THIS call.
+	// A backend that can list them has those leftovers replayed too, which
+	// is what makes this function safe to re-run (the scheduler does, on
+	// startup and every tick in 'after'). A replay that races another
+	// replay of the same event is idempotent: Handle claims a firing once
+	// per (event, declaration), and the loser records a duplicate.
+	if lister, ok := fb.(storedEventLister); ok {
+		leftovers, err := lister.NodesWithStoredEvents(ctx, namespaceID)
+		if err != nil {
+			return err
+		}
+		seen := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			seen[n.ID] = true
+		}
+		for _, n := range leftovers {
+			if !seen[n.ID] {
+				nodes = append(nodes, n)
+			}
+		}
+	}
 	var failures []error
 	for _, node := range nodes {
 		events, err := fb.FrozenEvents(ctx, namespaceID, node.ID)
@@ -168,8 +191,39 @@ func ThawAndReplay(ctx context.Context, e *Engine, fb FreezeBackend, namespaceID
 	return errors.Join(failures...)
 }
 
+// storedEventLister is the optional FreezeBackend capability ThawAndReplay
+// uses to find stored events a crashed replay left behind (task t38). It is
+// a separate interface rather than a FreezeBackend method so a backend
+// without it keeps compiling and simply gets no leftover recovery.
+type storedEventLister interface {
+	// NodesWithStoredEvents returns every node in namespaceID that is no
+	// longer frozen but still holds stored events.
+	NodesWithStoredEvents(ctx context.Context, namespaceID string) ([]NodeRecord, error)
+}
+
 // PostgresBackend freeze/replay methods (declaration_nodes and
 // declaration_node_frozen_events, migrations 0060 and 0066).
+
+// NodesWithStoredEvents implements storedEventLister.
+func (p PostgresBackend) NodesWithStoredEvents(ctx context.Context, namespaceID string) ([]NodeRecord, error) {
+	rows, err := p.Store.Pool().Query(ctx, `SELECT `+nodeColumns+` FROM declaration_nodes
+		WHERE namespace_id=$1 AND state<>$2 AND EXISTS (SELECT 1 FROM declaration_node_frozen_events fe
+		  WHERE fe.namespace_id=declaration_nodes.namespace_id AND fe.node_id=declaration_nodes.id)
+		ORDER BY id`, namespaceID, NodeStateFrozen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeRecord
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
 
 // FreezeOpenNodes implements FreezeBackend.
 func (p PostgresBackend) FreezeOpenNodes(ctx context.Context, tx pgx.Tx, namespaceID string, now time.Time) (int, error) {
@@ -284,6 +338,7 @@ func (p PostgresBackend) DeleteFrozenEvent(ctx context.Context, namespaceID, nod
 // Compile-time assertion that PostgresBackend still satisfies both
 // optional capabilities now that this file adds more methods to it.
 var (
-	_ NodeBackend   = PostgresBackend{}
-	_ FreezeBackend = PostgresBackend{}
+	_ NodeBackend       = PostgresBackend{}
+	_ FreezeBackend     = PostgresBackend{}
+	_ storedEventLister = PostgresBackend{}
 )

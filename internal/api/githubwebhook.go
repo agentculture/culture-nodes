@@ -128,11 +128,12 @@ func (s *Server) deliverGitHubFact(ctx context.Context, fact githubWebhookEvent)
 	d, err := s.Store.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{
 		NamespaceID: s.NamespaceID, Name: fact.Name, Payload: fact.Payload,
 		Emitter: "github-webhook", SourceKey: fact.SourceKey, Watermark: fact.Watermark, Subject: fact.Subject,
-		Pickup: s.Engine, Trigger: s.Engine,
+		Pickup: s.Engine, Trigger: s.Engine, Declarations: s.declarationHandler(),
 	})
 	if err != nil {
 		return EventDeliveryOut{}, err
 	}
+	s.logDeclarationErr(d)
 	ev := d.Event
 	return EventDeliveryOut{Event: SignalEventOut{ID: ev.ID, Name: ev.Name, RunID: ev.RunID, Payload: ev.Payload, Emitter: ev.Emitter, CreatedAt: ev.CreatedAt}, Resumed: []ResumedSubscriptionOut{}, PickedUp: []EventPickupOut{}, Triggered: d.Triggered, Duplicate: d.Duplicate}, nil
 }

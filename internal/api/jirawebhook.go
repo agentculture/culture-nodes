@@ -314,10 +314,11 @@ func jiraEmissions(issue map[string]any, site, project, bot string) []jiraFact {
 }
 
 func (s *Server) deliverJiraFact(ctx context.Context, fact jiraFact) (EventDeliveryOut, error) {
-	d, err := s.Store.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: s.NamespaceID, Name: fact.Name, Payload: fact.Payload, Emitter: "jira-webhook", Pickup: s.Engine, Trigger: s.Engine, SourceKey: fact.SourceKey, Watermark: fact.Watermark, Subject: fact.Subject})
+	d, err := s.Store.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: s.NamespaceID, Name: fact.Name, Payload: fact.Payload, Emitter: "jira-webhook", Pickup: s.Engine, Trigger: s.Engine, SourceKey: fact.SourceKey, Watermark: fact.Watermark, Subject: fact.Subject, Declarations: s.declarationHandler()})
 	if err != nil {
 		return EventDeliveryOut{}, err
 	}
+	s.logDeclarationErr(d)
 	ev := d.Event
 	return EventDeliveryOut{Event: SignalEventOut{ID: ev.ID, Name: ev.Name, RunID: ev.RunID, Payload: ev.Payload, Emitter: ev.Emitter, CreatedAt: ev.CreatedAt}, Resumed: []ResumedSubscriptionOut{}, PickedUp: []EventPickupOut{}, Triggered: d.Triggered, Duplicate: d.Duplicate}, nil
 }

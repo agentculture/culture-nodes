@@ -131,34 +131,43 @@ type OriginEvent struct {
 // Resolve returns the verified parent firing ID, or empty for a fresh lineage.
 // A present but invalid marker produces a durable rejection record.
 func (s *MarkerService) Resolve(ctx context.Context, event OriginEvent) (string, error) {
-	if event.Marker == "" {
-		return "", nil
+	parent, reason, err := s.verify(ctx, event)
+	if err != nil || reason == "" {
+		return parent, err
 	}
-	reject := func(reason string) (string, error) {
-		err := s.store.RecordMarkerRejection(ctx, MarkerRejection{NamespaceID: event.NamespaceID, EventID: event.EventID, Outcome: "marker rejected", Reason: reason})
-		return "", err
+	err = s.store.RecordMarkerRejection(ctx, MarkerRejection{NamespaceID: event.NamespaceID, EventID: event.EventID, Outcome: "marker rejected", Reason: reason})
+	return "", err
+}
+
+// verify is Resolve without the rejection record: it returns the verified
+// parent firing, or the reason the marker does not verify. Engine.StoreIfFrozen
+// (task t38) needs exactly this -- in 'before' the declaration engine records
+// nothing, so a marker it cannot verify there is simply not its event.
+func (s *MarkerService) verify(ctx context.Context, event OriginEvent) (parent, reason string, err error) {
+	if event.Marker == "" {
+		return "", "", nil
 	}
 	p, ok := parseMarker(event.Marker)
 	if !ok {
-		return reject("malformed or unsigned marker")
+		return "", "malformed or unsigned marker", nil
 	}
 	if !hmac.Equal([]byte(s.mac(p.firingID, p.kind, p.nonce)), []byte(p.mac)) {
-		return reject("invalid MAC")
+		return "", "invalid MAC", nil
 	}
 	if event.NamespaceID == "" || event.ArtifactID == "" || event.ArtifactKind != p.kind {
-		return reject("artifact identity mismatch")
+		return "", "artifact identity mismatch", nil
 	}
 	r, err := s.store.LookupMarker(ctx, event.NamespaceID, p.firingID, p.kind, p.nonce)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if r.NamespaceID != event.NamespaceID || r.FiringID != p.firingID || r.ArtifactKind != p.kind || r.MAC != p.mac || r.ArtifactID == "" || r.ArtifactID != event.ArtifactID {
-		return reject("marker not bound to artifact")
+		return "", "marker not bound to artifact", nil
 	}
 	if event.Author != "" && (event.BridgeAccount == "" || event.Author != event.BridgeAccount) {
-		return reject("artifact author is not bridge account")
+		return "", "artifact author is not bridge account", nil
 	}
-	return r.FiringID, nil
+	return r.FiringID, "", nil
 }
 
 // PostgresMarkerStore persists marker state in the declaration tables. Its

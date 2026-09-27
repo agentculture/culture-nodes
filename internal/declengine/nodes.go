@@ -87,6 +87,11 @@ type NodeRecord struct {
 	State, ClosedReason                             string
 	Deadline                                        time.Time
 	ReactorDeclarationID, ReactorDeclarationVersion string
+	// OpeningDeclarationID is the declaration whose firing opened this node
+	// -- the one whose per-subject slot frees when it closes (task t38's
+	// drain-on-close seam, drainAfterClose). Empty from a backend that does
+	// not join it (the in-memory test fakes).
+	OpeningDeclarationID string
 }
 
 // ExpiredNode is one node.expired emission ExpireDue produced.
@@ -181,9 +186,12 @@ func (e *Engine) deriveNode(ctx context.Context, event *Event, parent string) (n
 // version, simply did not match this particular event (a `with` filter, a
 // different trigger kind); that is not an orphan either. Only a reactor
 // that is gone or upgraded closes the node.
-func checkOrphan(ctx context.Context, nb NodeBackend, active []ActiveDeclaration, namespaceID, eventID string, node NodeRecord) error {
+//
+// closed reports whether THIS call closed the node, so Handle can drain the
+// opening declaration's deferred subjects once the close has committed.
+func checkOrphan(ctx context.Context, nb NodeBackend, active []ActiveDeclaration, namespaceID, eventID string, node NodeRecord) (closed bool, err error) {
 	if node.ReactorDeclarationID == "" {
-		return nil
+		return false, nil
 	}
 	currentVersion := ""
 	for _, a := range active {
@@ -193,19 +201,19 @@ func checkOrphan(ctx context.Context, nb NodeBackend, active []ActiveDeclaration
 		}
 	}
 	if currentVersion == node.ReactorDeclarationVersion {
-		return nil
+		return false, nil
 	}
 	now := currentVersion
 	verb := "upgraded to " + now
 	if now == "" {
 		verb = "removed"
 	}
-	closed, err := nb.CloseNode(ctx, namespaceID, node.ID, NodeReasonOrphanedByUpgrade)
+	closed, err = nb.CloseNode(ctx, namespaceID, node.ID, NodeReasonOrphanedByUpgrade)
 	if err != nil || !closed {
-		return err
+		return false, err
 	}
 	reason := fmt.Sprintf("reacting declaration %s was %s (was %s)", node.ReactorDeclarationID, verb, node.ReactorDeclarationVersion)
-	return nb.RecordNodeNote(ctx, namespaceID, eventID, OutcomeNodeOrphan, reason)
+	return true, nb.RecordNodeNote(ctx, namespaceID, eventID, OutcomeNodeOrphan, reason)
 }
 
 // closeNodeOpenedBy closes the node parentFiring opened, when one exists,
@@ -224,8 +232,28 @@ func (e *Engine) closeNodeOpenedBy(ctx context.Context, namespaceID, parentFirin
 	if err != nil || !found || node.State != NodeStateOpen {
 		return err
 	}
-	_, err = nb.CloseNode(ctx, namespaceID, node.ID, reason)
-	return err
+	closed, err := nb.CloseNode(ctx, namespaceID, node.ID, reason)
+	if err != nil || !closed {
+		return err
+	}
+	return e.drainAfterClose(ctx, namespaceID, node)
+}
+
+// drainAfterClose is the t10 x t12 seam (task t38): a node closing frees one
+// in-flight slot of the declaration whose firing opened it (SubjectInFlight
+// counts exactly those open nodes), so that declaration's oldest per-subject
+// deferral is replayed now rather than waiting for a new event that may
+// never come. Every closing path calls it -- consumed and loop-limited
+// (closeNodeOpenedBy), orphaned (Handle, after checkOrphan) and expired
+// (ExpireDue) -- and only once CloseNode (or ExpireDue's per-node
+// transaction) has committed, so the replay's own Handle call never runs
+// under a lock the close still holds. A node closed by a concurrent caller
+// is not this call's slot to spend: callers only drain when THEIR close won.
+func (e *Engine) drainAfterClose(ctx context.Context, namespaceID string, node NodeRecord) error {
+	if node.OpeningDeclarationID == "" {
+		return nil
+	}
+	return e.DrainSubject(ctx, namespaceID, node.OpeningDeclarationID)
 }
 
 // recordReactorIfAny snapshots, right after a landing node opens, whichever
@@ -270,6 +298,18 @@ func (e *Engine) ExpireDue(ctx context.Context, namespaceID string, now time.Tim
 	for _, ev := range expired {
 		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: ev.EventID, Kind: "node.expired", Node: ev.NodeName}); err != nil {
 			failures = append(failures, err)
+		}
+		// nb.ExpireDue committed this node's close before returning it, so
+		// its opening declaration's freed slot can be spent now (t38).
+		node, found, err := nb.NodeStatus(ctx, namespaceID, ev.NodeID)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if found {
+			if err := e.drainAfterClose(ctx, namespaceID, node); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 	return expired, errors.Join(failures...)
@@ -346,7 +386,9 @@ func actionTriggerFor(class, techStatus string) (trigger string) {
 // migrations/0060_firings.sql and 0065_declaration_node_lifecycle.sql).
 
 const nodeColumns = `id,namespace_id,opening_firing_id,node_name,state,COALESCE(closed_reason,''),
-	deadline,COALESCE(reactor_declaration_id,''),COALESCE(reactor_declaration_version,'')`
+	deadline,COALESCE(reactor_declaration_id,''),COALESCE(reactor_declaration_version,''),
+	COALESCE((SELECT f.declaration_id FROM declaration_firings f
+	  WHERE f.namespace_id=declaration_nodes.namespace_id AND f.id=declaration_nodes.opening_firing_id),'')`
 
 // scanNode reads deadline through a nullable pointer -- a node declared
 // with deadline "none" (landingDeadline's zero Duration) never has one, and
@@ -355,7 +397,7 @@ func scanNode(row interface{ Scan(...any) error }) (NodeRecord, error) {
 	var n NodeRecord
 	var deadline *time.Time
 	err := row.Scan(&n.ID, &n.NamespaceID, &n.OpeningFiringID, &n.Name, &n.State, &n.ClosedReason,
-		&deadline, &n.ReactorDeclarationID, &n.ReactorDeclarationVersion)
+		&deadline, &n.ReactorDeclarationID, &n.ReactorDeclarationVersion, &n.OpeningDeclarationID)
 	if err != nil {
 		return NodeRecord{}, err
 	}

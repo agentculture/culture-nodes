@@ -9,8 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/compiler"
 	"github.com/agentculture/culture-nodes/internal/decl"
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -85,6 +87,14 @@ func (w WorkerDispatcher) Dispatch(ctx context.Context, r DispatchRequest) (Disp
 	if producer == "" {
 		producer = DeclarationEngineActorID
 	}
+	// Both refusals run before the run exists, so a refused firing never
+	// leaves an action queued for the worker to execute anyway.
+	if err := w.requireStamping(ctx, r); err != nil {
+		return DispatchResult{}, err
+	}
+	if err := w.requireRegisteredProducer(ctx, producer); err != nil {
+		return DispatchResult{}, err
+	}
 	cw, input, err := workerEnvelope(r)
 	if err != nil {
 		return DispatchResult{}, err
@@ -137,6 +147,128 @@ func (w WorkerDispatcher) Dispatch(ctx context.Context, r DispatchRequest) (Disp
 	}
 	_, err = l.Append(ctx, ledger.Record{ID: recordID, RunID: r.Firing.ID, RecordType: ledger.RecordDecision, Origin: ledger.Origin{Kind: ledger.OriginEngine, ActorID: producer}, Authority: ledger.AuthorityDerived, Data: data})
 	return DispatchResult{Async: true}, err
+}
+
+// ErrProducerNotRegistered is the loud failure of a firing whose producer
+// identity (DeclarationEngineActorID unless overridden) is missing from the
+// actors table (task t38). Without the check the run would be created, the
+// derived decision record's ledger append would then fail on
+// ledger_records.origin_actor_id's foreign key, and the worker would still
+// execute an action whose firing the engine recorded as failed.
+var ErrProducerNotRegistered = errors.New("declengine: producer identity is not registered")
+
+func (w WorkerDispatcher) requireRegisteredProducer(ctx context.Context, producer string) error {
+	var registered bool
+	if err := w.Store.Pool().QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM actors WHERE id=$1)`, producer).Scan(&registered); err != nil {
+		return err
+	}
+	if !registered {
+		return fmt.Errorf("%w: %q has no actors row (ledger_records.origin_actor_id references actors(id)); register it with deploy/prod/register-actor.sh --engine %s",
+			ErrProducerNotRegistered, producer, producer)
+	}
+	return nil
+}
+
+// StampingCapabilityMarker is the marker scheme a bridge advertises it
+// stamps: {"stamping": {"marker": "cn1", ...}} on /v1/capabilities, recorded
+// on its actors row's capabilities (or its preflight block's).
+const StampingCapabilityMarker = "cn1"
+
+// StampingRefusal is task t27's engine-side remainder, wired by t38: a
+// dispatch whose action creates an artifact and carries a minted marker, to
+// an actor whose current registration does not advertise stamping, is
+// refused before anything is queued -- the bridge would create the artifact
+// without the marker, and every reaction to it would then start a fresh
+// lineage instead of continuing this one. evaluate() records it as
+// OutcomeStampingRefused with this error's text, naming actor and revision.
+type StampingRefusal struct {
+	ActionKind, ActorKey string
+	// Revision is the actor's newest registered revision; zero with
+	// Registered false when no row exists for the key at all.
+	Revision   int
+	Registered bool
+}
+
+func (r *StampingRefusal) Error() string {
+	if !r.Registered {
+		return fmt.Sprintf("declengine: stamping refused: action %s creates an artifact and carries a marker, but actor %q has no registration to advertise the %s stamping capability",
+			r.ActionKind, r.ActorKey, StampingCapabilityMarker)
+	}
+	return fmt.Sprintf("declengine: stamping refused: action %s creates an artifact and carries a marker, but actor %q revision %d does not advertise {\"stamping\": {\"marker\": %q}}",
+		r.ActionKind, r.ActorKey, r.Revision, StampingCapabilityMarker)
+}
+
+// requireStamping applies the refusal. Out of scope by construction: a
+// firing with no marker; an action whose every produced artifact is 'none';
+// an action with no `uses` (human.ask -- the approval is served by the
+// control plane's own human-task surface, not a bridge); and a `runner://`
+// target (code.run -- a runner returns its code.result in the operation
+// result, it creates nothing external to stamp).
+func (w WorkerDispatcher) requireStamping(ctx context.Context, r DispatchRequest) error {
+	if r.Marker == "" {
+		return nil
+	}
+	kind, ok := kinds.Action(r.Action.Kind)
+	if !ok || !createsArtifact(kind) {
+		return nil
+	}
+	var with struct {
+		Uses string `json:"uses"`
+	}
+	if len(r.Action.With) > 0 {
+		if err := json.Unmarshal(r.Action.With, &with); err != nil {
+			return err
+		}
+	}
+	if with.Uses == "" || strings.HasPrefix(with.Uses, "runner://") {
+		return nil
+	}
+	key := actors.ActorKeyOf(with.Uses)
+	refusal := &StampingRefusal{ActionKind: r.Action.Kind, ActorKey: key}
+	var caps []byte
+	err := w.Store.Pool().QueryRow(ctx, `SELECT revision,capabilities FROM actors WHERE namespace_id=$1 AND actor_key=$2 ORDER BY revision DESC LIMIT 1`,
+		r.Firing.NamespaceID, key).Scan(&refusal.Revision, &caps)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return refusal
+	}
+	if err != nil {
+		return err
+	}
+	refusal.Registered = true
+	if advertisesStamping(caps) {
+		return nil
+	}
+	return refusal
+}
+
+func createsArtifact(k kinds.Kind) bool {
+	for _, a := range k.Produces {
+		if a != kinds.ArtifactNone {
+			return true
+		}
+	}
+	return false
+}
+
+// advertisesStamping reads the capability where a bridge's advertisement
+// lands: top-level capabilities.stamping, or the same block nested under
+// capabilities.preflight.
+func advertisesStamping(raw []byte) bool {
+	var caps struct {
+		Stamping  *struct{ Marker string } `json:"stamping"`
+		Preflight struct {
+			Stamping *struct{ Marker string } `json:"stamping"`
+		} `json:"preflight"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &caps) != nil {
+		return false
+	}
+	for _, s := range []*struct{ Marker string }{caps.Stamping, caps.Preflight.Stamping} {
+		if s != nil && s.Marker == StampingCapabilityMarker {
+			return true
+		}
+	}
+	return false
 }
 
 // workerEnvelope translates only the action into the existing worker contract.

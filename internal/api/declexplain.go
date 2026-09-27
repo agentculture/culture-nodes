@@ -29,9 +29,9 @@ type DeclarationEvaluationOut struct {
 	DeclarationVersion string `json:"declaration_version"`
 	// Outcome is one of: matched, lineage missing, lineage checked,
 	// loop-limited, condition error, condition false, condition true,
-	// evaluation failed, duplicate, dispatching, dispatch failed, fired,
-	// deferred, shadow, budget-blocked, overlap-suppressed. The last two
-	// are defined but not yet produced by any task (t11, t14).
+	// evaluation failed, duplicate, dispatching, dispatch failed, stamping
+	// refused, fired, deferred, shadow, budget-blocked, overlap-suppressed.
+	// The last two are defined but not yet produced by any task (t11, t14).
 	Outcome string `json:"outcome"`
 	Reason  string `json:"reason"`
 	// FiringID is present once a firing was claimed for this evaluation

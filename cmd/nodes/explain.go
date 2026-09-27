@@ -172,6 +172,15 @@ shuts down gracefully. Does not apply schema migrations itself — run
 
 - ` + "`NODES_LISTEN`" + ` — listen address (default ` + "`:8080`" + `)
 - ` + "`NODES_DATABASE_URL`" + ` — PostgreSQL connection URL (required)
+- ` + "`NODES_DECLARATION_ENGINE`" + ` — ` + "`on`" + ` offers every event delivery to the
+  declaration engine after it commits, and lets
+  POST /v1alpha1/declaration-engine/switch flip to shadow or after; unset
+  leaves deliveries as before
+- ` + "`NODES_DECLARATION_MARKER_KEY`" + ` — origin-marker HMAC key, at least 32
+  bytes, identical on every process running the engine; required when it is on
+  (startup refuses without it)
+- ` + "`NODES_DECLARATION_PRODUCER_ACTOR_ID`" + ` — registered producer identity
+  for firings' derived records (default ` + "`engine_declaration_engine`" + `)
 `
 
 const explainAll = `# nodes all

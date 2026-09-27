@@ -79,7 +79,9 @@ func workerFiring(t *testing.T, authority ledger.Authority) (*postgres.Store, st
 		t.Fatal(err)
 	}
 	agent := store.NewULID()
-	if _, err := db.Pool().Exec(ctx, `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol) VALUES($1,$2,'test/worker',1,'agent','test')`, agent, ns.ID); err != nil {
+	// t38: an artifact-creating action carrying a marker is only dispatched
+	// to an actor that advertises cn1 stamping.
+	if _, err := db.Pool().Exec(ctx, `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol,capabilities) VALUES($1,$2,'test/worker',1,'agent','test','{"stamping":{"marker":"cn1","version":1}}')`, agent, ns.ID); err != nil {
 		t.Fatal(err)
 	}
 	d := active("worker-test").Declaration

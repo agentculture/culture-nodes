@@ -197,6 +197,10 @@ type Server struct {
 	// asserted. Set unconditionally in NewServer over declengine's own
 	// read query, the same way Engine and Ledger are.
 	openRunCounter openRunCounter
+
+	// declEngine is the running declaration engine (task t38), nil unless
+	// WithDeclarationEngine supplied one. See declswitch.go.
+	declEngine *declengine.Engine
 }
 
 // openRunCounter is the narrow read interface the drain route needs --
@@ -587,6 +591,8 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
 	mux.HandleFunc("GET /v1alpha1/declaration-engine/open-runs", s.wrap(s.handleGetOpenGraphRunCount))
+	mux.HandleFunc("GET /v1alpha1/declaration-engine/switch", s.wrap(s.handleGetDeclarationSwitch))
+	mux.HandleFunc("POST /v1alpha1/declaration-engine/switch", s.wrap(s.handleFlipDeclarationSwitch))
 	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
 	mux.HandleFunc("POST /v1alpha1/namespaces", s.wrap(s.handleCreateNamespace))
 

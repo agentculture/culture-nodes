@@ -241,3 +241,39 @@ func assertActive(t *testing.T, ctx context.Context, db *postgres.Store, ns, nam
 	}
 	t.Fatalf("declaration %q must be active", name)
 }
+
+// Deactivation mirrors activation (owner decision, 2026-09-28): an agent
+// cannot withdraw an activation declaration a human put in place, but it
+// can still deactivate an ordinary declaration.
+func TestDeactivateMirrorsActivationRootOfTrust(t *testing.T) {
+	db := pgtest.RequireStore(t, markerTestStore)
+	ctx := context.Background()
+	ns := pgtest.MustNamespace(t, db, "deactivation-mirror").ID
+	human := ActivationPrincipal{Kind: PrincipalHuman, Author: "human:alice"}
+	agent := ActivationPrincipal{Kind: PrincipalAgent, Author: "agent:codex-thor"}
+
+	ordinary := publishOrdinary(t, db, ns, "ordinary")
+	rule, err := publishActivationRule(t, db, ns, "rule", "ordinary", human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Activate(ctx, db, ns, rule.ID, human, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := Deactivate(ctx, db, ns, rule.ID, agent, ""); err == nil {
+		t.Fatal("an agent deactivated a human-activated activation declaration; want refusal")
+	}
+	assertActive(t, ctx, db, ns, "rule", rule.ID)
+	if err := Deactivate(ctx, db, ns, rule.ID, human, ""); err != nil {
+		t.Fatalf("human deactivation of an activation declaration must succeed: %v", err)
+	}
+	assertInactive(t, ctx, db, ns, "rule")
+
+	if err := Activate(ctx, db, ns, ordinary.ID, agent, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := Deactivate(ctx, db, ns, ordinary.ID, agent, ""); err != nil {
+		t.Fatalf("agent deactivation of an ordinary declaration must succeed: %v", err)
+	}
+	assertInactive(t, ctx, db, ns, "ordinary")
+}

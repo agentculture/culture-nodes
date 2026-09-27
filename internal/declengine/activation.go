@@ -295,10 +295,21 @@ func Deactivate(ctx context.Context, store *postgres.Store, namespaceID, targetV
 	if principal.Author == "" {
 		return errors.New("declengine: activation principal is required")
 	}
-	switch principal.Kind {
-	case PrincipalHuman, PrincipalAgent:
-	default:
-		return fmt.Errorf("declengine: unrecognized activation principal kind %q", principal.Kind)
+	// Deactivation mirrors activation (owner decision, 2026-09-28): only a
+	// human principal may withdraw an ACTIVATION declaration, so an agent
+	// cannot quietly switch off authority a person put in place. An ordinary
+	// declaration stays deactivatable by an agent. Activation-ness is read
+	// from the stored target body, never from the caller, as in Activate.
+	target, err := store.GetDeclarationVersion(ctx, targetVersionID)
+	if err != nil {
+		return err
+	}
+	d, err := decl.Parse(target.Body, decl.FormatJSON)
+	if err != nil {
+		return fmt.Errorf("declengine: deactivation target version %s: %w", targetVersionID, err)
+	}
+	if err := AuthorizeActivation(principal, IsActivationDeclaration(*d)); err != nil {
+		return err
 	}
 	if err := store.RecordDeclarationActivation(ctx, namespaceID, targetVersionID, "deactivate", ResolveAuthor(principal), supersedesID); err != nil {
 		return err

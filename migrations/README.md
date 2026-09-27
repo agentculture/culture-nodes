@@ -440,3 +440,11 @@ collector write reports `session_ok = true` (c43's AND). The router treats a
 fresh (< 5 min) false row, or a locked row of any age, as "not live" and
 routes to the actor's registered `metadata.fallback_actor`. `session_ok` is
 nullable: NULL is "unmeasured", never true or false.
+- `0059_declarations.sql` — trigger-condition-action declarations (#328
+  t6): `declarations` (unique name per namespace), immutable
+  `declaration_versions` (content digest, author), `declaration_links`
+  (`must` / `can`), movable nestable `declaration_aliases` with
+  `declaration_alias_members`, and the append-only `declaration_history`
+  of activations, deactivations and alias moves (corrections append with
+  `supersedes_id`). Versions, declarations and history are immutable by
+  trigger.

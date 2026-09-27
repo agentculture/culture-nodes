@@ -206,3 +206,5 @@ issue,bucket,disposition,evidence_pointer
 323,bug tail,pr.opened dormant: fetch_open_pulls drops state/created_at/html_url the fact builder needs; found landing loop-closure t2,examples/pr-upkeep/sweep.py fetch_open_pulls vs pr_upkeep_emit.opened_pr_fact
 324,bug tail,codex refresh token shared by copy across operator+engine accounts; re-login must run as culture-codex per host; alert from liveness via notify-discord,deploy/prod/lanes/unix-user.sh codex cred copy; runs 01M25XVB7N77D6AMYCQQJXWQ2B 01M25XVBMNFM6ENERRX69XS8T8
 325,finish work,"five below-cap confirmed findings from the 2026-09-10 code review of build/loop-closure-claude-codex, each small and independent","internal/api/runs.go, examples/cleanup/cleanup.py, adapters/*/server.py, internal/mesh/collector.go, examples/land/land_gate.py"
+328,large bets,redesign to trigger-condition-action declarations; /think then /spec-to-plan,devague frame trigger-condition-action
+327,large bets,goals and constraints as first-class state; parked as a follow-up of the #328 design (a goal could attach to an alias),docs/specs/2026-09-27-trigger-condition-action.md

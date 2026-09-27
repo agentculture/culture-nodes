@@ -71,3 +71,5 @@ issue,type,evidence_pointer
 323,Bug,examples/pr-upkeep/sweep.py fetch_open_pulls vs pr_upkeep_emit.opened_pr_fact
 324,Bug,deploy/prod/lanes/unix-user.sh codex cred copy; runs 01M25XVB7N77D6AMYCQQJXWQ2B 01M25XVBMNFM6ENERRX69XS8T8
 325,Task,"internal/api/runs.go, examples/cleanup/cleanup.py, adapters/*/server.py, internal/mesh/collector.go, examples/land/land_gate.py"
+328,Feature,devague frame trigger-condition-action
+327,Feature,docs/specs/2026-09-27-trigger-condition-action.md

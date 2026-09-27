@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.51.1] - 2026-09-27
+
+### Added
+
+- spec docs/specs/2026-09-27-trigger-condition-action.md (devague frame trigger-condition-action, scoped, thought through and challenged): one named trigger-condition-action declaration replaces the workflow graph; causal must/can chaining via signed origin markers; nodes as declared waits with deadlines; movable nestable aliases; live upgrades pinned per firing; activation by declaration; loop limits, budgets and variable sensitivity; shadow-mode migration (#328)
+- ADR 0014 recording the PRD departures: declarations replace the graph, per-firing version pinning, declared activation, run vocabulary mapped to lineage/firing/node/attempt
+
+### Changed
+
+- triage rows for #327 and #328; docs/triage/open-issues.md regenerated
+
 ## [0.51.0] - 2026-09-10
 
 ### Added

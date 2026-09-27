@@ -1,0 +1,40 @@
+{
+  "plan_slug": "trigger-condition-action",
+  "schema_version": 2,
+  "created": "2026-09-27T19:40:19Z",
+  "updated": "2026-09-27T22:02:29Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t25 split: the webhook's jira.issue.created merged now; the poller's created emission moves to t31 and the neutral jira.* renames to t37",
+      "task_ref": "t25",
+      "reason": "Codex's t25 renamed live pr-upkeep.jira.* events and dropped the synthetic creation transition, which would have stopped jira-intake and jira-comment-consumer in production. The poller half collides with pinned pr-upkeep stage/replay invariants that t31 rewrites anyway, and the renames are only safe once no graph workflow listens for the old names (t37). Owner chose this split.",
+      "affects": [
+        "t31",
+        "t37"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Add task t38, engine wiring, before t32: run the declaration engine in the server, drive ExpireDue / EmitActionResults / DrainSubject / ThawAndReplay on a schedule, a switch-flip route using FreezeHook and ThawAndReplay, the t27 engine-side stamping refusal, the t10xt12 drain-on-close seam, and register the engine_declaration_engine identity",
+      "task_ref": "t32",
+      "reason": "No plan task owned wiring the declaration engine into a running binary. t9-t18 each built primitives and left explicit wiring obligations. t32 (shadow parity on real traffic) and t36 (live signals) cannot run without it. Owner approved.",
+      "affects": [
+        "t32",
+        "t36",
+        "t37"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

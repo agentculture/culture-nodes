@@ -154,6 +154,19 @@ func (e *Engine) deriveNode(ctx context.Context, event *Event, parent string) (n
 		return NodeRecord{}, false, true, nil
 	}
 	event.Node = node.Name
+	// c81: an event arriving for a frozen node is stored against it, not
+	// matched/evaluated and not recorded as an ordinary late reaction --
+	// freeze.go's ThawAndReplay is what eventually runs it through Handle,
+	// once the node thaws. A backend with node lifecycle but no freeze
+	// support (should not occur outside a hand-built test fake, since only
+	// freeze.go ever produces this state) falls through to the same
+	// already-closed handling below.
+	if node.State == NodeStateFrozen {
+		if fb, ok := nb.(FreezeBackend); ok {
+			_, err := fb.StoreFrozenEvent(ctx, event.NamespaceID, node.ID, *event)
+			return node, true, false, err
+		}
+	}
 	if node.State != NodeStateOpen {
 		reason := fmt.Sprintf("node %q already closed (%s); reaction recorded, not fired", node.Name, node.ClosedReason)
 		return node, true, false, nb.RecordNodeNote(ctx, event.NamespaceID, event.ID, OutcomeNodeClosed, reason)

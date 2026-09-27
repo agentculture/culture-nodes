@@ -1,0 +1,17 @@
+-- 0066_decl_node_freeze_replay.sql
+--
+-- Task t18 (#328): rollback freeze and replay (spec c81, honesty h54, ADR
+-- 0014 "Consequences") -- internal/declengine/freeze.go.
+--
+-- 0060 already gave declaration_nodes a 'frozen' state (and its own
+-- deadline/deadline_remaining columns for a paused deadline) and gave
+-- declaration_node_frozen_events an arrival-ordered event_id per node. What
+-- was missing is the payload replay actually needs. Mirroring 0062's
+-- declaration_subject_deferrals (t10's DrainSubject, internal/declengine/
+-- guard.go), the whole triggering declengine.Event is stored as JSON rather
+-- than a handful of columns: replay (freeze.go's ThawAndReplay) re-runs it
+-- through the ordinary Handle path, so it needs everything Handle would
+-- have needed the first time (kind, node, variables, subject, and the
+-- origin marker that resolves lineage) -- not a bespoke subset that
+-- silently drifts from Event's fields as the engine grows.
+ALTER TABLE declaration_node_frozen_events ADD COLUMN event JSONB NOT NULL DEFAULT '{}'::jsonb;

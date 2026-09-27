@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/artifacts"
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/ledger"
@@ -187,6 +189,22 @@ type Server struct {
 	principalVerifier principalVerifier
 	jiraWebhook       jiraWebhookConfig
 	githubWebhook     githubWebhookConfig
+
+	// openRunCounter backs GET /v1alpha1/declaration-engine/open-runs (task
+	// t17, #328, spec c94/h63): the graph engine's open-run count, the fact
+	// that makes the drain ("flipping to 'after' drains, it does not
+	// strand") verifiable from outside the process instead of merely
+	// asserted. Set unconditionally in NewServer over declengine's own
+	// read query, the same way Engine and Ledger are.
+	openRunCounter openRunCounter
+}
+
+// openRunCounter is the narrow read interface the drain route needs --
+// declengine.PostgresOpenRunCounter satisfies it structurally, so this
+// package does not need declengine.OpenRunCounter itself to stay decoupled
+// from that package's own interface evolution.
+type openRunCounter interface {
+	OpenGraphRunCount(ctx context.Context, namespaceID string) (int, error)
 }
 
 // Option configures a Server.
@@ -403,7 +421,14 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 	if err != nil {
 		return nil, err
 	}
-	eng, err := postgres.NewEngine(store, namespaceID)
+	// The drain gate (task t17, #328, spec c94/h63) is wired unconditionally,
+	// not behind an Option: DrainGate only ever refuses a new graph run once
+	// a namespace's engine switch (internal/declengine/switch.go) has been
+	// flipped to 'after', so a namespace that has never flipped -- every
+	// installation before this task, and every namespace still in 'before'
+	// or 'shadow' -- gets exactly the pre-t17 behavior for free.
+	drainGate := declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: store}}
+	eng, err := postgres.NewEngine(store, namespaceID, engine.WithNewRunGate(drainGate))
 	if err != nil {
 		return nil, err
 	}
@@ -434,6 +459,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 		keepaliveInterval:       DefaultSSEKeepaliveInterval,
 		actorTokenLookup:        os.LookupEnv,
 		log:                     slog.Default(),
+		openRunCounter:          declengine.PostgresOpenRunCounter{Store: store},
 	}
 	s.inboundAuthenticator, err = actors.NewInboundAuthenticator(store, actors.DefaultInboundAuthenticationConfig, nil)
 	if err != nil {
@@ -451,7 +477,7 @@ func NewServer(store *postgres.Store, namespaceID string, opts ...Option) (*Serv
 	// never fails once the first postgres.NewEngine call above already
 	// succeeded for the identical (store, namespaceID) pair.
 	if s.telemetry != nil {
-		eng, err := postgres.NewEngine(store, namespaceID, engine.WithTelemetry(s.telemetry))
+		eng, err := postgres.NewEngine(store, namespaceID, engine.WithTelemetry(s.telemetry), engine.WithNewRunGate(drainGate))
 		if err != nil {
 			return nil, err
 		}
@@ -533,6 +559,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /v1alpha1/schedules/{id}", s.wrap(s.handleDeleteSchedule))
 
 	mux.HandleFunc("GET /v1alpha1/dispatch-rates", s.wrap(s.handleListDispatchRates))
+	mux.HandleFunc("GET /v1alpha1/declaration-engine/open-runs", s.wrap(s.handleGetOpenGraphRunCount))
 	mux.HandleFunc("GET /v1alpha1/namespaces", s.wrap(s.handleListNamespaces))
 	mux.HandleFunc("POST /v1alpha1/namespaces", s.wrap(s.handleCreateNamespace))
 

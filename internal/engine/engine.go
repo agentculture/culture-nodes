@@ -82,17 +82,50 @@ func WithTelemetry(p *telemetry.Provider) Option {
 	}
 }
 
+// NewRunGate decides whether TriggerEvent (trigger.go) may mint a BRAND
+// NEW graph run for namespaceID right now. It is the drain hook task t17
+// (#328) adds: the declaration engine's before/shadow/after switch
+// (internal/declengine/switch.go) reaching 'after' is the one condition
+// that should ever answer false here (see internal/declengine/drain.go's
+// DrainGate) -- spec c94/h63, "flipping to 'after' drains, it does not
+// strand": new trigger events stop starting graph runs from the flip
+// onward, but a graph run already open keeps running on the graph engine
+// until it ends, including the reactions (callbacks, waits, approvals) it
+// is waiting for. Nothing in this package other than trigger.go's two
+// brand-new-run call sites (the direct match and
+// DrainSubjectTriggerQueue's queue drain) ever consults it -- attaching an
+// event to an ALREADY active run/subject, resuming a parked wait,
+// completing an attempt, and every other continuation of an open run are
+// untouched, because none of them creates a new run.
+type NewRunGate interface {
+	// AllowNewRun reports whether a brand-new graph run may be created for
+	// namespaceID right now. An error aborts the caller's transaction the
+	// same way any other store error does.
+	AllowNewRun(ctx context.Context, namespaceID string) (bool, error)
+}
+
+// WithNewRunGate installs the drain gate a trigger-driven new-run creation
+// consults before minting a run. Nil (the default, and every caller that
+// predates this option) always allows -- before and shadow mode behave
+// exactly as they did before this task existed.
+func WithNewRunGate(gate NewRunGate) Option {
+	return func(e *Engine) {
+		e.newRunGate = gate
+	}
+}
+
 // Engine is the workflow state machine: it creates runs and commits the
 // §12.5 completion transaction. It is safe for concurrent use as long as its
 // Store is.
 type Engine struct {
-	store     Store
-	validator *contracts.Validator
-	now       func() time.Time
-	newID     func() string
-	retryBase time.Duration
-	retryMax  time.Duration
-	telemetry *telemetry.Provider
+	store      Store
+	validator  *contracts.Validator
+	now        func() time.Time
+	newID      func() string
+	retryBase  time.Duration
+	retryMax   time.Duration
+	telemetry  *telemetry.Provider
+	newRunGate NewRunGate
 
 	mu       sync.Mutex
 	prepared map[string]*Workflow
@@ -128,6 +161,16 @@ func New(s Store, opts ...Option) (*Engine, error) {
 
 // Store returns the store the engine writes through.
 func (e *Engine) Store() Store { return e.store }
+
+// allowNewRun consults the configured NewRunGate (if any) before a
+// trigger-driven brand-new run is minted. No gate configured -- the
+// default, and every caller that predates task t17 -- always allows.
+func (e *Engine) allowNewRun(ctx context.Context) (bool, error) {
+	if e.newRunGate == nil {
+		return true, nil
+	}
+	return e.newRunGate.AllowNewRun(ctx, e.store.NamespaceID())
+}
 
 // Workflow returns the prepared workflow for a digest, loading and caching it
 // from the given IR if it has not been seen. Guards and contracts are

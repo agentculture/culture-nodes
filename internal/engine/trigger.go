@@ -241,6 +241,23 @@ func (e *Engine) TriggerEvent(ctx context.Context, tx Tx, candidate TriggerWorkf
 			}
 		}
 
+		// task t17 (#328, spec c94/h63): a namespace drained to 'after'
+		// creates zero new graph runs from here on -- the declaration
+		// engine is the one that acts on this event now. Every branch
+		// above this point either attaches to, or queues behind, a
+		// subject that ALREADY has standing (an active run or a queued
+		// entry) rather than minting a new one, so none of them needs
+		// this gate; this is the one place in the whole match loop that
+		// is about to call createTriggeredRunTx for a subject/event that
+		// has none.
+		allow, err := e.allowNewRun(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !allow {
+			continue
+		}
+
 		run, err := e.createTriggeredRunTx(ctx, tx, wf, candidate, ev)
 		if err != nil {
 			return nil, err
@@ -311,6 +328,22 @@ func (e *Engine) DrainSubjectTriggerQueue(ctx context.Context, tx Tx, wf *Workfl
 		return err
 	}
 	if !found {
+		return nil
+	}
+	// task t17 (#328, spec c94/h63): draining a queued subject into a run
+	// is exactly as much "new graph-run creation" as TriggerEvent's own
+	// match path, so it is gated identically -- checked BEFORE the
+	// deferred row is deleted, so a namespace already drained to 'after'
+	// leaves the queued entry exactly where it was rather than discarding
+	// it. Nothing else touches that entry once it is queued (t18's
+	// freeze/replay is the intended next mover for whatever is left
+	// standing at a flip), so leaving it alone here is a safe no-op, not a
+	// silent drop.
+	allow, err := e.allowNewRun(ctx)
+	if err != nil {
+		return err
+	}
+	if !allow {
 		return nil
 	}
 	if err := tx.DeleteDeferredTrigger(ctx, deferred.ID); err != nil {

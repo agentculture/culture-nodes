@@ -192,6 +192,13 @@ class TestHistoryFactsHonourTheStageWatermark:
         facts = jira.jira_history_facts(issue, BOT)
         assert [fact[0] for fact in facts] == ["pr-upkeep.jira.transitioned.to-do"]
         assert facts[0][1]["changelog_id"] == "501"
+        emissions = jira.jira_emissions(
+            {"issues": [issue]}, site="team.example.com", project="SCRUM", bot_account_id=BOT
+        )
+        neutral = [fact for fact in emissions if fact["name"] == "jira.issue.transitioned"]
+        assert [fact["source_key"] for fact in neutral] == [
+            "jira:team.example.com:SCRUM-9:transitioned:To Do:501"
+        ]
 
     def test_a_humans_comment_with_the_prefix_stays_a_humans_fact(self):
         issue = _issue(
@@ -244,11 +251,12 @@ def _merged_pull(number, key, merged_at):
 
 
 def _history_events(calls):
-    """Events other than jira.issue.created (task t31, deviation d1): the
-    creation fact is emitted for every issue on every tick and deduplicated
-    by the control plane on its source key, so it is never stage-gated and
-    these stage tests are about the history and lifecycle facts."""
-    return [event for event in calls["events"] if event[0] != "jira.issue.created"]
+    """Existing history and lifecycle facts, excluding additive neutral Jira facts."""
+    return [
+        event
+        for event in calls["events"]
+        if event[0] not in {"jira.issue.created", "jira.issue.transitioned"}
+    ]
 
 
 def _tick(monkeypatch, *, pulls, closed, issues, sonar_pr=None):
@@ -297,6 +305,7 @@ class TestATickAgainstARecordedStage:
         assert sweep.main() == 0
         capsys.readouterr()
         assert _history_events(calls) == []
+        assert not any(event[0] == "jira.issue.transitioned" for event in calls["events"])
 
     def test_a_merge_after_the_recorded_stage_is_a_new_transition_and_is_emitted(
         self, monkeypatch, capsys

@@ -803,14 +803,32 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        # Two history facts plus the jira.issue.created fact (t31, deviation
-        # d1), which is emitted once per issue per tick and deduplicated by
-        # the control plane on its jira:<site>:<issue>:created source key.
-        assert report["emitted"] == 3
+        # Two history transitions, creation, and a neutral fact per transition.
+        assert report["emitted"] == 5
         created = [event for event in calls["events"] if event[0] == "jira.issue.created"]
         assert len(created) == 1
         assert created[0][2].endswith(":created") and created[0][2].startswith("jira:")
-        calls["events"] = [event for event in calls["events"] if event[0] != "jira.issue.created"]
+        neutral = [event for event in calls["events"] if event[0] == "jira.issue.transitioned"]
+        assert len(neutral) == 2
+        assert {event[2] for event in neutral} == {
+            "jira:team.example.com:EX-17:transitioned:To Do:0",
+            "jira:team.example.com:EX-17:transitioned:To Do:19999",
+        }
+        assert all(
+            event[1]
+            == {
+                "source": "jira",
+                "issue": "EX-17",
+                "to_status": "To Do",
+                "site": "team.example.com",
+            }
+            for event in neutral
+        )
+        calls["events"] = [
+            event
+            for event in calls["events"]
+            if event[0] not in {"jira.issue.created", "jira.issue.transitioned"}
+        ]
         assert calls["events"][0][2].endswith(":history:changelog:0")
         # task t9: the issue's current status names the event, distinct from
         # "a comment appeared" — the fixture issue's status is "To Do".
@@ -847,7 +865,11 @@ class TestEmitterMain:
         )
 
         assert sweep.main() == 0
-        names = [name for name, *_rest in calls["events"] if name != "jira.issue.created"]
+        names = [
+            name
+            for name, *_rest in calls["events"]
+            if name not in {"jira.issue.created", "jira.issue.transitioned"}
+        ]
         assert names[0] == "pr-upkeep.jira.transitioned.to-do"
         assert names[-2:] == [
             "pr-upkeep.jira.transitioned.to-do",

@@ -449,6 +449,27 @@ def jira_emissions(
                     "subject": item["id"],
                 }
             )
+            if name.startswith("pr-upkeep.jira.transitioned."):
+                transition_payload = {
+                    "source": "jira",
+                    "issue": item["id"],
+                    "to_status": event["status"],
+                    "site": source_site,
+                }
+                if event["from_status"]:
+                    transition_payload["from_status"] = event["from_status"]
+                facts.append(
+                    {
+                        "name": "jira.issue.transitioned",
+                        "payload": transition_payload,
+                        "source_key": (
+                            f"jira:{source_site}:{item['id']}:transitioned:"
+                            f"{event['status']}:{position_id}"
+                        ),
+                        "watermark": watermark,
+                        "subject": item["id"],
+                    }
+                )
     return facts
 
 

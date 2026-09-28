@@ -62,6 +62,13 @@ repeats, one per fetched issue, the same way it already counts re-sent history
 facts. Existing graph triggers and sweep behaviour are unchanged; the new fact
 is for declarations.
 
+For every transition the Jira poller reports, it also emits
+`jira.issue.transitioned` with the issue key, destination status, known source
+status, and site. Its distinct source key is
+`jira:<site>:<issue-key>:transitioned:<status>:<changelog-id>`. Re-polls use the
+same key and watermark, so the control plane deduplicates them. The legacy
+`pr-upkeep.jira.transitioned.<status>` events continue alongside it.
+
 ## One tick, precisely
 
 A tick sweeps up to `PR_UPKEEP_MAX_PRS_PER_SWEEP` (default 10) open PRs, and

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -300,6 +302,11 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		Operation   json.RawMessage `json:"operation"`
 		ApproverRef string          `json:"approver_ref"`
 		Timeout     string          `json:"timeout"`
+		GraphConfig struct {
+			Contract struct {
+				Outcomes map[string]json.RawMessage `json:"outcomes"`
+			} `json:"contract"`
+		} `json:"graph_config"`
 	}
 	if err := json.Unmarshal(r.Action.With, &with); err != nil {
 		return nil, nil, err
@@ -340,11 +347,28 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	}
 	schema := map[string]any{"schema": map[string]any{"type": "object"}}
 	outcomes := map[string]any{outcome: schema}
+	// Task t38e: an agent's domain outcome is carried through, not collapsed
+	// to `completed`. The node offers the outcomes the declaration's migrated
+	// contract declares (with.graph_config.contract.outcomes: the source
+	// graph node's own names and output schemas), so an agent reporting
+	// `packaged` completes the run with outcome `packaged` and the
+	// agent.result reaction (reactions.go) carries it. What the agent reports
+	// is still its claim: the attempt's ledger records stay capped at
+	// proposed by the worker's authority matrix, and an outcome the contract
+	// does not declare is the engine's technical contract_rejected, never a
+	// domain answer. With no declared contract the node keeps `completed`.
+	primary, extraAgent, err := agentOutcomes(nodeKind, with.GraphConfig.Contract.Outcomes, outcomes)
+	if err != nil {
+		return nil, nil, err
+	}
+	if primary != "" {
+		outcome = primary
+	}
 	// Task t38c: a nonzero exit is a code step's DOMAIN answer (`failed`,
 	// ConventionalCodeOutcomes' failure port), not a technical failure: the
 	// run completes and the code.result reaction carries it. Transport,
 	// timeout and runner trouble still fail the run (action.* results).
-	extra := []string{}
+	extra := extraAgent
 	if nodeKind == "code" {
 		outcomes["failed"] = schema
 		extra = append(extra, "failed")
@@ -404,6 +428,41 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	return cw, input, nil
 }
 
+// agentOutcomeName is the shape of a domain outcome an agent node may
+// declare: lower snake case, as every migrated contract names them.
+var agentOutcomeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// agentOutcomes replaces an agent node's default `completed` with the
+// declared contract's outcomes, in sorted order: primary takes the default
+// outcome's edge to finish, extra each get their own. Every other node kind,
+// and an agent node with no declared contract, keeps its default (primary
+// empty, extra empty).
+func agentOutcomes(nodeKind string, declared map[string]json.RawMessage, outcomes map[string]any) (primary string, extra []string, err error) {
+	if nodeKind != "agent" || len(declared) == 0 {
+		return "", []string{}, nil
+	}
+	names := make([]string, 0, len(declared))
+	for name := range declared {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	delete(outcomes, "completed")
+	for _, name := range names {
+		if !agentOutcomeName.MatchString(name) {
+			return "", nil, fmt.Errorf("agent.work graph_config.contract.outcomes: %q is not an outcome name", name)
+		}
+		var spec map[string]any
+		if err := json.Unmarshal(declared[name], &spec); err != nil || spec == nil {
+			return "", nil, fmt.Errorf("agent.work graph_config.contract.outcomes.%s must be an object with a schema", name)
+		}
+		if _, ok := spec["schema"]; !ok {
+			spec["schema"] = map[string]any{"type": "object"}
+		}
+		outcomes[name] = spec
+	}
+	return names[0], names[1:], nil
+}
+
 // Reconcile binds artifacts reported by the existing worker's terminal run.
 // The receiver must reconcile before replaying a reaction that arrived before
 // completion. An incomplete run never supplies artifact identity or variables.
@@ -449,7 +508,12 @@ func reconcileRun(ctx context.Context, db *postgres.Store, markersService *Marke
 	if result.ArtifactID == "" {
 		return nil
 	}
-	rows, err := db.Pool().Query(ctx, `SELECT artifact_kind,nonce,mac FROM declaration_minted_markers WHERE namespace_id=$1 AND firing_id=$2`, namespaceID, firingID)
+	// A marker the control plane stamps itself (task t38e: agent.work's
+	// agent_work marker, minted and bound to the run id by the reaction
+	// pass) never takes a bridge-reported artifact id: the run output's
+	// artifact_id is what the bridge created (a PR), not the run.
+	rows, err := db.Pool().Query(ctx, `SELECT artifact_kind,nonce,mac FROM declaration_minted_markers WHERE namespace_id=$1 AND firing_id=$2 AND artifact_kind<>$3`,
+		namespaceID, firingID, string(kinds.ArtifactAgentWork))
 	if err != nil {
 		return err
 	}

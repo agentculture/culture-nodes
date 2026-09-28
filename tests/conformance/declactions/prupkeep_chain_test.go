@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/decl"
 	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -164,4 +165,132 @@ func TestPRUpkeepDeclarationsChainIsOneLineage(t *testing.T) {
 	if got := r.lastOutcome(ff.eventID, finish); got != declengine.OutcomeFired {
 		t.Fatalf("finish outcome = %q, want %q", got, declengine.OutcomeFired)
 	}
+}
+
+// The analyse -> stage-dispatch hop over the real files (task t38e): route
+// decides, its code.result starts analyse (agent.work on the developer
+// lane), the agent reports `packaged` against analyse's migrated contract,
+// and the agent.result reaction starts stage-dispatch -- whose condition
+// reads that outcome -- in the same lineage. finish-no-fix, the other
+// branch off analyse's landing node, is evaluated and does not fire.
+func TestPRUpkeepAnalyseToStageDispatchIsOneLineage(t *testing.T) {
+	routeSrc := realDeclaration(t, "route.json")
+	analyseSrc := realDeclaration(t, "analyse.json")
+	stageSrc := realDeclaration(t, "stage-dispatch.json")
+	noFixSrc := realDeclaration(t, "finish-no-fix.json")
+	if analyseSrc.Trigger.Kind != "code.result" || analyseSrc.StartNode.Name != routeSrc.LandingNode.Name || analyseSrc.Action.Kind != "agent.work" {
+		t.Fatalf("analyse (%s on %s, %s) does not react to route (landing on %s)", analyseSrc.Trigger.Kind, analyseSrc.StartNode.Name, analyseSrc.Action.Kind, routeSrc.LandingNode.Name)
+	}
+	for _, d := range []decl.Declaration{stageSrc, noFixSrc} {
+		if d.Trigger.Kind != "agent.result" || d.StartNode.Name != analyseSrc.LandingNode.Name {
+			t.Fatalf("%s (%s on %s) does not react to analyse (landing on %s)", d.Name, d.Trigger.Kind, d.StartNode.Name, analyseSrc.LandingNode.Name)
+		}
+	}
+
+	r := newReactionHarness(t)
+	// The files name production actors; the harness registers stand-ins
+	// under exactly those keys, so `uses` stays as authored.
+	developer := r.addBridge(actors.ActorKeyOf(usesOf(t, analyseSrc)))
+	jira := r.addBridge(actors.ActorKeyOf(usesOf(t, stageSrc)))
+	developer.reply("packaged", map[string]any{
+		"verdicts": []any{map[string]any{"id": "f1", "verdict": "FIX", "reason": "unanswered and real"}},
+		"packages": []any{map[string]any{"rule": "go:S1192", "file": "internal/x.go", "finding_ids": []any{"f1"}}},
+	})
+	versions := map[string]postgres.DeclarationVersion{
+		routeSrc.Name:   r.publishReal(runnableHere(t, routeSrc)),
+		analyseSrc.Name: r.publishReal(analyseSrc),
+		stageSrc.Name:   r.publishReal(stageSrc),
+		noFixSrc.Name:   r.publishReal(runnableHere(t, noFixSrc)),
+	}
+	route, analyse, stage, noFix := versions[routeSrc.Name], versions[analyseSrc.Name], versions[stageSrc.Name], versions[noFixSrc.Name]
+
+	raw, err := os.ReadFile(filepath.Join(prUpkeepDeclarations, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Links []struct{ From, To, Kind string } `json:"links"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	stageMustFollowAnalyse := false
+	for _, l := range manifest.Links {
+		from, okFrom := versions[l.From]
+		to, okTo := versions[l.To]
+		if !okFrom || !okTo {
+			continue
+		}
+		if err := r.db.LinkDeclarations(r.ctx, r.ns, from.DeclarationID, to.DeclarationID, l.Kind); err != nil {
+			t.Fatal(err)
+		}
+		if l.From == stageSrc.Name && l.To == analyseSrc.Name && l.Kind == "must" {
+			stageMustFollowAnalyse = true
+		}
+	}
+	if !stageMustFollowAnalyse {
+		t.Fatalf("manifest has no must link %s -> %s", stageSrc.Name, analyseSrc.Name)
+	}
+
+	// The sweep's work-item fact for a keyed (non-gh:) item starts route.
+	item := map[string]any{"source": "github_pr", "repository": "agentculture/culture-nodes", "number": 328, "head_sha": "abc123",
+		"work_item": "SCRUM-7", "findings": []any{map[string]any{"id": "f1", "rule": "go:S1192", "file": "internal/x.go"}}}
+	payload, _ := json.Marshal(item)
+	ev, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: routeSrc.Trigger.Kind, Payload: payload, Emitter: "conformance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.engine.Handle(r.ctx, declengine.Event{NamespaceID: r.ns, ID: ev.Event.ID, Kind: routeSrc.Trigger.Kind, Node: declengine.RootNode, Variables: item}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	fr := r.onlyFiring(route)
+	if state := r.settle(fr.id, false); state != "completed" {
+		t.Fatalf("route ended %s, want completed", state)
+	}
+	r.drive()
+	fa := r.assertContinues(fr, analyse, "code.result", "passed", r.runner.operations()[0].OperationID)
+	if state := r.settle(fa.id, false); state != "completed" {
+		t.Fatalf("analyse reporting packaged ended %s, want completed", state)
+	}
+	if n := len(developer.received()); n != 1 {
+		t.Fatalf("developer lane invoked %d times, want 1", n)
+	}
+	r.drive()
+	rx := r.agentResults(fa.id)
+	if len(rx) != 1 || rx[0].Payload.Outcome != "packaged" || rx[0].Payload.Origin.ArtifactKind != "agent.work" || rx[0].Payload.Origin.ArtifactID != fa.id {
+		t.Fatalf("analyse's agent.result = %+v, want one carrying packaged with its agent_work origin", rx)
+	}
+	fs := r.onlyFiring(stage)
+	if fs.parent != fa.id || fs.lineage != fr.lineage || fs.eventID != rx[0].ID {
+		t.Fatalf("stage-dispatch firing = %+v, want parent %s in route's lineage %s via %s", fs, fa.id, fr.lineage, rx[0].ID)
+	}
+	if n := r.lineageLen(fs.id); n != 3 {
+		t.Fatalf("stage-dispatch's lineage has %d entries, want 3 (stage-dispatch, analyse, route)", n)
+	}
+	if got := r.lastOutcome(fs.eventID, stage); got != declengine.OutcomeFired {
+		t.Fatalf("stage-dispatch outcome = %q, want %q", got, declengine.OutcomeFired)
+	}
+	if got := r.lastOutcome(fs.eventID, noFix); got != declengine.OutcomeConditionFalse {
+		t.Fatalf("finish-no-fix outcome on packaged = %q, want %q", got, declengine.OutcomeConditionFalse)
+	}
+	if fs := r.firings(noFix); len(fs) != 0 {
+		t.Fatalf("finish-no-fix fired on packaged: %+v", fs)
+	}
+	if state := r.settle(fs.id, false); state != "completed" {
+		t.Fatalf("stage-dispatch ended %s, want completed", state)
+	}
+	if got := jira.received(); len(got) != 1 || got[0]["issue"] != "SCRUM-7" {
+		t.Fatalf("jira comment lane received %v, want one comment on SCRUM-7", got)
+	}
+}
+
+func usesOf(t *testing.T, d decl.Declaration) string {
+	t.Helper()
+	var with struct {
+		Uses string `json:"uses"`
+	}
+	if err := json.Unmarshal(d.Action.With, &with); err != nil || with.Uses == "" {
+		t.Fatalf("%s names no actor: %v", d.Name, err)
+	}
+	return with.Uses
 }

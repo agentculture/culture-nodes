@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/jackc/pgx/v5"
@@ -126,6 +127,23 @@ type OriginEvent struct {
 	ArtifactID    string
 	Author        string
 	BridgeAccount string
+	// EventKind is the delivered event's name. Engine.Handle and
+	// StoreIfFrozen set it; verify uses it to pin the reactions only the
+	// control plane emits to the marker kind it mints for them.
+	EventKind string
+}
+
+// controlPlaneReactionMarkers maps each reaction the control plane itself
+// emits (reactions.go) to the only marker kind that may carry it (task
+// t38e). An agent.work firing's github.pr marker is stamped into a public
+// pull request by its bridge; without this pin, anyone able to deliver an
+// event could copy it into an "agent.result" with any outcome and continue
+// the lineage. The pin only ever rejects more: a marker that verified
+// before still verifies for every other event name.
+var controlPlaneReactionMarkers = map[string]string{
+	ReactionHumanDecision: ReactionHumanDecision,
+	ReactionCodeResult:    ReactionCodeResult,
+	ReactionAgentResult:   string(kinds.ArtifactAgentWork),
 }
 
 // Resolve returns the verified parent firing ID, or empty for a fresh lineage.
@@ -156,6 +174,17 @@ func (s *MarkerService) verify(ctx context.Context, event OriginEvent) (parent, 
 	}
 	if event.NamespaceID == "" || event.ArtifactID == "" || event.ArtifactKind != p.kind {
 		return "", "artifact identity mismatch", nil
+	}
+	if want, pinned := controlPlaneReactionMarkers[event.EventKind]; pinned && p.kind != want {
+		return "", "reaction kind does not match marker", nil
+	}
+	// And the reverse: a marker kind minted only for a control-plane
+	// reaction is readable in that reaction's payload, so copied onto any
+	// other event name it must not verify either.
+	for reaction, kind := range controlPlaneReactionMarkers {
+		if p.kind == kind && event.EventKind != reaction {
+			return "", "reaction kind does not match marker", nil
+		}
 	}
 	r, err := s.store.LookupMarker(ctx, event.NamespaceID, p.firingID, p.kind, p.nonce)
 	if err != nil {

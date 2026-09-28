@@ -244,5 +244,11 @@ kinds added to the closed vocabulary:
   action, replacing the per-status `pr-upkeep.jira.transitioned.*` names
   (renamed under t37).
 
-`agent.result` and `jira.issue.transitioned` have no emitter yet, so
-declarations triggered on them do not fire until t38d adds one.
+Both now have emitters. t31c emits `jira.issue.transitioned`. t38e emits
+`agent.result` from the control plane's reaction pass. The pass mints a
+second marker for the firing, of kind `agent.work`, and binds it to the run
+id. It never hands that marker to an actor. The dispatch marker stays minted
+for `github.pr`. An `agent.result` verifies only with an `agent.work`
+marker, so the pull request's public marker cannot claim an agent outcome.
+The outcome is the one the agent reported against the contract outcomes in
+the declaration's `graph_config`. It is a proposed claim.

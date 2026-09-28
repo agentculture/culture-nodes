@@ -178,7 +178,7 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	if event.NamespaceID == "" || event.ID == "" || event.Kind == "" {
 		return errors.New("declengine: event identity and kind required")
 	}
-	event.Origin.NamespaceID, event.Origin.EventID = event.NamespaceID, event.ID
+	event.Origin.NamespaceID, event.Origin.EventID, event.Origin.EventKind = event.NamespaceID, event.ID, event.Kind
 	// A reaction can arrive before the worker has bound the artifact its
 	// action created; a dispatcher that can bind it first gets the chance.
 	if preparer, ok := e.dispatcher.(interface {

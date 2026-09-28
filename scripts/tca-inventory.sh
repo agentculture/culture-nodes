@@ -112,7 +112,7 @@ lines += [
     "",
     "## pr-upkeep and jira-intake item inventory",
     "",
-    "The rows below come from the declaration manifests and sources. Each declaration starts on its predecessor's landing node and triggers on the reaction to its action (task t31b). `source` means the form is authored and checked by `internal/api/declaration_examples_test.go` (parse, chain structure, publish, link). Runtime parity still needs a shadow comparison before cutover, and the reactions `agent.result` and `jira.issue.transitioned` have no emitter yet (see each set's README). The graph workflows and their legacy events stay live.",
+    "The rows below come from the declaration manifests and sources. Each declaration starts on its predecessor's landing node and triggers on the reaction to its action (task t31b). `source` means the form is authored and checked by `internal/api/declaration_examples_test.go` (parse, chain structure, publish, link). Runtime parity still needs a shadow comparison before cutover. The reactions `agent.result` (t38e) and `jira.issue.transitioned` (t31c) have emitters now (see each set's README). The graph workflows and their legacy events stay live.",
     "",
     "| Graph item | Declaration form | Parity status |",
     "|---|---|---|",

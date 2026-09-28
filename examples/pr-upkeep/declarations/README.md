@@ -67,13 +67,14 @@ alternative predecessors land on the same node, or where the trigger
 
 These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
 
-- **Trigger kinds without an emitter.** t31b registered `pr-upkeep.pr`,
+- **Reaction kinds registered by t31b.** t31b registered `pr-upkeep.pr`,
   `agent.result` and `jira.issue.transitioned` in `internal/decl/kinds`.
-  Nothing emits `agent.result` yet: the t38c reaction pass covers only
-  `human.decision` and `code.result`. The declaration worker envelope also
-  collapses an agent's outcome to `completed`, so `packaged` and `no_fix`
-  cannot reach a reaction today. Both need an owner decision, in the same
-  way as deviation d3.
+  t31c emits `jira.issue.transitioned`. Since t38e the control plane's
+  reaction pass emits `agent.result` for a completed `agent.work` run. The
+  worker envelope declares the outcomes in the declaration's
+  `graph_config.contract.outcomes`, so `packaged` and `no_fix` reach the
+  reaction as the agent reported them. The outcome is a proposed claim, not
+  evidence.
 - **Unmarked reactions.** A `jira.comment` or `jira.issue.created` reaction
   continues its lineage only if the emitter passes the stamped `origin`. No
   Jira poller or webhook does that yet. The poller also drops the system's

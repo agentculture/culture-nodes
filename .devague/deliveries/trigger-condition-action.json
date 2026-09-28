@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T04:25:55Z",
+  "updated": "2026-09-28T16:47:11Z",
   "deviations": [
     {
       "id": "d1",
@@ -98,6 +98,136 @@
       "status": "approved",
       "classification": "needs-follow-up",
       "seq": 7
+    },
+    {
+      "id": "d8",
+      "what": "The notifier becomes declarations: each notification case is a trigger-condition-action declaration posting through company/notify-discord (new reserved fact human.requested; discord.post contracts declare the bridge's sent/delivery_failed outcomes); muting a notification = deactivating its declaration; the nodes-notifier daemon stays only for graph runs until t37 (t41, in progress)",
+      "task_ref": "t33",
+      "reason": "Owner direction 2026-09-28 after the five-minute sweep flooded Discord: 'The notifier should be a Declaration as well. And then each case it fires - a TCA declaration.' The TCA inventory already listed the notifier as pending migration (docs/migration/tca-inventory.md).",
+      "affects": [
+        "t37"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 8
+    },
+    {
+      "id": "d9",
+      "what": "Web inbox shows what is being decided and where (API resolved_context: each context ref resolved server-side; card leads with the question, PR/ticket/file links, finding, fix summary or blocked reason; audit collapsed), and filters into tabs Open (default: pending, deadline not passed) / Waiting (pending past deadline) / Decided (t43, t44, #332)",
+      "task_ref": "t32",
+      "reason": "Owner could not decide an approval in the inbox ('missing information', 'not a link, not clear where and what') and asked for filtering: 'by default show only what's open', with tabs for waiting and decided. Found while deciding live-test tasks.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 9
+    },
+    {
+      "id": "d10",
+      "what": "Cloudflare zone culture.dev gains a cache rule bypassing nodes.culture.dev/v1alpha1/* (after the zone-wide 'Cache everything' rule, which overrode origin no-store); applied through cultureflare's API client; #305 closed",
+      "task_ref": "t32",
+      "reason": "Live test: the sensitivity inbox was served a stale edge copy and whoami was edge-cached for ~1h (per-principal responses shared across Access users). Owner approved applying the rule ('Please do').",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 10
+    },
+    {
+      "id": "d11",
+      "what": "GitHub App nodes-culture-dev (App ID 5109433, installation 165818005, all agentculture repos; contents/PR/issues write, checks/statuses/actions read, no workflows/admin) replaces per-account PATs; token minting and webhook wiring are follow-up work on #331",
+      "task_ref": "t32",
+      "reason": "Live test: culture-claude's GITHUB_TOKEN_WORKER returned 401, blocking every agent GitHub write (chain 6-8). The owner created and installed the app and stored its key in grant; verified live (JWT -> /app, installation token with the declared permissions).",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 11
+    },
+    {
+      "id": "d12",
+      "what": "Agent actions offer a conventional 'blocked' outcome (output requires reason; a declaration may not define its own), emitted as agent.result; pr-upkeep and jira-intake gain blocked-*/close-blocked-* declarations that ask group/platform-maintainers with the agent's report (t40e; engine side lives in d2's t38 wiring)",
+      "task_ref": "t32",
+      "reason": "Live test chain 6: company/developer honestly reported it could not do the job (GitHub token 401), but stamp-pr's contract offered only 'stamped', so the attempt was contract_rejected, no agent.result was emitted and the chain went silent. Owner decision 2026-09-28: add blocked as suggested plus pr-upkeep routes.",
+      "affects": [
+        "t31"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 12
+    },
+    {
+      "id": "d13",
+      "what": "A redelivered event never re-evaluates a declaration it already decided: Handle reads the event's evaluation trail once and skips decided (event, declaration) pairs across versions; progress-only pairs still resume (crash recovery); recorded failures are decided, a retry is a new event (t40a)",
+      "task_ref": "t32",
+      "reason": "Live in 'after': the sweep re-posts open Jira issues every tick and declhook passes duplicates through, so six events were re-evaluated every 5 minutes forever, a sensitivity-blocked firing silently retried, and a newly activated version could fire on an old event.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 13
+    },
+    {
+      "id": "d14",
+      "what": "Sensitivity inbox responses are Cache-Control: no-store and a decided task refuses a blind second decision (409); changing a standing answer names the decision it supersedes (t40b)",
+      "task_ref": "t30",
+      "reason": "Live test: the pending list came from a stale edge copy and a second 'approved' was appended to an already-approved task.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 14
+    },
+    {
+      "id": "d15",
+      "what": "The nodes CLI sends User-Agent culture-nodes/<version> (t40c)",
+      "task_ref": "t32",
+      "reason": "Cloudflare answers urllib's default Python-urllib agent with 403 (error 1010) in front of nodes.culture.dev, so every CLI call through Access failed.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 15
+    },
+    {
+      "id": "d16",
+      "what": "Sweep cutover: 'timer' is a reserved name only FireSchedule may assert (timer rows forced to the schedule:<row> emitter); scheduler, worker, expire-approvals and human-fanout graph engines are drain-gated; grant-check.sh covers activated declarations' environmentRefs; production now sweeps through the pr-upkeep-sweep declaration on a 'timer' schedule row, the graph row disabled (t40d)",
+      "task_ref": "t32",
+      "reason": "Live: the 5-minute schedule emitted pr-upkeep.sweep.due, so the migrated timer-triggered sweep declaration never fired; the graph sweep kept running only because those engines lacked the drain gate. Design from the qwen cortex review.",
+      "affects": [
+        "t17",
+        "t33"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 16
+    },
+    {
+      "id": "d17",
+      "what": "nodes-notifier skip-list NODES_NOTIFIER_SKIP_WORKFLOWS (compose default mutes both sweep lanes), a stopgap until t41's notification declarations (t40f)",
+      "task_ref": "t33",
+      "reason": "Every five-minute sweep run posted run.created/run.completed to Discord; the owner asked to toggle them off.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 17
+    },
+    {
+      "id": "d18",
+      "what": "Every bridge accepts a structured final answer that ends the text (bare JSON, fenced json, or prose followed by a JSON object with a string outcome) via a byte-identical final_answer.py; the conformance fake answers in the production shape (t40g)",
+      "task_ref": "t32",
+      "reason": "Live chain 7: the developer answered outcome blocked as JSON after a prose summary; the claude-code bridge parsed only whole-text JSON, so the run was contract_rejected again. Third test double this cycle that hid a real-adapter shape.",
+      "affects": [
+        "t31"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 18
     }
   ],
   "evidence": [],

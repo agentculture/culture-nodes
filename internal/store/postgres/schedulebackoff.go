@@ -84,7 +84,8 @@ const (
 	// NOT an approval node's task: no node run is parked on it and no run
 	// resumes when it is decided (PRD §9.9 governs those). It is a question
 	// about a schedule, and the run it names is the evidence, not the subject.
-	ScheduleFailingTaskKind = "schedule_failing"
+	// It is a notice (engine/humannotice.go): acknowledged is its one outcome.
+	ScheduleFailingTaskKind = engine.HumanTaskKindScheduleFailing
 )
 
 // scheduleOutcomeSQL reads the outcome of the most recent terminal run the
@@ -222,8 +223,10 @@ func (s *Store) raiseScheduleFailingTaskTx(ctx context.Context, tx pgx.Tx, sc *S
 		// A completion claim about a schedule, made by the control plane from
 		// facts it read -- never a verdict on whether the work is done
 		// (PRD §10.4). A human decides what to do about it.
-		"proposed_action": "investigate the failing environment, then decide this task; " +
+		"proposed_action": "investigate the failing environment, then acknowledge this task; " +
 			"the schedule keeps probing every probe interval and resumes its cadence on its own once a run completes",
+		// A notice's one answer, declared at creation (task t45).
+		"allowed_outcomes": engine.NoticeAllowedOutcomes(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("postgres: FireSchedule: marshal schedule_failing request for schedule %s: %w", sc.ID, err)

@@ -32,13 +32,13 @@ import (
 // ticketPendingTaskRequest is the subset of the recorded human-task request
 // this projection reads. It deliberately mirrors internal/engine's
 // (unexported) humanTaskRequest field-for-field rather than importing it:
-// these three fields are a WIRE contract the ticket page reads, and the
+// these two fields are a WIRE contract the ticket page reads (the outcome
+// set comes from engine.HumanTaskAllowedOutcomes instead, task t45), and the
 // engine's struct is free to grow fields that are none of this page's
 // business.
 type ticketPendingTaskRequest struct {
 	DecisionSchemaRef string     `json:"decision_schema_ref"`
 	Deadline          *time.Time `json:"deadline"`
-	AllowedOutcomes   []string   `json:"allowed_outcomes"`
 }
 
 // TicketPendingTaskOut is one pending human task on a ticket, shaped for the
@@ -79,12 +79,13 @@ func ticketPendingTask(task HumanTaskOut, ledgerVersion int64) TicketPendingTask
 		CreatedAt:       task.CreatedAt,
 		LedgerVersion:   ledgerVersion,
 	}
+	// The engine's effective set, so this page offers exactly what
+	// DecideHumanTask accepts — for a legacy notice with no stored
+	// allowed_outcomes that is ["acknowledged"] (task t45).
+	out.AllowedOutcomes = humanTaskAllowedOutcomes(task.Kind, task.Request)
 	var request ticketPendingTaskRequest
 	if len(task.Request) == 0 || json.Unmarshal(task.Request, &request) != nil {
 		return out
-	}
-	if request.AllowedOutcomes != nil {
-		out.AllowedOutcomes = request.AllowedOutcomes
 	}
 	out.DecisionSchemaRef = request.DecisionSchemaRef
 	out.Deadline = request.Deadline

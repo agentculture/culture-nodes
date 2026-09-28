@@ -33,6 +33,7 @@ import RunDecisionCard, {
   type RunVerdicts,
 } from "../components/RunDecisionCard";
 import SegmentedToggle from "../components/SegmentedToggle";
+import { taskAllowedOutcomes } from "../domain/human-task-notice";
 import { findTicketKey } from "../domain/ticket-key";
 import type { SharedEventType } from "../hooks/useSharedEvents";
 import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
@@ -307,7 +308,7 @@ function PendingDecisionsView() {
                       <code>{item.task.id}</code> · {item.task.kind}
                       <OutcomeButtons
                         taskId={item.task.id}
-                        outcomes={item.task.request.allowed_outcomes ?? []}
+                        outcomes={taskAllowedOutcomes(item.task)}
                         disabled={
                           actorId === null ||
                           versions[item.task.run_id] === undefined

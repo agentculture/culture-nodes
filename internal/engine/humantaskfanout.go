@@ -213,15 +213,11 @@ func DecisionPageURL(base string, subject RunSubject, runID string) string {
 // declares none (a kind that is an alert rather than a choice, e.g.
 // schedule_failing) returns nil, and the rendered message says so rather than
 // offering an empty list.
+//
+// A notice (humannotice.go) offers `acknowledged` even when a legacy request
+// declares nothing.
 func HumanTaskOptions(task HumanTask) []string {
-	var request humanTaskRequest
-	if len(task.Request) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(task.Request, &request); err != nil {
-		return nil
-	}
-	return request.AllowedOutcomes
+	return HumanTaskAllowedOutcomes(task)
 }
 
 // HumanTaskNodeID is the workflow node this task is FOR — `needs-human`, not

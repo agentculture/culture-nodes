@@ -5,11 +5,19 @@ import {
   DECIDED_TASK,
   EXPIRED_TASK,
   INBOX_NOW,
+  NOTICE_TASK,
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
+  UNDECIDABLE_TASK,
   WAITING_TASK,
 } from "../fixtures/human-tasks-fixture";
-import { isOverdue, parseInboxTab, partitionInbox, taskDeadlineMs } from "./inbox-tabs";
+import {
+  isOverdue,
+  isUndecidable,
+  parseInboxTab,
+  partitionInbox,
+  taskDeadlineMs,
+} from "./inbox-tabs";
 
 describe("inbox tabs (task t44)", () => {
   it("parses ?tab= and falls back to open", () => {
@@ -58,5 +66,21 @@ describe("inbox tabs (task t44)", () => {
     ]);
     expect(tabs.waiting.map((t) => t.id)).toEqual([WAITING_TASK.id]);
     expect(tabs.decided.map((t) => t.id)).toEqual([EXPIRED_TASK.id, DECIDED_TASK.id]);
+  });
+
+  // Task t45: nothing to select is not open work — but it is never hidden.
+  it("puts a pending task with no selectable outcome in Waiting, not Open", () => {
+    const expiredOnly: HumanTask = {
+      ...PENDING_TASK_MINIMAL,
+      id: "ht-expired-only",
+      request: { allowed_outcomes: ["expired"] },
+    };
+    expect(isUndecidable(UNDECIDABLE_TASK)).toBe(true);
+    expect(isUndecidable(expiredOnly)).toBe(true);
+    expect(isUndecidable(NOTICE_TASK)).toBe(false);
+    const tabs = partitionInbox([UNDECIDABLE_TASK, expiredOnly, NOTICE_TASK], INBOX_NOW);
+    expect(tabs.open.map((t) => t.id)).toEqual([NOTICE_TASK.id]);
+    expect(tabs.waiting.map((t) => t.id)).toEqual([UNDECIDABLE_TASK.id, expiredOnly.id]);
+    expect(tabs.decided).toEqual([]);
   });
 });

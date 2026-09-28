@@ -89,13 +89,16 @@ func TestTicketFrameBackLink(t *testing.T) {
 // SHOWN — with an empty (never absent) outcome list, so a page can say "this
 // is waiting on you and offers nothing to click" rather than silently
 // dropping it.
+//
+// The kind is not a notice: since task t45 a schedule_failing notice with no
+// stored outcomes reports ["acknowledged"] (the test after this one).
 func TestTicketPendingTaskShapesAnUndecidableTask(t *testing.T) {
-	got := ticketPendingTask(HumanTaskOut{ID: "ht-1", RunID: "run-1", Kind: "schedule_failing",
+	got := ticketPendingTask(HumanTaskOut{ID: "ht-1", RunID: "run-1", Kind: "some_future_alert",
 		Request: json.RawMessage(`{"schedule_id":"sch-1"}`)}, 7)
 	if got.AllowedOutcomes == nil || len(got.AllowedOutcomes) != 0 {
 		t.Fatalf("allowed_outcomes = %#v, want an empty non-nil slice", got.AllowedOutcomes)
 	}
-	if got.LedgerVersion != 7 || got.ID != "ht-1" || got.Kind != "schedule_failing" {
+	if got.LedgerVersion != 7 || got.ID != "ht-1" || got.Kind != "some_future_alert" {
 		t.Fatalf("shaped task = %+v", got)
 	}
 	encoded, err := json.Marshal(got)
@@ -104,6 +107,18 @@ func TestTicketPendingTaskShapesAnUndecidableTask(t *testing.T) {
 	}
 	if want := `"allowed_outcomes":[]`; !containsSubstring(string(encoded), want) {
 		t.Fatalf("encoded task %s, want it to carry %s", encoded, want)
+	}
+}
+
+// Task t45: a legacy notice — stored with no allowed_outcomes — is offered
+// on the ticket page with the one answer it takes.
+func TestTicketPendingTaskOffersAcknowledgedForALegacyNotice(t *testing.T) {
+	for _, kind := range []string{"schedule_failing", "trigger_remint_exhausted"} {
+		got := ticketPendingTask(HumanTaskOut{ID: "ht-1", RunID: "run-1", Kind: kind,
+			Request: json.RawMessage(`{"reason":"boom"}`)}, 7)
+		if len(got.AllowedOutcomes) != 1 || got.AllowedOutcomes[0] != "acknowledged" {
+			t.Errorf("%s allowed_outcomes = %#v, want [acknowledged]", kind, got.AllowedOutcomes)
+		}
 	}
 }
 

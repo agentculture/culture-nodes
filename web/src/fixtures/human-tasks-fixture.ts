@@ -251,3 +251,36 @@ export const BLOCKED_TASK: HumanTask = {
   ],
   created_at: "2026-09-28T09:00:00Z",
 };
+
+/**
+ * Task t45: a LEGACY notice — written before notices declared an outcome, so
+ * its request carries no `allowed_outcomes` — as the API now serves it, with
+ * the top-level `allowed_outcomes` reading it as `["acknowledged"]`.
+ */
+export const NOTICE_TASK: HumanTask = {
+  id: "ht-01J8XKINBOX0000000000000007",
+  run_id: "run-01J8XKINBOXRUN000000000007",
+  node_run_id: "nr-01J8XKINBOXNR0000000000007",
+  kind: "trigger_remint_exhausted",
+  status: "pending",
+  request: {
+    reason: "trigger re-mint attempts exhausted",
+    original_event_id: "evt-01J8XKINBOXEVT000000000007",
+    attempts: 2,
+    window_seconds: 86400,
+    subject: "SCRUM-194",
+  } as HumanTask["request"],
+  allowed_outcomes: ["acknowledged"],
+  created_at: "2026-08-13T11:00:00Z",
+};
+
+/** A pending task offering nothing a person may select (the guard case). */
+export const UNDECIDABLE_TASK: HumanTask = {
+  id: "ht-01J8XKINBOX0000000000000008",
+  run_id: "run-01J8XKINBOXRUN000000000008",
+  kind: "some_future_alert",
+  status: "pending",
+  request: {},
+  allowed_outcomes: [],
+  created_at: "2026-08-13T12:00:00Z",
+};

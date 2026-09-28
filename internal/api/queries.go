@@ -871,6 +871,8 @@ func scanHumanTasks(rows pgx.Rows) ([]HumanTaskOut, error) {
 		t.NodeRunID = textOrEmpty(nodeRunID)
 		t.AssignedOwnerID = textOrEmpty(assignedOwnerID)
 		t.Request = json.RawMessage(request)
+		// The same effective set humanTaskOut reports (task t45).
+		t.AllowedOutcomes = humanTaskAllowedOutcomes(t.Kind, t.Request)
 		t.Response = nonNullJSON(json.RawMessage(response))
 		t.CreatedAt = tsOrZero(createdAt)
 		if resolvedAt.Valid {

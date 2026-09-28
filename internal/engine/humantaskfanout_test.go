@@ -228,10 +228,12 @@ func TestUIBaseURLTrimsAndAnUnsetOriginRendersTheBarePath(t *testing.T) {
 	}
 }
 
-// A task whose kind asks for no choice (the schedule_failing alert t9 raises)
-// still fans out, and says so rather than offering an empty option list.
+// A task that declares no outcomes still fans out, and says so rather than
+// offering an empty option list. (Before task t45 this was schedule_failing;
+// a notice now offers `acknowledged` — see the test below — so the case is
+// pinned on a kind that is not a notice.)
 func TestTaskWithNoDeclaredOutcomesStillFansOutAndSaysSo(t *testing.T) {
-	task := engine.HumanTask{ID: "01TASK", RunID: "01RUN", Kind: "schedule_failing", Request: json.RawMessage(`{}`)}
+	task := engine.HumanTask{ID: "01TASK", RunID: "01RUN", Kind: "some_future_alert", Request: json.RawMessage(`{}`)}
 	plan := engine.PlanHumanTaskFanOut(task, engine.RunSubject{}, "")
 	if got := channelsOf(plan); strings.Join(got, ",") != engine.FanOutChannelNotify {
 		t.Fatalf("channels = %v, want only %s", got, engine.FanOutChannelNotify)
@@ -352,5 +354,17 @@ func TestTicketLifecycleTransitionPlansRequireTheRightEvidence(t *testing.T) {
 	payload = payloadFor(t, []engine.HumanTaskFanOut{*done}, engine.FanOutChannelJiraTransition)
 	if payload["target"] != engine.JiraDoneStatus {
 		t.Fatalf("done target = %v, want %q", payload["target"], engine.JiraDoneStatus)
+	}
+}
+
+// Task t45: a notice — even a legacy one stored with no allowed_outcomes —
+// offers the one answer it takes, `acknowledged`, in its fan-out.
+func TestLegacyNoticeFanOutOffersAcknowledged(t *testing.T) {
+	for _, kind := range []string{engine.HumanTaskKindScheduleFailing, engine.HumanTaskKindTriggerRemintExhausted} {
+		task := engine.HumanTask{ID: "01TASK", RunID: "01RUN", Kind: kind, Request: json.RawMessage(`{}`)}
+		rendered, _ := json.Marshal(payloadFor(t, engine.PlanHumanTaskFanOut(task, engine.RunSubject{}, ""), engine.FanOutChannelNotify))
+		if !strings.Contains(string(rendered), engine.OutcomeAcknowledged) || strings.Contains(string(rendered), "no declared outcomes") {
+			t.Errorf("%s notify payload %s does not offer %q", kind, rendered, engine.OutcomeAcknowledged)
+		}
 	}
 }

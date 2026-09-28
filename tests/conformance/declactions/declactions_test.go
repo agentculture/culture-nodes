@@ -90,6 +90,17 @@ type fakeBridge struct {
 	key    string
 	inputs []map[string]any
 	server *httptest.Server
+	// outcome is the domain outcome every invocation reports ("completed"
+	// when empty); output is merged into what it reports (task t38e).
+	outcome string
+	output  map[string]any
+}
+
+// reply sets what the bridge reports from now on.
+func (b *fakeBridge) reply(outcome string, output map[string]any) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.outcome, b.output = outcome, output
 }
 
 func newFakeBridge(t *testing.T, key string) *fakeBridge {
@@ -114,8 +125,15 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(req.Input, &input)
 	b.mu.Lock()
 	b.inputs = append(b.inputs, input)
-	b.mu.Unlock()
+	outcome := b.outcome
 	output := map[string]any{"bridge": b.key}
+	for k, v := range b.output {
+		output[k] = v
+	}
+	b.mu.Unlock()
+	if outcome == "" {
+		outcome = "completed"
+	}
 	// stamping.read_marker: absent -> nothing to stamp; present and
 	// malformed -> 400; present and well formed -> stamp and report.
 	if raw, present := input[declengine.MarkerInputKey]; present && raw != nil {
@@ -129,7 +147,7 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 	}
 	body, _ := json.Marshal(output)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(actors.InvocationResult{Outcome: "completed", Output: body})
+	_ = json.NewEncoder(w).Encode(actors.InvocationResult{Outcome: outcome, Output: body})
 }
 
 func (b *fakeBridge) received() []map[string]any {
@@ -246,10 +264,7 @@ func newDeclHarness(t *testing.T) *declHarness {
 	// capability facts its /v1/capabilities advertises -- including the
 	// stamping block (stamping.CAPABILITY) t38's refusal reads.
 	for _, key := range bridgeKeys {
-		b := newFakeBridge(t, key)
-		h.bridges[key] = b
-		exec(`INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol,endpoint_ref,metadata,capabilities) VALUES($1,$2,$3,1,'agent','nodes.actor/v1alpha1',$4,$5,'{"stamping":{"marker":"cn1","version":1}}')`,
-			store.NewULID(), ns, key, b.server.URL, `{"auth_token_env":"`+bridgeTokenEnv+`"}`)
+		h.addBridge(key)
 	}
 
 	runnerServer := httptest.NewServer(h.runner.handler())
@@ -289,6 +304,19 @@ func newDeclHarness(t *testing.T) *declHarness {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// addBridge registers one more stamping bridge under key, the way the
+// harness registers bridgeKeys.
+func (h *declHarness) addBridge(key string) *fakeBridge {
+	h.t.Helper()
+	b := newFakeBridge(h.t, key)
+	h.bridges[key] = b
+	if _, err := h.db.Pool().Exec(h.ctx, `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol,endpoint_ref,metadata,capabilities) VALUES($1,$2,$3,1,'agent','nodes.actor/v1alpha1',$4,$5,'{"stamping":{"marker":"cn1","version":1}}')`,
+		store.NewULID(), h.ns, key, b.server.URL, `{"auth_token_env":"`+bridgeTokenEnv+`"}`); err != nil {
+		h.t.Fatal(err)
+	}
+	return b
 }
 
 // exposeWidenings is the author's half of task t30b's per-variable exposure

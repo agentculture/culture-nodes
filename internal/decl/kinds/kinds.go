@@ -63,10 +63,9 @@ var triggers = []Kind{
 	// the produced artifact, so a reaction continues the action's lineage.
 	{Name: "code.result", Version: 1, Consumes: []ArtifactType{ArtifactCodeResult}, Produces: []ArtifactType{ArtifactCodeResult}},
 	// Task t31b (#328) registers three reactions the migrated pr-upkeep and
-	// jira-intake declarations (examples/*/declarations) chain on. They are
-	// vocabulary only: no emitter produces them under these names yet, so a
-	// declaration triggered on one does not fire until an emitter does. Each
-	// needs an owner decision (a devague deviation) before t32 relies on it.
+	// jira-intake declarations (examples/*/declarations) chain on. They were
+	// registered as vocabulary only, under owner decision d7; emitters came
+	// later (jira.issue.transitioned in t31c, agent.result in t38e).
 	//
 	// pr-upkeep.pr is the live sweep's work-item fact
 	// (examples/pr-upkeep/pr_upkeep_emit.py), already on the log under this
@@ -75,9 +74,10 @@ var triggers = []Kind{
 	{Name: "pr-upkeep.pr", Version: 1, Consumes: []ArtifactType{ArtifactGitHubPR}, Produces: []ArtifactType{ArtifactGitHubPR}},
 	// agent.result is the reaction to a completed agent.work run: its
 	// outcome and output as the agent reported them -- a proposed claim,
-	// never evidence (PRD §10.4). Intended payload, mirroring code.result:
-	// {node, outcome, result, origin}. Nothing emits it yet (the t38c
-	// reaction pass covers only human.decision and code.result).
+	// never evidence (PRD §10.4). Payload, mirroring code.result:
+	// {node, outcome, result, origin}. The control plane emits it (task
+	// t38e, internal/declengine/reactions.go) with an agent_work marker it
+	// mints and binds to the run id.
 	{Name: "agent.result", Version: 1, Consumes: []ArtifactType{ArtifactAgentWork}, Produces: []ArtifactType{ArtifactAgentWork}},
 	// jira.issue.transitioned is the neutral name for today's
 	// pr-upkeep.jira.transitioned.<status> facts (the jira.* renames are

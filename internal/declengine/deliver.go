@@ -125,7 +125,7 @@ func (e *Engine) StoreIfFrozen(ctx context.Context, event Event) (stored bool, e
 	if !ok || !ok2 {
 		return false, nil
 	}
-	event.Origin.NamespaceID, event.Origin.EventID = event.NamespaceID, event.ID
+	event.Origin.NamespaceID, event.Origin.EventID, event.Origin.EventKind = event.NamespaceID, event.ID, event.Kind
 	// Binding a completed run's artifact is not a dispatch -- it records what
 	// an 'after'-era action already created -- so it runs in 'before' too,
 	// even though ShadowGate's own PrepareOrigin skips outside 'after'. It is

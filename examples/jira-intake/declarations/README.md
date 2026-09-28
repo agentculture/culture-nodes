@@ -40,10 +40,11 @@ back to To Do. `jira.issue.created` fires only when an issue is created.
 ## What does not fire yet
 
 - `agent.result` and `jira.issue.transitioned` were registered by t31b.
-  Nothing emits them yet: the t38c reaction pass covers only
-  `human.decision` and `code.result`, and the `jira.*` renames are t37's
-  (deviation d1). The declaration worker envelope also reports an agent's
-  outcome as `completed`, not `intake_drafted`.
+  t31c emits `jira.issue.transitioned`, and the `jira.*` renames are t37's
+  (deviation d1). Since t38e the control plane's reaction pass emits
+  `agent.result`, and the worker envelope carries the agent's own outcome
+  (`intake_drafted`, from `graph_config.contract.outcomes`) instead of
+  `completed`.
 - A `jira.comment` reaction continues the lineage only if the emitter passes
   the stamped `origin`. No Jira emitter does that yet, and the poller drops
   the system's own comments as self-echo.

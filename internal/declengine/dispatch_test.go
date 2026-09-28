@@ -2,6 +2,7 @@ package declengine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/decl"
@@ -59,5 +60,34 @@ func TestWorkerEnvelopeOwnsTheMarkerKey(t *testing.T) {
 		if minted != "" && got != minted {
 			t.Fatalf("%q=%v, want the minted marker", MarkerInputKey, got)
 		}
+	}
+}
+
+// Task t38e: an agent.work node offers the outcomes its declaration's
+// migrated contract declares, so the agent's own outcome is carried rather
+// than collapsed to `completed`; with no contract it keeps `completed`, and
+// a name that is not an outcome name is refused before anything compiles.
+func TestWorkerEnvelopeCarriesTheAgentContractOutcomes(t *testing.T) {
+	envelope := func(with string) ([]string, error) {
+		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "agent.work", With: json.RawMessage(with)}}
+		cw, _, err := workerEnvelope(req)
+		if err != nil {
+			return nil, err
+		}
+		return cw.IR.Spec.Nodes["action"].Outcomes, nil
+	}
+	got, err := envelope(`{"uses":"actor://test/worker@sha256:aaaaaa","graph_config":{"contract":{"outcomes":{"packaged":{"schema":{"type":"object","required":["packages"]}},"no_fix":{"schema":{"type":"object"}}}}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "no_fix,packaged" {
+		t.Fatalf("agent node outcomes = %v, want exactly the contract's [no_fix packaged]", got)
+	}
+	got, err = envelope(`{"uses":"actor://test/worker@sha256:aaaaaa"}`)
+	if err != nil || strings.Join(got, ",") != "completed" {
+		t.Fatalf("agent node without a contract: outcomes %v (err %v), want [completed]", got, err)
+	}
+	if _, err := envelope(`{"uses":"actor://test/worker@sha256:aaaaaa","graph_config":{"contract":{"outcomes":{"Bad Name":{}}}}}`); err == nil {
+		t.Fatal("an outcome named \"Bad Name\" compiled")
 	}
 }

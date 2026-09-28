@@ -449,3 +449,46 @@ func TestImportPlanDeclarationOutputRefusals(t *testing.T) {
 		t.Fatalf("a refused declaration import still wrote a snapshot: %+v", list.Items)
 	}
 }
+
+// TestDeclarationSetRefusesANestedActivationBeforeWritingAnything pins the
+// cortex review's finding F1 on t35: validation used to run only the parser,
+// so a set whose activation rule targets another activation rule IN THE SET
+// passed validation, and publish wrote the earlier members before
+// declengine.Publish refused that one. The set's own members now answer the
+// one-level-deep check, so the whole set is refused and nothing is written.
+func TestDeclarationSetRefusesANestedActivationBeforeWritingAnything(t *testing.T) {
+	fx := newDeclHumanFixture(t)
+	var created generationWire
+	rr := doAccess(t, fx.srv, http.MethodPost, "/v1alpha1/workflow-generations", fx.token, map[string]any{
+		"description": "nested activation", "actor_ref": "actor://company/planner", "output": "declarations",
+	}, &created)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	completeGeneration(t, fx, created.RunID, map[string]any{
+		"format": "json",
+		"declarations": []map[string]any{
+			{"source": ordinaryDeclSource("set-first", "")},
+			{"source": activationDeclSource("set-rule-inner", "set-first")},
+			{"source": activationDeclSource("set-rule-outer", "set-rule-inner")},
+		},
+	}, true)
+
+	var got generationWire
+	doAccess(t, fx.srv, http.MethodGet, "/v1alpha1/workflow-generations/"+created.RunID, "", nil, &got)
+	if got.Declarations == nil || got.Declarations.Valid || len(got.Declarations.Declarations) != 3 {
+		t.Fatalf("a set with a nested activation reported valid: %+v", got.Declarations)
+	}
+	if outer := got.Declarations.Declarations[2]; outer.Valid || len(outer.Diagnostics) == 0 {
+		t.Fatalf("the outer activation rule carries no diagnostic: %+v", outer)
+	}
+	rr = doAccess(t, fx.srv, http.MethodPost, "/v1alpha1/workflow-generations/"+created.RunID+"/publish", fx.token, map[string]any{}, nil)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("publish: %d, want 422: %s", rr.Code, rr.Body.String())
+	}
+	for _, name := range []string{"set-first", "set-rule-inner", "set-rule-outer"} {
+		if rr := doAccess(t, fx.srv, http.MethodGet, "/v1alpha1/declarations/"+name, "", nil, nil); rr.Code != http.StatusNotFound {
+			t.Fatalf("the refused set wrote %s: %d", name, rr.Code)
+		}
+	}
+}

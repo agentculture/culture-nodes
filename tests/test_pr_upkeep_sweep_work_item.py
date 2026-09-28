@@ -86,6 +86,9 @@ class TestUpkeepPrFact:
             "head_sha": "sha9",
             "findings": [{"id": "pr9-qodo-1"}],
             "work_item": "SCRUM-9",
+            "title": "",
+            "finding_title": "",
+            "finding_count": 1,
         }
         assert "subject" not in fact
         assert "category" not in fact
@@ -180,6 +183,42 @@ class TestFetchOpenPullsCarriesTheCorrelationFields:
         assert emit.work_item_for_pull(listed[1], REPOSITORY) == "gh:agentculture/culture-nodes#7"
 
 
+class TestTheFactCarriesFlatDisplayFields:
+    """Task t48 (owner decision d21): a notification template renders only
+    flat values, so the fact repeats the PR title and its first finding at
+    the top level. Driven through the real sweep, not upkeep_pr_fact alone,
+    so the pull listing's shape is the one the fields are read from."""
+
+    def test_title_first_finding_and_count_ride_on_the_emitted_fact(
+        self, monkeypatch, capsys, sonar_payload
+    ):
+        pull = {
+            "number": 9,
+            "head_sha": "sha9",
+            "head": {"ref": "SCRUM-9/loop-t2"},
+            "body": "",
+            "title": "Tidy the parser",
+        }
+        # The recorded SonarCloud answer, served for this PR: real findings.
+        calls = _stub_sweep(
+            monkeypatch, pulls=[pull], sonar_main=sonar_payload, sonar_pr=sonar_payload
+        )
+        facts = _emitted_pr_facts(monkeypatch, calls)
+        assert sweep.main() == 0
+        capsys.readouterr()
+        ((_name, payload, _kwargs),) = facts
+        assert payload["title"] == "Tidy the parser"
+        assert payload["finding_count"] == len(payload["findings"]) >= 1
+        assert payload["finding_title"] == payload["findings"][0]["title"]
+        assert payload["finding_title"]
+        for key in ("title", "finding_title", "finding_count"):
+            assert not isinstance(payload[key], (dict, list)), key
+
+    def test_a_listing_entry_without_a_title_still_emits_an_empty_one(self):
+        fact = emit.upkeep_pr_fact({"number": 3, "head_sha": "s"}, REPOSITORY, [])
+        assert (fact["title"], fact["finding_title"], fact["finding_count"]) == ("", "", 0)
+
+
 class TestWorkflowInputContractAdmitsWorkItem:
     """The published contract is additionalProperties:false, so a fact carrying
     work_item is REJECTED by the trigger until the contract admits it (c16)."""
@@ -207,7 +246,12 @@ class TestWorkflowInputContractAdmitsWorkItem:
             REPOSITORY,
             [{"id": "pr9-qodo-1"}],
         )
-        assert set(fact) == set(schema["required"]) == set(schema["properties"])
+        # Every key the emitter writes is admitted; the six routing keys are
+        # required. The t48 display fields are admitted but optional, so a
+        # fact from a sweep deployed before them still validates.
+        assert set(fact) == set(schema["properties"])
+        assert set(schema["required"]) <= set(fact)
+        assert set(fact) - set(schema["required"]) == {"title", "finding_title", "finding_count"}
 
 
 class TestTheOrphanIdempotencyLimitIsDocumented:

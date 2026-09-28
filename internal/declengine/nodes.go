@@ -114,14 +114,32 @@ type NodeRecord struct {
 	Host, ActorKind string
 }
 
-// ExpiredNode is one node.expired emission ExpireDue produced.
+// ExpiredNode is one node.expired emission ExpireDue produced. FiringID is
+// the firing that opened the node.
 type ExpiredNode struct {
-	NamespaceID, NodeID, NodeName, EventID string
+	NamespaceID, NodeID, NodeName, EventID, FiringID string
 }
 
 // ActionResultEvent is one action.* emission EmitActionResults produced.
 type ActionResultEvent struct {
-	NamespaceID, FiringID, NodeID, NodeName, EventID, Trigger, Class string
+	NamespaceID, FiringID, NodeID, NodeName, EventID, Trigger, Class, Status string
+}
+
+// NodeExpiredVariables is a node.expired event's payload AND the variables
+// the engine hands its declarations: one map, so the stored fact and what a
+// template can render are the same shape by construction (task t48). Before
+// t48 the payload was stored and the event handled with NO variables, so a
+// template's {node_name} rendered as the literal placeholder.
+func NodeExpiredVariables(n ExpiredNode) map[string]any {
+	return map[string]any{"node_id": n.NodeID, "node_name": n.NodeName, "firing_id": n.FiringID}
+}
+
+// ActionResultVariables is an action.* event's payload and its declaration
+// variables, the same one map (task t48; see NodeExpiredVariables). firing_id
+// is the failed firing, which is also its run's id (runs.id), so
+// /runs/{firing_id} opens it in the UI.
+func ActionResultVariables(r ActionResultEvent) map[string]any {
+	return map[string]any{"firing_id": r.FiringID, "node_id": r.NodeID, "status": r.Status, "class": r.Class}
 }
 
 // NodeBackend is the node-lifecycle surface a Backend can optionally
@@ -330,7 +348,8 @@ func (e *Engine) ExpireDue(ctx context.Context, namespaceID string, now time.Tim
 	}
 	var failures []error
 	for _, ev := range expired {
-		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: ev.EventID, Kind: "node.expired", Node: ev.NodeName, Emitter: DeclarationEngineActorID}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: ev.EventID, Kind: "node.expired", Node: ev.NodeName,
+			Variables: NodeExpiredVariables(ev), Emitter: DeclarationEngineActorID}); err != nil {
 			failures = append(failures, err)
 		}
 		// nb.ExpireDue committed this node's close before returning it, so
@@ -368,7 +387,8 @@ func (e *Engine) EmitActionResults(ctx context.Context, namespaceID string, limi
 	}
 	var failures []error
 	for _, r := range results {
-		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: r.EventID, Kind: r.Trigger, Node: r.NodeName, Emitter: DeclarationEngineActorID}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: r.EventID, Kind: r.Trigger, Node: r.NodeName,
+			Variables: ActionResultVariables(r), Emitter: DeclarationEngineActorID}); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -509,7 +529,7 @@ func (p PostgresBackend) RecordNodeNote(ctx context.Context, namespaceID, eventI
 // CancelTimer remain unused here for that reason; this file's own guarded
 // UPDATE is what "reuse the scheduler timer machinery" means for a subject
 // that table cannot honestly describe.
-const dueNodesSQL = `SELECT id,node_name FROM declaration_nodes
+const dueNodesSQL = `SELECT id,node_name,opening_firing_id FROM declaration_nodes
 	WHERE namespace_id=$1 AND state='open' AND deadline IS NOT NULL AND deadline<=$2
 	ORDER BY deadline,id LIMIT $3`
 
@@ -523,11 +543,11 @@ func (p PostgresBackend) ExpireDue(ctx context.Context, namespaceID string, now 
 	if err != nil {
 		return nil, err
 	}
-	type candidate struct{ id, name string }
+	type candidate struct{ id, name, firing string }
 	var due []candidate
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.name); err != nil {
+		if err := rows.Scan(&c.id, &c.name, &c.firing); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -557,7 +577,8 @@ func (p PostgresBackend) ExpireDue(ctx context.Context, namespaceID string, now 
 			continue
 		}
 		eventID := store.NewULID()
-		payload, err := json.Marshal(map[string]any{"node_id": c.id, "node_name": c.name})
+		expired := ExpiredNode{NamespaceID: namespaceID, NodeID: c.id, NodeName: c.name, EventID: eventID, FiringID: c.firing}
+		payload, err := json.Marshal(NodeExpiredVariables(expired))
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			return out, err
@@ -570,7 +591,7 @@ func (p PostgresBackend) ExpireDue(ctx context.Context, namespaceID string, now 
 		if err := tx.Commit(ctx); err != nil {
 			return out, err
 		}
-		out = append(out, ExpiredNode{NamespaceID: namespaceID, NodeID: c.id, NodeName: c.name, EventID: eventID})
+		out = append(out, expired)
 	}
 	return out, nil
 }
@@ -648,7 +669,8 @@ func (p PostgresBackend) EmitActionResults(ctx context.Context, namespaceID stri
 		}
 		trigger := actionTriggerFor(class, status)
 		eventID := store.NewULID()
-		payload, err := json.Marshal(map[string]any{"firing_id": c.runID, "node_id": c.nodeID, "status": status, "class": class})
+		result := ActionResultEvent{NamespaceID: namespaceID, FiringID: c.runID, NodeID: c.nodeID, NodeName: c.nodeName, EventID: eventID, Trigger: trigger, Class: class, Status: status}
+		payload, err := json.Marshal(ActionResultVariables(result))
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			return out, err
@@ -661,7 +683,7 @@ func (p PostgresBackend) EmitActionResults(ctx context.Context, namespaceID stri
 		if err := tx.Commit(ctx); err != nil {
 			return out, err
 		}
-		out = append(out, ActionResultEvent{NamespaceID: namespaceID, FiringID: c.runID, NodeID: c.nodeID, NodeName: c.nodeName, EventID: eventID, Trigger: trigger, Class: class})
+		out = append(out, result)
 	}
 	return out, nil
 }

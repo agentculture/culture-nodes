@@ -257,6 +257,15 @@ The `capabilities.stamping` value must match authenticated
 after checking that response. Declaration dispatch refuses an actor whose
 newest revision does not advertise cn1.
 
+Where the marker lands in the post (task t48, owner decision d21): a
+message with an embed (any `title`, `description` or `fields`) carries the
+marker as the embed's **footer** text — the small print under the card —
+so the title and description are what a reader sees first. A content-only
+message has no footer, so the marker goes on the content's **last** line.
+Either way the marker's bytes are unchanged, and binding still uses the
+Discord message id the bridge returns (`output.artifact_id`); nothing reads
+the marker back out of the posted message.
+
 ## Running it
 
 ```bash

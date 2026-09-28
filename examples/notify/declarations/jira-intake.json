@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Jira intake requested",
-        "description": "Issue {id}",
+        "title": "Jira {id}: {0:summary:}",
+        "description": "[{id}](https://agentculture.atlassian.net/browse/{id}) was created in To Do; the intake agent is picking it up.",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,7 @@
     "deadline": "5m"
   },
   "exposes": [
-    "id"
+    "id",
+    "summary"
   ]
 }

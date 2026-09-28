@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "New finding on PR #{number} ({repository})",
-        "description": "The pr-upkeep sweep found work on **[{repository} PR #{number}](https://github.com/{repository}/pull/{number})** and is routing it: a Jira ticket if the PR has none, then analysis and a fix.",
+        "title": "PR #{number}: {0:title:}",
+        "description": "[{repository} PR #{number}](https://github.com/{repository}/pull/{number}) has {0:finding_count:new} finding(s); first: {0:finding_title:}\nThe pr-upkeep sweep is routing it: a Jira ticket if the PR has none, then analysis and a fix.",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,7 +51,10 @@
     "deadline": "5m"
   },
   "exposes": [
+    "finding_count",
+    "finding_title",
+    "number",
     "repository",
-    "number"
+    "title"
   ]
 }

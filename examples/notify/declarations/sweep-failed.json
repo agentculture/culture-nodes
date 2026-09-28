@@ -12,7 +12,7 @@
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
         "title": "PR upkeep sweep failed",
-        "description": "Outcome {outcome}",
+        "description": "[Open the failed sweep run](https://nodes.culture.dev/runs/{firing_id})",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,6 @@
     "deadline": "5m"
   },
   "exposes": [
-    "outcome"
+    "firing_id"
   ]
 }

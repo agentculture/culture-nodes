@@ -13,6 +13,14 @@ type HumanRequestedEvent struct {
 	RunID, TaskID, NodeName, EventID string
 }
 
+// HumanRequestedVariables is the variables a human.requested event hands its
+// declarations. Exported (task t48) so a template test renders against the
+// shape the engine emits rather than a copy of it. firing_id is the human.ask
+// firing, whose run the UI opens at /runs/{firing_id}.
+func HumanRequestedVariables(event HumanRequestedEvent) map[string]any {
+	return map[string]any{"human_task_id": event.TaskID, "firing_id": event.RunID, "node_name": event.NodeName}
+}
+
 // HumanRequestedBackend is optional, like NodeBackend and ReactionBackend.
 type HumanRequestedBackend interface {
 	EmitHumanRequested(context.Context, string, int) ([]HumanRequestedEvent, error)
@@ -33,7 +41,7 @@ func (e *Engine) EmitHumanRequested(ctx context.Context, namespaceID string, lim
 	var failures []error
 	for _, event := range events {
 		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: event.EventID, Kind: "human.requested", Node: event.NodeName,
-			Variables: map[string]any{"human_task_id": event.TaskID, "firing_id": event.RunID, "node_name": event.NodeName}, Emitter: DeclarationEngineActorID}); err != nil {
+			Variables: HumanRequestedVariables(event), Emitter: DeclarationEngineActorID}); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -94,7 +102,7 @@ func (p PostgresBackend) EmitHumanRequested(ctx context.Context, namespaceID str
 			continue
 		}
 		event.EventID = store.NewULID()
-		payload, err := json.Marshal(map[string]any{"human_task_id": event.TaskID, "firing_id": event.RunID, "node_name": event.NodeName})
+		payload, err := json.Marshal(HumanRequestedVariables(event))
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			return out, err

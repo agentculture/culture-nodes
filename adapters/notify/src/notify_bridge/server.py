@@ -354,8 +354,7 @@ class Handler(BaseHTTPRequestHandler):
         raw_url, _enabled = resolve_webhook()
         message = parsed.message
         if marker is not None:
-            content = payload.trim(message.content, payload.MAX_CONTENT_CHARS - len(marker) - 2)
-            message = replace(message, content=stamping.stamp_text(content, marker))
+            message = _stamp(message, marker)
         message_body = payload.build_message(raw_url, message)
         posted = (
             webhook_post(raw_url, message_body, return_message_id=True)
@@ -407,6 +406,32 @@ class Handler(BaseHTTPRequestHandler):
         # success unconditionally (the sibling bridges' own convention)
         # means a generic actor client never has to special-case that.
         self._write_json(202, {"invocation_id": invocation_id, "status": "cancel-requested"})
+
+
+def _stamp(message: payload.NotifyMessage, marker: str) -> payload.NotifyMessage:
+    """Carry the cn1 marker in the post without leading with it (task t48,
+    owner decision d21).
+
+    A message with an embed carries the marker as the embed's FOOTER: the
+    small print under the card, still the marker's exact bytes, so it stays
+    machine-readable while the title and description are what a reader sees
+    first. Stamping it into `content` instead -- as every other bridge's
+    `stamping.stamp_text` does -- put it ABOVE the embed, as the first line
+    of the Discord message, because a title/description-only notification
+    has no content of its own and the marker became all of it.
+
+    A content-only message has no footer to use, so the marker goes on the
+    content's LAST line (`stamping.stamp_text` appends), trimmed so the pair
+    still fits Discord's content cap.
+
+    Nothing reads the marker back out of the Discord message: binding uses
+    the provider message id this bridge returns (`stamping.artifact_result`).
+    """
+    stamping.validate_marker(marker)
+    if message.has_embed():
+        return replace(message, footer=marker)
+    content = payload.trim(message.content, payload.MAX_CONTENT_CHARS - len(marker) - 2)
+    return replace(message, content=stamping.stamp_text(content, marker))
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})

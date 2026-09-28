@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Decision needed: pr-upkeep-human-merges-pr",
-        "description": "Task {human_task_id}",
+        "title": "Decision needed: a pull request is ready to merge",
+        "description": "[Decide in the inbox](https://nodes.culture.dev/inbox) · [Open the run](https://nodes.culture.dev/runs/{firing_id})",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,6 @@
     "deadline": "5m"
   },
   "exposes": [
-    "human_task_id"
+    "firing_id"
   ]
 }

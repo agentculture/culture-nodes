@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Decision made: pr-upkeep-human-merges-pr",
-        "description": "Outcome {outcome}",
+        "title": "PR #{pr-upkeep-route:number} merge decision: {outcome}",
+        "description": "[{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number})",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,8 @@
     "deadline": "5m"
   },
   "exposes": [
-    "outcome"
+    "outcome",
+    "pr-upkeep-route:number",
+    "pr-upkeep-route:repository"
   ]
 }

@@ -161,6 +161,16 @@ not contain those added human nodes.
   | `head_sha` | the PR's head commit, which the check-runs read is keyed by |
   | `findings` | one file's undispatched findings, in priority order: what this run's `analyse` node judges |
   | `work_item` | the key of the work item the PR belongs to: the correlated Jira key (head branch, then body; narrowed to `jira_project` when configured), else the transient `gh:<owner>/<repo>#<n>` form. The engine stamps the run's `work_item` column from it; it is never empty, and it is neither `subject` nor `category` (#310). |
+  | `title` | the PR's title, `""` when the listing carried none. A display field (task t48, owner decision d21): notification templates render only flat values. Optional in the contract. |
+  | `finding_title` | the first finding's `title`, the same display role. Optional. |
+  | `finding_count` | how many findings `findings` holds, the same display role. Optional. |
+
+  The three display fields route nothing; they repeat what the pull and
+  `findings` already say so `notify-pr-work-item` can lead with
+  `PR #{number}: {title}` (examples/notify). The neutral Jira facts
+  (`jira.issue.created`, `jira.issue.transitioned`, `jira.comment`) likewise
+  carry the issue's `summary`, read from the search the sweep already makes,
+  and the Jira webhook (`internal/api/jirawebhook.go`) emits the same shape.
 
 - **route** is the entry, a decision node over the fact's `work_item`: a
   value starting `gh:` selects `orphan`, anything else `keyed`. It computes

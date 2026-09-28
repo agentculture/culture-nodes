@@ -283,6 +283,13 @@ spec:
           head_sha: {type: string, minLength: 1}
           findings: {type: array, minItems: 1}
           work_item: {type: string, minLength: 1}
+          # Display fields (task t48, owner decision d21): flat copies of the
+          # PR title and the first finding, for notification templates that
+          # cannot index into `findings`. Optional, so a fact from a sweep
+          # deployed before them is still admitted.
+          title: {type: string}
+          finding_title: {type: string}
+          finding_count: {type: integer, minimum: 0}
     output:
       schema: {type: object}
 

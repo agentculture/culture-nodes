@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "PR merge deadline passed",
-        "description": "Node {node_name}",
+        "title": "PR merge deadline passed with no decision",
+        "description": "[Open the run](https://nodes.culture.dev/runs/{firing_id}) · the merge approval expired, so the run finishes without a merge.",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,6 @@
     "deadline": "5m"
   },
   "exposes": [
-    "node_name"
+    "firing_id"
   ]
 }

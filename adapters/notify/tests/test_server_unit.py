@@ -435,3 +435,68 @@ def test_marked_dispatch_stamps_post_and_returns_message_id(bridge, monkeypatch)
     assert marker not in json.dumps(seen[-1][0])
     assert seen[-1][1] is False
     assert "artifact_id" not in body["output"]
+
+
+# -- cn1 marker placement (task t48, owner decision d21) ---------------------
+#
+# The first live Discord post led with the marker: a title/description-only
+# notification has no content, so stamping the marker into `content` made it
+# the whole content -- rendered ABOVE the embed, as the message's first line.
+
+_T48_MARKER = "cn1:firing-a:discord.message:" + "ab" * 24 + ":" + "cd" * 32
+_T48_DISCORD_URL = "https://discord.com/api/webhooks/123/token"
+
+
+def _post_to_discord(bridge, monkeypatch, idem_key, **input_overrides):
+    from notify_bridge.webhook import PostResult
+
+    seen = []
+
+    def fake_post(_url, body, *, return_message_id=False):
+        seen.append(json.loads(body))
+        return (PostResult.POSTED, 200, "987") if return_message_id else (PostResult.POSTED, 204)
+
+    monkeypatch.setattr(server, "webhook_post", fake_post)
+    monkeypatch.setattr(server, "resolve_webhook", lambda: (_T48_DISCORD_URL, True))
+    base, _cfg = bridge
+    status, body = _invoke(base, idem_key=idem_key, marker=_T48_MARKER, **input_overrides)
+    assert status == 200
+    return seen[-1], body
+
+
+def test_an_embed_post_carries_the_marker_in_its_footer_not_its_content(bridge, monkeypatch):
+    posted, body = _post_to_discord(
+        bridge,
+        monkeypatch,
+        "t48-embed",
+        content="",
+        title="PR #7: tidy the parser",
+        description="[agentculture/x#7](https://github.com/agentculture/x/pull/7) has 2 findings",
+    )
+    assert "content" not in posted, "the marker must not become the message's first line"
+    embed = posted["embeds"][0]
+    assert embed["footer"] == {"text": _T48_MARKER}
+    assert embed["title"].startswith("PR #7: tidy the parser")
+    assert embed["description"].startswith("[agentculture/x#7](")
+    assert _T48_MARKER not in embed["title"] + embed["description"]
+    # Still bound exactly as before: the provider id plus the same marker.
+    assert body["output"]["artifact_id"] == "987"
+    assert body["output"]["marker"] == _T48_MARKER
+
+
+def test_an_embed_post_with_its_own_content_leads_with_that_content(bridge, monkeypatch):
+    posted, _body = _post_to_discord(
+        bridge, monkeypatch, "t48-both", content="heads up", title="Sweep failed"
+    )
+    assert posted["content"] == "heads up"
+    assert posted["embeds"][0]["footer"]["text"] == _T48_MARKER
+
+
+def test_a_content_only_post_carries_the_marker_on_its_last_line(bridge, monkeypatch):
+    posted, _body = _post_to_discord(
+        bridge, monkeypatch, "t48-content", content="the build finished"
+    )
+    assert "embeds" not in posted
+    lines = posted["content"].splitlines()
+    assert lines[0] == "the build finished"
+    assert lines[-1] == _T48_MARKER

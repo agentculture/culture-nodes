@@ -176,6 +176,10 @@ func TestPostgresNodeExpiryExactlyOnceAndLateReactionRecorded(t *testing.T) {
 	if cVersion.ID == "" {
 		t.Fatal("node.expired did not fire the declaration that takes it as a trigger")
 	}
+	if expired[0].FiringID != fa.ID {
+		t.Fatalf("expired firing = %q, want the node's opening firing %q", expired[0].FiringID, fa.ID)
+	}
+	assertFiredWithPayloadVariables(t, db, ns, expired[0].EventID, "node_id", "node_name", "firing_id")
 
 	// Exactly once: calling ExpireDue again over the same due window never
 	// re-closes THIS node (c's own landing node, opened only moments ago by
@@ -419,7 +423,10 @@ func TestPostgresActionResultTriggersExactlyOnce(t *testing.T) {
 
 			// A declaration whose trigger is the exact action.* kind this
 			// class maps to, so firing it back through Handle is provable.
-			reactor := declFor("act-reactor-"+strings.ReplaceAll(tc.name, "_", "-"), node.Name, "none", "handled", "1h", tc.want, `{"uses":"actor://test"}`)
+			// Its input is the shape a notify-action-failed declaration renders
+			// (task t48), so the dispatched input proves the link resolves.
+			reactor := declFor("act-reactor-"+strings.ReplaceAll(tc.name, "_", "-"), node.Name, "none", "handled", "1h", tc.want,
+				`{"uses":"actor://test","input":{"description":"[Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"}}`)
 			publishActive(t, db, ns, reactor)
 
 			results, err := e.EmitActionResults(ctx, ns, 10)
@@ -435,6 +442,25 @@ func TestPostgresActionResultTriggersExactlyOnce(t *testing.T) {
 			}
 			if reactorFired != 1 {
 				t.Fatalf("action.* event did not fire its reactor: %d firings", reactorFired)
+			}
+			// t48: the reactor saw the stored payload as its variables. Before
+			// t48 the event was handled with none, so a notification template's
+			// {class} / {firing_id} rendered as the literal placeholder.
+			assertFiredWithPayloadVariables(t, db, ns, results[0].EventID, "class", "firing_id", "node_id", "status")
+			var reactorFiring string
+			if err := db.Pool().QueryRow(ctx, `SELECT id FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2`, ns, results[0].EventID).Scan(&reactorFiring); err != nil {
+				t.Fatal(err)
+			}
+			var rendered string
+			if err := db.Pool().QueryRow(ctx, `SELECT COALESCE(input->>'description','') FROM runs WHERE namespace_id=$1 AND id=$2`, ns, reactorFiring).Scan(&rendered); err != nil {
+				t.Fatal(err)
+			}
+			var status, class string
+			if err := db.Pool().QueryRow(ctx, `SELECT payload->>'status',payload->>'class' FROM signal_events WHERE namespace_id=$1 AND id=$2`, ns, results[0].EventID).Scan(&status, &class); err != nil {
+				t.Fatal(err)
+			}
+			if want := "[Open the failed run](https://nodes.culture.dev/runs/" + firing.ID + ") · status: " + status + " · class: " + class; status == "" || rendered != want {
+				t.Fatalf("rendered notify input = %q, want %q", rendered, want)
 			}
 
 			// Exactly once: emitting again produces nothing further, and
@@ -455,5 +481,35 @@ func TestPostgresActionResultTriggersExactlyOnce(t *testing.T) {
 			}
 			_ = declarationID
 		})
+	}
+}
+
+// assertFiredWithPayloadVariables pins that an engine-emitted event's fired
+// evaluation carries its stored signal payload as variables, key for key
+// (task t48): the stored fact and what a template renders are one shape.
+func assertFiredWithPayloadVariables(t *testing.T, db *postgres.Store, ns, eventID string, keys ...string) {
+	t.Helper()
+	ctx := context.Background()
+	var payloadRaw, varsRaw []byte
+	if err := db.Pool().QueryRow(ctx, `SELECT payload FROM signal_events WHERE namespace_id=$1 AND id=$2`, ns, eventID).Scan(&payloadRaw); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool().QueryRow(ctx, `SELECT variables FROM declaration_evaluations WHERE namespace_id=$1 AND event_id=$2 AND outcome='fired' LIMIT 1`, ns, eventID).Scan(&varsRaw); err != nil {
+		t.Fatal(err)
+	}
+	var payload, vars map[string]any
+	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(varsRaw, &vars); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		if _, ok := payload[k]; !ok {
+			t.Fatalf("stored payload %v has no %q", payload, k)
+		}
+		if vars[k] != payload[k] {
+			t.Fatalf("variable %q = %v, want the stored payload's %v (variables %v)", k, vars[k], payload[k], vars)
+		}
 	}
 }

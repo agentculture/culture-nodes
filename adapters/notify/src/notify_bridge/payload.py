@@ -31,6 +31,9 @@ MAX_DESCRIPTION_CHARS = 1900
 MAX_CONTENT_CHARS = 1900
 MAX_FIELD_NAME_CHARS = 256
 MAX_FIELD_VALUE_CHARS = 1024
+#: Discord's embed footer text cap is 2048; the footer only ever carries a
+#: cn1 marker (at most ~630 characters), so the margin is generous.
+MAX_FOOTER_CHARS = 2048
 
 #: Marks a trimmed field so a truncated value reads as truncated rather
 #: than silently cut off mid-word.
@@ -68,6 +71,15 @@ class NotifyMessage:
     title: str = ""
     description: str = ""
     fields: tuple[NotifyField, ...] = field(default_factory=tuple)
+    #: Small print under the embed. Never author input: `server.py` sets it
+    #: to the cn1 marker (task t48, owner decision d21) so the marker stays
+    #: machine-readable in the posted message without being the first thing
+    #: a reader sees. `mapping.parse_message` does not read it.
+    footer: str = ""
+
+    def has_embed(self) -> bool:
+        """Whether this message renders a Discord embed at all."""
+        return bool(self.title.strip() or self.description.strip() or self.fields)
 
 
 def build_message(raw_url: str, message: NotifyMessage) -> bytes:
@@ -102,6 +114,8 @@ def _build_discord(m: NotifyMessage) -> dict[str, Any]:
             for f in m.fields
         ]
     if embed:
+        if m.footer.strip():
+            embed["footer"] = {"text": trim(m.footer, MAX_FOOTER_CHARS)}
         body["embeds"] = [embed]
 
     # A Discord webhook rejects a message with neither content nor embeds;
@@ -114,9 +128,12 @@ def _build_discord(m: NotifyMessage) -> dict[str, Any]:
 
 
 def _build_generic(m: NotifyMessage) -> dict[str, Any]:
-    return {
+    body: dict[str, Any] = {
         "content": m.content,
         "title": m.title,
         "description": m.description,
         "fields": [{"name": f.name, "value": f.value, "inline": f.inline} for f in m.fields],
     }
+    if m.footer:
+        body["footer"] = m.footer
+    return body

@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Action failed: acknowledge-stamp-pr",
-        "description": "Class {class}",
+        "title": "pr-upkeep: acknowledge-stamp-pr failed",
+        "description": "[Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,8 @@
     "deadline": "5m"
   },
   "exposes": [
-    "class"
+    "class",
+    "firing_id",
+    "status"
   ]
 }

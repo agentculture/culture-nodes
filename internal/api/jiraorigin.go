@@ -81,6 +81,7 @@ func jiraCreatedOrigin(issue map[string]any, payload map[string]any, bot string)
 // The legacy pr-upkeep.jira.* facts still drop the system's own comments.
 func jiraReactionFacts(issue map[string]any, key, site, bot string) ([]jiraFact, int) {
 	fields := object(issue["fields"])
+	summary := text(fields["summary"]) // t48 display field, already fetched
 	comments := append([]any(nil), array(object(fields["comment"])["comments"])...)
 	sort.SliceStable(comments, func(i, j int) bool {
 		return historyLess(text(object(comments[i])["id"]), text(object(comments[j])["id"]))
@@ -110,14 +111,14 @@ func jiraReactionFacts(issue map[string]any, key, site, bot string) ([]jiraFact,
 				created = text(comment["updated"])
 			}
 			from, to := jiraStatusAt(issue, created)
-			payload := map[string]any{"source": "jira", "issue": key, "to_status": to, "site": site, "origin": origin}
+			payload := map[string]any{"source": "jira", "issue": key, "to_status": to, "site": site, "summary": summary, "origin": origin}
 			if from != "" {
 				payload["from_status"] = from
 			}
 			facts = append(facts, jiraFact{Name: jiraTransitionReaction, Payload: marshal(payload), SourceKey: "jira:" + site + ":" + key + ":transitioned:" + to + ":comment:" + id, Watermark: watermark, Subject: key})
 			continue
 		}
-		payload := map[string]any{"source": "jira", "issue": key, "comment_id": id, "author": author, "body": body, "site": site}
+		payload := map[string]any{"source": "jira", "issue": key, "comment_id": id, "author": author, "body": body, "site": site, "summary": summary}
 		if origin != nil {
 			payload["origin"] = origin
 		}

@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Decision made: jira-intake-blocked-intake",
-        "description": "Outcome {outcome}",
+        "title": "{jira-intake-intake:id} intake decision: {outcome}",
+        "description": "[{jira-intake-intake:id}](https://agentculture.atlassian.net/browse/{jira-intake-intake:id}) {jira-intake-intake:summary:}",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,8 @@
     "deadline": "5m"
   },
   "exposes": [
+    "jira-intake-intake:id",
+    "jira-intake-intake:summary",
     "outcome"
   ]
 }

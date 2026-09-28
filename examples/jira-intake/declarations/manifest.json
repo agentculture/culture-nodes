@@ -4,97 +4,184 @@
     "post-comment.json",
     "transition.json",
     "stage-intake.json",
-    "picked-up.json"
+    "picked-up.json",
+    "picked-up-gh.json"
+  ],
+  "entries": [
+    {
+      "declaration": "jira-intake-intake",
+      "graph_workflow": "workflow.yaml",
+      "legacy_trigger": {
+        "onEvent": "pr-upkeep.jira.transitioned.to-do",
+        "when": "event.payload.source == \"jira\""
+      },
+      "note": "Triggers on jira.issue.created (emitted by the webhook and the JQL poller since t25/t31) instead of the legacy pr-upkeep.jira.transitioned.to-do; the condition keeps the To Do status and the jira source. Parity difference: the legacy event also fires when an existing issue moves back to To Do, jira.issue.created only at creation."
+    }
   ],
   "links": [
     {
       "from": "jira-intake-post-comment",
       "to": "jira-intake-intake",
-      "kind": "must"
+      "kind": "must",
+      "why": "sole predecessor: posts the comment intake drafted, read as {jira-intake-intake:summary}"
     },
     {
       "from": "jira-intake-transition",
       "to": "jira-intake-post-comment",
-      "kind": "must"
+      "kind": "must",
+      "why": "sole predecessor: jira.comment is the reaction to post-comment's comment"
+    },
+    {
+      "from": "jira-intake-transition",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "reads the intake issue ({jira-intake-intake:*} or lineage[\"jira-intake-intake\"]); every jira-intake lineage starts at intake, so it is always present"
     },
     {
       "from": "jira-intake-stage-intake",
       "to": "jira-intake-transition",
-      "kind": "can"
+      "kind": "must",
+      "why": "sole predecessor: jira.issue.transitioned is the reaction to transition's jira.transition"
     },
     {
-      "from": "jira-intake-picked-up",
-      "to": "jira-intake-transition",
-      "kind": "can"
+      "from": "jira-intake-stage-intake",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "reads the intake issue ({jira-intake-intake:*} or lineage[\"jira-intake-intake\"]); every jira-intake lineage starts at intake, so it is always present"
     },
     {
       "from": "jira-intake-picked-up",
       "to": "jira-intake-stage-intake",
-      "kind": "can"
+      "kind": "must",
+      "why": "sole predecessor: jira.comment is the reaction to stage-intake's comment"
+    },
+    {
+      "from": "jira-intake-picked-up",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "reads the intake issue ({jira-intake-intake:*} or lineage[\"jira-intake-intake\"]); every jira-intake lineage starts at intake, so it is always present"
+    },
+    {
+      "from": "jira-intake-picked-up-gh",
+      "to": "jira-intake-transition",
+      "kind": "must",
+      "why": "sole predecessor on the gh: branch: transition's reaction goes straight to picked-up"
+    },
+    {
+      "from": "jira-intake-picked-up-gh",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "reads the intake issue ({jira-intake-intake:*} or lineage[\"jira-intake-intake\"]); every jira-intake lineage starts at intake, so it is always present"
     }
   ],
   "steps": [
     {
       "graph_workflow": "workflow.yaml",
       "graph_node": "intake",
-      "declaration": "jira-intake-intake"
+      "graph_kind": "agent",
+      "declarations": [
+        "jira-intake-intake"
+      ]
     },
     {
       "graph_workflow": "workflow.yaml",
       "graph_node": "post-comment",
-      "declaration": "jira-intake-post-comment"
+      "graph_kind": "agent",
+      "declarations": [
+        "jira-intake-post-comment"
+      ]
     },
     {
       "graph_workflow": "workflow.yaml",
       "graph_node": "transition",
-      "declaration": "jira-intake-transition"
+      "graph_kind": "agent",
+      "declarations": [
+        "jira-intake-transition"
+      ]
     },
     {
       "graph_workflow": "workflow.yaml",
       "graph_node": "stage-intake",
-      "declaration": "jira-intake-stage-intake"
+      "graph_kind": "agent",
+      "declarations": [
+        "jira-intake-stage-intake"
+      ]
     },
     {
       "graph_workflow": "workflow.yaml",
       "graph_node": "picked-up",
-      "declaration": "jira-intake-picked-up"
+      "graph_kind": "end",
+      "declarations": [
+        "jira-intake-picked-up",
+        "jira-intake-picked-up-gh"
+      ]
     }
   ],
   "edges": [
     {
-      "from": "jira-intake-post-comment",
-      "to": "jira-intake-intake",
-      "kind": "must",
+      "graph_workflow": "workflow.yaml",
+      "from": "intake",
       "outcome": "intake_drafted",
-      "when": null
+      "to": "post-comment",
+      "when": null,
+      "links": [
+        {
+          "from": "jira-intake-post-comment",
+          "to": "jira-intake-intake"
+        }
+      ]
     },
     {
-      "from": "jira-intake-transition",
-      "to": "jira-intake-post-comment",
-      "kind": "must",
+      "graph_workflow": "workflow.yaml",
+      "from": "post-comment",
       "outcome": "comment_posted",
-      "when": null
+      "to": "transition",
+      "when": null,
+      "links": [
+        {
+          "from": "jira-intake-transition",
+          "to": "jira-intake-post-comment"
+        }
+      ]
     },
     {
-      "from": "jira-intake-stage-intake",
-      "to": "jira-intake-transition",
-      "kind": "can",
+      "graph_workflow": "workflow.yaml",
+      "from": "transition",
       "outcome": "issue_transitioned",
-      "when": "!input.id.startsWith(\"gh:\")"
+      "to": "stage-intake",
+      "when": "!input.id.startsWith(\"gh:\")",
+      "links": [
+        {
+          "from": "jira-intake-stage-intake",
+          "to": "jira-intake-transition"
+        }
+      ]
     },
     {
-      "from": "jira-intake-picked-up",
-      "to": "jira-intake-transition",
-      "kind": "can",
+      "graph_workflow": "workflow.yaml",
+      "from": "transition",
       "outcome": "issue_transitioned",
-      "when": "input.id.startsWith(\"gh:\")"
+      "to": "picked-up",
+      "when": "input.id.startsWith(\"gh:\")",
+      "links": [
+        {
+          "from": "jira-intake-picked-up-gh",
+          "to": "jira-intake-transition"
+        }
+      ]
     },
     {
-      "from": "jira-intake-picked-up",
-      "to": "jira-intake-stage-intake",
-      "kind": "can",
+      "graph_workflow": "workflow.yaml",
+      "from": "stage-intake",
       "outcome": "comment_posted",
-      "when": null
+      "to": "picked-up",
+      "when": null,
+      "links": [
+        {
+          "from": "jira-intake-picked-up",
+          "to": "jira-intake-stage-intake"
+        }
+      ]
     }
   ]
 }

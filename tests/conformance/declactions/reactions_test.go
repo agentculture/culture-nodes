@@ -18,8 +18,6 @@ package declactions_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -481,55 +479,4 @@ func TestForgedReactionStartsAFreshLineage(t *testing.T) {
 	}
 	r.drive()
 	r.assertContinues(fa, b, "human.decision", "approved", task)
-}
-
-// The pr-upkeep chain shape (examples/pr-upkeep/declarations, task t31):
-// readiness (code.run) -> human-merges-pr (human.ask) -> finish, each MUST
-// after the previous, is one lineage end to end. This is a faithful
-// reduction: names and action kinds are read from the real declarations,
-// while the runnable `with` blocks, the chained node names and the reaction
-// triggers (code.result did not exist when t31 wrote them) are supplied here.
-func TestPRUpkeepChainIsOneLineage(t *testing.T) {
-	src := func(file string) decl.Declaration {
-		t.Helper()
-		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "pr-upkeep", "declarations", file))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var d decl.Declaration
-		if err := json.Unmarshal(raw, &d); err != nil {
-			t.Fatal(err)
-		}
-		return d
-	}
-	readinessSrc, askSrc, finishSrc := src("readiness.json"), src("human-merges-pr.json"), src("finish.json")
-	if readinessSrc.Action.Kind != "code.run" || askSrc.Action.Kind != "human.ask" || finishSrc.Trigger.Kind != "human.decision" {
-		t.Fatalf("pr-upkeep declarations drifted from the chain this test reduces: readiness %s, human-merges-pr %s, finish trigger %s",
-			readinessSrc.Action.Kind, askSrc.Action.Kind, finishSrc.Trigger.Kind)
-	}
-	r := newReactionHarness(t)
-	readiness := r.publish(codeDecl(readinessSrc.Name, "timer", "readiness-ready", "readiness-done"))
-	ask := askDecl(askSrc.Name, "readiness-done", "human-merges-pr-done")
-	ask.Trigger.Kind = "code.result"
-	merges := r.publish(ask)
-	finish := r.publish(codeDecl(finishSrc.Name, finishSrc.Trigger.Kind, "human-merges-pr-done", "finish-done"))
-	r.must(merges, readiness)
-	r.must(finish, merges)
-
-	r.start("readiness-ready")
-	fr := r.onlyFiring(readiness)
-	if state := r.settle(fr.id, false); state != "completed" {
-		t.Fatalf("readiness ended %s, want completed", state)
-	}
-	r.drive()
-	fm := r.assertContinues(fr, merges, "code.result", "passed", r.runner.operations()[0].OperationID)
-	task := r.decide(fm.id, "approved")
-	r.drive()
-	ff := r.assertContinues(fm, finish, "human.decision", "approved", task)
-	if n := r.lineageLen(ff.id); n != 3 {
-		t.Fatalf("finish's lineage has %d entries, want 3 (finish, human-merges-pr, readiness)", n)
-	}
-	if ff.lineage != fr.lineage {
-		t.Fatalf("finish lineage %s != readiness lineage %s", ff.lineage, fr.lineage)
-	}
 }

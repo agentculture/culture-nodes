@@ -112,7 +112,7 @@ lines += [
     "",
     "## pr-upkeep and jira-intake item inventory",
     "",
-    "The rows below come from the declaration manifests and sources. `source` means the form is authored and checked by the declaration parser test. Runtime parity still needs a shadow comparison before cutover. The graph workflows and their legacy events stay live.",
+    "The rows below come from the declaration manifests and sources. Each declaration starts on its predecessor's landing node and triggers on the reaction to its action (task t31b). `source` means the form is authored and checked by `internal/api/declaration_examples_test.go` (parse, chain structure, publish, link). Runtime parity still needs a shadow comparison before cutover, and the reactions `agent.result` and `jira.issue.transitioned` have no emitter yet (see each set's README). The graph workflows and their legacy events stay live.",
     "",
     "| Graph item | Declaration form | Parity status |",
     "|---|---|---|",
@@ -120,28 +120,35 @@ lines += [
 for graph, manifest_path in MIGRATED.items():
     manifest = json.loads(Path(manifest_path).read_text())
     directory = Path(manifest_path).parent
-    steps = [step for step in manifest["steps"] if step["graph_workflow"] == Path(graph).name]
-    for step in steps:
-        source_path = directory / (step["graph_node"] + ".json")
-        source = json.loads(source_path.read_text())
-        name = step["graph_node"]
-        lines.append(f"| `{graph}` node `{name}` | `{source_path}` action `{source['action']['kind']}`, start/landing deadlines | source; runtime parity pending |")
-        if "legacy_event" in source["trigger"]["with"]:
-            event = source["trigger"]["with"]["legacy_event"]
-            lines.append(f"| `{graph}` trigger `{event}` | `{source_path}` trigger `{source['trigger']['kind']}` with legacy event metadata | source; legacy event trigger parity pending |")
+    prefix = directory.parent.name + "-"
+    sources = {}
+    for file in manifest["declarations"]:
+        source = json.loads((directory / file).read_text())
+        sources[source["name"]] = (directory / file, source)
+    kinds = {link["from"] + " " + link["to"]: link["kind"] for link in manifest["links"]}
+    for entry in manifest["entries"]:
+        if entry["graph_workflow"] != Path(graph).name:
+            continue
+        path, source = sources[entry["declaration"]]
+        event = entry["legacy_trigger"]["onEvent"]
+        lines.append(f"| `{graph}` trigger `{event}` | `{path}` trigger `{source['trigger']['kind']}` at `root`; legacy trigger kept as a note in the manifest entry | source; entry trigger parity pending |")
         if "max_concurrent_subject" in source["trigger"]:
             cap = source["trigger"]["max_concurrent_subject"]
-            lines.append(f"| `{graph}` subject cap `{cap}` | `{source_path}` trigger.max_concurrent_subject | source; runtime parity pending |")
-        for affinity in source["action"]["with"].get("actor_selection", []):
-            lines.append(f"| `{graph}` affinity `{affinity['name']}` | `{source_path}` action.with.actor_selection | source; actor selection runtime parity pending |")
-    step_names = {step["declaration"] for step in steps}
-    for edge in manifest["edges"]:
-        if edge["from"] not in step_names:
+            lines.append(f"| `{graph}` subject cap `{cap}` | `{path}` trigger.max_concurrent_subject | source; runtime parity pending |")
+    for step in manifest["steps"]:
+        if step["graph_workflow"] != Path(graph).name:
             continue
-        target = edge["from"].removeprefix(Path(graph).parent.name + "-")
-        source_path = directory / (target + ".json")
+        for name in step["declarations"]:
+            path, source = sources[name]
+            lines.append(f"| `{graph}` node `{step['graph_node']}` | `{path}` trigger `{source['trigger']['kind']}`, action `{source['action']['kind']}`, `{source['start_node']['name']}` to `{source['landing_node']['name']}` | source; runtime parity pending |")
+            for affinity in source["action"]["with"].get("actor_selection", []):
+                lines.append(f"| `{graph}` affinity `{affinity['name']}` | `{path}` action.with.actor_selection | source; actor selection runtime parity pending |")
+    for edge in manifest["edges"]:
+        if edge["graph_workflow"] != Path(graph).name:
+            continue
         guard = f" when `{edge['when']}`" if edge.get("when") else ""
-        lines.append(f"| `{graph}` edge `{edge['to']}` `{edge['outcome']}` to `{edge['from']}`{guard} | `{manifest_path}` `{edge['kind']}` link, `{source_path}` reaction metadata | source; runtime parity pending |")
+        realized = ", ".join(f"`{link['from'].removeprefix(prefix)}` {kinds[link['from'] + ' ' + link['to']]} after `{link['to'].removeprefix(prefix)}`" for link in edge["links"])
+        lines.append(f"| `{graph}` edge `{edge['from']}` `{edge['outcome']}` to `{edge['to']}`{guard} | `{manifest_path}`: {realized} | source; runtime parity pending |")
 
 lines += [
     "",

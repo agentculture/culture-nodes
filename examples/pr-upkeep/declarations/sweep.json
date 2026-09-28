@@ -2,55 +2,50 @@
   "name": "pr-upkeep-sweep",
   "trigger": {
     "kind": "timer",
-    "with": {
-      "legacy_event": "pr-upkeep.sweep.due",
-      "legacy_condition": "true"
-    },
+    "reentry_limit": 0,
     "hop_limit": 5
   },
-  "condition": "true",
+  "condition": "has(event.schedule) && event.schedule == \"pr-upkeep-sweep-5m\"",
   "action": {
     "kind": "code.run",
     "with": {
       "graph_workflow": "sweep-cycle.workflow.yaml",
       "graph_node": "sweep",
       "graph_kind": "code",
-      "legacy": {
-        "kind": "code",
+      "uses": "runner://headspace/pr-upkeep-sweep@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "operation": {
+        "image": "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+        "network": "full",
+        "environmentRefs": [
+          "PR_UPKEEP_SWEEP_SOURCE_URL",
+          "PR_UPKEEP_SWEEP_SOURCE_SHA256",
+          "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL",
+          "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
+          "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL",
+          "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256",
+          "PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL",
+          "PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256",
+          "PR_UPKEEP_REPOSITORIES",
+          "GITHUB_TOKEN",
+          "SONAR_TOKEN",
+          "JIRA_ACCOUNT_EMAIL",
+          "JIRA_API_TOKEN",
+          "JIRA_API_BASE",
+          "NODES_API_URL",
+          "NODES_EVENT_TOKEN"
+        ],
+        "argv": [
+          "python3",
+          "-c",
+          "import hashlib, os, subprocess, sys, tempfile, urllib.request\nsources = (\n    (\"sweep.py\", \"PR_UPKEEP_SWEEP_SOURCE_URL\", \"PR_UPKEEP_SWEEP_SOURCE_SHA256\"),\n    (\"pr_upkeep_jira.py\", \"PR_UPKEEP_SWEEP_JIRA_SOURCE_URL\", \"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256\"),\n    (\"pr_upkeep_emit.py\", \"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL\", \"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256\"),\n    (\"pr_upkeep_github.py\", \"PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL\", \"PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256\"),\n)\ndirectory = tempfile.mkdtemp()\nfor filename, url_ref, digest_ref in sources:\n    body = urllib.request.urlopen(os.environ[url_ref], timeout=60).read()\n    if hashlib.sha256(body).hexdigest() != os.environ[digest_ref]:\n        sys.exit(f\"sweep-cycle: fetched {{filename} bytes do not match the granted digest; refusing to run unverified code\")\n    open(os.path.join(directory, filename), \"wb\").write(body)\npath = os.path.join(directory, \"sweep.py\")\ncode = subprocess.run([sys.executable, path]).returncode\n# 0 = emitted, 10 = empty sweep: both are successful emitter\n# passes (the facts, or the absence of new facts, are appended /\n# not needed). Anything else is a technical failure.\nsys.exit(0 if code in (0, 10) else code)\n"
+        ]
+      },
+      "input": {
+        "schedule": "{schedule}"
+      },
+      "timeout": "15m",
+      "graph_config": {
         "ownerRef": "team/platform-ai",
-        "uses": "runner://headspace/pr-upkeep-sweep@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "operation": {
-          "image": "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
-          "network": "full",
-          "environmentRefs": [
-            "PR_UPKEEP_SWEEP_SOURCE_URL",
-            "PR_UPKEEP_SWEEP_SOURCE_SHA256",
-            "PR_UPKEEP_SWEEP_JIRA_SOURCE_URL",
-            "PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256",
-            "PR_UPKEEP_SWEEP_EMIT_SOURCE_URL",
-            "PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256",
-            "PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL",
-            "PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256",
-            "PR_UPKEEP_REPOSITORIES",
-            "GITHUB_TOKEN",
-            "SONAR_TOKEN",
-            "JIRA_ACCOUNT_EMAIL",
-            "JIRA_API_TOKEN",
-            "JIRA_API_BASE",
-            "NODES_API_URL",
-            "NODES_EVENT_TOKEN"
-          ],
-          "argv": [
-            "python3",
-            "-c",
-            "import hashlib, os, subprocess, sys, tempfile, urllib.request\nsources = (\n    (\"sweep.py\", \"PR_UPKEEP_SWEEP_SOURCE_URL\", \"PR_UPKEEP_SWEEP_SOURCE_SHA256\"),\n    (\"pr_upkeep_jira.py\", \"PR_UPKEEP_SWEEP_JIRA_SOURCE_URL\", \"PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256\"),\n    (\"pr_upkeep_emit.py\", \"PR_UPKEEP_SWEEP_EMIT_SOURCE_URL\", \"PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256\"),\n    (\"pr_upkeep_github.py\", \"PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL\", \"PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256\"),\n)\ndirectory = tempfile.mkdtemp()\nfor filename, url_ref, digest_ref in sources:\n    body = urllib.request.urlopen(os.environ[url_ref], timeout=60).read()\n    if hashlib.sha256(body).hexdigest() != os.environ[digest_ref]:\n        sys.exit(f\"sweep-cycle: fetched {filename} bytes do not match the granted digest; refusing to run unverified code\")\n    open(os.path.join(directory, filename), \"wb\").write(body)\npath = os.path.join(directory, \"sweep.py\")\ncode = subprocess.run([sys.executable, path]).returncode\n# 0 = emitted, 10 = empty sweep: both are successful emitter\n# passes (the facts, or the absence of new facts, are appended /\n# not needed). Anything else is a technical failure.\nsys.exit(0 if code in (0, 10) else code)\n"
-          ]
-        },
-        "input": {
-          "bindings": {
-            "cycle": "/run/input"
-          }
-        },
         "contract": {
           "outcomes": {
             "passed": {
@@ -71,7 +66,6 @@
           ]
         },
         "policy": {
-          "timeout": "15m",
           "retry": {
             "maxAttempts": 1
           }
@@ -84,7 +78,7 @@
     "deadline": "none"
   },
   "landing_node": {
-    "name": "sweep-done",
+    "name": "pr-upkeep-sweep-done",
     "deadline": "1h"
   }
 }

@@ -1,11 +1,11 @@
 {
-  "name": "pr-upkeep-analyse",
+  "name": "pr-upkeep-analyse-orphan",
   "trigger": {
-    "kind": "code.result",
+    "kind": "agent.result",
     "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "event.outcome == \"passed\" && !lineage[\"pr-upkeep-route\"].work_item.startsWith(\"gh:\")",
+  "condition": "event.outcome == \"stamped\"",
   "action": {
     "kind": "agent.work",
     "with": {
@@ -160,7 +160,7 @@
     }
   },
   "start_node": {
-    "name": "pr-upkeep-route-done",
+    "name": "pr-upkeep-stamp-pr-done",
     "deadline": "168h"
   },
   "landing_node": {

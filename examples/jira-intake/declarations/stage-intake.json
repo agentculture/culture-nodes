@@ -1,44 +1,30 @@
 {
   "name": "jira-intake-stage-intake",
   "trigger": {
-    "kind": "timer",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "transition",
-          "outcome": "issue_transitioned",
-          "when": "!input.id.startsWith(\"gh:\")"
-        }
-      ]
-    },
+    "kind": "jira.issue.transitioned",
+    "reentry_limit": 0,
     "hop_limit": 9
   },
-  "condition": "true",
+  "condition": "!lineage[\"jira-intake-intake\"].id.startsWith(\"gh:\")",
   "action": {
     "kind": "jira.comment",
     "with": {
       "graph_workflow": "workflow.yaml",
       "graph_node": "stage-intake",
       "graph_kind": "agent",
-      "legacy": {
-        "kind": "agent",
+      "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "verb": "post_comment",
+        "issue": "{jira-intake-intake:id}",
+        "comment": "culture-nodes:stage=intake\nculture-nodes picked this ticket up: an intake comment is on the ticket above and the board has been moved to In Progress. The run and its ledger are in the culture-nodes control plane under this ticket's key."
+      },
+      "timeout": "10m",
+      "graph_config": {
         "ownerRef": "team/platform-ai",
-        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "ledger": {
           "propose": [
             "claim"
           ]
-        },
-        "input": {
-          "bindings": {
-            "verb": {
-              "literal": "post_comment"
-            },
-            "issue": "/run/input/id",
-            "comment": {
-              "literal": "culture-nodes:stage=intake\nculture-nodes picked this ticket up: an intake comment is on the ticket above and the board has been moved to In Progress. The run and its ledger are in the culture-nodes control plane under this ticket's key."
-            }
-          }
         },
         "contract": {
           "outcomes": {
@@ -54,23 +40,19 @@
           }
         },
         "policy": {
-          "timeout": "10m",
           "retry": {
             "maxAttempts": 2
           }
         }
-      },
-      "variables": {
-        "issue": "{id}"
       }
     }
   },
   "start_node": {
-    "name": "stage-intake-ready",
-    "deadline": "none"
+    "name": "jira-intake-transition-done",
+    "deadline": "2h"
   },
   "landing_node": {
-    "name": "stage-intake-done",
+    "name": "jira-intake-stage-intake-done",
     "deadline": "2h"
   }
 }

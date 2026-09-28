@@ -1,52 +1,42 @@
 {
   "name": "pr-upkeep-human-merges-pr",
   "trigger": {
-    "kind": "timer",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "readiness",
-          "outcome": "passed",
-          "when": null
-        },
-        {
-          "from": "readiness",
-          "outcome": "failed",
-          "when": null
-        }
-      ]
-    },
+    "kind": "code.result",
+    "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "true",
+  "condition": "event.outcome == \"passed\" || event.outcome == \"failed\"",
   "action": {
     "kind": "human.ask",
     "with": {
       "graph_workflow": "workflow.yaml",
       "graph_node": "human-merges-pr",
       "graph_kind": "approval",
-      "legacy": {
-        "kind": "approval",
+      "approver_ref": "group/platform-maintainers",
+      "input": {
+        "source": "{pr-upkeep-route:source}",
+        "repository": "{pr-upkeep-route:repository}",
+        "number": "{pr-upkeep-route:number}",
+        "head_sha": "{pr-upkeep-route:head_sha:}",
+        "work_item": "{pr-upkeep-route:work_item}",
+        "findings": "{pr-upkeep-route:findings}",
+        "readiness": "{result}",
+        "fix": "{pr-upkeep-fix:summary:}{pr-upkeep-fix-orphan:summary:}"
+      },
+      "graph_config": {
         "ownerRef": "team/platform-ai",
         "approverRef": "group/platform-maintainers",
         "decisionSchemaRef": "schema://pr-upkeep/merge-decision/v1",
-        "deadline": "168h",
-        "input": {
-          "bindings": {
-            "finding": "/run/input",
-            "fix": "/nodes/fix/output",
-            "readiness": "/nodes/readiness/output"
-          }
-        }
+        "deadline": "168h"
       }
     }
   },
   "start_node": {
-    "name": "human-merges-pr-ready",
-    "deadline": "none"
+    "name": "pr-upkeep-readiness-done",
+    "deadline": "168h"
   },
   "landing_node": {
-    "name": "human-merges-pr-done",
+    "name": "pr-upkeep-human-merges-pr-done",
     "deadline": "168h"
   }
 }

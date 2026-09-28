@@ -1,11 +1,11 @@
 {
-  "name": "pr-upkeep-readiness",
+  "name": "pr-upkeep-readiness-orphan",
   "trigger": {
-    "kind": "jira.comment",
+    "kind": "agent.result",
     "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "true",
+  "condition": "event.outcome == \"completed\" && lineage[\"pr-upkeep-route\"].work_item.startsWith(\"gh:\")",
   "action": {
     "kind": "code.run",
     "with": {
@@ -72,7 +72,7 @@
     }
   },
   "start_node": {
-    "name": "pr-upkeep-stage-pr-open-done",
+    "name": "pr-upkeep-fix-done",
     "deadline": "168h"
   },
   "landing_node": {

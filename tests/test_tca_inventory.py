@@ -98,69 +98,81 @@ class InventoryTest(unittest.TestCase):
                 self.assertNotIn("| pending |", row)
 
     def test_example_declarations_cover_graph_nodes_edges_triggers_and_caps(self):
+        """Every graph node, edge, trigger, cap and affinity rule maps to the chain.
+
+        A graph node maps to one declaration per predecessor path (t31b); a
+        graph edge maps to the links whose successor starts on the
+        predecessor's landing node. The structural chain rules themselves
+        (reaction triggers, must closure) are pinned in
+        internal/api/declaration_examples_test.go.
+        """
         for workflow, files in {
             "pr-upkeep": ("workflow.yaml", "sweep-cycle.workflow.yaml"),
             "jira-intake": ("workflow.yaml",),
         }.items():
             base = ROOT / "examples" / workflow
             manifest = json.loads((base / "declarations" / "manifest.json").read_text())
-            declarations = {
-                path: json.loads((base / "declarations" / path).read_text())
-                for path in manifest["declarations"]
-            }
+            by_name = {}
+            for path in manifest["declarations"]:
+                source = json.loads((base / "declarations" / path).read_text())
+                self.assertEqual(workflow + "-" + path.removesuffix(".json"), source["name"])
+                by_name[source["name"]] = source
+            links = {(link["from"], link["to"]): link for link in manifest["links"]}
+            for link in manifest["links"]:
+                self.assertIn(link["kind"], ("must", "can"))
+                self.assertTrue(link["why"].strip(), link)
             for file in files:
                 graph = yaml.safe_load((base / file).read_text())["spec"]
                 steps = [step for step in manifest["steps"] if step["graph_workflow"] == file]
                 self.assertEqual(set(graph["nodes"]), {step["graph_node"] for step in steps})
                 for step in steps:
-                    declaration = declarations[step["graph_node"] + ".json"]
-                    self.assertEqual(step["declaration"], declaration["name"])
-                    self.assertEqual(file, declaration["action"]["with"]["graph_workflow"])
+                    self.assertTrue(step["declarations"], step)
+                    for name in step["declarations"]:
+                        action = by_name[name]["action"]
+                        self.assertEqual(file, action["with"]["graph_workflow"])
+                        self.assertEqual(step["graph_node"], action["with"]["graph_node"])
+                edges = [edge for edge in manifest["edges"] if edge["graph_workflow"] == file]
+                self.assertEqual(len(graph["edges"]), len(edges))
                 for edge in graph["edges"]:
                     source, outcome = edge["from"].split(".", 1)
-                    source_targets = {
-                        item["to"]
-                        for item in graph["edges"]
-                        if item["from"].split(".", 1)[0] == source
-                    }
-                    target_sources = {
-                        item["from"].split(".", 1)[0]
-                        for item in graph["edges"]
-                        if item["to"] == edge["to"]
-                    }
-                    kind = (
-                        "can"
-                        if edge.get("when") or len(source_targets) > 1 or len(target_sources) > 1
-                        else "must"
+                    realized = next(
+                        item
+                        for item in edges
+                        if (item["from"], item["outcome"], item["to"])
+                        == (source, outcome, edge["to"])
                     )
-                    self.assertIn(
-                        {
-                            "from": workflow + "-" + edge["to"],
-                            "to": workflow + "-" + source,
-                            "kind": kind,
-                            "outcome": outcome,
-                            "when": edge.get("when"),
-                        },
-                        manifest["edges"],
-                    )
-                entry = declarations[graph["entry"] + ".json"]
-                self.assertEqual(
-                    graph["triggers"][0]["onEvent"], entry["trigger"]["with"]["legacy_event"]
-                )
-                self.assertIn(
-                    graph["triggers"][0].get("when", "true"),
-                    entry["condition"],
-                )
+                    self.assertEqual(edge.get("when"), realized["when"])
+                    self.assertTrue(realized["links"], realized)
+                    for pair in realized["links"]:
+                        self.assertIn((pair["from"], pair["to"]), links)
+                        successor, predecessor = by_name[pair["from"]], by_name[pair["to"]]
+                        self.assertEqual(
+                            predecessor["landing_node"]["name"], successor["start_node"]["name"]
+                        )
+                        self.assertEqual(edge["to"], successor["action"]["with"]["graph_node"])
+                        self.assertEqual(source, predecessor["action"]["with"]["graph_node"])
+                entry_node = graph["entry"]
+                entry = next(e for e in manifest["entries"] if e["graph_workflow"] == file)
+                entry_source = by_name[entry["declaration"]]
+                self.assertEqual(entry_node, entry_source["action"]["with"]["graph_node"])
+                self.assertEqual("root", entry_source["start_node"]["name"])
+                self.assertEqual(graph["triggers"][0], entry["legacy_trigger"])
+                self.assertNotIn("with", entry_source["trigger"])
+                guard = graph["triggers"][0].get("when")
+                if guard:
+                    # The engine's event variables are the payload itself.
+                    translated = guard.replace("event.payload.", "event.")
+                    self.assertIn(translated, entry_source["condition"])
                 if "maxConcurrentSubjectRuns" in graph["limits"]:
                     self.assertEqual(
                         graph["limits"]["maxConcurrentSubjectRuns"],
-                        entry["trigger"]["max_concurrent_subject"],
+                        entry_source["trigger"]["max_concurrent_subject"],
                     )
                 if "affinity" in graph:
-                    self.assertEqual(
-                        graph["affinity"],
-                        declarations["fix.json"]["action"]["with"]["actor_selection"],
-                    )
+                    for name in next(s for s in steps if s["graph_node"] == "fix")["declarations"]:
+                        self.assertEqual(
+                            graph["affinity"], by_name[name]["action"]["with"]["actor_selection"]
+                        )
 
 
 if __name__ == "__main__":

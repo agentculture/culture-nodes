@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-27T22:02:29Z",
+  "updated": "2026-09-28T03:33:02Z",
   "deviations": [
     {
       "id": "d1",
@@ -32,6 +32,20 @@
       "status": "approved",
       "classification": "needs-follow-up",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "Add task t38c and a code.result trigger kind: the control plane stamps human.ask and code.run (a scheduler pass binds the produced artifact to the firing's marker and emits human.decision / code.result reaction events carrying it), so must-links chain through human decisions and code steps",
+      "task_ref": "t32",
+      "reason": "Review findings C1/C2: no bridge stamps human.ask or code.run, nothing emits human.decision, and no code.result trigger kind existed, so lineage broke at pr-upkeep's readiness -> human-merges-pr -> finish must-links. Owner approved option 1A on 2026-09-28, including the vocabulary change.",
+      "affects": [
+        "t32",
+        "t31"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],

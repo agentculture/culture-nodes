@@ -43,10 +43,27 @@ const ENGINE_ONLY_OUTCOME = "expired";
 /**
  * A button reads as the verb a person performs. Only outcomes whose raw name
  * reads badly as a button are relabelled; the POSTed outcome is always the
- * raw name. `acknowledged` is the one answer a notice takes (task t45).
+ * raw name. `acknowledged` is the one answer a notice takes (task t45);
+ * `retry` / `abandon` are what a blocked-agent task offers (task t46, for
+ * t47's declarations). Any other outcome in `allowed_outcomes` still gets a
+ * button, under its raw name — the set is the server's, never this map's.
  */
-const OUTCOME_LABELS: Record<string, string> = {
+export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   acknowledged: "Acknowledge",
+  retry: "Retry",
+  abandon: "Abandon",
+};
+
+/**
+ * One line on what choosing an outcome does, where this page knows it. An
+ * outcome with no entry gets no hint rather than a guessed one: the edge it
+ * routes is the workflow's, and only these three mean the same thing
+ * wherever they appear.
+ */
+export const OUTCOME_HINTS: Readonly<Record<string, string>> = {
+  acknowledged: "Record that you read this; nothing else moves.",
+  retry: "Send the blocked step back to the agent to try again.",
+  abandon: "Stop here; the blocked step is not tried again.",
 };
 
 export function OutcomeButtons({
@@ -73,17 +90,28 @@ export function OutcomeButtons({
   }
   return (
     <div className="inbox-card__outcomes" aria-label={`Outcomes for ${taskId}`}>
-      {decidable.map((outcome) => (
-        <button
-          key={outcome}
-          type="button"
-          className="author-workflow__button"
-          disabled={disabled || busy}
-          onClick={() => onChoose(outcome)}
-        >
-          {OUTCOME_LABELS[outcome] ?? outcome}
-        </button>
-      ))}
+      {decidable.map((outcome) => {
+        const hint = OUTCOME_HINTS[outcome];
+        const hintId = `outcome-hint-${taskId}-${outcome}`;
+        return (
+          <span key={outcome} className="inbox-card__outcome-choice">
+            <button
+              type="button"
+              className="author-workflow__button"
+              disabled={disabled || busy}
+              aria-describedby={hint ? hintId : undefined}
+              onClick={() => onChoose(outcome)}
+            >
+              {OUTCOME_LABELS[outcome] ?? outcome}
+            </button>
+            {hint ? (
+              <span id={hintId} className="muted inbox-card__outcome-hint">
+                {hint}
+              </span>
+            ) : null}
+          </span>
+        );
+      })}
     </div>
   );
 }

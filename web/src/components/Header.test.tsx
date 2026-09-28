@@ -110,10 +110,12 @@ describe("Header mesh link (task t18)", () => {
 });
 
 /**
- * The PRD §8.6 spine (task t9). The nav is eight destinations in two groups —
+ * The PRD §8.6 spine (task t9). The nav is seven destinations in two groups —
  * the work a person came for, then the engine — and the count is asserted
- * rather than counted by eye, so adding a ninth tab is a decision someone has
- * to make in this file. The three projections of the runs dataset (list,
+ * rather than counted by eye, so adding an eighth tab is a decision someone
+ * has to make in this file. Task t46 (owner decision d19, "one place to
+ * decide") folded Decisions into the Inbox: ONE link for deciding, and
+ * /decisions redirects to the Inbox's To review tab. The three projections of the runs dataset (list,
  * board, jobs) became one Runs page with a projection toggle, and the
  * authoring doors moved under Design; nothing was retired, every old URL
  * redirects (App.test.tsx walks them).
@@ -121,7 +123,6 @@ describe("Header mesh link (task t18)", () => {
 const PRIMARY_NAV: ReadonlyArray<readonly [string, string]> = [
   ["Your work", "/"],
   ["Inbox", "/inbox"],
-  ["Decisions", "/decisions"],
   ["Design", "/design"],
   ["Runs", "/runs"],
   ["Mesh", "/mesh"],
@@ -136,10 +137,10 @@ function primaryLinks() {
 }
 
 describe("Header primary nav on the PRD §8.6 spine (task t9)", () => {
-  it("renders exactly eight primary links, named in spine order", () => {
+  it("renders exactly seven primary links, named in spine order", () => {
     renderHeader();
     const links = primaryLinks();
-    expect(links).toHaveLength(8);
+    expect(links).toHaveLength(7);
     expect(links.map((link) => link.textContent)).toEqual(
       PRIMARY_NAV.map(([name]) => name),
     );
@@ -152,10 +153,10 @@ describe("Header primary nav on the PRD §8.6 spine (task t9)", () => {
     }
   });
 
-  it("offers no separate Board, Jobs, Node Graphs or Generate destination — they are projections and sub-routes now", () => {
+  it("offers no separate Board, Jobs, Node Graphs, Generate or Decisions destination — they are projections, sub-routes and tabs now", () => {
     renderHeader();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    for (const gone of ["Board", "Jobs", "Node Graphs", "Generate", "Plan"]) {
+    for (const gone of ["Board", "Jobs", "Node Graphs", "Generate", "Plan", "Decisions"]) {
       expect(within(nav).queryByRole("link", { name: gone })).toBeNull();
     }
   });

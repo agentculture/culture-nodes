@@ -2,12 +2,18 @@ import type { HumanTask } from "../api/types";
 import { taskDecidableOutcomes } from "./human-task-notice";
 
 /**
- * The Inbox's three tabs (task t44, issue 332 follow-up). The owner's rule:
+ * The Inbox's tabs (task t44, issue 332 follow-up; widened to the one
+ * decision page by task t46, owner decision d19). The owner's rule:
  * "By default show only what's open. (Not the waiting expired of the past or
- * decided), then add tabs for waiting, decided."
+ * decided), then add tabs for waiting, decided." — and then "one place to
+ * decide", so the proposed ledger records the Decisions page used to list
+ * are the `review` tab here.
  *
- * - `open`: pending, with no deadline or a deadline still in the future —
- *   the actionable ones, and the default.
+ * - `act`: pending, with no deadline or a deadline still in the future —
+ *   the actionable ones, and the default. `?tab=open` (t44's name for it)
+ *   still lands here.
+ * - `review`: proposed ledger records awaiting a confirm/reject review.
+ *   Not a task partition — the page fills it from pending-decisions.
  * - `waiting`: pending, but the deadline has already passed and nobody
  *   decided (graph-era approvals, mostly). Still decidable. Also every
  *   pending task that offers NO outcome a person may select (task t45): it
@@ -16,15 +22,19 @@ import { taskDecidableOutcomes } from "./human-task-notice";
  * - `decided`: every task that is no longer pending — decided, expired, or
  *   any other terminal status — newest first, read-only.
  */
-export type InboxTab = "open" | "waiting" | "decided";
+export type InboxTab = "act" | "review" | "waiting" | "decided";
 
-export const DEFAULT_INBOX_TAB: InboxTab = "open";
+export const DEFAULT_INBOX_TAB: InboxTab = "act";
 
-export const INBOX_TABS: readonly InboxTab[] = ["open", "waiting", "decided"];
+export const INBOX_TABS: readonly InboxTab[] = ["act", "review", "waiting", "decided"];
 
-/** `?tab=` → a tab; anything unknown or absent falls back to `open`. */
+/**
+ * `?tab=` → a tab; anything unknown or absent falls back to `act`. `open`
+ * is t44's deep link for the same tab and keeps working.
+ */
 export function parseInboxTab(value: string | null): InboxTab {
-  return value === "open" || value === "waiting" || value === "decided"
+  if (value === "open") return "act";
+  return value === "act" || value === "review" || value === "waiting" || value === "decided"
     ? value
     : DEFAULT_INBOX_TAB;
 }
@@ -59,7 +69,7 @@ export function isOverdue(task: HumanTask, now: Date): boolean {
 }
 
 export interface InboxPartition {
-  open: HumanTask[];
+  act: HumanTask[];
   waiting: HumanTask[];
   decided: HumanTask[];
 }
@@ -70,7 +80,7 @@ function resolvedMs(task: HumanTask): number {
 }
 
 /**
- * Split every fetched task into the three tabs. Membership is decided by the
+ * Split every fetched task into its tab (every tab but `review`). Membership is decided by the
  * task's own `status`, not by which list call returned it, and a task seen
  * twice (one list call racing a decision) is kept once, first sighting wins.
  */
@@ -79,13 +89,13 @@ export function partitionInbox(
   now: Date,
 ): InboxPartition {
   const seen = new Set<string>();
-  const out: InboxPartition = { open: [], waiting: [], decided: [] };
+  const out: InboxPartition = { act: [], waiting: [], decided: [] };
   for (const task of tasks) {
     if (seen.has(task.id)) continue;
     seen.add(task.id);
     if (task.status !== "pending") out.decided.push(task);
     else if (isOverdue(task, now) || isUndecidable(task)) out.waiting.push(task);
-    else out.open.push(task);
+    else out.act.push(task);
   }
   // Newest resolution first; Array.prototype.sort is stable, so ties keep
   // the API's newest-created-first order.

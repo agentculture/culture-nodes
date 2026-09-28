@@ -292,7 +292,8 @@ A declaration may render a variable into a wider audience than it came from only
 | `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
-| `notify-pr-work-item` (`examples/notify/declarations/pr-work-item.json`) | `work_item` | `notify-pr-work-item` | listed; needs the owner's approval |
+| `notify-pr-work-item` (`examples/notify/declarations/pr-work-item.json`) | `repository` | `notify-pr-work-item` | listed; needs the owner's approval |
+| `notify-pr-work-item` (`examples/notify/declarations/pr-work-item.json`) | `number` | `notify-pr-work-item` | listed; needs the owner's approval |
 | `notify-jira-intake` (`examples/notify/declarations/jira-intake.json`) | `id` | `notify-jira-intake` | listed; needs the owner's approval |
 | `notify-action-failed-pr-upkeep-analyse-orphan` (`examples/notify/declarations/action-failed-pr-upkeep-analyse-orphan.json`) | `class` | `notify-action-failed-pr-upkeep-analyse-orphan` | listed; needs the owner's approval |
 | `notify-action-failed-pr-upkeep-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-analyse` | listed; needs the owner's approval |

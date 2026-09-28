@@ -645,6 +645,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/reviews", s.wrap(s.handleCreateReview))
 	mux.HandleFunc("POST /v1alpha1/reviews/{id}/commit", s.wrap(s.handleCommitReview))
 	mux.HandleFunc("GET /v1alpha1/pending-decisions", s.wrap(s.handleListPendingDecisions))
+	mux.HandleFunc("GET /v1alpha1/reviewed-records", s.wrap(s.handleListReviewedRecords))
 
 	mux.HandleFunc("POST /v1alpha1/runs/{id}/grades", s.wrap(s.handleCreateGrade))
 	mux.HandleFunc("POST /v1alpha1/hand-turns", s.wrap(s.handleCreateHandTurn))

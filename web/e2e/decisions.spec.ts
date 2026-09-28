@@ -5,42 +5,40 @@ import {
   PENDING_RUN,
   REVIEW_REQUEST,
 } from "../src/fixtures/pending-decisions-fixture";
-import { TICKET_ID } from "../src/fixtures/ticket-fixture";
 import { WHOAMI_ACTOR_ID, WHOAMI_EMAIL } from "../src/fixtures/whoami-fixture";
 import { mockDecisionsApi } from "./fixtures/api";
 
 /**
- * The Decisions view, in a browser (task t12) — the page the claim-deciding
- * moved FROM.
- *
- * It is not retired (decision c33: a surface is retired only when a better
- * one replaces it in that tab). The cross-ticket queue of proposed claims
- * still decides them here; what went is the Pending tab's inert checkbox,
- * which selected a record into a verdict no form on that tab could submit.
- * Its replacement is a link to the page that CAN take the decision.
+ * The review half of the one decision page, in a browser (task t12; task t46,
+ * owner decision d19 — "one place to decide"). The Decisions page became the
+ * Inbox's To review tab; `/decisions` is kept as a redirect to it, so every
+ * old link lands where the decision is now taken.
  */
-test("Pending tab sends a claim group to the ticket page and offers no dead checkbox", async ({ page }) => {
+test("/decisions lands on the Inbox's To review tab", async ({ page }) => {
   await mockDecisionsApi(page);
   await page.goto("/decisions");
-  await page.getByRole("button", { name: "Pending" }).click();
 
-  await expect(page.getByRole("heading", { name: "Pending decisions" })).toBeVisible();
+  await expect(page).toHaveURL(/\/inbox\?tab=review$/);
+  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^To review/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await expect(page.getByText(PENDING_RUN.records[0].id)).toBeVisible();
   // The claim's own words, including the qualifying half.
   await expect(page.getByText(/could not run the suite locally/)).toBeVisible();
-
-  await expect(
-    page.getByRole("link", { name: `Decide these claims on ticket ${TICKET_ID}` }).first(),
-  ).toHaveAttribute("href", `/tickets/${TICKET_ID}`);
-  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  // One entry for deciding in the header, and no dead Decisions link.
+  const nav = page.getByRole("navigation", { name: "Primary" });
+  await expect(nav.getByRole("link", { name: "Inbox" })).toHaveCount(1);
+  await expect(nav.getByRole("link", { name: "Decisions" })).toHaveCount(0);
 });
 
-test("Proposed claims tab records a per-record verdict as a review naming those records", async ({ page }) => {
+test("To review records a per-record verdict as a review naming those records", async ({ page }) => {
   const captured = await mockDecisionsApi(page);
-  await page.goto("/decisions");
+  await page.goto("/inbox?tab=review");
 
-  await expect(page.getByRole("heading", { name: "Decisions" })).toBeVisible();
-  await expect(page.getByText(/reviewing as/i)).toContainText(WHOAMI_EMAIL);
+  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
+  await expect(page.getByText(/deciding as/i)).toContainText(WHOAMI_EMAIL);
 
   const card = page.locator(`[data-run-id="${CLAIM_RUN_ID}"]`);
   await expect(card.getByText(`ledger version ${CLAIM_LEDGER_VERSION}`)).toBeVisible();
@@ -95,8 +93,8 @@ test("Proposed claims tab records a per-record verdict as a review naming those 
 
 test("holds nothing in the browser: no token, no remembered actor id", async ({ page }) => {
   await mockDecisionsApi(page);
-  await page.goto("/decisions");
-  await expect(page.getByRole("heading", { name: "Decisions" })).toBeVisible();
+  await page.goto("/inbox?tab=review");
+  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
 
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   expect(

@@ -14,7 +14,7 @@ import { mockInboxApi } from "./fixtures/api";
  * The deciding of *claims* moved to the ticket page in this task; deciding
  * human tasks did not. What changed here is the affordance: the hand-rolled
  * radio fieldset plus "Submit decision" is now the shared `OutcomeButtons`,
- * the same one the Decisions queue and the ticket page offer. A spec covers
+ * the same one the ticket page offers. A spec covers
  * it because that is a live surface a person uses to route a paused run, and
  * until now nothing walked it end to end in a browser at all.
  */
@@ -30,6 +30,8 @@ test("decides a pending human task with one click, at the ledger version it read
 
   const card = page.locator(`[data-human-task-id="${PENDING_TASK.id}"]`);
   // The guard version is READ, then shown, then submitted — not fabricated.
+  // It sits in the collapsed audit disclosure since issue 332 (task t43).
+  await card.locator("details.inbox-card__audit-details > summary").click();
   await expect(card.getByText(String(LEDGER_VERSION))).toBeVisible();
 
   const approve = card.getByRole("button", { name: "approved" });
@@ -51,7 +53,7 @@ test("decides a pending human task with one click, at the ledger version it read
   await expect(card.getByRole("status")).toContainText("decision recorded");
 });
 
-test("offers exactly the outcomes the engine accepts, and nothing to type", async ({ page }) => {
+test("offers exactly the outcomes the engine accepts, and only an optional note to type", async ({ page }) => {
   await mockInboxApi(page);
   await page.goto("/inbox");
 
@@ -62,10 +64,11 @@ test("offers exactly the outcomes the engine accepts, and nothing to type", asyn
     "changes_required",
     "rejected",
   ]);
-  // No free-text anything: no token panel, no decider field, no JSON payload
-  // and no note. Identity comes from whoami (task t9) and the response is
-  // derived from the task's own decision schema (task t12).
-  await expect(card.locator("input, textarea, select")).toHaveCount(0);
+  // No token panel, no decider field, no JSON payload: identity comes from
+  // whoami (task t9) and the response is derived from the task's own decision
+  // schema (task t12). The one field is the optional note (task t46).
+  await expect(card.locator("input, textarea, select")).toHaveCount(1);
+  await expect(card.getByLabel(/^Note \(optional/)).toBeVisible();
   expect(
     await page.evaluate(() => sessionStorage.length + localStorage.length),
   ).toBe(0);
@@ -91,7 +94,11 @@ test("never offers expired, and states the absence when a task offers no choice"
   await expect(rich.getByRole("button", { name: "approved" })).toBeVisible();
   await expect(rich.getByRole("button", { name: "expired" })).toHaveCount(0);
 
+  // A task offering nothing selectable is not To act work: it waits, labelled
+  // (task t45).
+  await page.goto("/inbox?tab=waiting");
   const empty = page.locator(`[data-human-task-id="${PENDING_TASK_MINIMAL.id}"]`);
+  await expect(empty.getByText("cannot be decided here")).toBeVisible();
   await expect(empty.getByText("needs an outcome set")).toBeVisible();
   await expect(empty.getByRole("button")).toHaveCount(0);
 });

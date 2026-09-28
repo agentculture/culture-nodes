@@ -1278,6 +1278,11 @@
             "format": "int64",
             "type": "integer"
           },
+          "note": {
+            "description": "Optional free-text reason from the decider (task t46). Trimmed; a blank note is no note. Recorded on the ledger decision record (`note`), as the confirming review record's `rationale`, and on the decided task (`note`). More than 2000 characters is refused with 400. Optional here, unlike a review commit's rationale.",
+            "maxLength": 2000,
+            "type": "string"
+          },
           "outcome": {
             "description": "The domain outcome selected. Must be one of the task's allowed_outcomes.",
             "type": "string"
@@ -2826,6 +2831,10 @@
             "description": "The paused node run this task belongs to.",
             "type": "string"
           },
+          "note": {
+            "description": "The decider's optional note (task t46), read from `response.note`; absent when the decision carried none.",
+            "type": "string"
+          },
           "request": {
             "description": "The PRD §9.9 task payload (decision_schema_ref, approver_ref, deadline, allowed_outcomes, context_refs, audit).",
             "type": "object"
@@ -2842,7 +2851,7 @@
             "type": "array"
           },
           "response": {
-            "description": "Set once the task is decided — outcome, decider_actor_id, response, decided_at.",
+            "description": "Set once the task is decided — outcome, decider_actor_id, response, note (when one was written), decided_at.",
             "type": "object"
           },
           "run_id": {
@@ -2923,6 +2932,10 @@
           },
           "node_run_id": {
             "description": "The node run the decision resolved.",
+            "type": "string"
+          },
+          "note": {
+            "description": "The note recorded with the decision (task t46); absent when none was sent.",
             "type": "string"
           },
           "outcome": {
@@ -4274,6 +4287,61 @@
           "frame_checksum",
           "record_ids",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "ReviewedRecord": {
+        "properties": {
+          "rationale": {
+            "description": "The reviewer's stated reason; absent when none was recorded.",
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/PendingDecisionRecord"
+          },
+          "review_record_id": {
+            "description": "The review record's own id.",
+            "type": "string"
+          },
+          "reviewed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reviewer_actor_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "verdict": {
+            "description": "The review's verdict on the record (`confirm` or `reject`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_record_id",
+          "run_id",
+          "verdict",
+          "reviewed_at",
+          "record"
+        ],
+        "type": "object"
+      },
+      "ReviewedRecordList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewedRecord"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Opaque keyset cursor for the next page; absent on the last page.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -8537,6 +8605,69 @@
         "summary": "Record a GitHub repository as public or private.",
         "tags": [
           "declarations"
+        ]
+      }
+    },
+    "/v1alpha1/reviewed-records": {
+      "get": {
+        "description": "The Decided half of the one decision page (task t46): one entry per review record, carrying the record it decided in full (the same shape pending-decisions listed it in), the verdict, the reviewer and the stated rationale. A human task's own decision record — a `decision` record carrying `human_task_id`, confirmed by the review the task's decision appends — is left out: the decided task is listed by GET /v1alpha1/human-tasks with its note, and listing it here too would show one decision twice.\nKeyset-paginated by the review record's `created_at` and `id`. An unrecognised query parameter is refused with 400.",
+        "operationId": "listReviewedRecords",
+        "parameters": [
+          {
+            "description": "Only reviews belonging to this run.",
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum number of entries to return (default 50, max 500).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous response's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewedRecordList"
+                }
+              }
+            },
+            "description": "The reviewed records, newest review first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "An unrecognised query parameter or invalid cursor was supplied."
+          }
+        },
+        "summary": "Ledger records a human review has decided, newest first.",
+        "tags": [
+          "reviews"
         ]
       }
     },

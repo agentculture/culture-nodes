@@ -1,54 +1,59 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import {
   ApiError,
-  decideHumanTask,
-  getLedger,
   listHumanTasks,
+  listPendingDecisions,
+  listReviewedRecords,
 } from "../api/client";
-import type { HumanTask, HumanTaskDecisionResult } from "../api/types";
-import AuthorityChip from "../components/AuthorityChip";
+import type { ReviewedRecord } from "../api/decisionTypes";
+import type { HumanTask, PendingDecisionRun } from "../api/types";
 import ErrorNotice from "../components/ErrorNotice";
-import { HumanTaskAudit, HumanTaskFacts } from "../components/HumanTaskContext";
-import { taskContextFacts } from "../domain/human-task-context";
-import { isNoticeTask, taskAllowedOutcomes } from "../domain/human-task-notice";
+import { DecidedTaskCard, PendingTaskCard } from "../components/HumanTaskCards";
+import { SignedInAs } from "../components/IdentityGate";
+import {
+  ProposedRunDecision,
+  RecordedDecisions,
+  ReviewedRecordCard,
+  type RecordedDecision,
+} from "../components/ReviewDecision";
+import SegmentedToggle from "../components/SegmentedToggle";
 import {
   DEFAULT_INBOX_TAB,
   INBOX_TABS,
   type InboxTab,
-  isUndecidable,
   parseInboxTab,
   partitionInbox,
 } from "../domain/inbox-tabs";
 import { formatRelativeTime } from "../domain/run-board";
-import { SignedInAs } from "../components/IdentityGate";
-import NoticeFacts from "../components/NoticeFacts";
-import OutcomeButtons from "../components/OutcomeButtons";
-import SegmentedToggle from "../components/SegmentedToggle";
-import StatusChip from "../components/StatusChip";
 import type { SharedEventType } from "../hooks/useSharedEvents";
 import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
 import { useWhoami } from "../hooks/useWhoami";
 
 /**
- * Every event that means a human task changed shape — a new one created, or
- * one just decided (possibly from another tab/operator) — a stable
- * module-level reference, as useSharedEvents requires (issue #46).
+ * Every event that changes what is awaiting a decision or what was decided:
+ * a human task created or decided, a ledger record appended (a new proposal),
+ * a review committed — any of them possibly from another tab or operator. A
+ * stable module-level reference, as useSharedEvents requires (issue #46).
  */
 const INBOX_EVENT_TYPES = [
   "dev.culture.nodes.human-task.created",
   "dev.culture.nodes.human-task.decided",
+  "dev.culture.nodes.ledger.record-appended",
+  "dev.culture.nodes.ledger.review-committed",
 ] as const satisfies readonly SharedEventType[];
 
 const TAB_LABELS: Record<InboxTab, string> = {
-  open: "Open",
+  act: "To act",
+  review: "To review",
   waiting: "Waiting",
   decided: "Decided",
 };
 
 const TAB_EMPTY: Record<InboxTab, string> = {
-  open: "Nothing open.",
+  act: "Nothing to act on. A run pauses here when it reaches an approval node.",
+  review: "Nothing is awaiting a review. Every proposed record has been confirmed or rejected.",
   waiting: "Nothing waiting past its deadline.",
   decided: "Nothing decided yet.",
 };
@@ -56,62 +61,95 @@ const TAB_EMPTY: Record<InboxTab, string> = {
 /** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
 const REFRESH_DEBOUNCE_MS = 4000;
 
+/** How many recent reviews the Decided tab reads. */
+const REVIEWED_LIMIT = 50;
+
+type DecidedEntry =
+  | { kind: "task"; at: number; task: HumanTask }
+  | { kind: "review"; at: number; item: ReviewedRecord };
+
+const ms = (iso: string | undefined): number => {
+  const parsed = iso ? Date.parse(iso) : Number.NaN;
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+/** Backend page size and page ceiling when following a list's cursors. */
+const PAGE_LIMIT = 500;
+const MAX_PAGES = 40;
+
 /**
- * The Inbox view (task t14, issue #38b): every human task the control plane
- * is waiting on, actionable from the browser.
+ * Every pending task, following `next_cursor` (the Decisions page's pending
+ * view did this; the one page keeps it): a queue longer than one backend
+ * page must still be reachable, not silently cut at the first 50.
+ */
+async function allPendingTasks(signal: AbortSignal): Promise<HumanTask[]> {
+  const items: HumanTask[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await listHumanTasks(signal, { status: "pending", limit: PAGE_LIMIT, cursor });
+    items.push(...result.items);
+    if (!result.next_cursor) break;
+    cursor = result.next_cursor;
+  }
+  return items;
+}
+
+/**
+ * Every undecided record, following cursors, with a run split across two
+ * backend pages merged back into ONE group — a review is per run.
+ */
+async function allPendingRecords(
+  signal: AbortSignal,
+): Promise<{ groups: PendingDecisionRun[]; count: number }> {
+  const byRun = new Map<string, PendingDecisionRun>();
+  let count = 0;
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await listPendingDecisions(signal, cursor ? { cursor } : undefined);
+    count += result.record_count;
+    for (const group of result.items) {
+      const seen = byRun.get(group.run_id);
+      if (seen) seen.records.push(...group.records);
+      else byRun.set(group.run_id, { ...group, records: [...group.records] });
+    }
+    if (!result.next_cursor) break;
+    cursor = result.next_cursor;
+  }
+  return { groups: [...byRun.values()], count };
+}
+
+const asApiError = (cause: unknown): ApiError =>
+  cause instanceof ApiError
+    ? cause
+    : new ApiError(0, String(cause), "check the browser console");
+
+/**
+ * The Inbox (`/inbox`): the ONE place a person decides (task t46, owner
+ * decision d19 — "one place to decide"). It used to be two pages: this one
+ * for human tasks (task t14) and Decisions (`/decisions`, task t30) for
+ * proposed ledger records. `/decisions` now redirects to the To review tab.
  *
- * Pending tasks come from `GET /v1alpha1/human-tasks?status=pending` and
- * render the §9.9 request payload exactly as the engine stored it — what
- * the human is actually being shown, never re-derived, and absent fields
- * stay absent (no fabricated deadlines). Each card carries one button per
- * outcome the engine will accept. Decided tasks
- * (`?status=decided`) render their resolution read-only under the
- * confirmed-authority chip, since a committed human decision IS a confirmed
- * ledger review (PRD §10.8).
+ * Four tabs, persisted as `?tab=`:
  *
- * The decision itself is `OutcomeButtons` — the same component the Decisions
- * queue and the ticket page offer (task t12). It used to be a second, hand-
- * rolled radio fieldset plus a submit here, which is exactly the drift
- * `allowed_outcomes` exists to prevent: two independent renderings of "offer
- * what DecideHumanTask accepts and nothing else" are two chances for one of
- * them to offer an outcome that 400s (`expired`, #265) or hide one that would
- * have worked. There is one now, and it takes the free-text JSON payload and
- * note with it: the response is derived from the task's own decision schema,
- * as it already was on the other two surfaces.
+ *   - **To act** (default; t44's `?tab=open` still lands here): pending human
+ *     tasks that can be decided now — approvals, blocked-agent asks, notices.
+ *     Each card offers exactly the task's allowed outcomes and an optional
+ *     note recorded with the decision (components/HumanTaskCards.tsx).
+ *   - **To review**: every proposed ledger record no review has decided
+ *     (`GET /v1alpha1/pending-decisions`), grouped by run, the payload in
+ *     full, a verdict per record and a REQUIRED rationale — the Decisions
+ *     page's form, moved intact (components/ReviewDecision.tsx).
+ *   - **Waiting**: pending tasks past their deadline, and tasks offering no
+ *     outcome a person may select ("cannot be decided here") — t44/t45.
+ *   - **Decided**: decided and expired tasks, with their notes, and the most
+ *     recent committed reviews (`GET /v1alpha1/reviewed-records`), newest
+ *     first, read-only.
  *
- * Who decides is not part of the form (task t9, spec c8). Until then the
- * page held a deployment-shared bearer per tab and asked for a decider id
- * in free text; both are gone. The decider is the actor
- * `useWhoami` says the signed-in principal is bound to, it is shown on the
- * page as a fact rather than a field, the request carries no credential
- * (the Cloudflare edge cookie is the credential), and an unbound or
- * signed-out state disables every submit.
- *
- * A card reads top to bottom as the decision does (issue #332): the
- * question, then what it is about — PR, ticket, findings with file links,
- * the agent's summary or reason — read from the API's server-side
- * resolution of the task's context refs (`resolved_context`), then the run
- * link and the decision. The audit ids and the raw JSON-pointer refs sit
- * behind a collapsed "audit" disclosure: kept, not in the way.
- *
- * `expected_ledger_version` is a real read, not a fabrication: each pending
- * card fetches its run's ledger once and submits the version it actually
- * read, so a concurrent write is refused by the stale guard instead of
- * silently raced.
- *
- * Three tabs filter the list (task t44), persisted as `?tab=`: **Open**
- * (default) is pending with no deadline or a future one — what a person can
- * act on now; **Waiting** is pending with a deadline already passed (stale,
- * still decidable, labelled "overdue since …"); **Decided** is every
- * non-pending task — decided and expired alike — newest first. Expired tasks
- * come from their own `?status=expired` read, since `?status=decided` never
- * returns them. The partition rule lives in `domain/inbox-tabs.ts`.
- *
- * A notice (task t45 — `trigger_remint_exhausted`, `schedule_failing`) asks
- * nothing: its card reads the notice out (reason, attempts, window, event,
- * subject) and offers one button, Acknowledge. A pending task offering no
- * selectable outcome at all sits in Waiting, labelled "cannot be decided
- * here" — never counted as open, never hidden.
+ * Who decides is not part of any form (task t9): the decider is the actor
+ * `useWhoami` says the signed-in principal is bound to, and an unbound or
+ * signed-out state disables every submit. A decision here is a confirmed,
+ * human-authority ledger record; the records a review names are never
+ * rewritten.
  */
 export interface InboxProps {
   /** Test seam for the deadline split and relative times; defaults to now. */
@@ -131,13 +169,20 @@ export function Inbox({ now }: InboxProps = {}) {
   };
   const [pending, setPending] = useState<HumanTask[] | null>(null);
   const [decided, setDecided] = useState<HumanTask[] | null>(null);
+  const [groups, setGroups] = useState<PendingDecisionRun[] | null>(null);
+  const [recordCount, setRecordCount] = useState(0);
+  const [reviewed, setReviewed] = useState<ReviewedRecord[] | null>(null);
+  const [reviewedMore, setReviewedMore] = useState(false);
+  // Reviews recorded in this sitting, kept at page level: a decided run
+  // leaves the pending list on the next refresh, and a confirmation rendered
+  // inside its card would vanish with it (found against a live plane, t30).
+  const [recorded, setRecorded] = useState<RecordedDecision[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
+  const [reviewError, setReviewError] = useState<ApiError | null>(null);
   const whoami = useWhoami();
-  // Bumped after a recorded decision, and (task t30, issue #46) by a
-  // debounced human-task event on the shared cross-run stream. The effect
-  // refetches WITHOUT nulling the lists first (stale-while-revalidate), so
-  // the decided card's "decision recorded" confirmation survives the
-  // refresh.
+  // Bumped after a recorded decision and by a debounced event on the shared
+  // stream. Reloads never null the lists first (stale-while-revalidate), so
+  // a card's "decision recorded" confirmation survives the refresh.
   const [reloadKey, setReloadKey] = useState(0);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastReload = useRef(0);
@@ -160,75 +205,110 @@ export function Inbox({ now }: InboxProps = {}) {
     [],
   );
 
-  const { resolveSnapshot } = useSnapshotReconcile(
-    INBOX_EVENT_TYPES,
-    scheduleReload,
-  );
+  const { resolveSnapshot } = useSnapshotReconcile(INBOX_EVENT_TYPES, scheduleReload);
 
   useEffect(() => {
     const controller = new AbortController();
+    const aborted = () => controller.signal.aborted;
     // "ready" means initial-load-settled and must never regress to
-    // "loading" on a refresh (task t30's hard convention) — only the very
-    // first render (reloadKey === 0) sets it; every later reload (decision
-    // submit or SSE event) stays "ready" throughout, stale-while-revalidate.
+    // "loading" on a refresh (task t30's hard convention).
     const isInitialLoad = reloadKey === 0;
     if (isInitialLoad) setAgentState({ status: "loading", run: null });
     setError(null);
+    setReviewError(null);
 
-    const toApiError = (cause: unknown): ApiError =>
-      cause instanceof ApiError
-        ? cause
-        : new ApiError(0, String(cause), "check the browser console");
-
-    Promise.all([
-      listHumanTasks(controller.signal, { status: "pending" }),
+    const tasks = Promise.all([
+      allPendingTasks(controller.signal),
       listHumanTasks(controller.signal, { status: "decided" }),
       listHumanTasks(controller.signal, { status: "expired" }),
     ])
       .then(([pendingList, decidedList, expiredList]) => {
-        if (controller.signal.aborted) return;
-        setPending(pendingList.items);
+        if (aborted()) return;
+        setPending(pendingList);
         // Decided and expired are both terminal; the Decided tab shows both.
         setDecided([...decidedList.items, ...expiredList.items]);
-        if (isInitialLoad) resolveSnapshot();
-        setAgentState({ status: "ready", run: null });
       })
       .catch((cause: unknown) => {
-        if (controller.signal.aborted) return;
+        if (aborted()) return;
         setPending((prev) => prev ?? []);
         setDecided((prev) => prev ?? []);
-        setError(toApiError(cause));
-        if (isInitialLoad) resolveSnapshot();
-        setAgentState({ status: "ready", run: null });
+        setError(asApiError(cause));
       });
+
+    // The review half fails on its own: a control plane without the
+    // reviewed-records read must not blank the tasks a person can act on.
+    const reviews = Promise.all([
+      allPendingRecords(controller.signal),
+      listReviewedRecords(controller.signal, { limit: REVIEWED_LIMIT }),
+    ])
+      .then(([pendingRecords, reviewedList]) => {
+        if (aborted()) return;
+        setGroups(pendingRecords.groups);
+        setRecordCount(pendingRecords.count);
+        setReviewed(reviewedList.items);
+        setReviewedMore(Boolean(reviewedList.next_cursor));
+      })
+      .catch((cause: unknown) => {
+        if (aborted()) return;
+        setGroups((prev) => prev ?? []);
+        setReviewed((prev) => prev ?? []);
+        setReviewError(asApiError(cause));
+      });
+
+    void Promise.all([tasks, reviews]).then(() => {
+      if (aborted()) return;
+      if (isInitialLoad) resolveSnapshot();
+      setAgentState({ status: "ready", run: null });
+    });
     return () => controller.abort();
   }, [reloadKey, resolveSnapshot]);
 
   const actorId = whoami.status === "bound" ? whoami.actorId : null;
-  const loaded = pending !== null && decided !== null;
+  const loaded = pending !== null && decided !== null && groups !== null && reviewed !== null;
   const clock = now ?? new Date();
   const tabs = partitionInbox([...(pending ?? []), ...(decided ?? [])], clock);
-  const shown = tabs[tab];
+
+  const decidedEntries: DecidedEntry[] = [
+    ...tabs.decided.map((task) => ({
+      kind: "task" as const,
+      at: ms(task.resolved_at ?? task.created_at),
+      task,
+    })),
+    ...(reviewed ?? []).map((item) => ({
+      kind: "review" as const,
+      at: ms(item.reviewed_at),
+      item,
+    })),
+  ].sort((a, b) => b.at - a.at);
+
+  const counts: Record<InboxTab, string> = {
+    act: String(tabs.act.length),
+    review: String(recordCount),
+    waiting: String(tabs.waiting.length),
+    decided: `${decidedEntries.length}${reviewedMore ? "+" : ""}`,
+  };
+
+  const refresh = () => setReloadKey((key) => key + 1);
 
   return (
     <section className="view-rail inbox-view">
       <h1>Inbox</h1>
       <p className="muted">
-        Human tasks the control plane is waiting on. A decision here is a
-        confirmed, human-authority ledger review — it routes the paused run.
+        The one place to decide. Human tasks the control plane is waiting on,
+        and agents&apos; proposed records awaiting a review. An agent saying it
+        is done is a claim, not evidence — a decision here is a human&apos;s,
+        recorded as a confirmed ledger record naming who decided and why.
       </p>
 
       <SignedInAs verb="Deciding" whoami={whoami} />
 
       {error ? <ErrorNotice error={error} /> : null}
+      {reviewError ? <ErrorNotice error={reviewError} /> : null}
+      <RecordedDecisions recorded={recorded} />
+
       {!loaded ? (
         <p className="muted" id="inbox-loading">
           Loading inbox…
-        </p>
-      ) : pending.length === 0 && decided.length === 0 ? (
-        <p className="muted" id="inbox-empty">
-          No human tasks yet. A run pauses here when it reaches an approval
-          node.
         </p>
       ) : (
         <>
@@ -242,26 +322,66 @@ export function Inbox({ now }: InboxProps = {}) {
                 onClick={() => setTab(name)}
               >
                 {TAB_LABELS[name]}{" "}
-                <span className="inbox-tab__count" data-count={tabs[name].length}>
-                  {tabs[name].length}
+                <span className="inbox-tab__count" data-count={counts[name]}>
+                  {counts[name]}
                 </span>
               </button>
             ))}
           </SegmentedToggle>
 
-          {shown.length === 0 ? (
+          {tab === "review" ? (
+            (groups ?? []).length === 0 ? (
+              <p className="muted" id="inbox-tab-empty">
+                {TAB_EMPTY.review}
+              </p>
+            ) : (
+              <>
+                <p className="muted" id="decisions-count">
+                  {recordCount} record(s) awaiting a review across {(groups ?? []).length}{" "}
+                  run(s). The rationale is required: a confirmation with no stated
+                  reason cannot be told apart from an unread one.
+                </p>
+                <ul className="decisions-list" id="inbox-review">
+                  {(groups ?? []).map((group) => (
+                    <ProposedRunDecision
+                      key={group.run_id}
+                      group={group}
+                      actorId={actorId}
+                      onDecided={(entry) => {
+                        setRecorded((current) => [entry, ...current]);
+                        refresh();
+                      }}
+                    />
+                  ))}
+                </ul>
+              </>
+            )
+          ) : tab === "decided" ? (
+            decidedEntries.length === 0 ? (
+              <p className="muted" id="inbox-tab-empty">
+                {TAB_EMPTY.decided}
+              </p>
+            ) : (
+              <ul className="inbox-list" id="inbox-decided">
+                {decidedEntries.map((entry) =>
+                  entry.kind === "task" ? (
+                    <DecidedTaskCard key={entry.task.id} task={entry.task} />
+                  ) : (
+                    <ReviewedRecordCard
+                      key={entry.item.review_record_id}
+                      item={entry.item}
+                    />
+                  ),
+                )}
+              </ul>
+            )
+          ) : tabs[tab].length === 0 ? (
             <p className="muted" id="inbox-tab-empty">
               {TAB_EMPTY[tab]}
             </p>
-          ) : tab === "decided" ? (
-            <ul className="inbox-list" id="inbox-decided">
-              {shown.map((task) => (
-                <DecidedTaskCard key={task.id} task={task} />
-              ))}
-            </ul>
           ) : (
             <ul className="inbox-list" id={`inbox-${tab}`}>
-              {shown.map((task) => (
+              {tabs[tab].map((task) => (
                 <PendingTaskCard
                   key={task.id}
                   task={task}
@@ -271,7 +391,7 @@ export function Inbox({ now }: InboxProps = {}) {
                       ? formatRelativeTime(task.request.deadline, clock)
                       : undefined
                   }
-                  onDecided={() => setReloadKey((key) => key + 1)}
+                  onDecided={refresh}
                 />
               ))}
             </ul>
@@ -279,207 +399,6 @@ export function Inbox({ now }: InboxProps = {}) {
         </>
       )}
     </section>
-  );
-}
-
-function PendingTaskCard({
-  task,
-  actorId,
-  overdueSince,
-  onDecided,
-}: {
-  task: HumanTask;
-  /** The signed-in principal's actor, or null when nothing can be recorded. */
-  actorId: string | null;
-  /** Relative time since a passed deadline (Waiting tab); absent otherwise. */
-  overdueSince?: string;
-  onDecided: () => void;
-}) {
-  const [ledgerVersion, setLedgerVersion] = useState<number | null>(null);
-  const [submitError, setSubmitError] = useState<ApiError | null>(null);
-  const [result, setResult] = useState<HumanTaskDecisionResult | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    getLedger(task.run_id, controller.signal)
-      .then((ledger) => {
-        if (!controller.signal.aborted)
-          setLedgerVersion(ledger.ledger_version);
-      })
-      .catch(() => {
-        /* the guard row keeps saying "reading…"; submit stays disabled */
-      });
-    return () => controller.abort();
-  }, [task.run_id]);
-
-  const request = task.request ?? {};
-
-  /**
-   * Record the decision (task t12). `expected_ledger_version` is a real read,
-   * not a fabrication: the card fetched its run's ledger once and submits the
-   * version it actually read, so a concurrent write is refused by the stale
-   * guard instead of silently raced.
-   */
-  const decide = async (outcome: string) => {
-    if (actorId === null || ledgerVersion === null || submitting) return;
-    setSubmitError(null);
-    setSubmitting(true);
-    try {
-      const decided = await decideHumanTask(task.id, {
-        outcome,
-        decider_actor_id: actorId,
-        // A task with a decision schema gets a schema-valid payload; one
-        // without gets none, rather than an invented empty object.
-        response: request.decision_schema_ref ? { outcome } : undefined,
-        expected_ledger_version: ledgerVersion,
-      });
-      setResult(decided);
-      onDecided();
-    } catch (cause) {
-      setSubmitError(
-        cause instanceof ApiError
-          ? cause
-          : new ApiError(0, String(cause), "check the browser console"),
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const notice = isNoticeTask(task);
-  const facts = notice ? null : taskContextFacts(task);
-  const undecidable = isUndecidable(task);
-
-  return (
-    <li className="inbox-card" data-human-task-id={task.id}>
-      <div className="inbox-card__head">
-        <StatusChip state="waiting" />
-        <code className="inbox-card__id">{task.id}</code>
-        <span className="inbox-card__kind">{task.kind}</span>
-      </div>
-
-      {facts ? <HumanTaskFacts facts={facts} /> : <NoticeFacts task={task} />}
-
-      <dl className="inbox-card__request">
-        <div>
-          <dt>run</dt>
-          <dd>
-            <Link to={`/runs/${task.run_id}`}>{task.run_id}</Link>
-          </dd>
-        </div>
-        <div>
-          <dt>created</dt>
-          <dd>
-            <time dateTime={task.created_at}>{task.created_at}</time>
-          </dd>
-        </div>
-        {request.deadline ? (
-          <div>
-            <dt>deadline</dt>
-            <dd>
-              <time dateTime={request.deadline}>{request.deadline}</time>
-              {overdueSince ? (
-                <span className="inbox-card__overdue">
-                  {" "}
-                  overdue since {overdueSince}
-                </span>
-              ) : null}
-            </dd>
-          </div>
-        ) : null}
-        {request.approver_ref ? (
-          <div>
-            <dt>approver</dt>
-            <dd>{request.approver_ref}</dd>
-          </div>
-        ) : null}
-        {request.decision_schema_ref ? (
-          <div>
-            <dt>decision schema</dt>
-            <dd>
-              <code>{request.decision_schema_ref}</code>
-            </dd>
-          </div>
-        ) : null}
-      </dl>
-
-      {result === null ? (
-        <>
-          {undecidable ? (
-            <p className="muted inbox-card__undecidable">
-              cannot be decided here
-            </p>
-          ) : null}
-          <OutcomeButtons
-            taskId={task.id}
-            outcomes={taskAllowedOutcomes(task)}
-            disabled={actorId === null || ledgerVersion === null}
-            busy={submitting}
-            onChoose={(outcome) => void decide(outcome)}
-          />
-          {submitError ? <ErrorNotice error={submitError} /> : null}
-        </>
-      ) : (
-        <p className="inbox-card__result" role="status">
-          decision recorded — outcome <strong>{result.outcome}</strong>, run
-          now <strong>{result.run_state}</strong>
-          {result.next_node_id ? <>, next node {result.next_node_id}</> : null}
-        </p>
-      )}
-
-      <HumanTaskAudit
-        task={task}
-        ledgerGuard={
-          ledgerVersion === null ? (
-            <span className="muted">reading the run's ledger…</span>
-          ) : (
-            <code>{ledgerVersion}</code>
-          )
-        }
-      />
-    </li>
-  );
-}
-
-/** A decided task, read-only: the resolution as a confirmed human review. */
-function DecidedTaskCard({ task }: { task: HumanTask }) {
-  return (
-    <li
-      className="inbox-card inbox-card--decided"
-      data-human-task-id={task.id}
-    >
-      <div className="inbox-card__head">
-        <AuthorityChip authority="confirmed" />
-        <code className="inbox-card__id">{task.id}</code>
-        <span className="inbox-card__kind">{task.kind}</span>
-      </div>
-      <HumanTaskFacts facts={taskContextFacts(task)} />
-      <dl className="inbox-card__request">
-        <div>
-          <dt>run</dt>
-          <dd>
-            <Link to={`/runs/${task.run_id}`}>{task.run_id}</Link>
-          </dd>
-        </div>
-        {task.resolved_at ? (
-          <div>
-            <dt>resolved</dt>
-            <dd>
-              <time dateTime={task.resolved_at}>{task.resolved_at}</time>
-            </dd>
-          </div>
-        ) : null}
-      </dl>
-      {task.response !== undefined && task.response !== null ? (
-        <pre className="inbox-card__response">
-          {JSON.stringify(task.response, null, 2)}
-        </pre>
-      ) : (
-        <p className="muted">No decision payload was recorded.</p>
-      )}
-      <HumanTaskAudit task={task} />
-    </li>
   );
 }
 

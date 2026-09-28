@@ -94,18 +94,21 @@ export function Header() {
       >
         {/* Two groups, and the split is the point (task t17, decision c33):
             a person is here for their own work, an operator is here for the
-            engine. Nothing was retired — Inbox and Decisions still list every
+            engine. Nothing was retired — the Inbox still lists every
             pending item across every ticket, which no single ticket page can
-            — but they stopped competing for first place with the one link a
+            — but it stopped competing for first place with the one link a
             person arriving from a Jira comment actually wants.
 
-            Eight links, and the count is the decision (task t9, PRD §8.6).
+            Seven links, and the count is the decision (task t9, PRD §8.6;
+            task t46 folded Decisions into the Inbox — one place to decide,
+            owner decision d19 — and /decisions redirects to its To review
+            tab).
             Twelve destinations included three projections of one dataset
             (Runs, Board, Jobs) and omitted the page that authors a workflow.
             Board and Jobs are now the /runs page's own projection toggle,
             Node Graphs and Generate are Design's, and every URL either of
             them had still answers — App.tsx redirects each one, so this is a
-            consolidation, not a retirement (decision c33). Adding a ninth
+            consolidation, not a retirement (decision c33). Adding an eighth
             link means changing the assertion in Header.test.tsx, which is
             the point of asserting it. */}
         <span className="app-header__group app-header__group--work">
@@ -114,9 +117,6 @@ export function Header() {
           </NavLink>
           <NavLink to="/inbox" className={navLinkClass} onClick={closeNav}>
             Inbox
-          </NavLink>
-          <NavLink to="/decisions" className={navLinkClass} onClick={closeNav}>
-            Decisions
           </NavLink>
         </span>
         <span className="app-header__group app-header__group--engine">

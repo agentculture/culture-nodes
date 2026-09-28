@@ -20,12 +20,14 @@ import {
 } from "./inbox-tabs";
 
 describe("inbox tabs (task t44)", () => {
-  it("parses ?tab= and falls back to open", () => {
+  it("parses ?tab= and falls back to act; t44's open link still lands on act", () => {
     expect(parseInboxTab("waiting")).toBe("waiting");
     expect(parseInboxTab("decided")).toBe("decided");
-    expect(parseInboxTab("open")).toBe("open");
-    expect(parseInboxTab(null)).toBe("open");
-    expect(parseInboxTab("Decided")).toBe("open");
+    expect(parseInboxTab("review")).toBe("review");
+    expect(parseInboxTab("act")).toBe("act");
+    expect(parseInboxTab("open")).toBe("act");
+    expect(parseInboxTab(null)).toBe("act");
+    expect(parseInboxTab("Decided")).toBe("act");
   });
 
   it("treats a missing, empty or unparseable deadline as no deadline", () => {
@@ -59,7 +61,7 @@ describe("inbox tabs (task t44)", () => {
       ],
       INBOX_NOW,
     );
-    expect(tabs.open.map((t) => t.id)).toEqual([
+    expect(tabs.act.map((t) => t.id)).toEqual([
       PENDING_TASK.id,
       PENDING_TASK_MINIMAL.id,
       BAD_DEADLINE_TASK.id,
@@ -79,7 +81,7 @@ describe("inbox tabs (task t44)", () => {
     expect(isUndecidable(expiredOnly)).toBe(true);
     expect(isUndecidable(NOTICE_TASK)).toBe(false);
     const tabs = partitionInbox([UNDECIDABLE_TASK, expiredOnly, NOTICE_TASK], INBOX_NOW);
-    expect(tabs.open.map((t) => t.id)).toEqual([NOTICE_TASK.id]);
+    expect(tabs.act.map((t) => t.id)).toEqual([NOTICE_TASK.id]);
     expect(tabs.waiting.map((t) => t.id)).toEqual([UNDECIDABLE_TASK.id, expiredOnly.id]);
     expect(tabs.decided).toEqual([]);
   });

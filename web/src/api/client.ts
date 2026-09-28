@@ -33,6 +33,7 @@ import type {
   WorkflowVersion,
   WorkflowVersionList,
 } from "./types";
+import type { ReviewedRecordList } from "./decisionTypes";
 
 /**
  * Same-origin API root. In dev, vite.config.ts proxies it to the Go control
@@ -365,6 +366,21 @@ export const listPendingDecisions = (
 ) =>
   getJson<PendingDecisionList>(
     `/pending-decisions${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
+    signal,
+  );
+
+/**
+ * `GET /v1alpha1/reviewed-records` (task t46): the records a human review
+ * decided, newest first, each with its verdict, reviewer and rationale — the
+ * review half of the Inbox's Decided tab. A human task's own decision is not
+ * listed here; the decided task already is.
+ */
+export const listReviewedRecords = (
+  signal?: AbortSignal,
+  params?: { run_id?: string; limit?: number; cursor?: string },
+) =>
+  getJson<ReviewedRecordList>(
+    `/reviewed-records${toQueryString(params as Record<string, string | number | undefined> | undefined)}`,
     signal,
   );
 

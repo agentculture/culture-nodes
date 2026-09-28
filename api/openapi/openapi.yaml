@@ -3861,6 +3861,58 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/reviewed-records:
+    get:
+      operationId: listReviewedRecords
+      tags: [reviews]
+      summary: Ledger records a human review has decided, newest first.
+      description: >-
+        The Decided half of the one decision page (task t46): one entry per
+        review record, carrying the record it decided in full (the same shape
+        pending-decisions listed it in), the verdict, the reviewer and the
+        stated rationale. A human task's own decision record — a `decision`
+        record carrying `human_task_id`, confirmed by the review the task's
+        decision appends — is left out: the decided task is listed by GET
+        /v1alpha1/human-tasks with its note, and listing it here too would
+        show one decision twice.
+
+        Keyset-paginated by the review record's `created_at` and `id`. An
+        unrecognised query parameter is refused with 400.
+      parameters:
+        - name: run_id
+          in: query
+          required: false
+          description: Only reviews belonging to this run.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of entries to return (default 50, max 500).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque keyset cursor from a previous response's `next_cursor`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The reviewed records, newest review first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewedRecordList'
+        '400':
+          description: An unrecognised query parameter or invalid cursor was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/runs/{id}/grades:
     post:
       operationId: createGrade
@@ -5859,6 +5911,41 @@ components:
           type: string
           description: Opaque keyset cursor for the next page; absent on the last page.
 
+    ReviewedRecord:
+      type: object
+      required: [review_record_id, run_id, verdict, reviewed_at, record]
+      properties:
+        review_record_id:
+          type: string
+          description: The review record's own id.
+        run_id:
+          type: string
+        reviewer_actor_id:
+          type: string
+        verdict:
+          type: string
+          description: The review's verdict on the record (`confirm` or `reject`).
+        rationale:
+          type: string
+          description: The reviewer's stated reason; absent when none was recorded.
+        reviewed_at:
+          type: string
+          format: date-time
+        record:
+          $ref: '#/components/schemas/PendingDecisionRecord'
+
+    ReviewedRecordList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewedRecord'
+        next_cursor:
+          type: string
+          description: Opaque keyset cursor for the next page; absent on the last page.
+
     ReviewCommitResult:
       type: object
       required: [review_id, records, ledger_version]
@@ -6430,7 +6517,10 @@ components:
             choice.
         response:
           type: object
-          description: Set once the task is decided — outcome, decider_actor_id, response, decided_at.
+          description: Set once the task is decided — outcome, decider_actor_id, response, note (when one was written), decided_at.
+        note:
+          type: string
+          description: The decider's optional note (task t46), read from `response.note`; absent when the decision carried none.
         created_at:
           type: string
           format: date-time
@@ -6629,6 +6719,15 @@ components:
           items:
             type: string
           description: Other ledger records the decider is confirming alongside this decision (e.g. records the task's context_refs pointed at). Ordinarily empty.
+        note:
+          type: string
+          maxLength: 2000
+          description: >-
+            Optional free-text reason from the decider (task t46). Trimmed; a
+            blank note is no note. Recorded on the ledger decision record
+            (`note`), as the confirming review record's `rationale`, and on
+            the decided task (`note`). More than 2000 characters is refused
+            with 400. Optional here, unlike a review commit's rationale.
 
     HumanTaskDecisionResult:
       type: object
@@ -6659,6 +6758,9 @@ components:
           type: string
         run_output:
           description: Set only when the routed edge ended the run.
+        note:
+          type: string
+          description: The note recorded with the decision (task t46); absent when none was sent.
 
     Mesh:
       type: object

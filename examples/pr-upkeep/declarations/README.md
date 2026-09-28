@@ -75,10 +75,21 @@ These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
   `graph_config.contract.outcomes`, so `packaged` and `no_fix` reach the
   reaction as the agent reported them. The outcome is a proposed claim, not
   evidence.
-- **Unmarked reactions.** A `jira.comment` or `jira.issue.created` reaction
-  continues its lineage only if the emitter passes the stamped `origin`. No
-  Jira poller or webhook does that yet. The poller also drops the system's
-  own comments as self-echo.
+- **Jira reactions need a configured bot account.** Since t38f the Jira
+  poller and webhook read the cn1 marker back out of the comment or issue
+  the jira bridge created and pass the stamped `origin`, so
+  `stage-dispatch` → `fix`, `stage-pr-open` → `readiness` and
+  `intake-orphan` → `stamp-pr` continue their lineage (the conformance test
+  drives `stage-dispatch` → `fix`; the other two ride the same emitter code
+  and are pinned only by unit tests). The bridge account in
+  that origin comes only from the emitter's configuration
+  (`jira_bot_account_id` for the poller, the webhook's bot account). Without
+  one no origin is attached, and each of those hops starts a fresh lineage.
+  The legacy `pr-upkeep.jira.comment` still drops the system's own comments.
+- **GitHub reactions carry no origin.** No bridge stamps a pull request: an
+  `agent.work` firing's `github.pr` marker is bound to its handover ref, and
+  a `github.comment` action's comment has no reaction trigger. Nothing here
+  chains on a GitHub reaction today.
 - **Strings, not typed values.** A template renders a string, so `number`
   and `findings` reach the action as JSON text. `readiness.py` refuses a
   non-integer `number`. `fix`'s affinity rules are kept in

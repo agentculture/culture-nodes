@@ -61,7 +61,14 @@ func (s *Server) handleJiraWebhook(w http.ResponseWriter, r *http.Request) error
 		if err != nil {
 			return internalError(err)
 		}
-		for _, fact := range jiraEmissions(issue, s.jiraWebhook.site, projectForIssue(s.jiraWebhook.project, key), s.jiraWebhook.botAccountID) {
+		facts, withheld := jiraEmissionsReport(issue, s.jiraWebhook.site, projectForIssue(s.jiraWebhook.project, key), s.jiraWebhook.botAccountID)
+		if withheld > 0 {
+			// Fail closed, and say so (task t38f): without the bridge's own
+			// account id an origin could not name who wrote the artifact, and
+			// verify skips its author check for an origin without one.
+			s.log.Warn("Jira webhook: stamped artifacts carry a cn1 marker but no bot account is configured; origin withheld, they start a fresh lineage", "issue", key, "withheld", withheld)
+		}
+		for _, fact := range facts {
 			delivery, err := s.deliverJiraFact(r.Context(), fact)
 			if err != nil {
 				return internalError(err)
@@ -153,7 +160,7 @@ func (s *Server) fetchJiraIssue(ctx context.Context, key string) (map[string]any
 	if base == "" || c.email == "" || c.apiToken == "" {
 		return nil, fmt.Errorf("Jira API hydration is not configured")
 	}
-	fields := "summary,description,priority,status,issuetype,created,updated,comment"
+	fields := "summary,description,priority,status,issuetype,created,updated,comment,creator"
 	var issue map[string]any
 	endpoint := base + "/rest/api/3/issue/" + url.PathEscape(key) + "?fields=" + url.QueryEscape(fields) + "&expand=changelog"
 	if err := c.getJSON(ctx, endpoint, &issue); err != nil {
@@ -229,6 +236,14 @@ func (c jiraWebhookConfig) hydrateCollection(ctx context.Context, base, key stri
 // jira_watermark, and jira_history_facts. Keep it in parity with those Python
 // functions; the push receiver deliberately leaves the sweep module untouched.
 func jiraEmissions(issue map[string]any, site, project, bot string) []jiraFact {
+	facts, _ := jiraEmissionsReport(issue, site, project, bot)
+	return facts
+}
+
+// jiraEmissionsReport is jiraEmissions plus how many marked artifacts got no
+// origin because no bot account is configured (pr_upkeep_jira's
+// jira_emissions_report).
+func jiraEmissionsReport(issue map[string]any, site, project, bot string) ([]jiraFact, int) {
 	fields, key := object(issue["fields"]), text(issue["key"])
 	description := jiraText(fields["description"])
 	base := map[string]any{"source": "jira", "id": key, "project": project, "severity": fallback(text(object(fields["priority"])["name"]), "Medium"), "kind": fallback(text(object(fields["issuetype"])["name"]), "Jira issue"), "file": "", "line": nil, "title": text(fields["summary"]), "description": truncate(description, 4000), "description_truncated": len([]rune(description)) > 4000, "status": text(object(fields["status"])["name"]), "details_url": "https://" + jiraSite(site) + "/browse/" + url.PathEscape(key)}
@@ -268,6 +283,10 @@ func jiraEmissions(issue map[string]any, site, project, bot string) []jiraFact {
 	// ":created" source key is shared with the poller so the two dedupe.
 	createdPayload := clone(base)
 	createdPayload["created_at"] = text(fields["created"])
+	withheld := 0
+	if jiraCreatedOrigin(issue, createdPayload, bot) {
+		withheld++
+	}
 	facts := []jiraFact{{Name: "jira.issue.created", Payload: marshal(createdPayload), SourceKey: "jira:" + jiraSite(site) + ":" + key + ":created", Watermark: marshal(map[string]any{"changelog_id": "0", "comment_id": ""}), Subject: key}}
 	changeID, commentID := "", ""
 	var seen []map[string]any
@@ -320,7 +339,8 @@ func jiraEmissions(issue map[string]any, site, project, bot string) []jiraFact {
 			facts = append(facts, jiraFact{Name: "jira.issue.transitioned", Payload: marshal(neutral), SourceKey: "jira:" + jiraSite(site) + ":" + key + ":transitioned:" + text(payload["status"]) + ":" + current.id, Watermark: watermark, Subject: key})
 		}
 	}
-	return facts
+	reactions, unmarked := jiraReactionFacts(issue, key, jiraSite(site), bot)
+	return append(facts, reactions...), withheld + unmarked
 }
 
 func (s *Server) deliverJiraFact(ctx context.Context, fact jiraFact) (EventDeliveryOut, error) {

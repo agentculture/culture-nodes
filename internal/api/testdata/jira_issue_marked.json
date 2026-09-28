@@ -1,0 +1,200 @@
+{
+ "id": "10042",
+ "key": "SCRUM-43",
+ "fields": {
+  "summary": "Stamped artifacts",
+  "description": {
+   "type": "doc",
+   "version": 1,
+   "content": [
+    {
+     "type": "paragraph",
+     "content": [
+      {
+       "type": "text",
+       "text": "Orphan PR #7."
+      }
+     ]
+    },
+    {
+     "type": "paragraph",
+     "content": [
+      {
+       "type": "text",
+       "text": "cn1:01K6TCA38F0000000000000001:jira.issue:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ]
+    }
+   ]
+  },
+  "priority": {
+   "name": "High"
+  },
+  "status": {
+   "name": "In Progress"
+  },
+  "issuetype": {
+   "name": "Task"
+  },
+  "created": "2026-09-01T09:00:00.000+0000",
+  "creator": {
+   "accountId": "bot"
+  },
+  "comment": {
+   "total": 6,
+   "comments": [
+    {
+     "id": "21",
+     "created": "2026-09-01T09:30:00.000+0000",
+     "author": {
+      "accountId": "human"
+     },
+     "body": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+       {
+        "type": "paragraph",
+        "content": [
+         {
+          "type": "text",
+          "text": "please pick this up"
+         }
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "id": "22",
+     "created": "2026-09-01T09:40:00.000+0000",
+     "author": {
+      "accountId": "bot"
+     },
+     "body": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+       {
+        "type": "paragraph",
+        "content": [
+         {
+          "type": "text",
+          "text": "culture-nodes:stage=intake\nPicked up.\n\n[culture-nodes:jira-actor]\n\ncn1:01K6TCA38F0000000000000001:jira.comment:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+         }
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "id": "23",
+     "created": "2026-09-01T09:45:00.000+0000",
+     "author": {
+      "accountId": "bot"
+     },
+     "body": "self echo [culture-nodes:jira-actor]"
+    },
+    {
+     "id": "24",
+     "created": "2026-09-01T10:00:01.000+0000",
+     "author": {
+      "accountId": "bot"
+     },
+     "body": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+       {
+        "type": "paragraph",
+        "content": [
+         {
+          "type": "text",
+          "text": "cn1:01K6TCA38F0000000000000001:jira.issue:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+         }
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "id": "25",
+     "created": "2026-09-01T11:00:00.000+0000",
+     "author": {
+      "accountId": "human"
+     },
+     "body": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+       {
+        "type": "paragraph",
+        "content": [
+         {
+          "type": "text",
+          "text": "quoting\nupstream cn1:01K6TCA38F0000000000000001:jira.comment:cccccccccccccccccccccccccccccccccccccccccccccccc:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\ncn1:01K6TCA38F0000000000000001:jira.comment:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+         }
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "id": "26",
+     "created": "2026-09-01T11:30:00.000+0000",
+     "author": {
+      "accountId": "human"
+     },
+     "body": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+       {
+        "type": "paragraph",
+        "content": [
+         {
+          "type": "text",
+          "text": "not a marker cn1:x:y:zz:zz"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   ]
+  }
+ },
+ "changelog": {
+  "total": 2,
+  "histories": [
+   {
+    "id": "7",
+    "created": "2026-09-01T10:00:00.000+0000",
+    "author": {
+     "accountId": "bot"
+    },
+    "items": [
+     {
+      "field": "status",
+      "fromString": "To Do",
+      "toString": "In Progress"
+     }
+    ]
+   },
+   {
+    "id": "8",
+    "created": "2026-09-01T10:20:00.000+0000",
+    "author": {
+     "accountId": "human"
+    },
+    "items": [
+     {
+      "field": "labels",
+      "fromString": "",
+      "toString": "tca"
+     }
+    ]
+   }
+  ]
+ }
+}

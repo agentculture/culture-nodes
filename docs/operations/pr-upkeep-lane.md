@@ -69,6 +69,30 @@ status, and site. Its distinct source key is
 same key and watermark, so the control plane deduplicates them. The legacy
 `pr-upkeep.jira.transitioned.<status>` events continue alongside it.
 
+Since task t38f (#328) the poller and the Jira webhook also emit the neutral
+reaction facts that let a declaration chain continue across a Jira hop. Every
+comment a person writes raises `jira.comment` under
+`jira:<site>:<issue-key>:comment:<comment-id>` with watermark
+`{"comment_id":"<comment-id>"}`. The system's own comments stay self-echo for
+the legacy `pr-upkeep.jira.*` facts exactly as before, but a bridge comment
+that carries a cn1 marker is the artifact a `jira.comment` action created, so
+it raises `jira.comment` too. The marker comment a `jira.transition` action
+posts raises `jira.issue.transitioned` under
+`jira:<site>:<issue-key>:transitioned:<status>:comment:<comment-id>`, and a
+marker in a created issue's description is carried on `jira.issue.created`.
+Each such fact carries `origin: {marker, artifact_kind, artifact_id, author,
+bridge_account}`: the last valid marker in the text, the marker's own kind,
+the id the jira bridge reported (the comment id, or the issue's numeric id for
+a created issue, never its key), the comment author or issue creator, and the
+repository grant's `jira_bot_account_id`. The engine verifies it; a marker a
+person pastes into their own comment names that person as author and is
+rejected. Without a configured `jira_bot_account_id` no origin is attached at
+all, the sweep says so on stderr, and every Jira reaction starts a fresh
+lineage. The poller now also requests the `creator` field. Changing
+`pr_upkeep_jira.py` changes its digest, so the deployed
+`PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256` grant must be re-pinned before the sweep
+fetches the new file.
+
 ## One tick, precisely
 
 A tick sweeps up to `PR_UPKEEP_MAX_PRS_PER_SWEEP` (default 10) open PRs, and

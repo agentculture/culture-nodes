@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import urllib.parse
 import urllib.request
 from base64 import b64encode
@@ -269,7 +270,7 @@ def fetch_jira_issues(site: str, project: str, email: str, token: str, api_base:
             f'project = "{project}" AND (resolution IS EMPTY OR resolved >= '
             f"-{JIRA_RESOLVED_LOOKBACK_DAYS}d) ORDER BY priority ASC"
         ),
-        "fields": "summary,description,priority,status,issuetype,created,updated,comment",
+        "fields": "summary,description,priority,status,issuetype,created,updated,comment,creator",
         "expand": "changelog",
         "maxResults": "100",
     }
@@ -419,13 +420,46 @@ def jira_emissions(
     fact IS. It stays free of any control-plane write path: `sweep.py`
     remains the sole emitter, and it is handed a list, not a connection.
     """
+    facts, withheld = jira_emissions_report(
+        payload, site=site, project=project, bot_account_id=bot_account_id
+    )
+    if withheld:
+        # Fail closed, and say so: without the bridge's own account id an
+        # origin could not name who wrote the artifact, and the engine skips
+        # its author check for an origin without one (marker.go verify).
+        print(
+            f"jira: {withheld} stamped artifact(s) carry a cn1 marker but no "
+            "jira_bot_account_id is configured; origin withheld, they start a fresh lineage",
+            file=sys.stderr,
+        )
+    return facts
+
+
+def jira_emissions_report(
+    payload: dict, *, site: str, project: str, bot_account_id: str = ""
+) -> tuple[list[dict], int]:
+    """`jira_emissions`, plus how many marked artifacts got no origin."""
     by_key = {issue.get("key"): issue for issue in payload.get("issues", [])}
     source_site = site.removeprefix("https://").rstrip("/")
     facts = []
+    withheld = 0
     for item in jira_work_items(payload, site=site, project=project):
         issue = by_key.get(item["id"], {})
+        fields = issue.get("fields") or {}
         created_payload = dict(item)
-        created_payload["created_at"] = str((issue.get("fields") or {}).get("created") or "")
+        created_payload["created_at"] = str(fields.get("created") or "")
+        marker = last_cn1_marker(jira_description_text(fields.get("description")))
+        if marker and not bot_account_id:
+            withheld += 1
+        elif marker and _marker_kind(marker) == JIRA_ISSUE_MARKER_KIND:
+            origin = _jira_origin(
+                marker,
+                _history_id(issue.get("id")),
+                (fields.get("creator") or {}).get("accountId") or "",
+                bot_account_id,
+            )
+            if origin is not None:
+                created_payload["origin"] = origin
         facts.append(
             {
                 "name": "jira.issue.created",
@@ -470,7 +504,163 @@ def jira_emissions(
                         "subject": item["id"],
                     }
                 )
-    return facts
+        reactions, unmarked = jira_reaction_facts(
+            issue, item["id"], source_site=source_site, bot_account_id=bot_account_id
+        )
+        facts.extend(reactions)
+        withheld += unmarked
+    return facts, withheld
+
+
+#: stamping.py's ``_MARKER`` (adapters/*/src/*/stamping.py), character for
+#: character. This module cannot import an adapter, so the pattern is copied
+#: and tests/test_jira_origin.py pins the two equal.
+_CN1_MARKER = re.compile(r"cn1:[^:]{1,256}:[^:]{1,256}:[0-9a-fA-F]{48}:[0-9a-fA-F]{64}\Z")
+#: A bridge stamps the marker on its own line (stamping.stamp_text), so an
+#: artifact's text is split on ASCII whitespace and each token matched whole.
+#: ASCII only, so the Go webhook (internal/api/jiraorigin.go) splits the
+#: same way.
+_MARKER_SEPARATORS = re.compile(r"[ \t\n\r\f\v]+")
+#: The marker kind a jira.create or jira.transition firing mints
+#: (internal/decl/kinds: both actions produce jira.issue first).
+JIRA_ISSUE_MARKER_KIND = "jira.issue"
+JIRA_COMMENT_REACTION = "jira.comment"
+JIRA_TRANSITION_REACTION = "jira.issue.transitioned"
+
+
+def last_cn1_marker(text: str) -> str:
+    """The last syntactically valid cn1 marker in an artifact's text, or ``""``.
+
+    The last one, because a bridge appends its marker after whatever the
+    rendered text already held. Syntax only: the engine verifies the MAC.
+    """
+    found = ""
+    for token in _MARKER_SEPARATORS.split(text or ""):
+        if _CN1_MARKER.match(token):
+            found = token
+    return found
+
+
+def _marker_kind(marker: str) -> str:
+    return marker.split(":")[2]
+
+
+def _jira_origin(marker: str, artifact_id: str, author: str, bridge_account: str) -> dict | None:
+    """The payload ``origin`` the engine verifies, or None (fail closed).
+
+    ``bridge_account`` is the emitter's configured bot account, never read
+    from the artifact. An origin without an author or without the bridge
+    account would skip the engine's author check, so none is attached.
+    """
+    if not (marker and artifact_id and author and bridge_account):
+        return None
+    return {
+        "marker": marker,
+        "artifact_kind": _marker_kind(marker),
+        "artifact_id": artifact_id,
+        "author": author,
+        "bridge_account": bridge_account,
+    }
+
+
+def jira_reaction_facts(
+    issue: dict, key: str, *, source_site: str, bot_account_id: str = ""
+) -> tuple[list[dict], int]:
+    """The neutral per-comment reactions (task t38f), plus withheld origins.
+
+    Every comment a person wrote raises ``jira.comment``. The system's own
+    comments stay self-echo for the legacy ``pr-upkeep.jira.*`` facts, but a
+    bridge comment that carries a cn1 marker is the artifact a ``jira.comment``
+    or ``jira.transition`` action created, so it raises that action's
+    reaction with an ``origin`` the engine can verify: ``jira.comment`` for a
+    comment marker, ``jira.issue.transitioned`` for the marker comment a
+    transition posts. A marker in a person's comment is attached too, naming
+    that person as author, so the engine rejects it rather than trusting it.
+    """
+    fields = issue.get("fields") or {}
+    comments = sorted(
+        (fields.get("comment") or {}).get("comments") or [],
+        key=lambda comment: _history_id_key(comment.get("id")),
+    )
+    facts = []
+    withheld = 0
+    for comment in comments:
+        comment_id = _history_id(comment.get("id"))
+        author = _account_id(comment)
+        text = jira_description_text(comment.get("body"))
+        marker = last_cn1_marker(text)
+        if marker and not bot_account_id:
+            withheld += 1
+        origin = _jira_origin(marker, comment_id, author, bot_account_id) if marker else None
+        own = jira_comment_is_self_echo([comment], bot_account_id)
+        if own and origin is None:
+            continue
+        watermark = {"comment_id": comment_id}
+        if own and _marker_kind(marker) == JIRA_ISSUE_MARKER_KIND:
+            from_status, to_status = _status_at(issue, _comment_timestamp_created(comment))
+            payload = {"source": "jira", "issue": key, "to_status": to_status, "site": source_site}
+            if from_status:
+                payload["from_status"] = from_status
+            payload["origin"] = origin
+            facts.append(
+                {
+                    "name": JIRA_TRANSITION_REACTION,
+                    "payload": payload,
+                    "source_key": (
+                        f"jira:{source_site}:{key}:transitioned:{to_status}:comment:{comment_id}"
+                    ),
+                    "watermark": watermark,
+                    "subject": key,
+                }
+            )
+            continue
+        payload = {
+            "source": "jira",
+            "issue": key,
+            "comment_id": comment_id,
+            "author": author,
+            "body": text,
+            "site": source_site,
+        }
+        if origin is not None:
+            payload["origin"] = origin
+        facts.append(
+            {
+                "name": JIRA_COMMENT_REACTION,
+                "payload": payload,
+                "source_key": f"jira:{source_site}:{key}:comment:{comment_id}",
+                "watermark": watermark,
+                "subject": key,
+            }
+        )
+    return facts, withheld
+
+
+def _comment_timestamp_created(comment: dict) -> str:
+    return str(comment.get("created") or comment.get("updated") or "")
+
+
+def _status_at(issue: dict, at: str) -> tuple[str, str]:
+    """``(from, to)`` of the newest status change at or before ``at``.
+
+    The transition a jira.transition marker comment follows: the bridge
+    posts the comment right after the move. With no recorded change yet,
+    the issue's current status, from nowhere.
+    """
+    changes = sorted(
+        (
+            (str(h.get("created") or ""), _history_id_key(h.get("id")), item)
+            for h in (issue.get("changelog") or {}).get("histories") or []
+            for item in h.get("items") or []
+            if item.get("field") == "status"
+        ),
+        key=lambda change: change[:2],
+    )
+    before = [item for created, _id, item in changes if created <= at]
+    if not before:
+        status = ((issue.get("fields") or {}).get("status") or {}).get("name") or ""
+        return "", str(status)
+    return str(before[-1].get("fromString") or ""), str(before[-1].get("toString") or "")
 
 
 def jira_watermark(issue: dict) -> dict:

@@ -868,7 +868,7 @@ class TestEmitterMain:
         names = [
             name
             for name, *_rest in calls["events"]
-            if name not in {"jira.issue.created", "jira.issue.transitioned"}
+            if name not in {"jira.issue.created", "jira.issue.transitioned", "jira.comment"}
         ]
         assert names[0] == "pr-upkeep.jira.transitioned.to-do"
         assert names[-2:] == [

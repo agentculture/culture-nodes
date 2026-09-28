@@ -88,6 +88,11 @@ func Parse(source []byte, format Format) (*Declaration, error) {
 		}
 	}
 	d.Exposes = NormalizeExposes(d.Exposes)
+	if d.StartFrom != nil {
+		if err := d.StartFrom.Validate(); err != nil {
+			return nil, fmt.Errorf("declaration %w", err)
+		}
+	}
 	var trigger map[string]json.RawMessage
 	if err := json.Unmarshal(shape["trigger"], &trigger); err != nil {
 		return nil, err

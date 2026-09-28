@@ -221,6 +221,25 @@ How t30b implements it:
   (`claude`, `codex`, `qwen`, `human`, `code`). Authors cannot label them, so
   they stay truthful.
 
+How t38d implements it:
+
+- `EventFromSignal` always starts a delivered event at `root` and keeps the
+  payload's `node` only as a claim. `Handle` moves a verified reaction to the
+  landing node its parent firing opened, as before. It honours the claim only
+  for a verified parent that opened no landing node. An unverified or
+  rejected marker never leaves `root`.
+- `declaration_nodes.host` and `actor_kind` (migration 0069) are written only
+  by the engine. `human.ask` records `human` and `code.run` records `code` when
+  the node opens. Otherwise the types come from the actor row the firing
+  run's newest attempt recorded. `kind` `human` gives `human`,
+  `metadata.harness` in the closed set gives the kind (`pi` and `colleague`
+  join the list above), and `capabilities.preflight.host.hostname` gives the
+  host. An unrecorded fact stays unset and matches no typed `start_from`. A
+  set type is never rewritten.
+- `start_from` applies only to an engine-opened node, so an event at `root`
+  never matches one. A declaration whose trigger matched but whose start did
+  not records `start not matched`, naming the types it needed.
+
 ### Break-glass stops, it does not start (d5, task t19b)
 
 A human is a principal authenticated by Cloudflare Access. A break-glass

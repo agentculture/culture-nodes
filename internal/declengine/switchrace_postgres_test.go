@@ -112,14 +112,14 @@ func TestPostgresFlipToBeforeWaitsForAnInFlightEvaluation(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-race-a1").ID
-	va := publishActive(t, db, ns, declFor("race-a1", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
+	va := publishActive(t, db, ns, declFor("race-a1", RootNode, "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
 	e := raceEngine(t, db, "TCA_RACE_A1_KEY")
 	if _, err := (PostgresSwitchStore{Store: db}).Flip(ctx, ns, ModeAfter, "human:ops", "start"); err != nil {
 		t.Fatal(err)
 	}
 
 	sw := newPausingSwitch(db)
-	handled := deliverAsync(db, ns, json.RawMessage(`{"node":"intake"}`), Router{Engine: e, Switch: sw})
+	handled := deliverAsync(db, ns, json.RawMessage(`{}`), Router{Engine: e, Switch: sw})
 	if mode := <-sw.read; mode != ModeAfter {
 		t.Fatalf("router read %q, want %q", mode, ModeAfter)
 	}
@@ -166,14 +166,14 @@ func TestPostgresFlipToAfterWaitsSoAReactionIsNotLost(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-race-a2").ID
-	va := publishActive(t, db, ns, declFor("race-a2-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
+	va := publishActive(t, db, ns, declFor("race-a2-a", RootNode, "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
 	vb := publishActive(t, db, ns, declFor("race-a2-b", "waiting", "none", "done", "none", "timer", `{"uses":"actor://test"}`))
 	e := raceEngine(t, db, "TCA_RACE_A2_KEY")
 	plain := Router{Engine: e, Switch: PostgresSwitchStore{Store: db}}
 	if err := flipAndReplay(ctx, db, e, ns, ModeAfter); err != nil {
 		t.Fatal(err)
 	}
-	first := <-deliverAsync(db, ns, json.RawMessage(`{"node":"intake"}`), plain)
+	first := <-deliverAsync(db, ns, json.RawMessage(`{}`), plain)
 	if first.err != nil || first.d.DeclarationErr != nil {
 		t.Fatalf("deliver: err=%v declarationErr=%v", first.err, first.d.DeclarationErr)
 	}

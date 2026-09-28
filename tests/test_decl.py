@@ -301,6 +301,63 @@ def test_decl_show_text(fake_api, capsys) -> None:
     assert "link: must -> one" in out
 
 
+@pytest.mark.parametrize(
+    "start_from, rendered",
+    [
+        ("any", "start_from: any"),
+        ({"host": "thor", "actor_kind": "codex"}, "start_from: host=thor actor_kind=codex"),
+        ({"actor_kind": "claude"}, "start_from: actor_kind=claude"),
+    ],
+)
+def test_decl_show_renders_start_from(fake_api, capsys, start_from, rendered) -> None:
+    """Task t38d: decl show prints where the declaration starts -- its
+    start_node, and start_from when it has one."""
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/declarations/(?P<name>[^/]+)$",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {
+                "id": "dv-1",
+                "declaration_id": "decl-1",
+                "name": "two",
+                "version": 1,
+                "digest": "sha256:abc",
+                "author": "a",
+                "created_at": "2026-01-01T00:00:00Z",
+                "warnings": [],
+                "active": False,
+                "links": [],
+                "start_node": "ready",
+                "start_from": start_from,
+            },
+        ),
+    )
+    fake_api.start()
+    rc = main(["decl", "show", "two", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "start_node: ready" in out
+    assert rendered in out
+
+
+def test_decl_show_without_start_from_prints_none(fake_api, capsys) -> None:
+    fake_api.route(
+        "GET",
+        r"/v1alpha1/declarations/(?P<name>[^/]+)$",
+        lambda h, m, q, b: h.send_json(
+            200,
+            {"name": "two", "active": False, "links": [], "start_node": "root"},
+        ),
+    )
+    fake_api.start()
+    rc = main(["decl", "show", "two", "--api-url", fake_api.base_url])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "start_node: root" in out
+    assert "start_from" not in out
+
+
 def test_decl_show_accepts_an_alias_shaped_name(fake_api, capsys) -> None:
     """decl show forwards whatever name string is given -- including one
     shaped like a chain alias -- unchanged, as a thin client (h23/h24)."""

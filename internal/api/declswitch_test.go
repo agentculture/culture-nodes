@@ -92,7 +92,7 @@ func TestDeclarationSwitchRouteFreezesAndReplaysThroughEventDelivery(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	va := publishActiveDecl(t, s, nsID, chainDecl("sw-a", "intake", "waiting"))
+	va := publishActiveDecl(t, s, nsID, chainDecl("sw-a", declengine.RootNode, "waiting"))
 	vb := publishActiveDecl(t, s, nsID, chainDecl("sw-b", "waiting", "done"))
 
 	var got declSwitchResp
@@ -108,7 +108,7 @@ func TestDeclarationSwitchRouteFreezesAndReplaysThroughEventDelivery(t *testing.
 	}
 
 	// The event route offers the delivery to the declaration engine.
-	first := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{"node": "intake"}})
+	first := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{}})
 	var firingID string
 	if err := s.Pool().QueryRow(ctx, `SELECT id FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2 AND declaration_id=$3`, nsID, first.Event.ID, va.DeclarationID).Scan(&firingID); err != nil {
 		t.Fatalf("POST /v1alpha1/events did not reach the declaration engine: %v", err)

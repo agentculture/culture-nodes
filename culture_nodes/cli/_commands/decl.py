@@ -179,6 +179,17 @@ def cmd_decl_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_start_from(value: object) -> str:
+    """Render a declaration's start_from (task t38d): ``any``, or the node
+    types it starts from as ``host=thor actor_kind=codex``. Empty when the
+    declaration has none (it starts on its start_node)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(f"{k}={value[k]}" for k in ("host", "actor_kind") if value.get(k))
+    return ""
+
+
 def cmd_decl_show(args: argparse.Namespace) -> int:
     client = client_from_args(args)
     resp = client.request(
@@ -200,6 +211,11 @@ def cmd_decl_show(args: argparse.Namespace) -> int:
         ]
         if payload.get("active"):
             lines.append(f"active_version_id: {payload.get('active_version_id', '')}")
+        if payload.get("start_node"):
+            lines.append(f"start_node: {payload['start_node']}")
+        start_from = _render_start_from(payload.get("start_from"))
+        if start_from:
+            lines.append(f"start_from: {start_from}")
         links = payload.get("links") or []
         if not links:
             lines.append("links: none")

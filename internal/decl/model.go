@@ -23,6 +23,12 @@ type Declaration struct {
 	// Parse and CanonicalJSON normalize the list (exposure.go), and an empty
 	// list is omitted, so declarations without one keep their digests.
 	Exposes []string `json:"exposes,omitempty"`
+	// StartFrom (task t38d, #328, owner decision d6) replaces StartNode for
+	// matching when present: the declaration fires from any open node, or
+	// from open nodes whose engine-recorded types match (startfrom.go).
+	// StartNode stays required and names the node the declaration is drawn
+	// from. Absent (nil), nothing changes, including the digest.
+	StartFrom *StartFrom `json:"start_from,omitempty"`
 }
 
 type Trigger struct {

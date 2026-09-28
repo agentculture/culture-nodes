@@ -273,6 +273,15 @@ the same route `chain show` calls) has no alias fallback of its own; a pure
 alias name 404s from `decl show` — use `chain show` for a name that might
 be an alias.
 
+## where a declaration starts
+
+`show` prints `start_node`, and `start_from` when the declaration has one:
+`any` (it fires from any open node an event arrived at), or node types such
+as `host=thor actor_kind=codex` (both must match). The control plane derives
+a node's types from the action that opened it, never from what an author or
+agent writes; an event without a verified origin marker always arrives at
+`root`, which matches no `start_from`.
+
 ## validate
 
 Compiles the document server-side and reports every diagnostic. An invalid

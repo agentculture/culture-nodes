@@ -105,6 +105,15 @@ type Event struct {
 	// derived from Variables here: the caller (whatever routes an event to
 	// Handle) decides it, exactly as TriggerEvent's caller does today.
 	Subject string
+	// ClaimedNode is the node an outside event's payload named (task t38d,
+	// d6). It is untrusted: EventFromSignal always sets Node to RootNode,
+	// and Handle honours ClaimedNode only for an event whose origin marker
+	// verified to a parent firing that opened no landing node -- the one
+	// case the pre-t38d engine took the payload's node for. An unverified or
+	// rejected marker never moves an event off root.
+	ClaimedNode string `json:",omitempty"`
+	// arrival is set only by Handle (deriveNode), never by a caller.
+	arrival nodeArrival
 }
 
 // Evaluation is one recorded step of one declaration's evaluation of one
@@ -121,6 +130,10 @@ type Landing struct {
 	NamespaceID, FiringID string
 	Node                  decl.Node
 	Deadline              time.Duration
+	// ActorKind is the node type the dispatched action kind itself decides
+	// (task t38d, nodetypes.go actionActorKind); empty for every action
+	// whose actor kind is read from its attempt's registration instead.
+	ActorKind string
 }
 
 // Backend implementations must claim atomically across processes, and scope
@@ -179,6 +192,7 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 		return errors.New("declengine: event identity and kind required")
 	}
 	event.Origin.NamespaceID, event.Origin.EventID, event.Origin.EventKind = event.NamespaceID, event.ID, event.Kind
+	event.arrival = nodeArrival{}
 	// A reaction can arrive before the worker has bound the artifact its
 	// action created; a dispatcher that can bind it first gets the chance.
 	if preparer, ok := e.dispatcher.(interface {
@@ -202,6 +216,11 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	if !cont {
 		return nil
 	}
+	// t38d: a verified parent that opened no landing node keeps the node
+	// its payload named, as before; anything else never leaves root.
+	if parent != "" && !nodeFound && event.ClaimedNode != "" {
+		event.Node = event.ClaimedNode
+	}
 	if event.Node == "" {
 		return errors.New("declengine: event node required (no verified parent firing to derive it from)")
 	}
@@ -219,9 +238,18 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	var failures []error
 	anyMatched := false
 	for _, a := range active {
-		matched, err := matches(a.Declaration, event)
+		matched, startMiss, err := classify(a.Declaration, event)
 		if err != nil {
 			failures = append(failures, err)
+			continue
+		}
+		if startMiss != "" {
+			// t38d: a start_from declaration whose trigger matched but whose
+			// start did not says which node types it needed (explain).
+			if err := e.backend.Record(ctx, Evaluation{NamespaceID: event.NamespaceID, EventID: event.ID, DeclarationID: a.ID,
+				VersionID: a.VersionID, Outcome: OutcomeStartUnmatched, Reason: startMiss}); err != nil {
+				failures = append(failures, err)
+			}
 			continue
 		}
 		if !matched {
@@ -431,7 +459,7 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	if result.Shadowed {
 		evaluation.Outcome, evaluation.Reason = OutcomeShadow, "engine switch is before/shadow; action not dispatched, landing node "+a.Declaration.LandingNode.Name+" opened as a would-fire record"
 	}
-	if err := e.backend.Finish(ctx, Landing{NamespaceID: event.NamespaceID, FiringID: firing.ID, Node: a.Declaration.LandingNode, Deadline: deadline}, evaluation); err != nil {
+	if err := e.backend.Finish(ctx, Landing{NamespaceID: event.NamespaceID, FiringID: firing.ID, Node: a.Declaration.LandingNode, Deadline: deadline, ActorKind: actionActorKind(action.Kind)}, evaluation); err != nil {
 		return err
 	}
 	// h40/c49: snapshot whichever active declaration reacts to the node
@@ -564,7 +592,8 @@ func (p PostgresBackend) Finish(ctx context.Context, l Landing, evaluation Evalu
 	if done {
 		return tx.Commit(ctx)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO declaration_nodes(id,namespace_id,opening_firing_id,node_name,deadline) VALUES($1,$2,$3,$4,$5)`, store.NewULID(), l.NamespaceID, l.FiringID, l.Node.Name, deadline); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO declaration_nodes(id,namespace_id,opening_firing_id,node_name,deadline,actor_kind) VALUES($1,$2,$3,$4,$5,NULLIF($6,''))`,
+		store.NewULID(), l.NamespaceID, l.FiringID, l.Node.Name, deadline, l.ActorKind); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO declaration_evaluations(id,namespace_id,event_id,declaration_id,declaration_version,outcome,reason,firing_id,variables)

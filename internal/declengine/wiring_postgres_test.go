@@ -237,7 +237,7 @@ func TestPostgresRouterBeforeStoresFrozenAndDriverReplays(t *testing.T) {
 			db := pgtest.RequireStore(t, markerTestStore)
 			ctx := context.Background()
 			ns := pgtest.MustNamespace(t, db, "tca-router-freeze").ID
-			va := publishActive(t, db, ns, declFor("rf-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
+			va := publishActive(t, db, ns, declFor("rf-a", RootNode, "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
 			vb := publishActive(t, db, ns, declFor("rf-b", "waiting", "none", "done", "none", "timer", `{"uses":"actor://test"}`))
 
 			sw := PostgresSwitchStore{Store: db}
@@ -260,7 +260,7 @@ func TestPostgresRouterBeforeStoresFrozenAndDriverReplays(t *testing.T) {
 			if _, err := sw.Flip(ctx, ns, ModeAfter, "human:ops", "start"); err != nil {
 				t.Fatal(err)
 			}
-			first := deliverVia(json.RawMessage(`{"node":"intake"}`))
+			first := deliverVia(json.RawMessage(`{}`))
 			fa := firingByEventDecl(t, db, ns, first.Event.ID, va.DeclarationID)
 			if _, err := sw.Flip(ctx, ns, ModeBefore, "human:ops", "rollback", FreezeHook(fb)); err != nil {
 				t.Fatal(err)

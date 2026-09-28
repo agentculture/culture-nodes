@@ -848,6 +848,12 @@ paths:
         evaluation of `event_id`.
 
 
+        A declaration with `start_from` (task t38d) whose trigger matched
+        but whose start did not records `start not matched`, its reason
+        naming the node types it needed and the types the engine recorded
+        on the node the event arrived at.
+
+
         A declaration whose trigger never matched `event_id` at all leaves
         no row to return — the firing loop records nothing for a
         non-match — so that case is 404, the same as an unknown declaration
@@ -3458,6 +3464,16 @@ paths:
         secret (`NODES_EVENT_TOKEN_SECRET`) — its own secret, separate
         from the decision and registration secrets, since emitting a named
         event can resume any signal-parked run in the namespace.
+
+
+        With the declaration engine enabled, the delivered event is also
+        offered to declarations (task t38; ADR 0014 addendum d6, task
+        t38d). The payload's `origin` {marker, artifact_kind, artifact_id,
+        author, bridge_account} is verified against the engine's marker
+        key; only a verified marker moves the event off the shared `root`
+        node, onto the landing node its parent firing opened. An event
+        without a verified marker always arrives at `root`, whatever the
+        payload's `node` names.
       security:
         - eventBearerAuth: []
       requestBody:
@@ -6901,7 +6917,7 @@ components:
             condition error, condition false, condition true, evaluation
             failed, duplicate, dispatching, dispatch failed, stamping
             refused, fired, deferred, shadow, budget-blocked,
-            sensitivity-blocked, overlap-suppressed. This route
+            sensitivity-blocked, overlap-suppressed, start not matched. This route
             always returns the newest row, i.e. the terminal outcome of the
             declaration's evaluation of the event. budget-blocked and
             overlap-suppressed are defined but not yet produced by any task
@@ -7030,6 +7046,35 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/DeclarationLink'
+            start_node:
+              type: string
+              description: The newest version's declared start node (task t38d).
+            start_from:
+              $ref: '#/components/schemas/DeclarationStartFrom'
+
+    DeclarationStartFrom:
+      description: >-
+        A declaration's start_from (task t38d, #328, ADR 0014 addendum d6),
+        present only when the declaration has one: `any` starts from any
+        open node the event arrived at; an object starts from open nodes
+        whose engine-recorded types match every given key. Types are
+        derived by the engine from the action that opened the node -- the
+        dispatched action kind (human.ask, code.run) and the registration
+        of the actor its attempt ran on -- never authored. An event at the
+        shared root node matches no start_from.
+      oneOf:
+        - type: string
+          enum: [any]
+        - type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            host:
+              type: string
+              minLength: 1
+            actor_kind:
+              type: string
+              enum: [claude, codex, qwen, pi, colleague, human, code]
 
     CreateDeclarationAliasRequest:
       type: object
@@ -7142,6 +7187,8 @@ components:
         action_kind: {type: string}
         start_node: {type: string}
         landing_node: {type: string}
+        start_from:
+          $ref: '#/components/schemas/DeclarationStartFrom'
 
     DeclarationFocusNode:
       type: object

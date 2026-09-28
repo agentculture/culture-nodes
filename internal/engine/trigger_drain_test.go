@@ -3,12 +3,67 @@ package engine_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
+
+func TestScheduleFireHonorsDrainGateBeforeAndAfter(t *testing.T) {
+	s := pgtest.RequireStore(t, testStore)
+	f := newFixtureOn(t, s, "trigger-subject.workflow.yaml",
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: s}}))
+	publishFixtureWorkflow(t, f)
+	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	sc, err := s.CreateSchedule(f.ctx, storepg.CreateScheduleInput{NamespaceID: f.ns.ID, Name: "drain-schedule",
+		EventName: "test.subject-event", Interval: 5 * time.Minute, FirstFireAt: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fire := func(when time.Time) storepg.ScheduleFireResult {
+		result, err := s.FireSchedule(f.ctx, storepg.FireScheduleInput{ScheduleID: sc.ID, Now: when, Trigger: f.engine})
+		if err != nil || !result.Fired {
+			t.Fatalf("FireSchedule: fired=%v err=%v", result.Fired, err)
+		}
+		return result
+	}
+	if runs := fire(at).Delivery.Triggered; len(runs) != 1 {
+		t.Fatalf("before: %d graph runs, want 1", len(runs))
+	}
+	sw := declengine.PostgresSwitchStore{Store: s}
+	if _, err := sw.Flip(f.ctx, f.ns.ID, declengine.ModeAfter, "human:ops", "schedule drain test"); err != nil {
+		t.Fatal(err)
+	}
+	if runs := fire(at.Add(5 * time.Minute)).Delivery.Triggered; len(runs) != 0 {
+		t.Fatalf("after: %d graph runs, want 0", len(runs))
+	}
+}
+
+func TestQueuedTriggerCannotMintAfterWorkerCompletion(t *testing.T) {
+	s := pgtest.RequireStore(t, testStore)
+	f := newFixtureOn(t, s, "trigger-subject-concurrency.workflow.yaml",
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: s}}))
+	publishFixtureWorkflow(t, f)
+	a := deliverConcurrencyEvent(t, f, "SCRUM-1", "a")
+	b := deliverConcurrencyEvent(t, f, "SCRUM-2", "b")
+	c := deliverConcurrencyEvent(t, f, "SCRUM-3", "c")
+	if len(a.Triggered) != 1 || len(b.Triggered) != 1 || len(c.Triggered) != 1 || !c.Triggered[0].Deferred {
+		t.Fatalf("before: expected two graph runs and one deferred trigger: %+v %+v %+v", a.Triggered, b.Triggered, c.Triggered)
+	}
+	sw := declengine.PostgresSwitchStore{Store: s}
+	if _, err := sw.Flip(f.ctx, f.ns.ID, declengine.ModeAfter, "human:ops", "queue drain test"); err != nil {
+		t.Fatal(err)
+	}
+	f.completeReadyWork(a.Triggered[0].RunID)
+	if _, exists := f.runIDForSubject("SCRUM-3"); exists {
+		t.Fatal("worker queue drain minted a graph run in after")
+	}
+	if state := f.run(a.Triggered[0].RunID).State; state != engine.RunCompleted {
+		t.Fatalf("open run did not complete: %s", state)
+	}
+}
 
 // Task t17 (#328, spec c94, ADR 0014 "Consequences", honesty h63): the
 // acceptance test for the drain guarantee -- "flipping to 'after' drains,

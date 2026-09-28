@@ -64,7 +64,7 @@ func TestSensitivityLineageOwnerAndApproval(t *testing.T) {
 		return DispatchResult{}, nil
 	}))
 	e.backend = m
-	ev := Event{NamespaceID: "ns", ID: "e1", Kind: "timer", Node: "ready", Origin: OriginEvent{}}
+	ev := Event{NamespaceID: "ns", ID: "e1", Kind: "pr-upkeep.pr", Node: "ready", Origin: OriginEvent{}}
 	if err := e.evaluate(context.Background(), ev, a, "", m.ancestors); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestSensitivityLineageOwnerAndApproval(t *testing.T) {
 	}
 
 	m.status = SensitivityApproved
-	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e2", Kind: "timer", Node: "ready"}, a, "", m.ancestors); err != nil {
+	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e2", Kind: "pr-upkeep.pr", Node: "ready"}, a, "", m.ancestors); err != nil {
 		t.Fatal(err)
 	}
 	if last := m.steps[len(m.steps)-1]; last.Outcome != OutcomeFired || !strings.Contains(rendered, "carol / carol") {
@@ -128,7 +128,7 @@ func TestSensitivityUnlistedBlocksWithoutTask(t *testing.T) {
 		return DispatchResult{}, nil
 	}))
 	e.backend = m
-	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e1", Kind: "timer", Node: "ready"}, a, "", m.ancestors); err != nil {
+	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e1", Kind: "pr-upkeep.pr", Node: "ready"}, a, "", m.ancestors); err != nil {
 		t.Fatal(err)
 	}
 	last := m.steps[len(m.steps)-1]
@@ -201,7 +201,7 @@ func TestLineageSourceRankKeepsTheEventRepository(t *testing.T) {
 		return DispatchResult{}, nil
 	}))
 	e.backend = m
-	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e1", Kind: "timer", Node: "ready"}, a, "", m.ancestors); err != nil {
+	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e1", Kind: "pr-upkeep.pr", Node: "ready"}, a, "", m.ancestors); err != nil {
 		t.Fatal(err)
 	}
 	if last := m.steps[len(m.steps)-1]; last.Outcome != OutcomeSensitivityBlocked || !strings.Contains(last.Reason, `add "gh-src:url" to exposes`) {

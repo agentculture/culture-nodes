@@ -41,7 +41,7 @@ func publishActiveDecl(t *testing.T, s *postgres.Store, ns string, d decl.Declar
 
 func deliverEvent(t *testing.T, s *postgres.Store, ns string) string {
 	t.Helper()
-	ev, err := s.DeliverSignalEvent(context.Background(), postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Emitter: "test"})
+	ev, err := s.DeliverSignalEvent(context.Background(), postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Emitter: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func deliverEvent(t *testing.T, s *postgres.Store, ns string) string {
 func explainDecl(name string) decl.Declaration {
 	return decl.Declaration{
 		Name:        name,
-		Trigger:     decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
+		Trigger:     decl.Trigger{Kind: "pr-upkeep.pr", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
 		Condition:   "true",
 		Action:      decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test"}`)},
 		StartNode:   decl.Node{Name: "ready", Deadline: "none"},
@@ -88,7 +88,7 @@ func TestDeclarationEvaluationRouteReturnsFired(t *testing.T) {
 	e := explainEngine(t, f.store, explainDispatchFunc(func(context.Context, declengine.DispatchRequest) (declengine.DispatchResult, error) {
 		return declengine.DispatchResult{}, nil
 	}))
-	if err := e.Handle(context.Background(), declengine.Event{NamespaceID: f.nsID, ID: eventID, Kind: "timer", Node: "ready"}); err != nil {
+	if err := e.Handle(context.Background(), declengine.Event{NamespaceID: f.nsID, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,7 +117,7 @@ func TestDeclarationEvaluationRouteReturnsConditionFalse(t *testing.T) {
 		t.Fatal("dispatched despite a false condition")
 		return declengine.DispatchResult{}, nil
 	}))
-	if err := e.Handle(context.Background(), declengine.Event{NamespaceID: f.nsID, ID: eventID, Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "Low"}}); err != nil {
+	if err := e.Handle(context.Background(), declengine.Event{NamespaceID: f.nsID, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "Low"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -149,7 +149,7 @@ func TestDeclarationEvaluationRouteRefusals(t *testing.T) {
 		t.Fatal("dispatched a declaration whose trigger never matched")
 		return declengine.DispatchResult{}, nil
 	}))
-	if err := e.Handle(context.Background(), declengine.Event{NamespaceID: f.nsID, ID: eventID, Kind: "timer", Node: "some-other-node"}); err != nil {
+	if err := e.Handle(context.Background(), declengine.Event{NamespaceID: f.nsID, ID: eventID, Kind: "pr-upkeep.pr", Node: "some-other-node"}); err != nil {
 		t.Fatal(err)
 	}
 	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/declarations/"+d.Name+"/evaluations?event_id="+eventID), nil, nil)

@@ -12,7 +12,7 @@ import (
 func ordinaryTestDecl(name string) decl.Declaration {
 	return decl.Declaration{
 		Name:        name,
-		Trigger:     decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
+		Trigger:     decl.Trigger{Kind: "pr-upkeep.pr", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
 		Condition:   "true",
 		Action:      decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test","input":{}}`)},
 		StartNode:   decl.Node{Name: "ready", Deadline: "none"},

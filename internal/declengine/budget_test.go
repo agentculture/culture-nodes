@@ -220,7 +220,7 @@ func TestBudgetExhaustedTriggerFiresAReactingDeclaration(t *testing.T) {
 		calls++
 		return DispatchResult{}, nil
 	}))
-	ev := Event{NamespaceID: "ns", ID: "e1", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	ev := Event{NamespaceID: "ns", ID: "e1", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	if err := e.Handle(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}

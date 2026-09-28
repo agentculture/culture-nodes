@@ -205,7 +205,13 @@ func (s *Store) CreateSchedule(ctx context.Context, in CreateScheduleInput) (Sch
 	// t38g: a schedule fires through DeliverSignalEvent's delivery, which
 	// refuses the control plane's reserved names and emitter; refusing them
 	// here keeps a schedule from being created only to fail every fire.
-	if err := kinds.CheckExternalEvent(in.EventName, in.Emitter); err != nil {
+	if in.EventName == "timer" {
+		if in.Emitter != "" && in.Emitter != "schedule:"+in.Name {
+			return Schedule{}, errors.New("postgres: CreateSchedule: timer requires the schedule emitter")
+		}
+	} else if in.Emitter == "schedule:"+in.Name && !kinds.ReservedEvent(in.EventName) {
+		// An operator may explicitly spell the emitter this row defaults to.
+	} else if err := kinds.CheckExternalEvent(in.EventName, in.Emitter); err != nil {
 		return Schedule{}, fmt.Errorf("postgres: CreateSchedule: %w", err)
 	}
 	if in.Emitter == "" {
@@ -507,12 +513,13 @@ func (s *Store) FireSchedule(ctx context.Context, in FireScheduleInput) (Schedul
 	}
 
 	delivery, err := s.deliverSignalEventTx(ctx, tx, DeliverSignalEventInput{
-		NamespaceID: sc.NamespaceID,
-		Name:        sc.EventName,
-		Payload:     sc.Payload,
-		Emitter:     sc.Emitter,
-		Pickup:      in.Pickup,
-		Trigger:     in.Trigger,
+		scheduleFire: true,
+		NamespaceID:  sc.NamespaceID,
+		Name:         sc.EventName,
+		Payload:      sc.Payload,
+		Emitter:      sc.Emitter,
+		Pickup:       in.Pickup,
+		Trigger:      in.Trigger,
 	})
 	if err != nil {
 		return ScheduleFireResult{}, fmt.Errorf("postgres: FireSchedule: deliver %s: %w", sc.EventName, err)

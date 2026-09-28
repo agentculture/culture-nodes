@@ -1000,6 +1000,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeclarationVersionList'
 
+  /v1alpha1/declarations/grants:
+    get:
+      operationId: listActivatedDeclarationGrants
+      tags: [declarations]
+      summary: List environment grant names required by activated declaration actions.
+      description: >-
+        Read-only deploy preflight view. Each item names the activated version's
+        action environment references. Values and inactive declarations are omitted.
+      responses:
+        '200':
+          description: Grant key names by activated declaration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, environment_refs]
+                      properties:
+                        name: {type: string}
+                        environment_refs:
+                          type: array
+                          items: {type: string}
+
   /v1alpha1/declarations/aliases:
     post:
       operationId: createDeclarationAlias

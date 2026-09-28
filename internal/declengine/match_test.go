@@ -16,7 +16,7 @@ func TestMatchingActiveTriggersAndCELErrors(t *testing.T) {
 	for _, tc := range []struct {
 		kind, node, priority string
 		want                 bool
-	}{{"timer", "ready", "High", true}, {"timer", "other", "High", false}, {"human.decision", "ready", "High", false}, {"timer", "ready", "Low", false}} {
+	}{{"pr-upkeep.pr", "ready", "High", true}, {"pr-upkeep.pr", "other", "High", false}, {"human.decision", "ready", "High", false}, {"pr-upkeep.pr", "ready", "Low", false}} {
 		got, err := matches(a.Declaration, Event{Kind: tc.kind, Node: tc.node, Variables: map[string]any{"priority": tc.priority}})
 		if err != nil || got != tc.want {
 			t.Fatalf("match %+v =%v err=%v", tc, got, err)
@@ -65,7 +65,7 @@ func TestSecretRequiredAndDispatchFailureRecorded(t *testing.T) {
 	e := newTestEngine(t, m, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) {
 		return DispatchResult{}, errors.New("worker unavailable")
 	}))
-	if err := e.Handle(context.Background(), Event{ID: "e", NamespaceID: "ns", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}); err == nil {
+	if err := e.Handle(context.Background(), Event{ID: "e", NamespaceID: "ns", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}); err == nil {
 		t.Fatal("lost dispatch error")
 	}
 	if len(m.nodes) != 0 || m.steps[len(m.steps)-1].Outcome != "dispatch failed" {
@@ -79,7 +79,7 @@ func TestThreeDeclarationChainThroughVerifiedMarkers(t *testing.T) {
 		requests = append(requests, r)
 		return DispatchResult{ArtifactID: r.Firing.ID, Variables: map[string]any{"x": "X", "y": "Y", "z": "Z"}}, nil
 	}))
-	ev := Event{ID: "1", NamespaceID: "ns", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	ev := Event{ID: "1", NamespaceID: "ns", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	for _, name := range []string{"A", "B", "C"} {
 		a := active(name)
 		m.active = []ActiveDeclaration{a}

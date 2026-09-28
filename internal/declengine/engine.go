@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/contracts"
@@ -257,7 +258,8 @@ func (e *Engine) handle(ctx context.Context, event Event, resumeDeferred string)
 	// (kinds.CheckExternalEvent); this is the engine's own refusal, after
 	// the marker verdict is recorded and before the event can land on --
 	// and close -- the node a genuine reaction is owed.
-	if kinds.ReservedEvent(event.Kind) && event.Emitter != DeclarationEngineActorID {
+	if kinds.ReservedEvent(event.Kind) && event.Emitter != DeclarationEngineActorID &&
+		!(event.Kind == "timer" && strings.HasPrefix(event.Emitter, "schedule:")) {
 		return e.backend.Record(ctx, Evaluation{NamespaceID: event.NamespaceID, EventID: event.ID, DeclarationID: reservedEventDeclarationID,
 			VersionID: nodeLifecycleVersion, Outcome: OutcomeReservedEventRejected,
 			Reason: fmt.Sprintf("%s is emitted only by the control plane (%s); this one came from %q, recorded, not fired", event.Kind, DeclarationEngineActorID, event.Emitter)})

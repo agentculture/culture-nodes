@@ -68,7 +68,7 @@ func TestPostgresBudgetBlocksDispatchAndEmitsTrigger(t *testing.T) {
 	declID := declarationIDFor(t, db, ns.ID, "budget-node-test")
 
 	event1 := deliver(t, db, ns.ID)
-	ev1 := Event{NamespaceID: ns.ID, ID: event1, Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	ev1 := Event{NamespaceID: ns.ID, ID: event1, Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	if err := e.Handle(ctx, ev1); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestPostgresBudgetBlocksDispatchAndEmitsTrigger(t *testing.T) {
 	// sessions), so this one is blocked before the actor would have been
 	// invoked.
 	event2 := deliver(t, db, ns.ID)
-	ev2 := Event{NamespaceID: ns.ID, ID: event2, Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	ev2 := Event{NamespaceID: ns.ID, ID: event2, Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	if err := e.Handle(ctx, ev2); err != nil {
 		t.Fatal(err)
 	}

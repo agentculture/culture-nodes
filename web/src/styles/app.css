@@ -2547,6 +2547,53 @@ button.timeline__node {
   padding: 0.6rem 0.8rem;
 }
 
+/* Issue #332: what is being decided, and where it lives, above the
+   decision; the audit ids behind a disclosure below it. */
+.inbox-card__question {
+  margin: 0.6rem 0 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+
+.inbox-card__facts {
+  margin: 0.6rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.inbox-card__findings {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.inbox-card__finding-meta {
+  color: var(--ink-soft);
+}
+
+.inbox-card__narrative {
+  margin: 0.2rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) / 2);
+  padding: 0.5rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.inbox-card__audit-details {
+  margin-top: 0.75rem;
+}
+
+.inbox-card__audit-details > summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
 /* --- Decisions view (task t30, issue #99) ---------------------------------
    The decision queue reuses the Inbox card vocabulary deliberately: both
    views ask the same thing of a person — read this, then decide it — and

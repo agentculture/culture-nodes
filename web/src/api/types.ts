@@ -520,6 +520,27 @@ export interface HumanTask {
   response?: unknown;
   created_at: string;
   resolved_at?: string;
+  /**
+   * `request.context_refs` resolved server-side for display (issue #332):
+   * `from` first, then bindings by name. Absent when the task has no refs.
+   */
+  resolved_context?: HumanTaskContextValue[];
+  /** The declaration firing that started the run; absent for graph runs. */
+  firing?: { declaration_name?: string };
+}
+
+/**
+ * One resolved context ref (components.schemas.HumanTaskContextValue).
+ * Exactly one of `value` and `unresolved` is set; `truncated` marks a value
+ * the API shrank to its 16 KiB bound.
+ */
+export interface HumanTaskContextValue {
+  name: string;
+  ref?: string;
+  literal?: boolean;
+  value?: unknown;
+  truncated?: boolean;
+  unresolved?: string;
 }
 
 /** `GET /v1alpha1/human-tasks` (components.schemas.HumanTaskList). */

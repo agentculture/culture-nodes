@@ -139,3 +139,16 @@ func parsePointer(pointer string) ([]string, error) {
 	}
 	return tokens, nil
 }
+
+// ParseBindingPointer and TraverseJSON expose this resolver's own pointer
+// grammar and document walk to read-side presentation (issue #332: the
+// inbox resolves a human task's context_refs for display). Exporting the
+// two halves, rather than letting internal/api re-spell RFC 6901, keeps "a
+// pointer the approver is shown" and "a pointer the engine resolves" one
+// implementation. Neither reads state; the caller supplies the surface.
+func ParseBindingPointer(pointer string) ([]string, error) { return parsePointer(pointer) }
+
+// TraverseJSON walks tokens into document exactly as a binding resolves.
+func TraverseJSON(document json.RawMessage, tokens []string) (json.RawMessage, error) {
+	return traverse(document, tokens)
+}

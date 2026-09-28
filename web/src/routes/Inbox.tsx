@@ -7,13 +7,11 @@ import {
   getLedger,
   listHumanTasks,
 } from "../api/client";
-import type {
-  HumanTask,
-  HumanTaskBinding,
-  HumanTaskDecisionResult,
-} from "../api/types";
+import type { HumanTask, HumanTaskDecisionResult } from "../api/types";
 import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
+import { HumanTaskAudit, HumanTaskFacts } from "../components/HumanTaskContext";
+import { taskContextFacts } from "../domain/human-task-context";
 import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
 import StatusChip from "../components/StatusChip";
@@ -64,6 +62,13 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * page as a fact rather than a field, the request carries no credential
  * (the Cloudflare edge cookie is the credential), and an unbound or
  * signed-out state disables every submit.
+ *
+ * A card reads top to bottom as the decision does (issue #332): the
+ * question, then what it is about — PR, ticket, findings with file links,
+ * the agent's summary or reason — read from the API's server-side
+ * resolution of the task's context refs (`resolved_context`), then the run
+ * link and the decision. The audit ids and the raw JSON-pointer refs sit
+ * behind a collapsed "audit" disclosure: kept, not in the way.
  *
  * `expected_ledger_version` is a real read, not a fabrication: each pending
  * card fetches its run's ledger once and submits the version it actually
@@ -201,21 +206,6 @@ export function Inbox() {
   );
 }
 
-/** Shorten a sha256 digest the way the Workflows table does. */
-function shortDigest(digest: string): string {
-  return digest.length > 21 ? `${digest.slice(0, 20)}…` : digest;
-}
-
-/**
- * Render one context ref the way the workflow declares it: a pointer as the
- * pointer, a literal (issue #73) as the declared value. A literal is shown
- * rather than summarised because it is the whole reason the shape exists — the
- * reader should be able to name what the task observes.
- */
-function renderBinding(ref: HumanTaskBinding): string {
-  return typeof ref === "string" ? ref : JSON.stringify(ref.literal);
-}
-
 function PendingTaskCard({
   task,
   actorId,
@@ -245,7 +235,6 @@ function PendingTaskCard({
   }, [task.run_id]);
 
   const request = task.request ?? {};
-  const audit = request.audit;
 
   /**
    * Record the decision (task t12). `expected_ledger_version` is a real read,
@@ -279,6 +268,8 @@ function PendingTaskCard({
     }
   };
 
+  const facts = taskContextFacts(task);
+
   return (
     <li className="inbox-card" data-human-task-id={task.id}>
       <div className="inbox-card__head">
@@ -286,6 +277,8 @@ function PendingTaskCard({
         <code className="inbox-card__id">{task.id}</code>
         <span className="inbox-card__kind">{task.kind}</span>
       </div>
+
+      <HumanTaskFacts facts={facts} />
 
       <dl className="inbox-card__request">
         <div>
@@ -322,80 +315,6 @@ function PendingTaskCard({
             </dd>
           </div>
         ) : null}
-        {request.context_refs ? (
-          <div>
-            <dt>context refs</dt>
-            <dd>
-              {request.context_refs.from ? (
-                <code>{request.context_refs.from}</code>
-              ) : null}
-              {request.context_refs.bindings ? (
-                <ul className="inbox-card__bindings">
-                  {Object.entries(request.context_refs.bindings).map(
-                    ([name, ref]) => (
-                      <li key={name}>
-                        {name}: <code>{renderBinding(ref)}</code>
-                      </li>
-                    ),
-                  )}
-                </ul>
-              ) : null}
-            </dd>
-          </div>
-        ) : null}
-        {audit ? (
-          <div>
-            <dt>audit</dt>
-            <dd>
-              <dl className="inbox-card__audit">
-                {audit.node_id ? (
-                  <div>
-                    <dt>node</dt>
-                    <dd>
-                      <code>{audit.node_id}</code>
-                    </dd>
-                  </div>
-                ) : null}
-                {audit.token_id ? (
-                  <div>
-                    <dt>token</dt>
-                    <dd>
-                      <code>{audit.token_id}</code>
-                    </dd>
-                  </div>
-                ) : null}
-                {audit.workflow_digest ? (
-                  <div>
-                    <dt>workflow</dt>
-                    <dd>
-                      <code title={audit.workflow_digest}>
-                        {shortDigest(audit.workflow_digest)}
-                      </code>
-                    </dd>
-                  </div>
-                ) : null}
-                {audit.from_node ? (
-                  <div>
-                    <dt>arrived via</dt>
-                    <dd>
-                      {audit.from_node} → {audit.from_outcome}
-                    </dd>
-                  </div>
-                ) : null}
-              </dl>
-            </dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>ledger guard</dt>
-          <dd>
-            {ledgerVersion === null ? (
-              <span className="muted">reading the run's ledger…</span>
-            ) : (
-              <code>{ledgerVersion}</code>
-            )}
-          </dd>
-        </div>
       </dl>
 
       {result === null ? (
@@ -416,6 +335,17 @@ function PendingTaskCard({
           {result.next_node_id ? <>, next node {result.next_node_id}</> : null}
         </p>
       )}
+
+      <HumanTaskAudit
+        task={task}
+        ledgerGuard={
+          ledgerVersion === null ? (
+            <span className="muted">reading the run's ledger…</span>
+          ) : (
+            <code>{ledgerVersion}</code>
+          )
+        }
+      />
     </li>
   );
 }
@@ -432,6 +362,7 @@ function DecidedTaskCard({ task }: { task: HumanTask }) {
         <code className="inbox-card__id">{task.id}</code>
         <span className="inbox-card__kind">{task.kind}</span>
       </div>
+      <HumanTaskFacts facts={taskContextFacts(task)} />
       <dl className="inbox-card__request">
         <div>
           <dt>run</dt>
@@ -455,6 +386,7 @@ function DecidedTaskCard({ task }: { task: HumanTask }) {
       ) : (
         <p className="muted">No decision payload was recorded.</p>
       )}
+      <HumanTaskAudit task={task} />
     </li>
   );
 }

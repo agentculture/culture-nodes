@@ -86,3 +86,115 @@ export const DECISION_RESULT: HumanTaskDecisionResult = {
   next_node_id: "deploy",
   run_state: "running",
 };
+
+/**
+ * Issue #332: the two real task shapes, with the API's resolved context.
+ * `human-merges-pr` (examples/pr-upkeep/workflow.yaml) binds the fix node's
+ * output and the run input; the declaration `human.ask` blocked-step task
+ * (examples/pr-upkeep/declarations/blocked-stamp-pr.json) reads the run input.
+ */
+export const MERGE_HEAD_SHA = "e128a17c0ffee0000000000000000000000000ab";
+
+export const MERGE_TASK: HumanTask = {
+  id: "ht-01M278CXQZM6M6F0J7H1WHT0FV",
+  run_id: "run-01M278MERGE00000000000001",
+  kind: "approval",
+  status: "pending",
+  request: {
+    approver_ref: "group/platform-maintainers",
+    decision_schema_ref: "schema://pr-upkeep/merge-decision/v1",
+    allowed_outcomes: ["approved", "rejected", "expired"],
+    context_refs: {
+      bindings: {
+        finding: "/run/input",
+        fix: "/nodes/fix/output",
+        readiness: "/nodes/readiness/output",
+      },
+    },
+    audit: {
+      node_id: "human-merges-pr",
+      token_id: "tok-01M278MERGE000000000001",
+      workflow_digest:
+        "sha256:2222333344445555666677778888999900001111aaaabbbbccccddddeeeeffff",
+      from_node: "readiness",
+      from_outcome: "passed",
+    },
+  },
+  resolved_context: [
+    {
+      name: "finding",
+      ref: "/run/input",
+      value: {
+        number: 326,
+        source: "github_pr",
+        repository: "agentculture/culture-nodes",
+        head_sha: MERGE_HEAD_SHA,
+        findings: [
+          {
+            id: "AZ1",
+            file: "tests/test_hand_turn_cli.py",
+            line: 141,
+            rule: "python:S9073",
+            kind: "CODE_SMELL",
+            severity: "MAJOR",
+            source: "sonarcloud",
+            title: "Split this composite assertion into separate assertions.",
+          },
+        ],
+      },
+    },
+    {
+      name: "fix",
+      ref: "/nodes/fix/output",
+      value: {
+        summary:
+          "**Finding taken:** python:S9073 at tests/test_hand_turn_cli.py:141\n\n**Verdict:** real defect, fixed",
+      },
+    },
+    {
+      name: "readiness",
+      ref: "/nodes/readiness/output",
+      unresolved:
+        'node "readiness" has no succeeded attempt in this run, so it has no output',
+    },
+  ],
+  created_at: "2026-09-28T08:00:00Z",
+};
+
+export const BLOCKED_TASK: HumanTask = {
+  id: "ht-01M278BLOCKED000000000001",
+  run_id: "run-01M278BLOCKED0000000001",
+  kind: "approval",
+  status: "pending",
+  firing: { declaration_name: "pr-upkeep-blocked-stamp-pr" },
+  request: {
+    approver_ref: "group/platform-maintainers",
+    allowed_outcomes: ["approved", "rejected"],
+    context_refs: { from: "/run/input" },
+    audit: { node_id: "blocked-stamp-pr" },
+  },
+  resolved_context: [
+    {
+      name: "from",
+      ref: "/run/input",
+      value: {
+        question:
+          "The pr-upkeep stamp-pr agent could not complete its task. Review the reason and report.",
+        blocked_step: "stamp-pr",
+        ticket: "SCRUM-15",
+        number: "329",
+        repository: "agentculture/culture-nodes",
+        // A template: `#` + three digits in a plain string reads as a hex colour
+        // to tests/lint/webtokens_test.go.
+        work_item: `gh:agentculture/culture-nodes#${329}`,
+        agent_report: {
+          reason: "The PR has no push credential for the stamp commit.",
+          pr: 329,
+          evidence: ["git push: 403 Forbidden"],
+        },
+        marker: "m1",
+      },
+    },
+  ],
+  created_at: "2026-09-28T09:00:00Z",
+};

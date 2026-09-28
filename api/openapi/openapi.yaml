@@ -6418,6 +6418,47 @@ components:
         resolved_at:
           type: string
           format: date-time
+        resolved_context:
+          type: array
+          description: >-
+            request.context_refs resolved for display (issue #332): one entry
+            per ref, `from` first, then bindings by name. The raw refs stay in
+            `request` verbatim. `/run/input` resolves to the run's input and
+            `/nodes/<id>/output` to the result of that node's newest succeeded
+            attempt — the same values GET /v1alpha1/runs/{id} already returns
+            (run.input, node_runs[].attempts[].result), so this widens no
+            read. Node evidence is not inlined. Absent when the task carries
+            no context refs.
+          items:
+            $ref: '#/components/schemas/HumanTaskContextValue'
+
+    HumanTaskContextValue:
+      type: object
+      required: [name]
+      description: >-
+        One context ref resolved for display. Exactly one of `value` and
+        `unresolved` is set. A value is bounded to 16 KiB of JSON: a larger
+        one is shrunk (long strings cut with an ellipsis, long arrays
+        shortened) and marked `truncated`, and one that cannot be shrunk
+        under the bound is omitted with a reason naming the run view.
+      properties:
+        name:
+          type: string
+          description: The binding's name, or `from` for the single input pointer.
+        ref:
+          type: string
+          description: The JSON pointer exactly as authored; absent for a literal binding.
+        literal:
+          type: boolean
+          description: True when the binding declares a literal value rather than a pointer.
+        value:
+          description: The resolved JSON value (any type).
+        truncated:
+          type: boolean
+          description: True when `value` was shrunk to fit the size bound.
+        unresolved:
+          type: string
+          description: Why no value is shown — e.g. the node has no succeeded attempt yet.
 
     HumanTaskList:
       type: object

@@ -234,7 +234,7 @@ PSQL="docker compose -f deploy/prod/compose.yaml exec -T postgres psql -U nodes 
 NAMESPACE_ID=$($PSQL -c "SELECT id FROM namespaces ORDER BY created_at LIMIT 1")
 
 $PSQL -c "INSERT INTO actors
-  (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata)
+  (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata, capabilities)
   VALUES
   ('actor_register_$(date +%s%N)_$$',
    '$NAMESPACE_ID',
@@ -243,13 +243,19 @@ $PSQL -c "INSERT INTO actors
    'agent',
    'http',
    'http://192.168.1.157:8088',
-   '{\"auth_token_env\": \"NOTIFY_DISCORD_BRIDGE_TOKEN\"}'::jsonb)"
+   '{\"auth_token_env\": \"NOTIFY_DISCORD_BRIDGE_TOKEN\"}'::jsonb,
+   '{\"stamping\":{\"marker\":\"cn1\",\"version\":1}}'::jsonb)"
 ```
 
 `endpoint_ref` must use a numeric IPv4 host (worker containers do not
 inherit the host's `/etc/hosts`). `metadata.auth_token_env` names the env
 var the worker reads the bridge credential from at dispatch time — never
 the token value itself.
+
+The `capabilities.stamping` value must match authenticated
+`GET /v1/capabilities`. With the production helper, pass `--stamping-cn1`
+after checking that response. Declaration dispatch refuses an actor whose
+newest revision does not advertise cn1.
 
 ## Running it
 

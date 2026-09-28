@@ -167,6 +167,13 @@ for manifest_path in dict.fromkeys(MIGRATED.values()):
             step = entry.split(":", 1)[0] if ":" in entry else source["name"]
             lines.append(f"| `{source['name']}` (`{directory / file}`) | `{entry}` | `{step}` | listed; needs the owner's approval |")
 
+notify_manifest = Path("examples/notify/declarations/manifest.json")
+if notify_manifest.exists():
+    for file in json.loads(notify_manifest.read_text())["declarations"]:
+        source = json.loads((notify_manifest.parent / file).read_text())
+        for entry in source.get("exposes", []):
+            lines.append(f"| `{source['name']}` (`{notify_manifest.parent / file}`) | `{entry}` | `{source['name']}` | listed; needs the owner's approval |")
+
 lines += [
     "",
     "## Configuration and source generation (c61 and c62)",
@@ -174,7 +181,7 @@ lines += [
     "| Current item | Target declaration form | Parity status |",
     "|---|---|---|",
     "| schedules (`internal/scheduler/schedules.go`) | `timer` trigger to the scheduled action | pending |",
-    "| notifier posts (`internal/notifier/`) | lifecycle event trigger to `discord.post` action | pending |",
+    "| notifier posts (`internal/notifier/`) | `examples/notify/declarations/manifest.json`: per-case `discord.post` declarations; mute by deactivation | source; runtime parity pending; graph daemon retained until t37 |",
     "| repair routing (`internal/repair/`) | failure trigger, bounded condition and repair action | pending |",
     "| hand-turns (`schemas/ledger/hand_turn_definition.schema.json`) | `human.ask` action and `human.decision` reaction | pending |",
     "| affinity (`internal/compiler/affinity.go`) | Actor selection on the declaration action | pending |",
@@ -199,7 +206,7 @@ for endpoint, target in (
     lines.append(f"| web UI `/v1alpha1/{endpoint}` (`web/src/api/client.ts`) | {target} | pending; graph read path retained |")
 
 for event in ("created", "completed", "failed", "cancelled", "bounded"):
-    lines.append(f"| nodes-notifier `dev.culture.nodes.run.{event}` (`internal/notifier/lifecycle.go`) | Lineage or firing lifecycle event to `discord.post`; keep graph event delivery | pending; graph read path retained |")
+    lines.append(f"| nodes-notifier `dev.culture.nodes.run.{event}` (`internal/notifier/lifecycle.go`) | `examples/notify/declarations/manifest.json`: relevant milestone, failure or human-needed fact to `discord.post`; legacy graph event delivery remains until t37 | source; runtime parity pending; graph read path retained |")
 
 lines += [
     "| `scripts/collect-handover.py` run/node-run/attempt detail | Resolve lineage, firing and action attempt for handover; keep graph detail reads | pending; graph read path retained |",

@@ -15,7 +15,7 @@ import (
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
-var reservedEventNames = []string{"timer", "human.decision", "code.result", "agent.result", "node.expired",
+var reservedEventNames = []string{"timer", "human.decision", "human.requested", "code.result", "agent.result", "node.expired",
 	"action.failed", "action.timed_out", "action.rejected", "action.capacity_exhausted", "action.budget_exhausted"}
 
 func signalEventCount(t *testing.T, f *fixture) int {

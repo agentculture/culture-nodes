@@ -1385,16 +1385,26 @@ each entry matching a workflow key exactly or, when it ends in `*`, as a
 prefix. Every lifecycle event of a matching run (created, completed,
 failed, cancelled, bounded) is consumed — the cursor advances past it —
 and logged as `outcome=skipped`, never posted. Compose defaults it to
-`pr-upkeep-sweep-cycle,pr-upkeep-sweep`, so the five-minute pr-upkeep sweep
+`pr-upkeep-sweep-cycle,pr-upkeep-sweep,notify-*`, so the five-minute pr-upkeep sweep
 no longer floods the channel after a plain `deploy.sh thor`, on either lane.
 A run a declaration fired is matched by its **declaration name** (the run
 view's `run.firing.declaration_name`, which is also what the notification
 shows), not by its one-node envelope workflow, which is why the declaration
 sweep is listed as `pr-upkeep-sweep` (`pr-upkeep-sweep*` would also mute
-`pr-upkeep-sweep-failed`). An empty value does **not** unmute — compose's
+`pr-upkeep-sweep-failed`). The `notify-*` prefix mutes notification
+declaration envelope runs while their `discord.post` action sends the message.
+Deactivate a notification declaration to mute that case. An empty value does **not** unmute — compose's
 `:-` substitutes the default for empty too — so to post every workflow
 set a value naming none, e.g. `none`. The key is optional to
 `audit-credentials.sh` by construction (it carries a non-empty default).
+
+Before activating notification declarations, check that the newest
+`company/notify-discord` actor row advertises
+`{"stamping":{"marker":"cn1","version":1}}` in `actors.capabilities`.
+The bridge serves this fact at authenticated `GET /v1/capabilities`.
+After checking it, register a new revision with
+`register-actor.sh company/notify-discord <numeric-IPv4-endpoint> <token-env> --stamping-cn1`.
+The script carries the capability into later revisions.
 
 **Secrets**: `CULTURE_NODES_WEBHOOK_URL` (checked first) or
 `DISCORD_WEBHOOK_URL` (fallback) — read by `internal/notify.ResolveWebhook`

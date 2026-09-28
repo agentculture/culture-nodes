@@ -350,6 +350,18 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	}
 	schema := map[string]any{"schema": map[string]any{"type": "object"}}
 	outcomes := map[string]any{outcome: schema}
+	// The notify bridge's domain vocabulary is fixed. Supply it at the
+	// engine seam so an omitted author contract cannot reject a delivered post.
+	if r.Action.Kind == "discord.post" {
+		if with.GraphConfig.Contract.Outcomes == nil {
+			with.GraphConfig.Contract.Outcomes = make(map[string]json.RawMessage)
+		}
+		for _, name := range []string{"sent", "delivery_failed"} {
+			if _, ok := with.GraphConfig.Contract.Outcomes[name]; !ok {
+				with.GraphConfig.Contract.Outcomes[name] = json.RawMessage(`{"schema":{"type":"object","required":["delivered","status_code"]}}`)
+			}
+		}
+	}
 	// Task t38e: an agent's domain outcome is carried through, not collapsed
 	// to `completed`. The node offers the outcomes the declaration's migrated
 	// contract declares (with.graph_config.contract.outcomes: the source

@@ -307,3 +307,14 @@ and emits `agent.result` with `outcome: blocked` and that output as `result`.
 Declarations cannot redefine this reserved outcome. Pr-upkeep routes it to
 platform maintainers for a human decision; that decision closes the blocked
 attempt and does not retry the action automatically.
+
+### Notification declarations (t41)
+
+The notifier becomes a set of `discord.post` declarations, one per case.
+Deactivating a declaration mutes its notification. The control plane emits
+reserved `human.requested` when a declaration's `human.ask` run has a pending
+task; a guarded driver pass offers it at that action's landing node.
+Notification reactions sharing a live node use the real reactor's trigger
+kind, so they co-fire without consuming a later reaction. Their landing
+nodes expire after five minutes. The legacy daemon skips `notify-*` envelope
+runs during the graph transition and retires with the graph lane in t37.

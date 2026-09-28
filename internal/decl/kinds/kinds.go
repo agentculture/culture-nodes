@@ -56,6 +56,7 @@ var triggers = []Kind{
 	{Name: "jira.issue.created", Version: 1, Consumes: []ArtifactType{ArtifactJiraIssue}, Produces: []ArtifactType{ArtifactJiraIssue}},
 	{Name: "jira.comment", Version: 1, Consumes: []ArtifactType{ArtifactJiraComment}, Produces: []ArtifactType{ArtifactJiraComment}},
 	{Name: "human.decision", Version: 1, Consumes: []ArtifactType{ArtifactHumanDecision}, Produces: []ArtifactType{ArtifactHumanDecision}},
+	{Name: "human.requested", Version: 1, Consumes: []ArtifactType{ArtifactHumanDecision}, Produces: []ArtifactType{ArtifactHumanDecision}},
 	// code.result (task t38c, #328, deviation d3): the reaction to a code.run
 	// action's runner result, the code step's counterpart of human.decision.
 	// Neither is reported by a stamping bridge; the control plane emits both

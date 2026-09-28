@@ -172,6 +172,34 @@ type Engine struct {
 	dispatcher Dispatcher
 }
 
+// decidedOutcomes is the single classification for rows written by Handle
+// and its marker/node helpers. False entries are intermediate progress. A recorded
+// error is final for this delivery: a later source tick must not silently
+// retry an action or apply a newly activated version to an old event. A new
+// signal event is the explicit retry. Deferred is final for ordinary offers;
+// DrainSubject alone opts into resuming that queued event.
+var decidedOutcomes = map[string]bool{
+	OutcomeMatched: false, OutcomeLineageChecked: false,
+	OutcomeConditionTrue: false, OutcomeDispatching: false,
+	OutcomeLineageMissing: true, OutcomeLoopLimited: true,
+	OutcomeConditionError: true, OutcomeConditionFalse: true,
+	OutcomeEvaluationError: true, OutcomeDuplicate: true,
+	OutcomeDispatchFailed: true, OutcomeFired: true, OutcomeDeferred: true,
+	OutcomeShadow: true, OutcomeBudgetBlocked: true,
+	OutcomeOverlapSuppressed: true, OutcomeStampingRefused: true,
+	OutcomeSensitivityBlocked: true, OutcomeStartUnmatched: true,
+	OutcomeReservedEventRejected: true, OutcomeParentNoLandingNode: true,
+	OutcomeNodeClosed: true, OutcomeNodeOrphan: true, OutcomeNodeExpired: true,
+	"marker rejected": true,
+}
+
+// decidedReader is optional so small in-memory backends can continue to
+// exercise the firing loop without a persistence API. Production reads all
+// outcomes for one event with the 0060 (namespace,event,...) index.
+type decidedReader interface {
+	DecidedForEvent(context.Context, string, string) (map[string]string, error)
+}
+
 // New builds an engine whose marker key is read from cfg.MarkerKeyEnv.
 func New(cfg Config, backend Backend, markers MarkerStore, dispatcher Dispatcher) (*Engine, error) {
 	if cfg.MarkerKeyEnv == "" || backend == nil || dispatcher == nil {
@@ -188,8 +216,23 @@ func New(cfg Config, backend Backend, markers MarkerStore, dispatcher Dispatcher
 // declaration in its namespace. A failure in one declaration is recorded
 // and joined into the returned error; it never stops the others.
 func (e *Engine) Handle(ctx context.Context, event Event) error {
+	return e.handle(ctx, event, "")
+}
+
+func (e *Engine) handle(ctx context.Context, event Event, resumeDeferred string) error {
 	if event.NamespaceID == "" || event.ID == "" || event.Kind == "" {
 		return errors.New("declengine: event identity and kind required")
+	}
+	decided := map[string]string{}
+	if reader, ok := e.backend.(decidedReader); ok {
+		var err error
+		decided, err = reader.DecidedForEvent(ctx, event.NamespaceID, event.ID)
+		if err != nil {
+			return err
+		}
+	}
+	if decided[reservedEventDeclarationID] != "" || decided[nodeLifecycleDeclarationID] != "" {
+		return nil
 	}
 	event.Origin.NamespaceID, event.Origin.EventID, event.Origin.EventKind = event.NamespaceID, event.ID, event.Kind
 	event.arrival = nodeArrival{}
@@ -202,9 +245,13 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 			return err
 		}
 	}
-	parent, err := e.markers.Resolve(ctx, event.Origin)
-	if err != nil {
-		return err
+	var parent string
+	if decided["origin-marker"] == "" {
+		var err error
+		parent, err = e.markers.Resolve(ctx, event.Origin)
+		if err != nil {
+			return err
+		}
 	}
 	// t38g (review A2): the ingresses refuse these names already
 	// (kinds.CheckExternalEvent); this is the engine's own refusal, after
@@ -242,6 +289,13 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	var failures []error
 	anyMatched := false
 	for _, a := range active {
+		if decided[a.ID] != "" && !(a.ID == resumeDeferred && decided[a.ID] == OutcomeDeferred) {
+			// A prior decision already consumed this declaration's chance to
+			// react. Do not let the no-match orphan path treat that skip as
+			// evidence that the node lost all reacting declarations.
+			anyMatched = true
+			continue
+		}
 		matched, startMiss, err := classify(a.Declaration, event)
 		if err != nil {
 			failures = append(failures, err)
@@ -509,6 +563,27 @@ func landingDeadline(n decl.Node) (time.Duration, error) {
 // PostgresBackend adapts the 0059 catalog and the 0060 firing and
 // evaluation tables.
 type PostgresBackend struct{ Store *postgres.Store }
+
+// DecidedForEvent reads one event's evaluation trail, independent of version.
+// The existing declaration_evaluations_event_idx covers this scan.
+func (p PostgresBackend) DecidedForEvent(ctx context.Context, namespaceID, eventID string) (map[string]string, error) {
+	rows, err := p.Store.Pool().Query(ctx, `SELECT declaration_id,outcome FROM declaration_evaluations WHERE namespace_id=$1 AND event_id=$2`, namespaceID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	decided := map[string]string{}
+	for rows.Next() {
+		var id, outcome string
+		if err := rows.Scan(&id, &outcome); err != nil {
+			return nil, err
+		}
+		if decidedOutcomes[outcome] && (decided[id] == "" || decided[id] == OutcomeDeferred) {
+			decided[id] = outcome
+		}
+	}
+	return decided, rows.Err()
+}
 
 // Active returns, per declaration, the version its newest activation or
 // deactivation names, when that entry is an activation.

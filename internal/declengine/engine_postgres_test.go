@@ -183,8 +183,7 @@ func TestPostgresFiringThroughExistingWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(outcomes(t, db, ns, eventID, version.DeclarationID), ",")
-	want := strings.Join([]string{OutcomeMatched, OutcomeLineageChecked, OutcomeConditionTrue, OutcomeDispatching, OutcomeFired,
-		OutcomeMatched, OutcomeLineageChecked, OutcomeConditionTrue, OutcomeDuplicate}, ",")
+	want := strings.Join([]string{OutcomeMatched, OutcomeLineageChecked, OutcomeConditionTrue, OutcomeDispatching, OutcomeFired}, ",")
 	if got != want {
 		t.Fatalf("evaluation steps %s, want %s", got, want)
 	}

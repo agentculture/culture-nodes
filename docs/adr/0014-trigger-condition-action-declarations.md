@@ -161,6 +161,19 @@ Every consumer of today's run surfaces keeps a read path until it migrates:
 
 ## Addendum (2026-09-28): owner decisions during the build
 
+### Redelivery decisions (t40a)
+
+The post-commit delivery hook still offers watermark duplicates to the
+declaration engine so a delivery committed before `Handle` ran can recover.
+For each event and declaration, the engine checks the existing evaluation
+trail once per event, across declaration versions. A decided outcome prevents
+another evaluation row or firing on redelivery. Progress rows alone permit
+recovery. Recorded condition, evaluation and dispatch failures are final for
+that event: retrying a failed action requires a new signal event. A queued
+`deferred` event is final for ordinary redelivery but the subject queue's
+explicit drain may resume it. Stored freeze/thaw reactions remain first-time
+events until their declarations reach a decision.
+
 The build (issue #328) raised questions the spec left open. The owner decided
 them on 2026-09-28. Each is recorded as a devague deviation
 (`devague deviate --list`) and implemented as its own task.

@@ -150,8 +150,8 @@ func (e *Engine) checkSubjectConcurrency(ctx context.Context, event Event, a Act
 // ThawAndReplay applies to stored events: a replay that fails leaves the
 // entry queued for the next slot that frees, rather than dropping an event
 // OutcomeDeferred promised would never be dropped. A crash between Handle
-// and the delete replays it once more, which is safe -- Handle claims one
-// firing per (event, declaration) and the repeat records a duplicate. The
+// and the delete replays it once more; the decided-outcome read skips a
+// declaration already fired by the earlier drain. The
 // delete is conditional on the entry's version, so a replay that deferred
 // again (or a newer event that replaced the entry meanwhile) stays queued.
 func (e *Engine) DrainSubject(ctx context.Context, namespaceID, declarationID string) error {
@@ -159,7 +159,7 @@ func (e *Engine) DrainSubject(ctx context.Context, namespaceID, declarationID st
 	if err != nil || !found {
 		return err
 	}
-	if err := e.Handle(ctx, deferred.Event); err != nil {
+	if err := e.handle(ctx, deferred.Event, declarationID); err != nil {
 		return err
 	}
 	return e.backend.DeleteDeferredSubject(ctx, namespaceID, deferred)

@@ -550,6 +550,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1alpha1/declarations/validate", s.wrap(s.handleValidateDeclaration))
 	mux.HandleFunc("POST /v1alpha1/declarations", s.wrap(s.handlePublishDeclaration))
 	mux.HandleFunc("GET /v1alpha1/declarations", s.wrap(s.handleListDeclarations))
+	mux.HandleFunc("GET /v1alpha1/declarations/grants", s.wrap(s.handleDeclarationGrants))
 	mux.HandleFunc("POST /v1alpha1/declarations/aliases", s.wrap(s.handleCreateDeclarationAlias))
 	// GET .../declaration-aliases/{name}, not .../declarations/aliases/{name}
 	// (task t21b, #328): net/http.ServeMux refuses to register a literal

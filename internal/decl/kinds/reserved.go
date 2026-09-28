@@ -19,6 +19,7 @@ const ControlPlaneEmitter = "engine_declaration_engine"
 // every "action." name: the action.* results are the engine's reports on
 // its own dispatches.
 var controlPlaneEvents = map[string]bool{
+	"timer":                       true,
 	string(ArtifactHumanDecision): true,
 	string(ArtifactCodeResult):    true,
 	"agent.result":                true,
@@ -44,7 +45,7 @@ func (e *ReservedEventError) Error() string {
 	if e.Name != "" {
 		return fmt.Sprintf("event name %q is reserved: only the control plane emits it", e.Name)
 	}
-	return fmt.Sprintf("emitter %q is reserved: it names the control plane's declaration engine", e.Emitter)
+	return fmt.Sprintf("emitter %q is reserved: it names an internal event source", e.Emitter)
 }
 
 // CheckExternalEvent is the one check every ingress that appends a signal
@@ -55,7 +56,7 @@ func CheckExternalEvent(name, emitter string) error {
 	if ReservedEvent(name) {
 		return &ReservedEventError{Name: name}
 	}
-	if emitter == ControlPlaneEmitter {
+	if emitter == ControlPlaneEmitter || strings.HasPrefix(emitter, "schedule:") {
 		return &ReservedEventError{Emitter: emitter}
 	}
 	return nil

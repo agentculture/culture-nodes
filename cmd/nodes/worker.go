@@ -15,6 +15,7 @@ import (
 	"github.com/agentculture/culture-nodes/internal/actors"
 	"github.com/agentculture/culture-nodes/internal/api"
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -151,7 +152,8 @@ func cmdWorker(args []string, jsonMode bool) (int, error) {
 		}
 	}
 
-	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider))
+	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider),
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: db}}))
 	if err != nil {
 		return 0, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,
@@ -478,7 +480,8 @@ Stops cleanly on SIGINT or SIGTERM.
 // instance it drives, so a node completed by this in-process worker emits
 // the same engine-transition telemetry the API server's own engine would.
 func buildWorker(db *postgres.Store, namespace string, telemetryProvider *telemetry.Provider) (*worker.Worker, *runnerServiceReloader, *clifmt.CliError) {
-	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider))
+	eng, err := postgres.NewEngine(db, namespace, engine.WithTelemetry(telemetryProvider),
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: db}}))
 	if err != nil {
 		return nil, nil, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,

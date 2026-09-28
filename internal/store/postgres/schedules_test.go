@@ -8,8 +8,48 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
+
+type scheduleCapture struct{ deliveries []postgres.SignalDelivery }
+
+func (c *scheduleCapture) HandleDeliveredEvent(_ context.Context, d postgres.SignalDelivery) error {
+	c.deliveries = append(c.deliveries, d)
+	return nil
+}
+
+func TestTimerScheduleDeliversRealDeclarationEvent(t *testing.T) {
+	s := requireStore(t)
+	ns := mustNamespace(t, s, "timer-declaration")
+	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, payload string
+		wantSchedule  bool
+	}{
+		{"pr-upkeep-sweep-timer", `{"schedule":"pr-upkeep-sweep-5m"}`, true},
+		{"pr-upkeep-empty-timer", `{}`, false},
+	} {
+		sc := mustSchedule(t, s, postgres.CreateScheduleInput{NamespaceID: ns.ID, Name: tc.name,
+			EventName: "timer", Payload: json.RawMessage(tc.payload), Interval: 5 * time.Minute, FirstFireAt: at})
+		capture := &scheduleCapture{}
+		result, err := s.FireSchedule(context.Background(), postgres.FireScheduleInput{ScheduleID: sc.ID, Now: at, Declarations: capture})
+		if err != nil || !result.Fired || len(capture.deliveries) != 1 {
+			t.Fatalf("FireSchedule %s: fired=%v, deliveries=%d, err=%v", tc.name, result.Fired, len(capture.deliveries), err)
+		}
+		event := declengine.EventFromSignal(capture.deliveries[0].Event)
+		if event.Kind != "timer" || event.Emitter != "schedule:"+tc.name {
+			t.Fatalf("event = %+v", event)
+		}
+		_, hasSchedule := event.Variables["schedule"]
+		if hasSchedule != tc.wantSchedule {
+			t.Fatalf("%s schedule present=%v", tc.name, hasSchedule)
+		}
+		if tc.wantSchedule && event.Variables["schedule"] != "pr-upkeep-sweep-5m" {
+			t.Fatalf("schedule=%v", event.Variables["schedule"])
+		}
+	}
+}
 
 // Store-level tests for the declared cadence (issue #107, task t33).
 //

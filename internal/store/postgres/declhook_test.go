@@ -75,7 +75,7 @@ func TestDeliveredEventHandlerRunsAfterCommitWithoutTheDeliveryLocks(t *testing.
 	probe := &probeHandler{t: t, s: s, lockKey: "signal-watermark:" + ns.ID + ":test:source"}
 
 	in := postgres.DeliverSignalEventInput{
-		NamespaceID: ns.ID, Name: "timer", Emitter: "test", Subject: "ISSUE-7",
+		NamespaceID: ns.ID, Name: "pr-upkeep.pr", Emitter: "test", Subject: "ISSUE-7",
 		SourceKey: "test:source", Watermark: json.RawMessage(`{"seq":"1"}`),
 		Declarations: probe,
 	}
@@ -106,7 +106,7 @@ func TestDeliveredEventHandlerRunsAfterCommitWithoutTheDeliveryLocks(t *testing.
 	}
 
 	// No handler: exactly the pre-t38 delivery.
-	plain, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns.ID, Name: "timer", Emitter: "test"})
+	plain, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns.ID, Name: "pr-upkeep.pr", Emitter: "test"})
 	if err != nil || plain.DeclarationErr != nil || len(probe.calls) != 3 {
 		t.Fatalf("handler-less delivery: err=%v declErr=%v calls=%d", err, plain.DeclarationErr, len(probe.calls))
 	}
@@ -121,7 +121,7 @@ func TestDeliveredEventHandlerRunsAfterFireScheduleCommits(t *testing.T) {
 	ns := mustNamespace(t, s, "declhook-sched")
 	base := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	sc := mustSchedule(t, s, postgres.CreateScheduleInput{
-		NamespaceID: ns.ID, Name: "decl-timer", EventName: "timer", Emitter: "schedule",
+		NamespaceID: ns.ID, Name: "decl-timer", EventName: "timer",
 		Payload: json.RawMessage(`{}`), Interval: time.Hour, FirstFireAt: base,
 	})
 	probe := &probeHandler{t: t, s: s, scheduleID: sc.ID}

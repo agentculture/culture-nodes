@@ -6546,6 +6546,54 @@
         ]
       }
     },
+    "/v1alpha1/declarations/grants": {
+      "get": {
+        "description": "Read-only deploy preflight view. Each item names the activated version's action environment references. Values and inactive declarations are omitted.",
+        "operationId": "listActivatedDeclarationGrants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "environment_refs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "environment_refs"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Grant key names by activated declaration."
+          }
+        },
+        "summary": "List environment grant names required by activated declaration actions.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/declarations/validate": {
       "post": {
         "description": "Task t19 (#328; spec c27, honesty h21). Never persists anything -- a document that fails to parse is a documented domain outcome (`valid: false`), not an HTTP error, matching `POST /v1alpha1/workflows/validate`'s posture. `warnings` reports every `action.with` template reference that may be missing and has no default -- it crosses only a 'can' link, names a declaration this one has no link to at all, or is a numeric `{N:...}` reference beyond this declaration's guaranteed ('must') predecessor count. Warnings never affect `valid`.",

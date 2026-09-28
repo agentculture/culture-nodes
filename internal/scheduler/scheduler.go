@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	idstore "github.com/agentculture/culture-nodes/internal/store"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -930,7 +931,8 @@ func (sch *Scheduler) engineFor(namespaceID string) (*engine.Engine, error) {
 	if eng, ok := sch.engines[namespaceID]; ok {
 		return eng, nil
 	}
-	eng, err := postgres.NewEngine(sch.db, namespaceID, engine.WithTelemetry(sch.opts.Telemetry))
+	eng, err := postgres.NewEngine(sch.db, namespaceID, engine.WithTelemetry(sch.opts.Telemetry),
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: sch.db}}))
 	if err != nil {
 		return nil, err
 	}

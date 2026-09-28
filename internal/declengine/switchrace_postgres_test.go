@@ -98,7 +98,7 @@ type deliveryResult struct {
 func deliverAsync(db *postgres.Store, ns string, payload json.RawMessage, h postgres.DeliveredEventHandler) <-chan deliveryResult {
 	out := make(chan deliveryResult, 1)
 	go func() {
-		d, err := db.DeliverSignalEvent(context.Background(), postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Payload: payload, Emitter: "test", Declarations: h})
+		d, err := db.DeliverSignalEvent(context.Background(), postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Payload: payload, Emitter: "test", Declarations: h})
 		out <- deliveryResult{d, err}
 	}()
 	return out
@@ -112,7 +112,7 @@ func TestPostgresFlipToBeforeWaitsForAnInFlightEvaluation(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-race-a1").ID
-	va := publishActive(t, db, ns, declFor("race-a1", RootNode, "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
+	va := publishActive(t, db, ns, declFor("race-a1", RootNode, "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 	e := raceEngine(t, db, "TCA_RACE_A1_KEY")
 	if _, err := (PostgresSwitchStore{Store: db}).Flip(ctx, ns, ModeAfter, "human:ops", "start"); err != nil {
 		t.Fatal(err)
@@ -166,8 +166,8 @@ func TestPostgresFlipToAfterWaitsSoAReactionIsNotLost(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-race-a2").ID
-	va := publishActive(t, db, ns, declFor("race-a2-a", RootNode, "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
-	vb := publishActive(t, db, ns, declFor("race-a2-b", "waiting", "none", "done", "none", "timer", `{"uses":"actor://test"}`))
+	va := publishActive(t, db, ns, declFor("race-a2-a", RootNode, "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
+	vb := publishActive(t, db, ns, declFor("race-a2-b", "waiting", "none", "done", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 	e := raceEngine(t, db, "TCA_RACE_A2_KEY")
 	plain := Router{Engine: e, Switch: PostgresSwitchStore{Store: db}}
 	if err := flipAndReplay(ctx, db, e, ns, ModeAfter); err != nil {
@@ -183,7 +183,7 @@ func TestPostgresFlipToAfterWaitsSoAReactionIsNotLost(t *testing.T) {
 	}
 
 	sw := newPausingSwitch(db)
-	handled := deliverAsync(db, ns, originPayload(t, reactEvent(t, db, ns, "placeholder", fa, "timer", nil)), Router{Engine: e, Switch: sw})
+	handled := deliverAsync(db, ns, originPayload(t, reactEvent(t, db, ns, "placeholder", fa, "pr-upkeep.pr", nil)), Router{Engine: e, Switch: sw})
 	if mode := <-sw.read; mode != ModeBefore {
 		t.Fatalf("router read %q, want %q", mode, ModeBefore)
 	}
@@ -241,7 +241,7 @@ func TestPostgresDrainSubjectKeepsTheDeferralUntilItsReplaySucceeds(t *testing.T
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-drain-keep").ID
-	a := declFor("dk-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`)
+	a := declFor("dk-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	a.Trigger.MaxConcurrentSubject = 1
 	va := publishActive(t, db, ns, a)
 	fail := false
@@ -253,7 +253,7 @@ func TestPostgresDrainSubjectKeepsTheDeferralUntilItsReplaySucceeds(t *testing.T
 	}
 	first, second := deliver(t, db, ns), deliver(t, db, ns)
 	for _, id := range []string{first, second} {
-		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: id, Kind: "timer", Node: "intake", Subject: "ISSUE-9"}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: id, Kind: "pr-upkeep.pr", Node: "intake", Subject: "ISSUE-9"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -298,7 +298,7 @@ func TestPostgresShadowFiringSpendsNoRealBudget(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-shadow-budget").ID
-	va := publishActive(t, db, ns, declFor("sb-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
+	va := publishActive(t, db, ns, declFor("sb-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 	insertDeclarationBudget(t, db, ns, "node", "waiting", intp(1), nil)
 	e := raceEngine(t, db, "TCA_SHADOW_BUDGET_KEY")
 	sw := PostgresSwitchStore{Store: db}
@@ -306,7 +306,7 @@ func TestPostgresShadowFiringSpendsNoRealBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	shadowed := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: shadowed, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: shadowed, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := terminalOutcome(t, db, ns, shadowed, va.DeclarationID); got != OutcomeShadow {
@@ -320,7 +320,7 @@ func TestPostgresShadowFiringSpendsNoRealBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	realEv := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: realEv, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: realEv, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, reason := terminalOutcome(t, db, ns, realEv, va.DeclarationID); got != OutcomeFired {

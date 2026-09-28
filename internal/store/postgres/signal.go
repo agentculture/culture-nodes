@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store"
@@ -327,7 +326,10 @@ func (s *Store) SignalEventByID(ctx context.Context, id string) (SignalEvent, bo
 
 // DeliverSignalEventInput is one inbound signal event.
 type DeliverSignalEventInput struct {
-	NamespaceID string
+	// scheduleFire is set only by FireSchedule, inside this package. External
+	// callers cannot authorize a reserved timer through the delivery API.
+	scheduleFire bool
+	NamespaceID  string
 	// Name is the signal name subscriptions match on.
 	Name string
 	// Payload is the emitter's free-form event body. Defaults to "{}".
@@ -523,9 +525,7 @@ func (in DeliverSignalEventInput) validate() error {
 // It does not commit and does not roll back: the caller owns tx's lifetime,
 // including the rollback that undoes everything this wrote.
 func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) (SignalDelivery, error) {
-	// t38g (A2): every caller appends for an outside party; the engine's
-	// own emitters never come through here (kinds.CheckExternalEvent).
-	if err := kinds.CheckExternalEvent(in.Name, in.Emitter); err != nil {
+	if err := checkSignalOrigin(in); err != nil {
 		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: %w", err)
 	}
 	if issueKey, ok := jiraCreatedIssueSourceKey(in.SourceKey); ok {

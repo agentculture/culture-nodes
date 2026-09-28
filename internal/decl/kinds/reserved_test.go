@@ -10,7 +10,7 @@ import (
 // registered now or later -- and the outside facts are not.
 func TestReservedEventsAreTheControlPlanesOwn(t *testing.T) {
 	for _, k := range Triggers() {
-		engineOwn := k.Name == "human.decision" || k.Name == "code.result" || k.Name == "agent.result"
+		engineOwn := k.Name == "timer" || k.Name == "human.decision" || k.Name == "code.result" || k.Name == "agent.result"
 		for _, c := range k.Consumes {
 			if c == ArtifactActionResult || c == ArtifactNode {
 				engineOwn = true
@@ -30,10 +30,10 @@ func TestCheckExternalEvent(t *testing.T) {
 	if err := CheckExternalEvent("human.decision", "bridge"); !errors.As(err, &refusal) || refusal.Name != "human.decision" {
 		t.Fatalf("reserved name: err = %v", err)
 	}
-	if err := CheckExternalEvent("timer", ControlPlaneEmitter); !errors.As(err, &refusal) || refusal.Emitter != ControlPlaneEmitter {
+	if err := CheckExternalEvent("ordinary", ControlPlaneEmitter); !errors.As(err, &refusal) || refusal.Emitter != ControlPlaneEmitter {
 		t.Fatalf("reserved emitter: err = %v", err)
 	}
-	if err := CheckExternalEvent("timer", "external"); err != nil {
+	if err := CheckExternalEvent("ordinary", "external"); err != nil {
 		t.Fatalf("ordinary event refused: %v", err)
 	}
 }

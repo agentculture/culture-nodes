@@ -13,7 +13,7 @@ import (
 // arrival node -- EventFromSignal always starts it at root.
 func TestEventFromSignalAlwaysArrivesAtRoot(t *testing.T) {
 	for _, payload := range []string{`{"node":"waiting"}`, `{"node":"waiting","origin":{"marker":"cn1:x"}}`, `{}`, `[1]`} {
-		ev := EventFromSignal(postgres.SignalEvent{ID: "e", NamespaceID: "ns", Name: "timer", Payload: json.RawMessage(payload)})
+		ev := EventFromSignal(postgres.SignalEvent{ID: "e", NamespaceID: "ns", Name: "pr-upkeep.pr", Payload: json.RawMessage(payload)})
 		if ev.Node != RootNode {
 			t.Errorf("payload %s: Node = %q, want %q", payload, ev.Node, RootNode)
 		}
@@ -23,7 +23,7 @@ func TestEventFromSignalAlwaysArrivesAtRoot(t *testing.T) {
 	}
 	// t38g: the payload's node is only a variable; the emitter is the
 	// signal row's, for Handle's reserved-name check.
-	ev := EventFromSignal(postgres.SignalEvent{ID: "e", NamespaceID: "ns", Name: "timer", Emitter: "jira-webhook", Payload: json.RawMessage(`{"node":"waiting"}`)})
+	ev := EventFromSignal(postgres.SignalEvent{ID: "e", NamespaceID: "ns", Name: "pr-upkeep.pr", Emitter: "jira-webhook", Payload: json.RawMessage(`{"node":"waiting"}`)})
 	if ev.Node != RootNode || ev.Variables["node"] != "waiting" || ev.Emitter != "jira-webhook" {
 		t.Fatalf("EventFromSignal = node %q, variables %v, emitter %q; want root, the payload kept as variables, the row's emitter", ev.Node, ev.Variables, ev.Emitter)
 	}
@@ -55,7 +55,7 @@ func TestClassifyStartFrom(t *testing.T) {
 		{"declared name alone is not enough", codex, atDeclared, false, "no firing opened"},
 		{"any at an opened node", anyNode, arrivedClaude, true, ""},
 		{"any at root", anyNode, atRoot, false, "no firing opened"},
-		{"other trigger kind is silent", codex, Event{Kind: "timer", Node: RootNode}, false, ""},
+		{"other trigger kind is silent", codex, Event{Kind: "pr-upkeep.pr", Node: RootNode}, false, ""},
 	} {
 		matched, miss, err := classify(tc.d, tc.ev)
 		if err != nil {

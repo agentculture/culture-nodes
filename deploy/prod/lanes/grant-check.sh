@@ -2,7 +2,7 @@
 # preflight, before anything on the host is shipped, built or stopped.
 #
 # What it answers: does the runner on this host hold every environment grant
-# that a workflow the control plane can start TODAY declares? On 2026-08-29 the
+# that a workflow or activated declaration can start TODAY declares? On 2026-08-29 the
 # answer became "no" — a deploy truncated runner-secrets.env — and nothing
 # asked the question until 183 sweep runs had been refused over sixteen hours.
 # The runner boundary's own refusal is correct and immediate
@@ -18,8 +18,9 @@
 # remote command emits names and nothing else — so the refusal is safe to paste
 # into an issue, which is what an operator does with it.
 #
-# SCOPE: the LATEST version of each workflow_key that has a trigger, or that an
-# enabled schedule can start. prod carries ~104 published workflow versions,
+# SCOPE: activated declaration actions plus the LATEST version of each
+# workflow_key that has a trigger, or that an enabled schedule can start.
+# prod carries ~104 published workflow versions,
 # most of them superseded; diffing all of them would flag grants nothing can
 # ask for, and a gate that cries wolf is a gate people learn to skip. A
 # workflow started only by hand is out of scope for the same reason: whoever
@@ -157,6 +158,7 @@ granted = set(os.environ.get("GRANT_CHECK_GRANTED", "").split())
 granted |= set(os.environ.get("GRANT_CHECK_DEPLOY_GRANTS", "").split())
 schedules = collection("GRANT_CHECK_SCHEDULES")
 workflows = collection("GRANT_CHECK_WORKFLOWS")
+declarations = collection("GRANT_CHECK_DECLARATIONS")
 
 # Anything in scope this check could not parse. It refuses the deploy exactly
 # like a missing grant does, because it is the same fact: nobody has confirmed
@@ -209,6 +211,16 @@ for index, version in enumerate(workflows):
 
 missing = {}
 in_scope = []
+for index, declaration in enumerate(declarations):
+    if not isinstance(declaration, dict):
+        refuse("declaration grant #%d is not an object" % index)
+    name = declaration.get("name")
+    refs = declaration.get("environment_refs")
+    if not isinstance(name, str) or not name or not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs):
+        refuse("declaration grant #%d has no valid name/ref list" % index)
+    for ref in refs:
+        if ref not in granted:
+            missing.setdefault(ref, []).append("activated declaration %s" % name)
 for key in sorted(latest):
     number, version = latest[key]
     subject = "%s@%d" % (key, number)
@@ -346,7 +358,7 @@ grant_check_host() { # host
     grant_check_refuse "$host" "a temporary directory for the control plane's answers could not be created under ${TMPDIR:-/tmp}" \
       "Make ${TMPDIR:-/tmp} writable on the machine running this deploy (or set TMPDIR to somewhere that is) and re-run."
 
-  say "grant check: reading published workflows and schedules from $source_of_url (read-only)"
+  say "grant check: reading published workflows, schedules and activated declaration grants from $source_of_url (read-only)"
   curl -fsS --max-time "${NODES_API_TIMEOUT_SECONDS:-10}" -o "$workspace/workflows.json" "$url/v1alpha1/workflows?limit=500" || {
     rm -rf "$workspace"
     say "WARNING: grant check skipped — the control plane did not answer GET /v1alpha1/workflows; this deploy's grants are UNVERIFIED"
@@ -355,6 +367,11 @@ grant_check_host() { # host
   curl -fsS --max-time "${NODES_API_TIMEOUT_SECONDS:-10}" -o "$workspace/schedules.json" "$url/v1alpha1/schedules" || {
     rm -rf "$workspace"
     say "WARNING: grant check skipped — the control plane did not answer GET /v1alpha1/schedules; this deploy's grants are UNVERIFIED"
+    return 0
+  }
+  curl -fsS --max-time "${NODES_API_TIMEOUT_SECONDS:-10}" -o "$workspace/declarations.json" "$url/v1alpha1/declarations/grants" || {
+    rm -rf "$workspace"
+    say "WARNING: grant check skipped — the control plane did not answer GET /v1alpha1/declarations/grants; this deploy's grants are UNVERIFIED"
     return 0
   }
   granted=$(grant_check_names_on_host "$host") || {
@@ -370,6 +387,7 @@ grant_check_host() { # host
   read_status=0
   report=$(GRANT_CHECK_WORKFLOWS=$workspace/workflows.json \
     GRANT_CHECK_SCHEDULES=$workspace/schedules.json \
+    GRANT_CHECK_DECLARATIONS=$workspace/declarations.json \
     GRANT_CHECK_GRANTED=$granted \
     GRANT_CHECK_DEPLOY_GRANTS=$GRANT_CHECK_DEPLOY_GRANTS \
     python3 -c "$GRANT_CHECK_PY") || read_status=$?

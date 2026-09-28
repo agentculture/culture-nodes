@@ -279,6 +279,55 @@ func (s *Server) handleListDeclarations(w http.ResponseWriter, r *http.Request) 
 	return nil
 }
 
+// handleDeclarationGrants returns only environment grant names from active
+// declaration actions. The deploy preflight uses this read-only view; it must
+// inspect the activated version, which can differ from the latest publish.
+func (s *Server) handleDeclarationGrants(w http.ResponseWriter, r *http.Request) error {
+	versions, err := s.Store.ListDeclarations(r.Context(), s.NamespaceID)
+	if err != nil {
+		return internalError(err)
+	}
+	type grant struct {
+		Name            string   `json:"name"`
+		EnvironmentRefs []string `json:"environment_refs"`
+	}
+	items := make([]grant, 0)
+	for _, latest := range versions {
+		active, id, _, err := s.Store.DeclarationActivationStatus(r.Context(), s.NamespaceID, latest.DeclarationID)
+		if err != nil {
+			return internalError(err)
+		}
+		if !active {
+			continue
+		}
+		version, err := s.Store.GetDeclarationVersion(r.Context(), id)
+		if err != nil {
+			return internalError(err)
+		}
+		var d decl.Declaration
+		if err := json.Unmarshal(version.Body, &d); err != nil {
+			return internalError(err)
+		}
+		var with struct {
+			Operation struct {
+				EnvironmentRefs []string `json:"environmentRefs"`
+			} `json:"operation"`
+		}
+		if len(d.Action.With) > 0 {
+			if err := json.Unmarshal(d.Action.With, &with); err != nil {
+				return internalError(err)
+			}
+		}
+		refs := with.Operation.EnvironmentRefs
+		if refs == nil {
+			refs = []string{}
+		}
+		items = append(items, grant{Name: latest.Name, EnvironmentRefs: refs})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	return nil
+}
+
 // declarationShowOut is components.schemas.DeclarationShow: a declaration's
 // newest version plus its outbound links and current activation status.
 type declarationShowOut struct {

@@ -41,6 +41,8 @@ func TestAudienceRanking(t *testing.T) {
 		{"jira.issue.created", "jira.comment", false}, // same system
 		{"jira.issue.created", "agent.work", false},   // team -> team
 		{"human.decision", "agent.work", true},        // a person's answer -> team
+		{"code.result", "agent.work", true},           // a code result (operators) -> team
+		{"code.result", "code.run", false},            // same system
 		{"github.pr.approved", "discord.post", true},  // org -> public
 		{"timer", "discord.post", true},               // engine records -> public
 		{"no.such.trigger", "human.ask", true},        // unknown source is restricted

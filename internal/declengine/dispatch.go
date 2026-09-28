@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -450,9 +451,17 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	if nodeKind == "approval" {
 		output = "/run/input"
 	}
-	document := map[string]any{"apiVersion": "nodes.culture.dev/v1alpha1", "kind": "Workflow", "metadata": map[string]any{"name": "decl-" + strings.ToLower(r.Firing.DeclarationID), "version": "1.0.0", "ownerRef": "team/declarations"}, "spec": map[string]any{
+	spec := map[string]any{
 		"entry": "action", "contract": map[string]any{"input": schema, "output": schema},
-		"nodes": map[string]any{"action": node, "finish": map[string]any{"kind": "end", "ownerRef": "team/declarations", "output": map[string]any{"from": output}}}, "edges": edges}}
+		"nodes": map[string]any{"action": node, "finish": map[string]any{"kind": "end", "ownerRef": "team/declarations", "output": map[string]any{"from": output}}}, "edges": edges}
+	if nodeKind == "approval" {
+		limit, err := approvalRunLimit(r.Declaration.LandingNode)
+		if err != nil {
+			return nil, nil, err
+		}
+		spec["limits"] = map[string]any{"maxDuration": limit}
+	}
+	document := map[string]any{"apiVersion": "nodes.culture.dev/v1alpha1", "kind": "Workflow", "metadata": map[string]any{"name": "decl-" + strings.ToLower(r.Firing.DeclarationID), "version": "1.0.0", "ownerRef": "team/declarations"}, "spec": spec}
 	source, err := json.Marshal(document)
 	if err != nil {
 		return nil, nil, err
@@ -465,6 +474,28 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		return nil, nil, fmt.Errorf("declaration worker envelope: %v", diagnostics)
 	}
 	return cw, input, nil
+}
+
+// approvalRunLimit is a human.ask run's wall-clock bound. A person answers
+// on their own schedule, so the compiler's one-hour DefaultMaxDuration would
+// fail every decision made later than that (run.bounded max_duration), and
+// the decision would never reach a declaration as human.decision. Production
+// lost four decisions this way on 2026-09-28 (#328). The run must outlive
+// the landing node it opened -- the node's own deadline (node.expired) is
+// what bounds the wait -- so the bound is that deadline plus an hour, and a
+// year for a node declared "none".
+func approvalRunLimit(landing decl.Node) (string, error) {
+	if landing.Deadline == "" {
+		landing.Deadline = "none"
+	}
+	d, err := landingDeadline(landing)
+	if err != nil {
+		return "", err
+	}
+	if d == 0 {
+		return (365 * 24 * time.Hour).String(), nil
+	}
+	return (d + time.Hour).String(), nil
 }
 
 // agentOutcomeName is the shape of a domain outcome an agent node may

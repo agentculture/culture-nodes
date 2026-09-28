@@ -548,3 +548,34 @@ func TestForgedReactionStartsAFreshLineage(t *testing.T) {
 	r.drive()
 	r.assertContinues(fa, b, "human.decision", "approved", task)
 }
+
+// A person answers on their own schedule. A human.ask run decided hours after
+// it opened -- inside its landing node's deadline -- must still complete and
+// continue the lineage. Before #328's fix every declaration run inherited the
+// compiler's one-hour maxDuration, so production lost four decisions made
+// 5.5 h later: the engine failed each run (run.bounded max_duration) and no
+// human.decision was ever emitted.
+func TestHumanAskDecidedHoursLaterStillContinues(t *testing.T) {
+	for _, outcome := range []string{"approved", "rejected"} {
+		t.Run(outcome, func(t *testing.T) {
+			r := newReactionHarness(t)
+			ask := askDecl("rx-late-ask", "ready", "asked")
+			ask.LandingNode.Deadline = "168h"
+			a := r.publish(ask)
+			b := r.publish(jiraDecl("rx-late-after", "human.decision", "asked", "done"))
+			r.must(b, a)
+			r.start("ready")
+			fa := r.onlyFiring(a)
+			if state := r.settle(fa.id, true); state != "running" {
+				t.Fatalf("human.ask run is %s, want parked on its task", state)
+			}
+			if _, err := r.db.Pool().Exec(r.ctx, `UPDATE runs SET created_at=created_at-interval '5 hours' WHERE id=$1`, fa.id); err != nil {
+				t.Fatal(err)
+			}
+			task := r.decide(fa.id, outcome)
+			r.drive()
+			r.drive()
+			r.assertContinues(fa, b, "human.decision", outcome, task)
+		})
+	}
+}

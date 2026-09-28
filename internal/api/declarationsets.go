@@ -35,11 +35,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/decl"
 	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
+
+// setActivationLookup answers IsActivationDeclaration from the set's own
+// members first (a sibling may not be published yet), then from the store.
+type setActivationLookup struct {
+	members map[string]*decl.Declaration
+	store   declengine.StoreActivationLookup
+}
+
+func (l setActivationLookup) IsActivationDeclaration(ctx context.Context, namespaceID, name string) (bool, error) {
+	if d, ok := l.members[name]; ok {
+		return declengine.IsActivationDeclaration(*d), nil
+	}
+	return l.store.IsActivationDeclaration(ctx, namespaceID, name)
+}
 
 // declarationSetItem is one member's source. Format defaults to yaml.
 type declarationSetItem struct {
@@ -169,6 +185,21 @@ func (s *Server) validateDeclarationSet(ctx context.Context, items []declaration
 			ids[l.To] = v.DeclarationID
 		}
 	}
+	// Run Publish's own static activation gate (one level deep, c33/h64) on
+	// every member now, answering "is the target an activation declaration"
+	// from the set first, so a member that Publish would refuse fails
+	// validation before anything is written rather than halfway through.
+	lookup := setActivationLookup{members: members, store: declengine.StoreActivationLookup{Store: s.Store}}
+	for i, d := range parsed {
+		if d == nil {
+			continue
+		}
+		if err := declengine.ValidatePublish(ctx, s.NamespaceID, *d, lookup); err != nil {
+			out.Declarations[i].Diagnostics = append(out.Declarations[i].Diagnostics, err.Error())
+			out.Declarations[i].Valid = false
+			allValid = false
+		}
+	}
 	out.Valid = allValid && len(out.Diagnostics) == 0
 	if !out.Valid {
 		return out, parsed, nil
@@ -216,7 +247,7 @@ func (s *Server) publishDeclarationSet(ctx context.Context, principal declengine
 			"the declaration set does not validate: %d set diagnostic(s)", len(out.Diagnostics))
 	}
 	ids := map[string]string{}
-	var overlap []string
+	var overlap, publishedNames []string
 	for i, item := range items {
 		v, err := declengine.Publish(ctx, s.Store, declengine.StoreActivationLookup{Store: s.Store}, declengine.PublishInput{
 			NamespaceID: s.NamespaceID,
@@ -226,10 +257,15 @@ func (s *Server) publishDeclarationSet(ctx context.Context, principal declengine
 		})
 		if err != nil {
 			if !errors.Is(err, declengine.ErrOverlapReportFailed) {
+				sort.Strings(publishedNames)
+				if len(publishedNames) > 0 {
+					err = fmt.Errorf("%w (already published in this set, retry is safe: %s)", err, strings.Join(publishedNames, ", "))
+				}
 				return out, classifyDeclarationError(err)
 			}
 			overlap = append(overlap, "declaration published; the overlap report failed: "+err.Error())
 		}
+		publishedNames = append(publishedNames, v.Name)
 		ids[v.Name] = v.DeclarationID
 		e := &out.Declarations[i]
 		e.VersionID, e.Version, e.Author, e.Digest = v.ID, v.Version, v.Author, v.Digest

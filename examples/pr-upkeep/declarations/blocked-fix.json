@@ -2,8 +2,8 @@
   "name": "pr-upkeep-blocked-fix",
   "trigger": {
     "kind": "agent.result",
-    "reentry_limit": 0,
-    "hop_limit": 10
+    "reentry_limit": 1,
+    "hop_limit": 20
   },
   "condition": "event.outcome == \"blocked\"",
   "action": {
@@ -14,7 +14,7 @@
       "graph_kind": "approval",
       "approver_ref": "group/platform-maintainers",
       "input": {
-        "question": "The pr-upkeep fix agent could not complete its task. Review the reason and report; acknowledge or reject to close this blocked attempt.",
+        "question": "fix is blocked. Review the agent report and resolve the obstacle.\nRetry: run the same agent work again.\nAbandon: record that this step is stopped, with no PR or Jira change.\nAcknowledge: record this blocked attempt and end.",
         "blocked_step": "fix",
         "agent_report": "{result}",
         "repository": "{pr-upkeep-route:repository:}",
@@ -27,7 +27,12 @@
         "approverRef": "group/platform-maintainers",
         "deadline": "168h"
       },
-      "timeout": "168h"
+      "timeout": "168h",
+      "outcomes": [
+        "retry",
+        "abandon",
+        "acknowledged"
+      ]
     }
   },
   "start_node": {

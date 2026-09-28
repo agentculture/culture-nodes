@@ -24,9 +24,12 @@ The routine five-minute sweep has no notification. Its failed result does.
 | `notify-human-needed-pr-upkeep-blocked-stamp-pr` | `human.requested` | `pr-upkeep-blocked-stamp-pr-done` | `true` | `Decision needed: pr-upkeep-blocked-stamp-pr \| Task {human_task_id}` |
 | `notify-human-decided-pr-upkeep-blocked-stamp-pr` | `human.decision` | `pr-upkeep-blocked-stamp-pr-done` | `true` | `Decision made: pr-upkeep-blocked-stamp-pr \| Outcome {outcome}` |
 | `notify-agent-blocked-pr-upkeep-blocked-stamp-pr` | `agent.result` | `pr-upkeep-stamp-pr-done` | `event.outcome == "blocked"` | `Agent blocked: pr-upkeep-blocked-stamp-pr \| Outcome {outcome}` |
-| `notify-action-failed-pr-upkeep-close-blocked-analyse` | `action.failed` | `pr-upkeep-close-blocked-analyse-done` | `true` | `Action failed: close-blocked-analyse \| Class {class}` |
-| `notify-action-failed-pr-upkeep-close-blocked-fix` | `action.failed` | `pr-upkeep-close-blocked-fix-done` | `true` | `Action failed: close-blocked-fix \| Class {class}` |
-| `notify-action-failed-pr-upkeep-close-blocked-stamp-pr` | `action.failed` | `pr-upkeep-close-blocked-stamp-pr-done` | `true` | `Action failed: close-blocked-stamp-pr \| Class {class}` |
+| `notify-action-failed-pr-upkeep-acknowledge-analyse` | `action.failed` | `pr-upkeep-acknowledge-analyse-done` | `true` | `Action failed: acknowledge-analyse \| Class {class}` |
+| `notify-action-failed-pr-upkeep-abandon-analyse` | `action.failed` | `pr-upkeep-abandon-analyse-done` | `true` | `Action failed: abandon-analyse \| Class {class}` |
+| `notify-action-failed-pr-upkeep-acknowledge-fix` | `action.failed` | `pr-upkeep-acknowledge-fix-done` | `true` | `Action failed: acknowledge-fix \| Class {class}` |
+| `notify-action-failed-pr-upkeep-abandon-fix` | `action.failed` | `pr-upkeep-abandon-fix-done` | `true` | `Action failed: abandon-fix \| Class {class}` |
+| `notify-action-failed-pr-upkeep-acknowledge-stamp-pr` | `action.failed` | `pr-upkeep-acknowledge-stamp-pr-done` | `true` | `Action failed: acknowledge-stamp-pr \| Class {class}` |
+| `notify-action-failed-pr-upkeep-abandon-stamp-pr` | `action.failed` | `pr-upkeep-abandon-stamp-pr-done` | `true` | `Action failed: abandon-stamp-pr \| Class {class}` |
 | `notify-action-failed-pr-upkeep-finish-expired` | `action.failed` | `pr-upkeep-finish-done` | `true` | `Action failed: finish-expired \| Class {class}` |
 | `notify-action-failed-pr-upkeep-finish-no-change` | `action.failed` | `pr-upkeep-finish-done` | `true` | `Action failed: finish-no-change \| Class {class}` |
 | `notify-action-failed-pr-upkeep-finish-no-fix` | `action.failed` | `pr-upkeep-finish-done` | `true` | `Action failed: finish-no-fix \| Class {class}` |
@@ -50,7 +53,8 @@ The routine five-minute sweep has no notification. Its failed result does.
 | `notify-human-needed-jira-intake-blocked-intake` | `human.requested` | `jira-intake-blocked-intake-done` | `true` | `Decision needed: jira-intake-blocked-intake \| Task {human_task_id}` |
 | `notify-human-decided-jira-intake-blocked-intake` | `human.decision` | `jira-intake-blocked-intake-done` | `true` | `Decision made: jira-intake-blocked-intake \| Outcome {outcome}` |
 | `notify-agent-blocked-jira-intake-blocked-intake` | `agent.result` | `jira-intake-intake-done` | `event.outcome == "blocked"` | `Agent blocked: jira-intake-blocked-intake \| Outcome {outcome}` |
-| `notify-action-failed-jira-intake-close-blocked-intake` | `action.failed` | `jira-intake-close-blocked-intake-done` | `true` | `Action failed: close-blocked-intake \| Class {class}` |
+| `notify-action-failed-jira-intake-acknowledge-intake` | `action.failed` | `jira-intake-acknowledge-intake-done` | `true` | `Action failed: acknowledge-intake \| Class {class}` |
+| `notify-action-failed-jira-intake-abandon-intake` | `action.failed` | `jira-intake-abandon-intake-done` | `true` | `Action failed: abandon-intake \| Class {class}` |
 | `notify-action-failed-jira-intake-intake` | `action.failed` | `jira-intake-intake-done` | `true` | `Action failed: intake \| Class {class}` |
 | `notify-action-failed-jira-intake-picked-up-gh` | `action.failed` | `jira-intake-picked-up-done` | `true` | `Action failed: picked-up-gh \| Class {class}` |
 | `notify-action-failed-jira-intake-picked-up` | `action.failed` | `jira-intake-picked-up-done` | `true` | `Action failed: picked-up \| Class {class}` |
@@ -59,3 +63,6 @@ The routine five-minute sweep has no notification. Its failed result does.
 | `notify-action-failed-jira-intake-transition` | `action.failed` | `jira-intake-transition-done` | `true` | `Action failed: transition \| Class {class}` |
 | `notify-sweep-failed` | `code.result` | `pr-upkeep-sweep-done` | `event.outcome == "failed"` | `PR upkeep sweep failed \| Outcome {outcome}` |
 | `notify-merge-deadline` | `node.expired` | `pr-upkeep-human-merges-pr-done` | `true` | `PR merge deadline passed \| Node {node_name}` |
+
+The four `human-decided-*-blocked-*` cases use condition `true`, so retry,
+abandon, and acknowledged decisions all emit their outcome notification.

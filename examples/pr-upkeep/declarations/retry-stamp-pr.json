@@ -1,0 +1,76 @@
+{
+  "name": "pr-upkeep-retry-stamp-pr",
+  "trigger": {
+    "kind": "human.decision",
+    "reentry_limit": 1,
+    "hop_limit": 20
+  },
+  "condition": "event.outcome == \"retry\"",
+  "action": {
+    "kind": "agent.work",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "retry-stamp-pr",
+      "graph_kind": "agent",
+      "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "input": {
+        "instruction": "A Jira ticket was just created for the pull request described\nby `pr` below (repository and number), because the PR had no\nticket. Its key is bound as `ticket`.\n\nAdd one line to the PR BODY, at the top, of exactly this form:\n\n    Jira: <ticket>\n\nUse the GitHub REST API (PATCH /repos/{{owner}/{{repo}/pulls/{{n}\nwith the existing body plus the new line) or `gh pr edit\n--body`. Do not change anything else about the PR, do not push\ncommits, do not comment. If the body already names that key,\nchange nothing and say so.\n\nReport the PR you edited and the line you added.\n",
+        "ticket": "{pr-upkeep-stamp-pr:id}",
+        "source": "{pr-upkeep-route:source}",
+        "repository": "{pr-upkeep-route:repository}",
+        "number": "{pr-upkeep-route:number}",
+        "head_sha": "{pr-upkeep-route:head_sha:}",
+        "work_item": "{pr-upkeep-route:work_item}",
+        "findings": "{pr-upkeep-route:findings}"
+      },
+      "timeout": "30m",
+      "graph_config": {
+        "ownerRef": "team/developer-experience",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "contract": {
+          "outcomes": {
+            "stamped": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "summary"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "retry_of": "pr-upkeep-stamp-pr"
+    }
+  },
+  "start_node": {
+    "name": "pr-upkeep-blocked-stamp-pr-done",
+    "deadline": "168h"
+  },
+  "landing_node": {
+    "name": "pr-upkeep-stamp-pr-done",
+    "deadline": "168h"
+  },
+  "exposes": [
+    "pr-upkeep-route:findings",
+    "pr-upkeep-route:head_sha",
+    "pr-upkeep-route:number",
+    "pr-upkeep-route:repository",
+    "pr-upkeep-route:source",
+    "pr-upkeep-route:work_item"
+  ]
+}

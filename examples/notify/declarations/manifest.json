@@ -16,9 +16,6 @@
     "human-needed-pr-upkeep-blocked-stamp-pr.json",
     "human-decided-pr-upkeep-blocked-stamp-pr.json",
     "agent-blocked-pr-upkeep-blocked-stamp-pr.json",
-    "action-failed-pr-upkeep-close-blocked-analyse.json",
-    "action-failed-pr-upkeep-close-blocked-fix.json",
-    "action-failed-pr-upkeep-close-blocked-stamp-pr.json",
     "action-failed-pr-upkeep-finish-expired.json",
     "action-failed-pr-upkeep-finish-no-change.json",
     "action-failed-pr-upkeep-finish-no-fix.json",
@@ -42,7 +39,6 @@
     "human-needed-jira-intake-blocked-intake.json",
     "human-decided-jira-intake-blocked-intake.json",
     "agent-blocked-jira-intake-blocked-intake.json",
-    "action-failed-jira-intake-close-blocked-intake.json",
     "action-failed-jira-intake-intake.json",
     "action-failed-jira-intake-picked-up-gh.json",
     "action-failed-jira-intake-picked-up.json",
@@ -50,7 +46,15 @@
     "action-failed-jira-intake-stage-intake.json",
     "action-failed-jira-intake-transition.json",
     "sweep-failed.json",
-    "merge-deadline.json"
+    "merge-deadline.json",
+    "action-failed-pr-upkeep-acknowledge-stamp-pr.json",
+    "action-failed-pr-upkeep-abandon-stamp-pr.json",
+    "action-failed-pr-upkeep-acknowledge-analyse.json",
+    "action-failed-pr-upkeep-abandon-analyse.json",
+    "action-failed-pr-upkeep-acknowledge-fix.json",
+    "action-failed-pr-upkeep-abandon-fix.json",
+    "action-failed-jira-intake-acknowledge-intake.json",
+    "action-failed-jira-intake-abandon-intake.json"
   ],
   "entries": [
     {
@@ -182,28 +186,52 @@
       "message": "Agent blocked: pr-upkeep-blocked-stamp-pr | Outcome {outcome}"
     },
     {
-      "file": "action-failed-pr-upkeep-close-blocked-analyse.json",
-      "name": "notify-action-failed-pr-upkeep-close-blocked-analyse",
+      "file": "action-failed-pr-upkeep-acknowledge-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-acknowledge-analyse",
       "trigger": "action.failed",
-      "start_node": "pr-upkeep-close-blocked-analyse-done",
+      "start_node": "pr-upkeep-acknowledge-analyse-done",
       "condition": "true",
-      "message": "Action failed: close-blocked-analyse | Class {class}"
+      "message": "Action failed: acknowledge-analyse | Class {class}"
     },
     {
-      "file": "action-failed-pr-upkeep-close-blocked-fix.json",
-      "name": "notify-action-failed-pr-upkeep-close-blocked-fix",
+      "file": "action-failed-pr-upkeep-abandon-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-abandon-analyse",
       "trigger": "action.failed",
-      "start_node": "pr-upkeep-close-blocked-fix-done",
+      "start_node": "pr-upkeep-abandon-analyse-done",
       "condition": "true",
-      "message": "Action failed: close-blocked-fix | Class {class}"
+      "message": "Action failed: abandon-analyse | Class {class}"
     },
     {
-      "file": "action-failed-pr-upkeep-close-blocked-stamp-pr.json",
-      "name": "notify-action-failed-pr-upkeep-close-blocked-stamp-pr",
+      "file": "action-failed-pr-upkeep-acknowledge-fix.json",
+      "name": "notify-action-failed-pr-upkeep-acknowledge-fix",
       "trigger": "action.failed",
-      "start_node": "pr-upkeep-close-blocked-stamp-pr-done",
+      "start_node": "pr-upkeep-acknowledge-fix-done",
       "condition": "true",
-      "message": "Action failed: close-blocked-stamp-pr | Class {class}"
+      "message": "Action failed: acknowledge-fix | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-abandon-fix.json",
+      "name": "notify-action-failed-pr-upkeep-abandon-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-abandon-fix-done",
+      "condition": "true",
+      "message": "Action failed: abandon-fix | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-acknowledge-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-acknowledge-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-acknowledge-stamp-pr-done",
+      "condition": "true",
+      "message": "Action failed: acknowledge-stamp-pr | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-abandon-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-abandon-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-abandon-stamp-pr-done",
+      "condition": "true",
+      "message": "Action failed: abandon-stamp-pr | Class {class}"
     },
     {
       "file": "action-failed-pr-upkeep-finish-expired.json",
@@ -390,12 +418,20 @@
       "message": "Agent blocked: jira-intake-blocked-intake | Outcome {outcome}"
     },
     {
-      "file": "action-failed-jira-intake-close-blocked-intake.json",
-      "name": "notify-action-failed-jira-intake-close-blocked-intake",
+      "file": "action-failed-jira-intake-acknowledge-intake.json",
+      "name": "notify-action-failed-jira-intake-acknowledge-intake",
       "trigger": "action.failed",
-      "start_node": "jira-intake-close-blocked-intake-done",
+      "start_node": "jira-intake-acknowledge-intake-done",
       "condition": "true",
-      "message": "Action failed: close-blocked-intake | Class {class}"
+      "message": "Action failed: acknowledge-intake | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-abandon-intake.json",
+      "name": "notify-action-failed-jira-intake-abandon-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-abandon-intake-done",
+      "condition": "true",
+      "message": "Action failed: abandon-intake | Class {class}"
     },
     {
       "file": "action-failed-jira-intake-intake.json",

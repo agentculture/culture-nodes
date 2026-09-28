@@ -124,7 +124,9 @@ item.
       └──no_change───────────────────────────────────────────────────────▶ finish
 
   stamp-pr/analyse/fix.blocked ──▶ blocked-step human.ask
-                                      └──approved/rejected/expired──▶ close-blocked-step
+                                      ├──retry───────────────▶ same agent step
+                                      ├──abandon─────────────▶ record and end
+                                      └──acknowledged────────▶ record and end
 ```
 
 The `blocked` branch in this sketch is the declaration chain under
@@ -285,8 +287,8 @@ The v2 split makes these different states explicit:
 - **An agent blockage waits at a blocked-step human task.** A missing
   credential, access, or conflicting instruction yields an `agent.result`
   with `blocked` and a reason. The declaration routes that report to
-  platform maintainers. Their decision closes the attempt; retrying starts
-  only through a later, separately initiated action.
+  platform maintainers. Retry dispatches the same agent step; abandon records a stop,
+  and acknowledge records closure.
 
 ## The human-merges rule
 

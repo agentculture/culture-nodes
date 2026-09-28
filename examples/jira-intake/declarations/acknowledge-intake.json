@@ -1,16 +1,16 @@
 {
-  "name": "jira-intake-close-blocked-intake",
+  "name": "jira-intake-acknowledge-intake",
   "trigger": {
     "kind": "human.decision",
     "reentry_limit": 0,
     "hop_limit": 9
   },
-  "condition": "true",
+  "condition": "event.outcome == \"acknowledged\"",
   "action": {
     "kind": "code.run",
     "with": {
       "graph_workflow": "workflow.yaml",
-      "graph_node": "close-blocked-intake",
+      "graph_node": "acknowledge-intake",
       "graph_kind": "end",
       "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
       "operation": {
@@ -25,7 +25,9 @@
       },
       "input": {
         "decision": "{outcome}",
-        "blocked_step": "intake"
+        "blocked_step": "intake",
+        "work_item": "{jira-intake-intake:id:}",
+        "ticket": "{jira-intake-intake:id:}"
       }
     }
   },
@@ -34,7 +36,7 @@
     "deadline": "168h"
   },
   "landing_node": {
-    "name": "jira-intake-close-blocked-intake-done",
+    "name": "jira-intake-acknowledge-intake-done",
     "deadline": "none"
   }
 }

@@ -1,0 +1,179 @@
+{
+  "name": "pr-upkeep-retry-analyse",
+  "trigger": {
+    "kind": "human.decision",
+    "reentry_limit": 1,
+    "hop_limit": 20
+  },
+  "condition": "event.outcome == \"retry\" && !lineage[\"pr-upkeep-route\"].work_item.startsWith(\"gh:\")",
+  "action": {
+    "kind": "agent.work",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "retry-analyse",
+      "graph_kind": "agent",
+      "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "input": {
+        "instruction": "Judge the findings in `pr.findings` BEFORE any of them is\nfixed. They are all on the same file of the same pull request,\nwhich `pr` names by repository, number and head sha.\n\nFor EVERY finding, read the review thread it sits under on\nthat pull request -- its replies and whether it is marked\nresolved -- and give it exactly one verdict:\n\n  FIX       nobody has answered it and it is a real defect\n  PUSHBACK  a human replied declining it; quote why, briefly\n  DUPLICATE another finding in this same list is the same\n            defect under a different rule or tool\n  SKIP      its thread is resolved, or it is already fixed at\n            this head sha, or it is a false positive\n\nEvery finding gets a verdict and a ONE-LINE reason. A finding\nyou did not judge is not a finding you may fix.\n\nThen bundle the FIX verdicts into `packages`: one package per\n(rule, file) pair, listing that pair's finding ids. Thirteen\ninstances of one rule in one file are ONE package, because one\nedit answers all thirteen. Order the packages so the one\ncarrying the highest-priority finding is first; the fix node\nworks that one and only that one.\n\nDo NOT package findings you would only reach after that fix\nlands. The moment it pushes, every remaining finding on this\nfile is anchored to lines that moved, and the sweep re-scans\nthe file at the new head sha and dispatches them again with\ncurrent positions. Leaving them to that post-push re-scan is\nthe correct answer, not an omission.\n\nChange no code and push nothing. If NO finding earns FIX,\nreport `no_fix` with the verdicts and an empty `packages`\nlist: a session nobody needed is the thing this node exists to\navoid buying.\n",
+        "source": "{pr-upkeep-route:source}",
+        "repository": "{pr-upkeep-route:repository}",
+        "number": "{pr-upkeep-route:number}",
+        "head_sha": "{pr-upkeep-route:head_sha:}",
+        "work_item": "{pr-upkeep-route:work_item}",
+        "findings": "{pr-upkeep-route:findings}"
+      },
+      "timeout": "30m",
+      "graph_config": {
+        "ownerRef": "team/developer-experience",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "contract": {
+          "outcomes": {
+            "packaged": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "verdicts",
+                  "packages"
+                ],
+                "properties": {
+                  "verdicts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "verdict",
+                        "reason"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "verdict": {
+                          "enum": [
+                            "FIX",
+                            "PUSHBACK",
+                            "DUPLICATE",
+                            "SKIP"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 240,
+                          "pattern": "^[^\\n]+$"
+                        }
+                      }
+                    }
+                  },
+                  "packages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "rule",
+                        "file",
+                        "finding_ids"
+                      ],
+                      "properties": {
+                        "rule": {
+                          "type": "string"
+                        },
+                        "file": {
+                          "type": "string"
+                        },
+                        "finding_ids": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "no_fix": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "verdicts",
+                  "packages"
+                ],
+                "properties": {
+                  "verdicts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "verdict",
+                        "reason"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "verdict": {
+                          "enum": [
+                            "PUSHBACK",
+                            "DUPLICATE",
+                            "SKIP"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 240,
+                          "pattern": "^[^\\n]+$"
+                        }
+                      }
+                    }
+                  },
+                  "packages": {
+                    "type": "array",
+                    "maxItems": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "retry": {
+            "maxAttempts": 2
+          }
+        }
+      },
+      "retry_of": "pr-upkeep-analyse"
+    }
+  },
+  "start_node": {
+    "name": "pr-upkeep-blocked-analyse-done",
+    "deadline": "168h"
+  },
+  "landing_node": {
+    "name": "pr-upkeep-analyse-done",
+    "deadline": "168h"
+  },
+  "exposes": [
+    "pr-upkeep-route:findings",
+    "pr-upkeep-route:head_sha",
+    "pr-upkeep-route:number",
+    "pr-upkeep-route:repository",
+    "pr-upkeep-route:source",
+    "pr-upkeep-route:work_item"
+  ]
+}

@@ -20,11 +20,19 @@
     "swept.json",
     "sweep-failed.json",
     "blocked-stamp-pr.json",
-    "close-blocked-stamp-pr.json",
     "blocked-analyse.json",
-    "close-blocked-analyse.json",
     "blocked-fix.json",
-    "close-blocked-fix.json"
+    "acknowledge-stamp-pr.json",
+    "abandon-stamp-pr.json",
+    "retry-stamp-pr.json",
+    "acknowledge-analyse.json",
+    "abandon-analyse.json",
+    "retry-analyse.json",
+    "retry-analyse-orphan.json",
+    "acknowledge-fix.json",
+    "abandon-fix.json",
+    "retry-fix.json",
+    "retry-fix-orphan.json"
   ],
   "entries": [
     {
@@ -251,34 +259,16 @@
       "why": "the PR identity comes from the route step"
     },
     {
-      "from": "pr-upkeep-close-blocked-stamp-pr",
-      "to": "pr-upkeep-blocked-stamp-pr",
-      "kind": "must",
-      "why": "closes the human decision on the blocked agent step"
-    },
-    {
       "from": "pr-upkeep-blocked-analyse",
       "to": "pr-upkeep-route",
       "kind": "must",
       "why": "the PR identity comes from the route step"
     },
     {
-      "from": "pr-upkeep-close-blocked-analyse",
-      "to": "pr-upkeep-blocked-analyse",
-      "kind": "must",
-      "why": "closes the human decision on the blocked agent step"
-    },
-    {
       "from": "pr-upkeep-blocked-fix",
       "to": "pr-upkeep-route",
       "kind": "must",
       "why": "the PR identity comes from the route step"
-    },
-    {
-      "from": "pr-upkeep-close-blocked-fix",
-      "to": "pr-upkeep-blocked-fix",
-      "kind": "must",
-      "why": "closes the human decision on the blocked agent step"
     },
     {
       "from": "pr-upkeep-blocked-stamp-pr",
@@ -309,6 +299,216 @@
       "to": "pr-upkeep-fix-orphan",
       "kind": "can",
       "why": "agent.result blocked arrives at this agent action landing node"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-stamp-pr",
+      "to": "pr-upkeep-blocked-stamp-pr",
+      "kind": "must",
+      "why": "acknowledge routes the blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-abandon-stamp-pr",
+      "to": "pr-upkeep-blocked-stamp-pr",
+      "kind": "must",
+      "why": "abandon routes the blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-stamp-pr",
+      "to": "pr-upkeep-blocked-stamp-pr",
+      "kind": "must",
+      "why": "retries only this blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-stamp-pr",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the original PR identity is retained through the blocked lineage"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-analyse",
+      "to": "pr-upkeep-blocked-analyse",
+      "kind": "must",
+      "why": "acknowledge routes the blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-abandon-analyse",
+      "to": "pr-upkeep-blocked-analyse",
+      "kind": "must",
+      "why": "abandon routes the blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-analyse",
+      "to": "pr-upkeep-blocked-analyse",
+      "kind": "must",
+      "why": "retries only this blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-analyse",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the original PR identity is retained through the blocked lineage"
+    },
+    {
+      "from": "pr-upkeep-retry-analyse-orphan",
+      "to": "pr-upkeep-blocked-analyse",
+      "kind": "must",
+      "why": "retries only this blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-analyse-orphan",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the original PR identity is retained through the blocked lineage"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-fix",
+      "to": "pr-upkeep-blocked-fix",
+      "kind": "must",
+      "why": "acknowledge routes the blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-abandon-fix",
+      "to": "pr-upkeep-blocked-fix",
+      "kind": "must",
+      "why": "abandon routes the blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-fix",
+      "to": "pr-upkeep-blocked-fix",
+      "kind": "must",
+      "why": "retries only this blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-fix",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the original PR identity is retained through the blocked lineage"
+    },
+    {
+      "from": "pr-upkeep-retry-fix-orphan",
+      "to": "pr-upkeep-blocked-fix",
+      "kind": "must",
+      "why": "retries only this blocked human decision"
+    },
+    {
+      "from": "pr-upkeep-retry-fix-orphan",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the original PR identity is retained through the blocked lineage"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-stamp-pr",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "records the original work item"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-stamp-pr",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "why": "orphan route has a stamped Jira ticket; keyed route does not"
+    },
+    {
+      "from": "pr-upkeep-abandon-stamp-pr",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "records the original work item"
+    },
+    {
+      "from": "pr-upkeep-abandon-stamp-pr",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "why": "orphan route has a stamped Jira ticket; keyed route does not"
+    },
+    {
+      "from": "pr-upkeep-retry-stamp-pr",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "must",
+      "why": "retries this original agent step"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-analyse",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "records the original work item"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-analyse",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "why": "orphan route has a stamped Jira ticket; keyed route does not"
+    },
+    {
+      "from": "pr-upkeep-abandon-analyse",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "records the original work item"
+    },
+    {
+      "from": "pr-upkeep-abandon-analyse",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "why": "orphan route has a stamped Jira ticket; keyed route does not"
+    },
+    {
+      "from": "pr-upkeep-retry-analyse",
+      "to": "pr-upkeep-analyse",
+      "kind": "must",
+      "why": "retries this original agent step"
+    },
+    {
+      "from": "pr-upkeep-retry-analyse-orphan",
+      "to": "pr-upkeep-analyse-orphan",
+      "kind": "must",
+      "why": "retries this original agent step"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-fix",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "records the original work item"
+    },
+    {
+      "from": "pr-upkeep-acknowledge-fix",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "why": "orphan route has a stamped Jira ticket; keyed route does not"
+    },
+    {
+      "from": "pr-upkeep-abandon-fix",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "records the original work item"
+    },
+    {
+      "from": "pr-upkeep-abandon-fix",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "why": "orphan route has a stamped Jira ticket; keyed route does not"
+    },
+    {
+      "from": "pr-upkeep-retry-fix",
+      "to": "pr-upkeep-fix",
+      "kind": "must",
+      "why": "retries this original agent step"
+    },
+    {
+      "from": "pr-upkeep-retry-fix",
+      "to": "pr-upkeep-analyse",
+      "kind": "must",
+      "why": "reuses the keyed analysis package"
+    },
+    {
+      "from": "pr-upkeep-retry-fix-orphan",
+      "to": "pr-upkeep-fix-orphan",
+      "kind": "must",
+      "why": "retries this original agent step"
+    },
+    {
+      "from": "pr-upkeep-retry-fix-orphan",
+      "to": "pr-upkeep-analyse-orphan",
+      "kind": "must",
+      "why": "reuses the orphan analysis package"
     }
   ],
   "steps": [

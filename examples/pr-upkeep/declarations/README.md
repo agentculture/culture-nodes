@@ -69,11 +69,17 @@ Every agent action can now return `blocked` with a reason. The three
 `blocked-*` declarations listen on the landing nodes shared by stamp-pr,
 analyse/analyse-orphan, and fix/fix-orphan. They show the agent's full report,
 step, PR identity, work item, and available ticket to
-`group/platform-maintainers`. The matching `close-blocked-*` declaration
-records the human decision and closes that branch. Approval records the
-maintainer's acknowledgement; it does not merge the PR or retry the
-agent. Rejection and expiry also close the attempt for inspection. The
-optional ticket reference uses a template default on keyed lineages.
+`group/platform-maintainers`. Each task offers `retry`, `abandon`, and `acknowledged` (plus implied
+`expired`). `retry-*` reuses the original actor and input templates, lands on
+the original step node, and lets the existing downstream reactions continue.
+Keyed and orphan analyse/fix retries select their matching original action.
+`abandon-*` records decision, step, work item, and ticket without changing
+Jira or the PR; `acknowledge-*` records closure. A future operator workflow
+could add a Jira comment or transition after separate approval. The blocked
+and retry declarations allow one reentry, so at most two retry dispatches
+occur in the same lineage. The `retry_of` lineage alias binds downstream
+references to the latest retried output and retains the retry input fields.
+The optional ticket reference uses a template default on keyed lineages.
 
 The blocked human routes need no new `exposes` entries: `human.ask` has the
 operators audience, which is no wider than the agent result or the route
@@ -128,8 +134,9 @@ These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
 
 ## Exposure lists and publish warnings (t30, t30b)
 
-After linking, a validate reports 34 sensitivity warnings, one for each
-reference below. These routes render variables of `pr-upkeep-route`
+After linking, a validate reports 65 sensitivity warnings, one for each
+reference below (34 for the original routes, 31 more for the t47 `retry-*`
+routes, which re-render the original step's inputs to the same agent). These routes render variables of `pr-upkeep-route`
 or `pr-upkeep-analyse` into a wider audience. The blocked human routes
 introduce no additional sensitivity warnings.
 
@@ -148,6 +155,8 @@ approved yet: every entry needs its owner's approval before cutover
 |---|---|---|
 | `pr-upkeep-analyse`, `pr-upkeep-analyse-orphan`, `pr-upkeep-stamp-pr`, `pr-upkeep-fix-orphan` | agent (team) | `pr-upkeep-route:` `findings`, `head_sha`, `number`, `repository`, `source`, `work_item` |
 | `pr-upkeep-fix` | agent (team) | the same six route entries, plus `pr-upkeep-analyse:packages` |
+| `pr-upkeep-retry-analyse`, `pr-upkeep-retry-analyse-orphan`, `pr-upkeep-retry-stamp-pr`, `pr-upkeep-retry-fix-orphan` (t47) | agent (team) | the same six route entries as the step they retry |
+| `pr-upkeep-retry-fix` (t47) | agent (team) | the same six route entries, plus `pr-upkeep-analyse:packages` |
 | `pr-upkeep-intake-orphan`, `pr-upkeep-stage-dispatch`, `pr-upkeep-stage-pr-open` | jira (team) | `pr-upkeep-route:work_item` |
 
 `internal/api/declaration_examples_test.go`

@@ -1,0 +1,42 @@
+{
+  "name": "jira-intake-abandon-intake",
+  "trigger": {
+    "kind": "human.decision",
+    "reentry_limit": 0,
+    "hop_limit": 9
+  },
+  "condition": "event.outcome == \"abandon\"",
+  "action": {
+    "kind": "code.run",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "abandon-intake",
+      "graph_kind": "end",
+      "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+      "operation": {
+        "image": "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os\nprint(json.dumps(json.loads(os.environ[\"NODES_INPUT_JSON\"]), sort_keys=True))\n"
+        ],
+        "network": "none",
+        "allowedOutputPaths": []
+      },
+      "input": {
+        "decision": "{outcome}",
+        "blocked_step": "intake",
+        "work_item": "{jira-intake-intake:id:}",
+        "ticket": "{jira-intake-intake:id:}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "jira-intake-blocked-intake-done",
+    "deadline": "168h"
+  },
+  "landing_node": {
+    "name": "jira-intake-abandon-intake-done",
+    "deadline": "none"
+  }
+}

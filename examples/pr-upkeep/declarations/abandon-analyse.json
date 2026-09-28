@@ -1,0 +1,42 @@
+{
+  "name": "pr-upkeep-abandon-analyse",
+  "trigger": {
+    "kind": "human.decision",
+    "reentry_limit": 0,
+    "hop_limit": 10
+  },
+  "condition": "event.outcome == \"abandon\"",
+  "action": {
+    "kind": "code.run",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "abandon-analyse",
+      "graph_kind": "end",
+      "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+      "operation": {
+        "image": "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os\nprint(json.dumps(json.loads(os.environ[\"NODES_INPUT_JSON\"]), sort_keys=True))\n"
+        ],
+        "network": "none",
+        "allowedOutputPaths": []
+      },
+      "input": {
+        "decision": "{outcome}",
+        "blocked_step": "analyse",
+        "work_item": "{pr-upkeep-route:work_item:}",
+        "ticket": "{pr-upkeep-stamp-pr:id:}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "pr-upkeep-blocked-analyse-done",
+    "deadline": "168h"
+  },
+  "landing_node": {
+    "name": "pr-upkeep-abandon-analyse-done",
+    "deadline": "none"
+  }
+}

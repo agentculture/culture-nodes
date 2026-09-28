@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -21,6 +22,8 @@ const (
 )
 
 const schemaName = "declaration/declaration.schema.json"
+
+var humanOutcomeName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 var validator struct {
 	sync.Once
@@ -92,6 +95,26 @@ func Parse(source []byte, format Format) (*Declaration, error) {
 		}
 		if _, redefined := with.GraphConfig.Contract.Outcomes["blocked"]; redefined {
 			return nil, fmt.Errorf("declaration agent contract: blocked is a reserved conventional outcome")
+		}
+	}
+	// An absent `with` declares no outcomes (legacy approved/rejected).
+	if d.Action.Kind == "human.ask" && len(bytes.TrimSpace(d.Action.With)) > 0 {
+		var with map[string]json.RawMessage
+		if err := json.Unmarshal(d.Action.With, &with); err != nil {
+			return nil, fmt.Errorf("human.ask with: %w", err)
+		}
+		if raw, declared := with["outcomes"]; declared {
+			var names []string
+			if len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &names) != nil || len(names) == 0 {
+				return nil, fmt.Errorf("human.ask with.outcomes must be a non-empty array of outcome identifiers")
+			}
+			seen := map[string]bool{}
+			for _, name := range names {
+				if !humanOutcomeName.MatchString(name) || name == "expired" || seen[name] {
+					return nil, fmt.Errorf("human.ask with.outcomes contains invalid, reserved, or repeated outcome %q", name)
+				}
+				seen[name] = true
+			}
 		}
 	}
 	if _, ok := shape["condition"]; !ok {

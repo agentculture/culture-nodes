@@ -305,6 +305,7 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		Operation   json.RawMessage `json:"operation"`
 		ApproverRef string          `json:"approver_ref"`
 		Timeout     string          `json:"timeout"`
+		Outcomes    []string        `json:"outcomes"`
 		GraphConfig struct {
 			Contract struct {
 				Outcomes map[string]json.RawMessage `json:"outcomes"`
@@ -410,15 +411,22 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 			return nil, nil, errors.New("human.ask requires approver_ref")
 		}
 		node["approverRef"] = with.ApproverRef
-		outcomes["rejected"] = schema
 		delete(outcomes, outcome)
-		outcome = "approved"
+		choices := with.Outcomes
+		if len(choices) == 0 {
+			choices = []string{"approved", "rejected"}
+		}
+		outcome = choices[0]
 		outcomes[outcome] = schema
+		for _, choice := range choices[1:] {
+			outcomes[choice] = schema
+			extra = append(extra, choice)
+		}
 		// `expired` is implied for every approval node by the compiler;
 		// an edge for it lets an expired task complete the run, so the
 		// human.decision reaction reports it (t38c) instead of the run
 		// failing on "no edge matched".
-		extra = append(extra, "rejected", "expired")
+		extra = append(extra, "expired")
 	} else {
 		node["uses"] = with.Uses
 	}

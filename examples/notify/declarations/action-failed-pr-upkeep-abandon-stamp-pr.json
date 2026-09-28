@@ -1,5 +1,5 @@
 {
-  "name": "notify-action-failed-jira-intake-close-blocked-intake",
+  "name": "notify-action-failed-pr-upkeep-abandon-stamp-pr",
   "trigger": {
     "kind": "action.failed",
     "reentry_limit": 0,
@@ -11,7 +11,7 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Action failed: close-blocked-intake",
+        "title": "Action failed: abandon-stamp-pr",
         "description": "Class {class}",
         "require_delivery": false
       },
@@ -43,11 +43,11 @@
     }
   },
   "start_node": {
-    "name": "jira-intake-close-blocked-intake-done",
+    "name": "pr-upkeep-abandon-stamp-pr-done",
     "deadline": "none"
   },
   "landing_node": {
-    "name": "notify-action-failed-jira-intake-close-blocked-intake-done",
+    "name": "notify-action-failed-pr-upkeep-abandon-stamp-pr-done",
     "deadline": "5m"
   },
   "exposes": [

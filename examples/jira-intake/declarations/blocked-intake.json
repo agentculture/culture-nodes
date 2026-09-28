@@ -2,8 +2,8 @@
   "name": "jira-intake-blocked-intake",
   "trigger": {
     "kind": "agent.result",
-    "reentry_limit": 0,
-    "hop_limit": 9
+    "reentry_limit": 1,
+    "hop_limit": 20
   },
   "condition": "event.outcome == \"blocked\"",
   "action": {
@@ -14,7 +14,7 @@
       "graph_kind": "approval",
       "approver_ref": "group/platform-maintainers",
       "input": {
-        "question": "Jira intake agent could not draft the issue comment. Review its report and resolve the obstacle. A decision closes this attempt.",
+        "question": "intake is blocked. Review the agent report and resolve the obstacle.\nRetry: run the same agent work again.\nAbandon: record that this step is stopped, with no PR or Jira change.\nAcknowledge: record this blocked attempt and end.",
         "blocked_step": "intake",
         "agent_report": "{result}",
         "issue": "{jira-intake-intake:id:}",
@@ -25,7 +25,12 @@
         "approverRef": "group/platform-maintainers",
         "deadline": "168h"
       },
-      "timeout": "168h"
+      "timeout": "168h",
+      "outcomes": [
+        "retry",
+        "abandon",
+        "acknowledged"
+      ]
     }
   },
   "start_node": {

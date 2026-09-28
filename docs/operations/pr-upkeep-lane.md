@@ -29,7 +29,9 @@ sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.
     ▼
 workflow.yaml ── analyse ──packaged──▶ fix ──completed──▶ readiness ──▶ human-merges-pr ──▶ finish
                     └─────no_fix─────────────────────────────────────────────────────────────▶ finish
-stamp-pr/analyse/fix ──blocked──▶ platform-maintainers human task ──decision──▶ close-blocked
+stamp-pr/analyse/fix ──blocked──▶ platform-maintainers human task ──retry──▶ same agent step
+                                                    ├──abandon──▶ record and end
+                                                    └──acknowledged──▶ record and end
 ```
 
 The blocked branch is implemented by the migrated declarations, not by the
@@ -39,10 +41,21 @@ If an agent cannot act because its credential is rejected, access is missing,
 or instructions conflict, it returns `blocked` with `output.reason`. Check
 the `agent.result` reaction and the matching `blocked-*` human task. The task
 shows the agent report, blocked step, PR identity, work item, and ticket when
-available. A maintainer resolves the external obstacle and approves or
-rejects the task; expiry also closes this attempt. No decision automatically
-retries the agent. A later sweep or deliberate new dispatch supplies a new
-attempt when the obstacle has been removed.
+available. After resolving the obstacle, choose **Retry** to dispatch the same
+agent actor with its original rendered inputs. Choose **Abandon** to record
+that this step should stop; this does not change the PR or Jira ticket. Choose
+**Acknowledge** to record and close this blocked attempt. Expiry closes the
+human task without any of these follow-up actions.
+
+To handle a blocked run, open its `blocked-*` human task, read `agent_report`
+and the PR/ticket identity, resolve access or instruction problems, and decide.
+The `human.decision` event's outcome selects one declaration. Retry lands on
+the original step node so the existing downstream route can continue. The
+blocked and retry declarations each allow one reentry: at most two retry
+dispatches can occur in one lineage; another blocked result records a
+`loop-limited` evaluation and needs a fresh operator-initiated run. An
+abandonment is only a record. A later operator workflow could comment on or
+transition Jira after a separate policy decision.
 
 Four properties make this a *repeat* process rather than a script someone
 runs:

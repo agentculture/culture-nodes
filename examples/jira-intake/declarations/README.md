@@ -64,5 +64,9 @@ narrower `code.run`. The blocked human route needs no `exposes` entry.
 
 `jira-intake-blocked-intake` listens for an `agent.result` with outcome
 `blocked` from the intake agent. It asks `group/platform-maintainers` to
-review the agent's reason and issue identity. `jira-intake-close-blocked-intake`
-closes the branch after the human decision; it does not retry intake.
+review the agent's reason and issue identity. `retry-intake` dispatches the same intake actor and issue inputs;
+`abandon-intake` records the decision and issue identity without transitioning
+Jira; `acknowledge-intake` records closure. The task offers retry, abandon,
+and acknowledged, plus implied expiry. The blocked and retry declarations
+each permit one reentry, bounding the lineage to two retry dispatches. A
+future operator workflow could comment on Jira after an abandonment.

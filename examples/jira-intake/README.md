@@ -155,3 +155,7 @@ are recorded.
 - **A technical failure at any node fails the run visibly** — including a
   completion whose outcome or output shape the contract rejects, which is how
   both live intake failures above surfaced. There is no silent stall.
+
+Blocked intake human tasks offer retry (same agent and issue inputs), abandon
+(record only), and acknowledged (record and end). Expiry is implicit. Retry
+is bounded by one reentry of both blocked and retry declarations.

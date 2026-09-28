@@ -305,8 +305,21 @@ the agent's report and evidence. An agent uses it when missing credentials,
 access, or contradictory instructions prevent completion. The run completes
 and emits `agent.result` with `outcome: blocked` and that output as `result`.
 Declarations cannot redefine this reserved outcome. Pr-upkeep routes it to
-platform maintainers for a human decision; that decision closes the blocked
-attempt and does not retry the action automatically.
+platform maintainers for a human decision.
+
+### t47: declared human outcomes (owner decision d19, 2026-09-28)
+
+`human.ask` may set `action.with.outcomes` to a nonempty array of unique
+identifier names other than `expired`. The approval envelope offers exactly
+those names plus the implied `expired`; an absent list retains
+`approved`/`rejected` plus `expired`. The `human.decision` reaction carries
+the selected outcome as `event.outcome`. The blocked agent routes offer
+`retry`, `abandon`, and `acknowledged`: retry dispatches the original agent
+work, abandon records a stop, and acknowledged records closure. A retry lands
+on the original step node; `retry_of` makes its latest run input and output
+available under that step name to downstream templates. The blocked and retry
+declarations each permit one reentry, bounding this causal chain to two retry
+dispatches. A later blocked result hits the loop limit rather than recursing.
 
 ### Notification declarations (t41)
 

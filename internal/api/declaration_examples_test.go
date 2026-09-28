@@ -342,7 +342,7 @@ func TestExampleDeclarationsValidatePublishAndLink(t *testing.T) {
 				}
 			}
 		}
-		if want := map[string]int{"pr-upkeep": 34, "jira-intake": 0}[workflow]; sensitivity != want {
+		if want := map[string]int{"pr-upkeep": 65, "jira-intake": 0}[workflow]; sensitivity != want {
 			t.Errorf("%s: %d sensitivity warnings, want %d (examples/%s/declarations/README.md)", workflow, sensitivity, want, workflow)
 		}
 	}

@@ -261,6 +261,37 @@ A declaration may render a variable into a wider audience than it came from only
 | `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `pr-upkeep-stage-pr-open` (`examples/pr-upkeep/declarations/stage-pr-open.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-stamp-pr` (`examples/pr-upkeep/declarations/retry-stamp-pr.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-stamp-pr` (`examples/pr-upkeep/declarations/retry-stamp-pr.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-stamp-pr` (`examples/pr-upkeep/declarations/retry-stamp-pr.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-stamp-pr` (`examples/pr-upkeep/declarations/retry-stamp-pr.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-stamp-pr` (`examples/pr-upkeep/declarations/retry-stamp-pr.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-stamp-pr` (`examples/pr-upkeep/declarations/retry-stamp-pr.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse` (`examples/pr-upkeep/declarations/retry-analyse.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse` (`examples/pr-upkeep/declarations/retry-analyse.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse` (`examples/pr-upkeep/declarations/retry-analyse.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse` (`examples/pr-upkeep/declarations/retry-analyse.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse` (`examples/pr-upkeep/declarations/retry-analyse.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse` (`examples/pr-upkeep/declarations/retry-analyse.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse-orphan` (`examples/pr-upkeep/declarations/retry-analyse-orphan.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse-orphan` (`examples/pr-upkeep/declarations/retry-analyse-orphan.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse-orphan` (`examples/pr-upkeep/declarations/retry-analyse-orphan.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse-orphan` (`examples/pr-upkeep/declarations/retry-analyse-orphan.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse-orphan` (`examples/pr-upkeep/declarations/retry-analyse-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-analyse-orphan` (`examples/pr-upkeep/declarations/retry-analyse-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-analyse:packages` | `pr-upkeep-analyse` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix` (`examples/pr-upkeep/declarations/retry-fix.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-retry-fix-orphan` (`examples/pr-upkeep/declarations/retry-fix-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `notify-pr-work-item` (`examples/notify/declarations/pr-work-item.json`) | `repository` | `notify-pr-work-item` | listed; needs the owner's approval |
 | `notify-pr-work-item` (`examples/notify/declarations/pr-work-item.json`) | `number` | `notify-pr-work-item` | listed; needs the owner's approval |
 | `notify-jira-intake` (`examples/notify/declarations/jira-intake.json`) | `id` | `notify-jira-intake` | listed; needs the owner's approval |
@@ -278,9 +309,6 @@ A declaration may render a variable into a wider audience than it came from only
 | `notify-human-needed-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/human-needed-pr-upkeep-blocked-stamp-pr.json`) | `human_task_id` | `notify-human-needed-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
 | `notify-human-decided-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/human-decided-pr-upkeep-blocked-stamp-pr.json`) | `outcome` | `notify-human-decided-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
 | `notify-agent-blocked-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/agent-blocked-pr-upkeep-blocked-stamp-pr.json`) | `outcome` | `notify-agent-blocked-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
-| `notify-action-failed-pr-upkeep-close-blocked-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-close-blocked-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-close-blocked-analyse` | listed; needs the owner's approval |
-| `notify-action-failed-pr-upkeep-close-blocked-fix` (`examples/notify/declarations/action-failed-pr-upkeep-close-blocked-fix.json`) | `class` | `notify-action-failed-pr-upkeep-close-blocked-fix` | listed; needs the owner's approval |
-| `notify-action-failed-pr-upkeep-close-blocked-stamp-pr` (`examples/notify/declarations/action-failed-pr-upkeep-close-blocked-stamp-pr.json`) | `class` | `notify-action-failed-pr-upkeep-close-blocked-stamp-pr` | listed; needs the owner's approval |
 | `notify-action-failed-pr-upkeep-finish-expired` (`examples/notify/declarations/action-failed-pr-upkeep-finish-expired.json`) | `class` | `notify-action-failed-pr-upkeep-finish-expired` | listed; needs the owner's approval |
 | `notify-action-failed-pr-upkeep-finish-no-change` (`examples/notify/declarations/action-failed-pr-upkeep-finish-no-change.json`) | `class` | `notify-action-failed-pr-upkeep-finish-no-change` | listed; needs the owner's approval |
 | `notify-action-failed-pr-upkeep-finish-no-fix` (`examples/notify/declarations/action-failed-pr-upkeep-finish-no-fix.json`) | `class` | `notify-action-failed-pr-upkeep-finish-no-fix` | listed; needs the owner's approval |
@@ -304,7 +332,6 @@ A declaration may render a variable into a wider audience than it came from only
 | `notify-human-needed-jira-intake-blocked-intake` (`examples/notify/declarations/human-needed-jira-intake-blocked-intake.json`) | `human_task_id` | `notify-human-needed-jira-intake-blocked-intake` | listed; needs the owner's approval |
 | `notify-human-decided-jira-intake-blocked-intake` (`examples/notify/declarations/human-decided-jira-intake-blocked-intake.json`) | `outcome` | `notify-human-decided-jira-intake-blocked-intake` | listed; needs the owner's approval |
 | `notify-agent-blocked-jira-intake-blocked-intake` (`examples/notify/declarations/agent-blocked-jira-intake-blocked-intake.json`) | `outcome` | `notify-agent-blocked-jira-intake-blocked-intake` | listed; needs the owner's approval |
-| `notify-action-failed-jira-intake-close-blocked-intake` (`examples/notify/declarations/action-failed-jira-intake-close-blocked-intake.json`) | `class` | `notify-action-failed-jira-intake-close-blocked-intake` | listed; needs the owner's approval |
 | `notify-action-failed-jira-intake-intake` (`examples/notify/declarations/action-failed-jira-intake-intake.json`) | `class` | `notify-action-failed-jira-intake-intake` | listed; needs the owner's approval |
 | `notify-action-failed-jira-intake-picked-up-gh` (`examples/notify/declarations/action-failed-jira-intake-picked-up-gh.json`) | `class` | `notify-action-failed-jira-intake-picked-up-gh` | listed; needs the owner's approval |
 | `notify-action-failed-jira-intake-picked-up` (`examples/notify/declarations/action-failed-jira-intake-picked-up.json`) | `class` | `notify-action-failed-jira-intake-picked-up` | listed; needs the owner's approval |
@@ -313,6 +340,14 @@ A declaration may render a variable into a wider audience than it came from only
 | `notify-action-failed-jira-intake-transition` (`examples/notify/declarations/action-failed-jira-intake-transition.json`) | `class` | `notify-action-failed-jira-intake-transition` | listed; needs the owner's approval |
 | `notify-sweep-failed` (`examples/notify/declarations/sweep-failed.json`) | `outcome` | `notify-sweep-failed` | listed; needs the owner's approval |
 | `notify-merge-deadline` (`examples/notify/declarations/merge-deadline.json`) | `node_name` | `notify-merge-deadline` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-acknowledge-stamp-pr` (`examples/notify/declarations/action-failed-pr-upkeep-acknowledge-stamp-pr.json`) | `class` | `notify-action-failed-pr-upkeep-acknowledge-stamp-pr` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-abandon-stamp-pr` (`examples/notify/declarations/action-failed-pr-upkeep-abandon-stamp-pr.json`) | `class` | `notify-action-failed-pr-upkeep-abandon-stamp-pr` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-acknowledge-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-acknowledge-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-acknowledge-analyse` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-abandon-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-abandon-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-abandon-analyse` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-acknowledge-fix` (`examples/notify/declarations/action-failed-pr-upkeep-acknowledge-fix.json`) | `class` | `notify-action-failed-pr-upkeep-acknowledge-fix` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-abandon-fix` (`examples/notify/declarations/action-failed-pr-upkeep-abandon-fix.json`) | `class` | `notify-action-failed-pr-upkeep-abandon-fix` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-acknowledge-intake` (`examples/notify/declarations/action-failed-jira-intake-acknowledge-intake.json`) | `class` | `notify-action-failed-jira-intake-acknowledge-intake` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-abandon-intake` (`examples/notify/declarations/action-failed-jira-intake-abandon-intake.json`) | `class` | `notify-action-failed-jira-intake-abandon-intake` | listed; needs the owner's approval |
 
 ## Configuration and source generation (c61 and c62)
 

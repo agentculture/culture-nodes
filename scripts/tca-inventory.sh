@@ -156,6 +156,8 @@ lines += [
     "",
     "A declaration may render a variable into a wider audience than it came from only if it lists the variable in `exposes` and the variable's owner approves that entry. The owner is the author of the declaration that produced the variable (the entry's step), as published. Approval is per (declaration name, entry, owner): it survives a republish of the declaration, and a new author of the producing declaration needs a new one. Until approved, a firing that renders the variable is `sensitivity-blocked`. Every entry below is listed in the source and still needs its owner's approval; none is approved by the migration itself.",
     "",
+    "Destination audiences (t49, d20): `destination_audiences` records a target actor's audience by the stable `with.uses` key. After deployment an administrator records `company/notify-discord` as `org`; then org, team and operators sources rendered to that actor do not widen. Other Discord actors remain public until individually recorded, and still require `exposes` and owner approval for narrower sources. The entries below must be reevaluated against their actual target actors after that record is installed; this inventory does not itself grant an approval or create a destination record.",
+    "",
     "| Declaration | Exposes entry | Owner (author of) | Status |",
     "|---|---|---|---|",
 ]

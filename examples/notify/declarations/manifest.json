@@ -2,7 +2,6 @@
   "declarations": [
     "pr-work-item.json",
     "jira-intake.json",
-    "action-failed-pr-upkeep-analyse-orphan.json",
     "action-failed-pr-upkeep-analyse.json",
     "action-failed-pr-upkeep-blocked-analyse.json",
     "human-needed-pr-upkeep-blocked-analyse.json",
@@ -16,17 +15,12 @@
     "human-needed-pr-upkeep-blocked-stamp-pr.json",
     "human-decided-pr-upkeep-blocked-stamp-pr.json",
     "agent-blocked-pr-upkeep-blocked-stamp-pr.json",
-    "action-failed-pr-upkeep-finish-expired.json",
-    "action-failed-pr-upkeep-finish-no-change.json",
-    "action-failed-pr-upkeep-finish-no-fix.json",
     "action-failed-pr-upkeep-finish.json",
-    "action-failed-pr-upkeep-fix-orphan.json",
     "action-failed-pr-upkeep-fix.json",
     "action-failed-pr-upkeep-human-merges-pr.json",
     "human-needed-pr-upkeep-human-merges-pr.json",
     "human-decided-pr-upkeep-human-merges-pr.json",
     "action-failed-pr-upkeep-intake-orphan.json",
-    "action-failed-pr-upkeep-readiness-orphan.json",
     "action-failed-pr-upkeep-readiness.json",
     "action-failed-pr-upkeep-route.json",
     "action-failed-pr-upkeep-stage-dispatch.json",
@@ -40,7 +34,6 @@
     "human-decided-jira-intake-blocked-intake.json",
     "agent-blocked-jira-intake-blocked-intake.json",
     "action-failed-jira-intake-intake.json",
-    "action-failed-jira-intake-picked-up-gh.json",
     "action-failed-jira-intake-picked-up.json",
     "action-failed-jira-intake-post-comment.json",
     "action-failed-jira-intake-stage-intake.json",
@@ -63,7 +56,7 @@
       "trigger": "pr-upkeep.pr",
       "start_node": "root",
       "condition": "true",
-      "message": "PR upkeep work item | Work item {work_item}"
+      "message": "PR #{number}: {0:title:} | [{repository} PR #{number}](https://github.com/{repository}/pull/{number}) has {0:finding_count:new} finding(s); first: {0:finding_title:}\nThe pr-upkeep sweep is routing it: a Jira ticket if the PR has none, then analysis and a fix."
     },
     {
       "file": "jira-intake.json",
@@ -71,15 +64,7 @@
       "trigger": "jira.issue.created",
       "start_node": "root",
       "condition": "event.source == \"jira\" && event.status == \"To Do\"",
-      "message": "Jira intake requested | Issue {id}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-analyse-orphan.json",
-      "name": "notify-action-failed-pr-upkeep-analyse-orphan",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-analyse-done",
-      "condition": "true",
-      "message": "Action failed: analyse-orphan | Class {class}"
+      "message": "Jira {id}: {0:summary:} | [{id}](https://agentculture.atlassian.net/browse/{id}) was created in To Do; the intake agent is picking it up."
     },
     {
       "file": "action-failed-pr-upkeep-analyse.json",
@@ -87,7 +72,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-analyse-done",
       "condition": "true",
-      "message": "Action failed: analyse | Class {class}"
+      "message": "pr-upkeep: analyse failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-blocked-analyse.json",
@@ -95,7 +80,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-blocked-analyse-done",
       "condition": "true",
-      "message": "Action failed: blocked-analyse | Class {class}"
+      "message": "pr-upkeep: blocked-analyse failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "human-needed-pr-upkeep-blocked-analyse.json",
@@ -103,7 +88,7 @@
       "trigger": "human.requested",
       "start_node": "pr-upkeep-blocked-analyse-done",
       "condition": "true",
-      "message": "Decision needed: pr-upkeep-blocked-analyse | Task {human_task_id}"
+      "message": "Decision needed: pr-upkeep analyse is blocked | [Decide in the inbox](https://nodes.culture.dev/inbox) · [Open the run](https://nodes.culture.dev/runs/{firing_id})"
     },
     {
       "file": "human-decided-pr-upkeep-blocked-analyse.json",
@@ -111,7 +96,7 @@
       "trigger": "human.decision",
       "start_node": "pr-upkeep-blocked-analyse-done",
       "condition": "true",
-      "message": "Decision made: pr-upkeep-blocked-analyse | Outcome {outcome}"
+      "message": "PR #{pr-upkeep-route:number} analyse decision: {outcome} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number})"
     },
     {
       "file": "agent-blocked-pr-upkeep-blocked-analyse.json",
@@ -119,7 +104,7 @@
       "trigger": "agent.result",
       "start_node": "pr-upkeep-analyse-done",
       "condition": "event.outcome == \"blocked\"",
-      "message": "Agent blocked: pr-upkeep-blocked-analyse | Outcome {outcome}"
+      "message": "PR #{pr-upkeep-route:number} analyse blocked: {pr-upkeep-route:title:} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number}) · [Decide in the inbox](https://nodes.culture.dev/inbox)"
     },
     {
       "file": "action-failed-pr-upkeep-blocked-fix.json",
@@ -127,7 +112,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-blocked-fix-done",
       "condition": "true",
-      "message": "Action failed: blocked-fix | Class {class}"
+      "message": "pr-upkeep: blocked-fix failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "human-needed-pr-upkeep-blocked-fix.json",
@@ -135,7 +120,7 @@
       "trigger": "human.requested",
       "start_node": "pr-upkeep-blocked-fix-done",
       "condition": "true",
-      "message": "Decision needed: pr-upkeep-blocked-fix | Task {human_task_id}"
+      "message": "Decision needed: pr-upkeep fix is blocked | [Decide in the inbox](https://nodes.culture.dev/inbox) · [Open the run](https://nodes.culture.dev/runs/{firing_id})"
     },
     {
       "file": "human-decided-pr-upkeep-blocked-fix.json",
@@ -143,7 +128,7 @@
       "trigger": "human.decision",
       "start_node": "pr-upkeep-blocked-fix-done",
       "condition": "true",
-      "message": "Decision made: pr-upkeep-blocked-fix | Outcome {outcome}"
+      "message": "PR #{pr-upkeep-route:number} fix decision: {outcome} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number})"
     },
     {
       "file": "agent-blocked-pr-upkeep-blocked-fix.json",
@@ -151,7 +136,7 @@
       "trigger": "agent.result",
       "start_node": "pr-upkeep-fix-done",
       "condition": "event.outcome == \"blocked\"",
-      "message": "Agent blocked: pr-upkeep-blocked-fix | Outcome {outcome}"
+      "message": "PR #{pr-upkeep-route:number} fix blocked: {pr-upkeep-route:title:} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number}) · [Decide in the inbox](https://nodes.culture.dev/inbox)"
     },
     {
       "file": "action-failed-pr-upkeep-blocked-stamp-pr.json",
@@ -159,7 +144,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-blocked-stamp-pr-done",
       "condition": "true",
-      "message": "Action failed: blocked-stamp-pr | Class {class}"
+      "message": "pr-upkeep: blocked-stamp-pr failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "human-needed-pr-upkeep-blocked-stamp-pr.json",
@@ -167,7 +152,7 @@
       "trigger": "human.requested",
       "start_node": "pr-upkeep-blocked-stamp-pr-done",
       "condition": "true",
-      "message": "Decision needed: pr-upkeep-blocked-stamp-pr | Task {human_task_id}"
+      "message": "Decision needed: pr-upkeep stamp-pr is blocked | [Decide in the inbox](https://nodes.culture.dev/inbox) · [Open the run](https://nodes.culture.dev/runs/{firing_id})"
     },
     {
       "file": "human-decided-pr-upkeep-blocked-stamp-pr.json",
@@ -175,7 +160,7 @@
       "trigger": "human.decision",
       "start_node": "pr-upkeep-blocked-stamp-pr-done",
       "condition": "true",
-      "message": "Decision made: pr-upkeep-blocked-stamp-pr | Outcome {outcome}"
+      "message": "PR #{pr-upkeep-route:number} stamp-pr decision: {outcome} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number})"
     },
     {
       "file": "agent-blocked-pr-upkeep-blocked-stamp-pr.json",
@@ -183,79 +168,7 @@
       "trigger": "agent.result",
       "start_node": "pr-upkeep-stamp-pr-done",
       "condition": "event.outcome == \"blocked\"",
-      "message": "Agent blocked: pr-upkeep-blocked-stamp-pr | Outcome {outcome}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-acknowledge-analyse.json",
-      "name": "notify-action-failed-pr-upkeep-acknowledge-analyse",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-acknowledge-analyse-done",
-      "condition": "true",
-      "message": "Action failed: acknowledge-analyse | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-abandon-analyse.json",
-      "name": "notify-action-failed-pr-upkeep-abandon-analyse",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-abandon-analyse-done",
-      "condition": "true",
-      "message": "Action failed: abandon-analyse | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-acknowledge-fix.json",
-      "name": "notify-action-failed-pr-upkeep-acknowledge-fix",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-acknowledge-fix-done",
-      "condition": "true",
-      "message": "Action failed: acknowledge-fix | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-abandon-fix.json",
-      "name": "notify-action-failed-pr-upkeep-abandon-fix",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-abandon-fix-done",
-      "condition": "true",
-      "message": "Action failed: abandon-fix | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-acknowledge-stamp-pr.json",
-      "name": "notify-action-failed-pr-upkeep-acknowledge-stamp-pr",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-acknowledge-stamp-pr-done",
-      "condition": "true",
-      "message": "Action failed: acknowledge-stamp-pr | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-abandon-stamp-pr.json",
-      "name": "notify-action-failed-pr-upkeep-abandon-stamp-pr",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-abandon-stamp-pr-done",
-      "condition": "true",
-      "message": "Action failed: abandon-stamp-pr | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-finish-expired.json",
-      "name": "notify-action-failed-pr-upkeep-finish-expired",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-finish-done",
-      "condition": "true",
-      "message": "Action failed: finish-expired | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-finish-no-change.json",
-      "name": "notify-action-failed-pr-upkeep-finish-no-change",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-finish-done",
-      "condition": "true",
-      "message": "Action failed: finish-no-change | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-finish-no-fix.json",
-      "name": "notify-action-failed-pr-upkeep-finish-no-fix",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-finish-done",
-      "condition": "true",
-      "message": "Action failed: finish-no-fix | Class {class}"
+      "message": "PR #{pr-upkeep-route:number} stamp-pr blocked: {pr-upkeep-route:title:} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number}) · [Decide in the inbox](https://nodes.culture.dev/inbox)"
     },
     {
       "file": "action-failed-pr-upkeep-finish.json",
@@ -263,15 +176,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-finish-done",
       "condition": "true",
-      "message": "Action failed: finish | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-fix-orphan.json",
-      "name": "notify-action-failed-pr-upkeep-fix-orphan",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-fix-done",
-      "condition": "true",
-      "message": "Action failed: fix-orphan | Class {class}"
+      "message": "pr-upkeep: finish failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-fix.json",
@@ -279,7 +184,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-fix-done",
       "condition": "true",
-      "message": "Action failed: fix | Class {class}"
+      "message": "pr-upkeep: fix failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-human-merges-pr.json",
@@ -287,7 +192,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-human-merges-pr-done",
       "condition": "true",
-      "message": "Action failed: human-merges-pr | Class {class}"
+      "message": "pr-upkeep: human-merges-pr failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "human-needed-pr-upkeep-human-merges-pr.json",
@@ -295,7 +200,7 @@
       "trigger": "human.requested",
       "start_node": "pr-upkeep-human-merges-pr-done",
       "condition": "true",
-      "message": "Decision needed: pr-upkeep-human-merges-pr | Task {human_task_id}"
+      "message": "Decision needed: a pull request is ready to merge | [Decide in the inbox](https://nodes.culture.dev/inbox) · [Open the run](https://nodes.culture.dev/runs/{firing_id})"
     },
     {
       "file": "human-decided-pr-upkeep-human-merges-pr.json",
@@ -303,7 +208,7 @@
       "trigger": "human.decision",
       "start_node": "pr-upkeep-human-merges-pr-done",
       "condition": "true",
-      "message": "Decision made: pr-upkeep-human-merges-pr | Outcome {outcome}"
+      "message": "PR #{pr-upkeep-route:number} merge decision: {outcome} | [{pr-upkeep-route:repository} PR #{pr-upkeep-route:number}](https://github.com/{pr-upkeep-route:repository}/pull/{pr-upkeep-route:number})"
     },
     {
       "file": "action-failed-pr-upkeep-intake-orphan.json",
@@ -311,15 +216,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-intake-orphan-done",
       "condition": "true",
-      "message": "Action failed: intake-orphan | Class {class}"
-    },
-    {
-      "file": "action-failed-pr-upkeep-readiness-orphan.json",
-      "name": "notify-action-failed-pr-upkeep-readiness-orphan",
-      "trigger": "action.failed",
-      "start_node": "pr-upkeep-readiness-done",
-      "condition": "true",
-      "message": "Action failed: readiness-orphan | Class {class}"
+      "message": "pr-upkeep: intake-orphan failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-readiness.json",
@@ -327,7 +224,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-readiness-done",
       "condition": "true",
-      "message": "Action failed: readiness | Class {class}"
+      "message": "pr-upkeep: readiness failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-route.json",
@@ -335,7 +232,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-route-done",
       "condition": "true",
-      "message": "Action failed: route | Class {class}"
+      "message": "pr-upkeep: route failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-stage-dispatch.json",
@@ -343,7 +240,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-stage-dispatch-done",
       "condition": "true",
-      "message": "Action failed: stage-dispatch | Class {class}"
+      "message": "pr-upkeep: stage-dispatch failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-stage-pr-open.json",
@@ -351,7 +248,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-stage-pr-open-done",
       "condition": "true",
-      "message": "Action failed: stage-pr-open | Class {class}"
+      "message": "pr-upkeep: stage-pr-open failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-stamp-pr.json",
@@ -359,7 +256,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-stamp-pr-done",
       "condition": "true",
-      "message": "Action failed: stamp-pr | Class {class}"
+      "message": "pr-upkeep: stamp-pr failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-sweep-failed.json",
@@ -367,7 +264,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-sweep-failed-done",
       "condition": "true",
-      "message": "Action failed: sweep-failed | Class {class}"
+      "message": "pr-upkeep: sweep-failed failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-sweep.json",
@@ -375,7 +272,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-sweep-done",
       "condition": "true",
-      "message": "Action failed: sweep | Class {class}"
+      "message": "pr-upkeep: sweep failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-pr-upkeep-swept.json",
@@ -383,7 +280,7 @@
       "trigger": "action.failed",
       "start_node": "pr-upkeep-swept-done",
       "condition": "true",
-      "message": "Action failed: swept | Class {class}"
+      "message": "pr-upkeep: swept failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-jira-intake-blocked-intake.json",
@@ -391,7 +288,7 @@
       "trigger": "action.failed",
       "start_node": "jira-intake-blocked-intake-done",
       "condition": "true",
-      "message": "Action failed: blocked-intake | Class {class}"
+      "message": "jira-intake: blocked-intake failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "human-needed-jira-intake-blocked-intake.json",
@@ -399,7 +296,7 @@
       "trigger": "human.requested",
       "start_node": "jira-intake-blocked-intake-done",
       "condition": "true",
-      "message": "Decision needed: jira-intake-blocked-intake | Task {human_task_id}"
+      "message": "Decision needed: jira-intake intake is blocked | [Decide in the inbox](https://nodes.culture.dev/inbox) · [Open the run](https://nodes.culture.dev/runs/{firing_id})"
     },
     {
       "file": "human-decided-jira-intake-blocked-intake.json",
@@ -407,7 +304,7 @@
       "trigger": "human.decision",
       "start_node": "jira-intake-blocked-intake-done",
       "condition": "true",
-      "message": "Decision made: jira-intake-blocked-intake | Outcome {outcome}"
+      "message": "{jira-intake-intake:id} intake decision: {outcome} | [{jira-intake-intake:id}](https://agentculture.atlassian.net/browse/{jira-intake-intake:id}) {jira-intake-intake:summary:}"
     },
     {
       "file": "agent-blocked-jira-intake-blocked-intake.json",
@@ -415,23 +312,7 @@
       "trigger": "agent.result",
       "start_node": "jira-intake-intake-done",
       "condition": "event.outcome == \"blocked\"",
-      "message": "Agent blocked: jira-intake-blocked-intake | Outcome {outcome}"
-    },
-    {
-      "file": "action-failed-jira-intake-acknowledge-intake.json",
-      "name": "notify-action-failed-jira-intake-acknowledge-intake",
-      "trigger": "action.failed",
-      "start_node": "jira-intake-acknowledge-intake-done",
-      "condition": "true",
-      "message": "Action failed: acknowledge-intake | Class {class}"
-    },
-    {
-      "file": "action-failed-jira-intake-abandon-intake.json",
-      "name": "notify-action-failed-jira-intake-abandon-intake",
-      "trigger": "action.failed",
-      "start_node": "jira-intake-abandon-intake-done",
-      "condition": "true",
-      "message": "Action failed: abandon-intake | Class {class}"
+      "message": "{jira-intake-intake:id} intake blocked: {jira-intake-intake:summary:} | [{jira-intake-intake:id}](https://agentculture.atlassian.net/browse/{jira-intake-intake:id}) · [Decide in the inbox](https://nodes.culture.dev/inbox)"
     },
     {
       "file": "action-failed-jira-intake-intake.json",
@@ -439,15 +320,7 @@
       "trigger": "action.failed",
       "start_node": "jira-intake-intake-done",
       "condition": "true",
-      "message": "Action failed: intake | Class {class}"
-    },
-    {
-      "file": "action-failed-jira-intake-picked-up-gh.json",
-      "name": "notify-action-failed-jira-intake-picked-up-gh",
-      "trigger": "action.failed",
-      "start_node": "jira-intake-picked-up-done",
-      "condition": "true",
-      "message": "Action failed: picked-up-gh | Class {class}"
+      "message": "jira-intake: intake failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-jira-intake-picked-up.json",
@@ -455,7 +328,7 @@
       "trigger": "action.failed",
       "start_node": "jira-intake-picked-up-done",
       "condition": "true",
-      "message": "Action failed: picked-up | Class {class}"
+      "message": "jira-intake: picked-up failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-jira-intake-post-comment.json",
@@ -463,7 +336,7 @@
       "trigger": "action.failed",
       "start_node": "jira-intake-post-comment-done",
       "condition": "true",
-      "message": "Action failed: post-comment | Class {class}"
+      "message": "jira-intake: post-comment failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-jira-intake-stage-intake.json",
@@ -471,7 +344,7 @@
       "trigger": "action.failed",
       "start_node": "jira-intake-stage-intake-done",
       "condition": "true",
-      "message": "Action failed: stage-intake | Class {class}"
+      "message": "jira-intake: stage-intake failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "action-failed-jira-intake-transition.json",
@@ -479,7 +352,7 @@
       "trigger": "action.failed",
       "start_node": "jira-intake-transition-done",
       "condition": "true",
-      "message": "Action failed: transition | Class {class}"
+      "message": "jira-intake: transition failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     },
     {
       "file": "sweep-failed.json",
@@ -487,7 +360,7 @@
       "trigger": "code.result",
       "start_node": "pr-upkeep-sweep-done",
       "condition": "event.outcome == \"failed\"",
-      "message": "PR upkeep sweep failed | Outcome {outcome}"
+      "message": "PR upkeep sweep failed | [Open the failed sweep run](https://nodes.culture.dev/runs/{firing_id})"
     },
     {
       "file": "merge-deadline.json",
@@ -495,7 +368,71 @@
       "trigger": "node.expired",
       "start_node": "pr-upkeep-human-merges-pr-done",
       "condition": "true",
-      "message": "PR merge deadline passed | Node {node_name}"
+      "message": "PR merge deadline passed with no decision | [Open the run](https://nodes.culture.dev/runs/{firing_id}) · the merge approval expired, so the run finishes without a merge."
+    },
+    {
+      "file": "action-failed-pr-upkeep-acknowledge-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-acknowledge-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-acknowledge-stamp-pr-done",
+      "condition": "true",
+      "message": "pr-upkeep: acknowledge-stamp-pr failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-abandon-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-abandon-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-abandon-stamp-pr-done",
+      "condition": "true",
+      "message": "pr-upkeep: abandon-stamp-pr failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-acknowledge-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-acknowledge-analyse",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-acknowledge-analyse-done",
+      "condition": "true",
+      "message": "pr-upkeep: acknowledge-analyse failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-abandon-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-abandon-analyse",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-abandon-analyse-done",
+      "condition": "true",
+      "message": "pr-upkeep: abandon-analyse failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-acknowledge-fix.json",
+      "name": "notify-action-failed-pr-upkeep-acknowledge-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-acknowledge-fix-done",
+      "condition": "true",
+      "message": "pr-upkeep: acknowledge-fix failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-abandon-fix.json",
+      "name": "notify-action-failed-pr-upkeep-abandon-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-abandon-fix-done",
+      "condition": "true",
+      "message": "pr-upkeep: abandon-fix failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-acknowledge-intake.json",
+      "name": "notify-action-failed-jira-intake-acknowledge-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-acknowledge-intake-done",
+      "condition": "true",
+      "message": "jira-intake: acknowledge-intake failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-abandon-intake.json",
+      "name": "notify-action-failed-jira-intake-abandon-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-abandon-intake-done",
+      "condition": "true",
+      "message": "jira-intake: abandon-intake failed | [Open the failed run](https://nodes.culture.dev/runs/{firing_id}) · status: {status} · class: {class}"
     }
   ]
 }

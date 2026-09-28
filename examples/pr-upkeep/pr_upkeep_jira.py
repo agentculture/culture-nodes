@@ -448,6 +448,10 @@ def jira_emissions_report(
         fields = issue.get("fields") or {}
         created_payload = dict(item)
         created_payload["created_at"] = str(fields.get("created") or "")
+        # Flat display field (task t48, d21): the issue's summary under its
+        # own name, for templates. `title` already carries it for the work
+        # item shape; `summary` is what every neutral jira.* fact now shares.
+        created_payload["summary"] = str(fields.get("summary") or "")
         marker = last_cn1_marker(jira_description_text(fields.get("description")))
         if marker and not bot_account_id:
             withheld += 1
@@ -489,6 +493,7 @@ def jira_emissions_report(
                     "issue": item["id"],
                     "to_status": event["status"],
                     "site": source_site,
+                    "summary": str(fields.get("summary") or ""),
                 }
                 if event["from_status"]:
                     transition_payload["from_status"] = event["from_status"]
@@ -578,6 +583,7 @@ def jira_reaction_facts(
     that person as author, so the engine rejects it rather than trusting it.
     """
     fields = issue.get("fields") or {}
+    summary = str(fields.get("summary") or "")  # t48 display field, already fetched
     comments = sorted(
         (fields.get("comment") or {}).get("comments") or [],
         key=lambda comment: _history_id_key(comment.get("id")),
@@ -598,7 +604,13 @@ def jira_reaction_facts(
         watermark = {"comment_id": comment_id}
         if own and _marker_kind(marker) == JIRA_ISSUE_MARKER_KIND:
             from_status, to_status = _status_at(issue, _comment_timestamp_created(comment))
-            payload = {"source": "jira", "issue": key, "to_status": to_status, "site": source_site}
+            payload = {
+                "source": "jira",
+                "issue": key,
+                "to_status": to_status,
+                "site": source_site,
+                "summary": summary,
+            }
             if from_status:
                 payload["from_status"] = from_status
             payload["origin"] = origin
@@ -621,6 +633,7 @@ def jira_reaction_facts(
             "author": author,
             "body": text,
             "site": source_site,
+            "summary": summary,
         }
         if origin is not None:
             payload["origin"] = origin

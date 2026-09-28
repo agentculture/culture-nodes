@@ -118,7 +118,14 @@ def upkeep_pr_fact(
     ``work_item`` and deliberately NO ``subject``: subject re-enters the
     one-active-run-per-subject guard #268 removed, and no ``category`` --
     the work item is its own run column (decision c41), not a category.
+
+    ``title``, ``finding_title`` and ``finding_count`` are DISPLAY fields
+    (task t48, owner decision d21): a declaration template can only render a
+    flat value (``{title}``), never a path into ``findings``, so a
+    notification that leads with what happened needs them at the top level.
+    They repeat what the pull and ``findings`` already say and route nothing.
     """
+    first = dispatched[0] if dispatched else {}
     return {
         "source": "github_pr",
         "repository": repository,
@@ -126,6 +133,11 @@ def upkeep_pr_fact(
         "head_sha": pull.get("head_sha") or "",
         "findings": dispatched,
         "work_item": work_item_for_pull(pull, repository, jira_project),
+        "title": pull.get("title") or "",
+        "finding_title": (
+            (first.get("title") or first.get("message") or "") if isinstance(first, dict) else ""
+        ),
+        "finding_count": len(dispatched),
     }
 
 

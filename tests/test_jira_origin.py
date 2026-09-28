@@ -194,6 +194,7 @@ def test_a_transitions_marker_comment_raises_the_neutral_transition_with_origin(
         "from_status": "To Do",
         "to_status": "In Progress",
         "site": SITE,
+        "summary": "",  # t48 display field; this fixture issue has none
         "origin": {
             "marker": ISSUE_MARKER,
             "artifact_kind": "jira.issue",

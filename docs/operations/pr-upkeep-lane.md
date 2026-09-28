@@ -588,6 +588,19 @@ The exception is a change to the fact's *shape*: the input contract is
 `additionalProperties: false`, so a new payload key (as `work_item` was, #310)
 widens the contract and the workflow is republished in the same change.
 
+The t48 display fields (`title`, `finding_title`, `finding_count`, task t48,
+owner decision d21) are such a change, shaped to be the gentle kind: the
+contract admits them as **optional**, so a sweep still running the previous
+`pr_upkeep_emit.py` keeps passing the republished contract, and the new sweep
+passes it too. What the change does need is the fetched-module digests
+re-pinned: `pr_upkeep_emit.py` (the fact fields) and `pr_upkeep_jira.py` (the
+`summary` on the neutral Jira facts) both changed, so
+`PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256` and `PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256`
+are re-granted before the sweep fetches them, and the sweep declaration is
+republished if its fetched set moved. Until then the sweep keeps emitting the
+old shape and `notify-pr-work-item` renders its defaults (an empty title, "new
+finding(s)").
+
 ## What is deliberately not here
 
 - **No merge credential anywhere in the loop.** The fix actor opens or updates

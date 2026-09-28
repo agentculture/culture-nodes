@@ -283,6 +283,9 @@ func jiraEmissionsReport(issue map[string]any, site, project, bot string) ([]jir
 	// ":created" source key is shared with the poller so the two dedupe.
 	createdPayload := clone(base)
 	createdPayload["created_at"] = text(fields["created"])
+	// t48 (d21): the summary as a flat display field on every neutral jira.*
+	// fact, exactly as pr_upkeep_jira does.
+	createdPayload["summary"] = text(fields["summary"])
 	withheld := 0
 	if jiraCreatedOrigin(issue, createdPayload, bot) {
 		withheld++
@@ -332,7 +335,7 @@ func jiraEmissionsReport(issue map[string]any, site, project, bot string) ([]jir
 			// jira.issue.transitioned (#328 t31c, d7) is the neutral reaction
 			// to a jira.transition action, emitted alongside the legacy name
 			// exactly as the poller does (pr_upkeep_jira.jira_emissions).
-			neutral := map[string]any{"source": "jira", "issue": key, "to_status": payload["status"], "site": jiraSite(site)}
+			neutral := map[string]any{"source": "jira", "issue": key, "to_status": payload["status"], "site": jiraSite(site), "summary": text(fields["summary"])}
 			if from := text(payload["from_status"]); from != "" {
 				neutral["from_status"] = from
 			}

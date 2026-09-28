@@ -99,7 +99,8 @@ func TestJiraEmissionsCarryStampedOrigin(t *testing.T) {
 		t.Fatalf("no neutral transition for the transition's marker comment: %+v", keys)
 	}
 	want := map[string]any{"source": "jira", "issue": markedIssue, "from_status": "To Do", "to_status": "In Progress", "site": markedSite,
-		"origin": origin(issueMark, "jira.issue", "24", "bot", "bot")}
+		"summary": "Stamped artifacts", // t48 display field
+		"origin":  origin(issueMark, "jira.issue", "24", "bot", "bot")}
 	if got := factPayload(t, transition); !reflect.DeepEqual(got, want) {
 		t.Fatalf("transition reaction = %v, want %v", got, want)
 	}

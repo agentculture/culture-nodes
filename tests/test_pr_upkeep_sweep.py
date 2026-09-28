@@ -821,6 +821,8 @@ class TestEmitterMain:
                 "issue": "EX-17",
                 "to_status": "To Do",
                 "site": "team.example.com",
+                # t48 (d21): the summary, flat, for notification templates.
+                "summary": "Make the recorded backlog item actionable",
             }
             for event in neutral
         )

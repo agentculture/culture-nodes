@@ -664,6 +664,7 @@ class TestJiraEmissions:
                 ),
                 "to_status": old["payload"]["status"],
                 "site": "team.example.com",
+                "summary": old["payload"]["title"],  # t48: the same summary, flat
             }
             assert new["watermark"] == old["watermark"]
 
@@ -709,3 +710,27 @@ class TestJiraCredentials:
         monkeypatch.delenv(missing)
         with pytest.raises(ValueError, match="JIRA_ACCOUNT_EMAIL and JIRA_API_TOKEN"):
             jira.jira_credentials()
+
+
+class TestNeutralJiraFactsCarryTheSummary:
+    """Task t48 (owner decision d21): a notification template renders only
+    flat values, so every neutral jira.* fact names its issue's summary as
+    `summary` -- read from the search response the sweep already fetched,
+    no extra API call. The Go webhook twin is pinned equal to these by
+    internal/api/jirawebhook_test.go's seam test."""
+
+    def test_created_transitioned_and_comment_facts_carry_it(self, jira_round_trip_complete):
+        issue = jira_round_trip_complete["issues"][0]
+        expected = issue["fields"]["summary"]
+        assert expected
+        facts = jira.jira_emissions(
+            jira_round_trip_complete, site="https://team.example.com/", project="SCRUM"
+        )
+        neutral = [
+            f
+            for f in facts
+            if f["name"] in ("jira.issue.created", "jira.issue.transitioned", "jira.comment")
+        ]
+        assert {f["name"] for f in neutral} >= {"jira.issue.created", "jira.issue.transitioned"}
+        for fact in neutral:
+            assert fact["payload"]["summary"] == expected, fact["name"]

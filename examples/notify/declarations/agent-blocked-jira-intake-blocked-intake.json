@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "Agent blocked: jira-intake-blocked-intake",
-        "description": "Outcome {outcome}",
+        "title": "{jira-intake-intake:id} intake blocked: {jira-intake-intake:summary:}",
+        "description": "[{jira-intake-intake:id}](https://agentculture.atlassian.net/browse/{jira-intake-intake:id}) · [Decide in the inbox](https://nodes.culture.dev/inbox)",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,7 @@
     "deadline": "5m"
   },
   "exposes": [
-    "outcome"
+    "jira-intake-intake:id",
+    "jira-intake-intake:summary"
   ]
 }

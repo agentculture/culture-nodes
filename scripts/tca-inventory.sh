@@ -44,6 +44,11 @@ def before_text(path):
 
 
 files = [path for path in tracked if workflow_file(path)]
+MIGRATED = {
+    "examples/pr-upkeep/workflow.yaml": "examples/pr-upkeep/declarations/manifest.json",
+    "examples/pr-upkeep/sweep-cycle.workflow.yaml": "examples/pr-upkeep/declarations/manifest.json",
+    "examples/jira-intake/workflow.yaml": "examples/jira-intake/declarations/manifest.json",
+}
 before_files = before_tracked()
 definitions = [path for path in before_files if workflow_file(path) and Path(path).suffix in (".yaml", ".yml", ".json") and not path.startswith("schemas/workflow/")]
 schema = json.loads(before_text("schemas/workflow/workflow.schema.json"))
@@ -96,7 +101,47 @@ for path in files:
         form = "Declaration fixture with equivalent behavior or validation result"
     else:
         form = "Split workflow trigger, CEL guards and actions into linked declarations"
-    lines.append(f"| `{path}` | {form} | pending |")
+    if path in MIGRATED:
+        form = f"[{MIGRATED[path]}](../../{MIGRATED[path]}) lists each step and edge"
+        parity = "source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord"
+    else:
+        parity = "pending"
+    lines.append(f"| `{path}` | {form} | {parity} |")
+
+lines += [
+    "",
+    "## pr-upkeep and jira-intake item inventory",
+    "",
+    "The rows below come from the declaration manifests and sources. `source` means the form is authored and checked by the declaration parser test. Runtime parity still needs a shadow comparison before cutover. The graph workflows and their legacy events stay live.",
+    "",
+    "| Graph item | Declaration form | Parity status |",
+    "|---|---|---|",
+]
+for graph, manifest_path in MIGRATED.items():
+    manifest = json.loads(Path(manifest_path).read_text())
+    directory = Path(manifest_path).parent
+    steps = [step for step in manifest["steps"] if step["graph_workflow"] == Path(graph).name]
+    for step in steps:
+        source_path = directory / (step["graph_node"] + ".json")
+        source = json.loads(source_path.read_text())
+        name = step["graph_node"]
+        lines.append(f"| `{graph}` node `{name}` | `{source_path}` action `{source['action']['kind']}`, start/landing deadlines | source; runtime parity pending |")
+        if "legacy_event" in source["trigger"]["with"]:
+            event = source["trigger"]["with"]["legacy_event"]
+            lines.append(f"| `{graph}` trigger `{event}` | `{source_path}` trigger `{source['trigger']['kind']}` with legacy event metadata | source; legacy event trigger parity pending |")
+        if "max_concurrent_subject" in source["trigger"]:
+            cap = source["trigger"]["max_concurrent_subject"]
+            lines.append(f"| `{graph}` subject cap `{cap}` | `{source_path}` trigger.max_concurrent_subject | source; runtime parity pending |")
+        for affinity in source["action"]["with"].get("actor_selection", []):
+            lines.append(f"| `{graph}` affinity `{affinity['name']}` | `{source_path}` action.with.actor_selection | source; actor selection runtime parity pending |")
+    step_names = {step["declaration"] for step in steps}
+    for edge in manifest["edges"]:
+        if edge["from"] not in step_names:
+            continue
+        target = edge["from"].removeprefix(Path(graph).parent.name + "-")
+        source_path = directory / (target + ".json")
+        guard = f" when `{edge['when']}`" if edge.get("when") else ""
+        lines.append(f"| `{graph}` edge `{edge['to']}` `{edge['outcome']}` to `{edge['from']}`{guard} | `{manifest_path}` `{edge['kind']}` link, `{source_path}` reaction metadata | source; runtime parity pending |")
 
 lines += [
     "",

@@ -1,0 +1,75 @@
+{
+  "name": "jira-intake-post-comment",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "intake",
+          "outcome": "intake_drafted",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 9
+  },
+  "condition": "true",
+  "action": {
+    "kind": "jira.comment",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "post-comment",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/platform-ai",
+        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "input": {
+          "bindings": {
+            "verb": {
+              "literal": "post_comment"
+            },
+            "issue": "/run/input/id",
+            "comment": "/nodes/intake/output/summary"
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "comment_posted": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "issue",
+                  "comment_id"
+                ]
+              }
+            }
+          }
+        },
+        "policy": {
+          "timeout": "10m",
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "variables": {
+        "issue": "{id}",
+        "comment": "{jira-intake-intake:summary:}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "post-comment-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "post-comment-done",
+    "deadline": "2h"
+  }
+}

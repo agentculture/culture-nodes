@@ -1,0 +1,60 @@
+{
+  "name": "pr-upkeep-finish",
+  "trigger": {
+    "kind": "human.decision",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "analyse",
+          "outcome": "no_fix",
+          "when": null
+        },
+        {
+          "from": "fix",
+          "outcome": "no_change",
+          "when": null
+        },
+        {
+          "from": "human-merges-pr",
+          "outcome": "approved",
+          "when": null
+        },
+        {
+          "from": "human-merges-pr",
+          "outcome": "rejected",
+          "when": null
+        },
+        {
+          "from": "human-merges-pr",
+          "outcome": "expired",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 10
+  },
+  "condition": "true",
+  "action": {
+    "kind": "code.run",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "finish",
+      "graph_kind": "end",
+      "legacy": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/analyse/output"
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "finish-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "finish-done",
+    "deadline": "168h"
+  }
+}

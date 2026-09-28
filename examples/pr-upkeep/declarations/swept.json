@@ -1,0 +1,40 @@
+{
+  "name": "pr-upkeep-swept",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "sweep",
+          "outcome": "passed",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 5
+  },
+  "condition": "true",
+  "action": {
+    "kind": "code.run",
+    "with": {
+      "graph_workflow": "sweep-cycle.workflow.yaml",
+      "graph_node": "swept",
+      "graph_kind": "end",
+      "legacy": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/sweep/output"
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "swept-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "swept-done",
+    "deadline": "1h"
+  }
+}

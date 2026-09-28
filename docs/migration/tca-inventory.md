@@ -27,7 +27,7 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | `examples/harness-compare/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/independent-review/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/jira-comment-consumer/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
-| `examples/jira-intake/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
+| `examples/jira-intake/workflow.yaml` | [examples/jira-intake/declarations/manifest.json](../../examples/jira-intake/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord |
 | `examples/jira-question-round-trip/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/land/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/merge-gate/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
@@ -35,8 +35,8 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | `examples/notify-message/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/parallel-live-proof/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/placement-proof/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
-| `examples/pr-upkeep/sweep-cycle.workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
-| `examples/pr-upkeep/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` | [examples/pr-upkeep/declarations/manifest.json](../../examples/pr-upkeep/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord |
+| `examples/pr-upkeep/workflow.yaml` | [examples/pr-upkeep/declarations/manifest.json](../../examples/pr-upkeep/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord |
 | `examples/self-hosting-loop/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/spec-chain-lane/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/spec-chain/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
@@ -155,6 +155,61 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | `web/src/domain/__golden__/round-trip.mutated.workflow.json` | Declaration editor round trip or graph-view golden | pending |
 | `web/src/domain/__golden__/round-trip.workflow.json` | Declaration editor round trip or graph-view golden | pending |
 | `web/src/domain/__golden__/round-trip.workflow.yaml` | Declaration editor round trip or graph-view golden | pending |
+
+## pr-upkeep and jira-intake item inventory
+
+The rows below come from the declaration manifests and sources. `source` means the form is authored and checked by the declaration parser test. Runtime parity still needs a shadow comparison before cutover. The graph workflows and their legacy events stay live.
+
+| Graph item | Declaration form | Parity status |
+|---|---|---|
+| `examples/pr-upkeep/workflow.yaml` node `route` | `examples/pr-upkeep/declarations/route.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` trigger `pr-upkeep.pr` | `examples/pr-upkeep/declarations/route.json` trigger `timer` with legacy event metadata | source; legacy event trigger parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `intake-orphan` | `examples/pr-upkeep/declarations/intake-orphan.json` action `jira.create`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `stamp-pr` | `examples/pr-upkeep/declarations/stamp-pr.json` action `agent.work`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `stage-dispatch` | `examples/pr-upkeep/declarations/stage-dispatch.json` action `jira.comment`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `analyse` | `examples/pr-upkeep/declarations/analyse.json` action `agent.work`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `fix` | `examples/pr-upkeep/declarations/fix.json` action `agent.work`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` affinity `security-findings` | `examples/pr-upkeep/declarations/fix.json` action.with.actor_selection | source; actor selection runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` affinity `general-findings` | `examples/pr-upkeep/declarations/fix.json` action.with.actor_selection | source; actor selection runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `stage-pr-open` | `examples/pr-upkeep/declarations/stage-pr-open.json` action `jira.comment`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `readiness` | `examples/pr-upkeep/declarations/readiness.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `human-merges-pr` | `examples/pr-upkeep/declarations/human-merges-pr.json` action `human.ask`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` node `finish` | `examples/pr-upkeep/declarations/finish.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-route` `orphan` to `pr-upkeep-intake-orphan` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/intake-orphan.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-route` `keyed` to `pr-upkeep-analyse` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/analyse.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-intake-orphan` `issue_created` to `pr-upkeep-stamp-pr` | `examples/pr-upkeep/declarations/manifest.json` `must` link, `examples/pr-upkeep/declarations/stamp-pr.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-stamp-pr` `stamped` to `pr-upkeep-analyse` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/analyse.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-analyse` `packaged` to `pr-upkeep-stage-dispatch` when `!input.work_item.startsWith("gh:")` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/stage-dispatch.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-analyse` `packaged` to `pr-upkeep-fix` when `input.work_item.startsWith("gh:")` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/fix.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-analyse` `no_fix` to `pr-upkeep-finish` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/finish.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-stage-dispatch` `comment_posted` to `pr-upkeep-fix` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/fix.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-fix` `completed` to `pr-upkeep-stage-pr-open` when `!input.work_item.startsWith("gh:")` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/stage-pr-open.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-fix` `completed` to `pr-upkeep-readiness` when `input.work_item.startsWith("gh:")` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/readiness.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-stage-pr-open` `comment_posted` to `pr-upkeep-readiness` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/readiness.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-readiness` `passed` to `pr-upkeep-human-merges-pr` | `examples/pr-upkeep/declarations/manifest.json` `must` link, `examples/pr-upkeep/declarations/human-merges-pr.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-readiness` `failed` to `pr-upkeep-human-merges-pr` | `examples/pr-upkeep/declarations/manifest.json` `must` link, `examples/pr-upkeep/declarations/human-merges-pr.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-fix` `no_change` to `pr-upkeep-finish` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/finish.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-human-merges-pr` `approved` to `pr-upkeep-finish` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/finish.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-human-merges-pr` `rejected` to `pr-upkeep-finish` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/finish.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/workflow.yaml` edge `pr-upkeep-human-merges-pr` `expired` to `pr-upkeep-finish` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/finish.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` node `sweep` | `examples/pr-upkeep/declarations/sweep.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` trigger `pr-upkeep.sweep.due` | `examples/pr-upkeep/declarations/sweep.json` trigger `timer` with legacy event metadata | source; legacy event trigger parity pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` node `swept` | `examples/pr-upkeep/declarations/swept.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` node `sweep-failed` | `examples/pr-upkeep/declarations/sweep-failed.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` edge `pr-upkeep-sweep` `passed` to `pr-upkeep-swept` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/swept.json` reaction metadata | source; runtime parity pending |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` edge `pr-upkeep-sweep` `failed` to `pr-upkeep-sweep-failed` | `examples/pr-upkeep/declarations/manifest.json` `can` link, `examples/pr-upkeep/declarations/sweep-failed.json` reaction metadata | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` node `intake` | `examples/jira-intake/declarations/intake.json` action `agent.work`, start/landing deadlines | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` trigger `pr-upkeep.jira.transitioned.to-do` | `examples/jira-intake/declarations/intake.json` trigger `jira.issue.created` with legacy event metadata | source; legacy event trigger parity pending |
+| `examples/jira-intake/workflow.yaml` subject cap `2` | `examples/jira-intake/declarations/intake.json` trigger.max_concurrent_subject | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` node `post-comment` | `examples/jira-intake/declarations/post-comment.json` action `jira.comment`, start/landing deadlines | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` node `transition` | `examples/jira-intake/declarations/transition.json` action `jira.transition`, start/landing deadlines | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` node `stage-intake` | `examples/jira-intake/declarations/stage-intake.json` action `jira.comment`, start/landing deadlines | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` node `picked-up` | `examples/jira-intake/declarations/picked-up.json` action `code.run`, start/landing deadlines | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` edge `jira-intake-intake` `intake_drafted` to `jira-intake-post-comment` | `examples/jira-intake/declarations/manifest.json` `must` link, `examples/jira-intake/declarations/post-comment.json` reaction metadata | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` edge `jira-intake-post-comment` `comment_posted` to `jira-intake-transition` | `examples/jira-intake/declarations/manifest.json` `must` link, `examples/jira-intake/declarations/transition.json` reaction metadata | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` edge `jira-intake-transition` `issue_transitioned` to `jira-intake-stage-intake` when `!input.id.startsWith("gh:")` | `examples/jira-intake/declarations/manifest.json` `can` link, `examples/jira-intake/declarations/stage-intake.json` reaction metadata | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` edge `jira-intake-transition` `issue_transitioned` to `jira-intake-picked-up` when `input.id.startsWith("gh:")` | `examples/jira-intake/declarations/manifest.json` `can` link, `examples/jira-intake/declarations/picked-up.json` reaction metadata | source; runtime parity pending |
+| `examples/jira-intake/workflow.yaml` edge `jira-intake-stage-intake` `comment_posted` to `jira-intake-picked-up` | `examples/jira-intake/declarations/manifest.json` `can` link, `examples/jira-intake/declarations/picked-up.json` reaction metadata | source; runtime parity pending |
 
 ## Configuration and source generation (c61 and c62)
 

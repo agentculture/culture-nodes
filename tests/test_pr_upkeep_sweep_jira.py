@@ -617,8 +617,18 @@ class TestJiraEmissions:
     def test_shapes_one_complete_raise_event_call_per_fact(self, jira_payload):
         facts = jira.jira_emissions(jira_payload, site="team.example.com", project="EX")
         assert facts, "the recorded search response yields no facts at all"
+        created = [fact for fact in facts if fact["name"] == "jira.issue.created"]
+        assert len(created) == len(jira_payload["issues"])
         for fact in facts:
             assert set(fact) == {"name", "payload", "source_key", "watermark", "subject"}
+            if fact["name"] == "jira.issue.created":
+                assert fact["source_key"] == f"jira:team.example.com:{fact['subject']}:created"
+                assert fact["watermark"] == {"changelog_id": "0", "comment_id": ""}
+                issue = next(i for i in jira_payload["issues"] if i["key"] == fact["subject"])
+                assert fact["payload"]["created_at"] == (issue.get("fields") or {}).get(
+                    "created", ""
+                )
+                continue
             position = f"jira:team.example.com:{fact['subject']}:history:"
             assert fact["source_key"].startswith(position)
             assert fact["name"].startswith("pr-upkeep.jira.")

@@ -1,0 +1,78 @@
+{
+  "name": "pr-upkeep-stamp-pr",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "intake-orphan",
+          "outcome": "issue_created",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 10
+  },
+  "condition": "true",
+  "action": {
+    "kind": "agent.work",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "stamp-pr",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/developer-experience",
+        "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "input": {
+          "bindings": {
+            "instruction": {
+              "literal": "A Jira ticket was just created for the pull request described\nby `pr` below (repository and number), because the PR had no\nticket. Its key is bound as `ticket`.\n\nAdd one line to the PR BODY, at the top, of exactly this form:\n\n    Jira: <ticket>\n\nUse the GitHub REST API (PATCH /repos/{owner}/{repo}/pulls/{n}\nwith the existing body plus the new line) or `gh pr edit\n--body`. Do not change anything else about the PR, do not push\ncommits, do not comment. If the body already names that key,\nchange nothing and say so.\n\nReport the PR you edited and the line you added.\n"
+            },
+            "ticket": "/nodes/intake-orphan/output/issue",
+            "pr": "/run/input"
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "stamped": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "summary"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "timeout": "30m",
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "variables": {
+        "ticket": "{pr-upkeep-intake-orphan:issue:}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "stamp-pr-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "stamp-pr-done",
+    "deadline": "168h"
+  }
+}

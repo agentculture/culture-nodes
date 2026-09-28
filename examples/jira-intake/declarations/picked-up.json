@@ -1,0 +1,45 @@
+{
+  "name": "jira-intake-picked-up",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "transition",
+          "outcome": "issue_transitioned",
+          "when": "input.id.startsWith(\"gh:\")"
+        },
+        {
+          "from": "stage-intake",
+          "outcome": "comment_posted",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 9
+  },
+  "condition": "true",
+  "action": {
+    "kind": "code.run",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "picked-up",
+      "graph_kind": "end",
+      "legacy": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/transition/output"
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "picked-up-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "picked-up-done",
+    "deadline": "2h"
+  }
+}

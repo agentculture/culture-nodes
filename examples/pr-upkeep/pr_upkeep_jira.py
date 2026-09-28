@@ -252,9 +252,7 @@ def _get_json(url: str, *, basic: tuple[str, str]) -> dict:
         return json.load(response)
 
 
-def fetch_jira_issues(
-    site: str, project: str, email: str, token: str, api_base: str = ""
-) -> dict:
+def fetch_jira_issues(site: str, project: str, email: str, token: str, api_base: str = "") -> dict:
     """Fetch one project's issues and fully hydrate ordered Jira history.
 
     ``api_base`` reroutes the REST calls only. A scoped Jira Cloud
@@ -422,9 +420,21 @@ def jira_emissions(
     remains the sole emitter, and it is handed a list, not a connection.
     """
     by_key = {issue.get("key"): issue for issue in payload.get("issues", [])}
+    source_site = site.removeprefix("https://").rstrip("/")
     facts = []
     for item in jira_work_items(payload, site=site, project=project):
         issue = by_key.get(item["id"], {})
+        created_payload = dict(item)
+        created_payload["created_at"] = str((issue.get("fields") or {}).get("created") or "")
+        facts.append(
+            {
+                "name": "jira.issue.created",
+                "payload": created_payload,
+                "source_key": f"jira:{source_site}:{item['id']}:created",
+                "watermark": {"changelog_id": "0", "comment_id": ""},
+                "subject": item["id"],
+            }
+        )
         for name, event, watermark, position_kind, position_id in jira_history_facts(
             issue, bot_account_id, item
         ):

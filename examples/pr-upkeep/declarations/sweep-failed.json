@@ -1,0 +1,40 @@
+{
+  "name": "pr-upkeep-sweep-failed",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "sweep",
+          "outcome": "failed",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 5
+  },
+  "condition": "true",
+  "action": {
+    "kind": "code.run",
+    "with": {
+      "graph_workflow": "sweep-cycle.workflow.yaml",
+      "graph_node": "sweep-failed",
+      "graph_kind": "end",
+      "legacy": {
+        "kind": "end",
+        "ownerRef": "team/platform-ai",
+        "output": {
+          "from": "/nodes/sweep/output"
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "sweep-failed-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "sweep-failed-done",
+    "deadline": "1h"
+  }
+}

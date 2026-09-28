@@ -43,12 +43,24 @@ runs:
 - **Facts, not calls.** The sweep only appends cursor-guarded facts. Which
   workflow consumes them is not the sweep's business, and a fact the trigger
   declines is still durable and queryable.
+
 - **The cursor is the memory.** The control plane advances a watermark in the
   same transaction that appends the event, so a tick that dies halfway cannot
   re-report the position it already reported.
 - **A person is always in it.** `fix` opens or updates a PR and stops. The
   merge is an approval node, and no actor in this deployment holds a merge
   credential.
+
+The Jira poller also emits `jira.issue.created` for every fetched issue on
+every tick (task t31, deviation d1 of #328), alongside the synthetic
+`pr-upkeep.jira.transitioned.<initial-status>` fact. Its source key is
+`jira:<site>:<issue-key>:created` and its watermark is
+`{"changelog_id":"0","comment_id":""}`, matching the webhook replay path, so
+both producers deduplicate the same creation fact and the control plane answers
+every repeat `duplicate=true`. The tick report's `emitted` count includes these
+repeats, one per fetched issue, the same way it already counts re-sent history
+facts. Existing graph triggers and sweep behaviour are unchanged; the new fact
+is for declarations.
 
 ## One tick, precisely
 

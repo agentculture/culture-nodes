@@ -1278,7 +1278,9 @@ paths:
         actor is always the authenticated principal, and the append-only
         `declaration_history` row is written nowhere else. `version_id`
         defaults to the declaration's newest published version when
-        omitted.
+        omitted. A LAN break-glass credential bound to a human actor may
+        deactivate; other declaration writes still require their normal
+        authorization.
       parameters:
         - name: name
           in: path
@@ -2480,9 +2482,10 @@ paths:
       description: >-
         Task t38 (issue #328; spec c80/c81, honesty h53/h54). A flip is a
         human decision: the principal is classified by the same allow-list
-        the declaration routes use -- a Cloudflare Access identity, or a
-        LAN break-glass credential bound to a person -- and an agent
-        principal is refused (403), a shared transition secret too (401).
+        the declaration routes use. A LAN break-glass credential bound to
+        a human actor may flip only to `before`; `shadow` and `after` require
+        Cloudflare Access (403 for break-glass). An agent principal is
+        refused (403), a shared transition secret too (401).
         Every flip is recorded in engine_switch_history, attributed to the
         authenticated principal.
 

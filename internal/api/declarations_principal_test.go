@@ -58,3 +58,40 @@ func TestWriteJSONWithWarningAnswers200(t *testing.T) {
 		t.Fatalf("body lost the warning: %s", rr.Body.String())
 	}
 }
+
+// Deactivation mirrors activation: the break-glass case on deactivate must
+// not close the route to the agent bearer that may activate (declengine
+// .Deactivate bounds which declarations an agent may withdraw).
+func TestAgentBearerKeepsEveryDeclarationWriteRoute(t *testing.T) {
+	for _, path := range []string{
+		"/v1alpha1/declarations",
+		"/v1alpha1/declarations/sample/links",
+		"/v1alpha1/declarations/sample/activate",
+		"/v1alpha1/declarations/sample/deactivate",
+	} {
+		policy, protected := principalPolicy(http.MethodPost, path)
+		if !protected || !policy.agents {
+			t.Errorf("POST %s: protected=%t agents=%t, want agents=true", path, protected, policy.agents)
+		}
+	}
+}
+
+func TestBreakGlassApproverPolicyOnlyOnEmergencyStops(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodPost, "/v1alpha1/declarations/sample/deactivate", true},
+		{http.MethodPost, "/v1alpha1/declaration-engine/switch", true},
+		{http.MethodPost, "/v1alpha1/declarations/sample/activate", false},
+		{http.MethodPost, "/v1alpha1/declarations/aliases/sample/move", false},
+		{http.MethodPost, "/v1alpha1/sensitivity-approvals/sample/decision", false},
+		{http.MethodPut, "/v1alpha1/declarations/sample/deactivate", false},
+		{http.MethodPost, "/v1alpha1/declarations/sample/other/deactivate", false},
+	} {
+		policy, protected := principalPolicy(tc.method, tc.path)
+		if !protected || policy.breakGlassApprover != tc.allowed {
+			t.Errorf("%s %s: protected=%t breakGlassApprover=%t, want %t", tc.method, tc.path, protected, policy.breakGlassApprover, tc.allowed)
+		}
+	}
+}

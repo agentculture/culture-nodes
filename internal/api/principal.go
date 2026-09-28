@@ -64,6 +64,9 @@ type Principal struct {
 	ActorID    string
 	Roles      []auth.Role
 	Synthetic  bool
+	// InboundCredential distinguishes a dial-in credential from an agent's
+	// own bearer when a non-human holder is classified as an agent.
+	InboundCredential bool
 }
 
 // PrincipalFromContext exposes the resolved principal to later tasks such as
@@ -178,6 +181,10 @@ func (s *Server) principalMiddleware(accessListener bool, next http.Handler) htt
 				s.refuse(w, r, http.StatusForbidden, "unbound", p.Subject)
 				return
 			}
+			if p.InboundCredential && p.isActorBearer() && declarationSurfaceWrite(r.Method, r.URL.Path) {
+				s.refuse(w, r, http.StatusForbidden, "forbidden_role", p.Subject)
+				return
+			}
 			if p.isActorBearer() {
 				// An agent principal is never a role-holder on a human
 				// surface: it writes where the policy says agents may, and
@@ -186,7 +193,7 @@ func (s *Server) principalMiddleware(accessListener bool, next http.Handler) htt
 					s.refuse(w, r, http.StatusForbidden, "forbidden_role", p.Subject)
 					return
 				}
-			} else if !hasRole(p.Roles, policy.role) {
+			} else if !hasRole(p.Roles, policy.role) && !(policy.breakGlassApprover && p.Provider == principalProviderInboundCredential && hasRole(p.Roles, auth.RoleApprover)) {
 				s.refuse(w, r, http.StatusForbidden, "forbidden_role", p.Subject)
 				return
 			}
@@ -220,6 +227,9 @@ func (s *Server) actorBearerMiddleware(next http.Handler) http.Handler {
 type routePolicy struct {
 	role   auth.Role
 	secret string
+	// breakGlassApprover admits a human-bound inbound credential on the
+	// two explicitly named emergency stop routes only.
+	breakGlassApprover bool
 	// agents marks a protected route a registered agent actor's own bearer
 	// may write (actorbearer.go); the role above then applies to people only.
 	agents bool
@@ -238,6 +248,13 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 	}
 	p := routePolicy{role: auth.RoleNamespaceAdministrator}
 	switch {
+	case method == http.MethodPost && path == "/v1alpha1/declaration-engine/switch":
+		p.breakGlassApprover = true
+	case method == http.MethodPost && declarationDeactivatePath(path):
+		// Deactivation mirrors activation: the agent bearer that may
+		// activate here may also deactivate (declengine bounds which).
+		p.breakGlassApprover = true
+		p.agents = agentMayWrite(method, path)
 	case strings.Contains(path, "/human-tasks/") && strings.HasSuffix(path, "/decision"),
 		strings.Contains(path, "/reviews"), strings.Contains(path, "/tickets/"), strings.HasSuffix(path, "/grades"),
 		path == "/v1alpha1/hand-turns", path == "/v1alpha1/hand-turn-definitions":
@@ -264,6 +281,16 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 		p.agents = agentMayWrite(method, path)
 	}
 	return p, true
+}
+
+func declarationDeactivatePath(path string) bool {
+	name, ok := strings.CutPrefix(path, "/v1alpha1/declarations/")
+	return ok && strings.HasSuffix(name, "/deactivate") && strings.Count(name, "/") == 1 && name != "/deactivate"
+}
+
+func declarationSurfaceWrite(method, path string) bool {
+	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions &&
+		(strings.HasPrefix(path, "/v1alpha1/declarations") || path == "/v1alpha1/declaration-engine/switch" || strings.HasPrefix(path, "/v1alpha1/sensitivity-approvals/"))
 }
 
 func hasRole(roles []auth.Role, required auth.Role) bool {

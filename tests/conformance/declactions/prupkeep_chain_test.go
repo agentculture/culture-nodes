@@ -60,8 +60,9 @@ func runnableHere(t *testing.T, d decl.Declaration) decl.Declaration {
 	return d
 }
 
-// publishReal publishes and activates d as authored (no default rewriting)
-// and approves any step-0 sensitivity widening, as the owner would.
+// publishReal publishes and activates d as authored (no default rewriting,
+// and its own exposes list) and approves every listed entry, as the owner
+// would.
 func (r *reactionHarness) publishReal(d decl.Declaration) postgres.DeclarationVersion {
 	t := r.t
 	t.Helper()

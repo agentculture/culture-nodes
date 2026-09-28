@@ -103,7 +103,7 @@ for path in files:
         form = "Split workflow trigger, CEL guards and actions into linked declarations"
     if path in MIGRATED:
         form = f"[{MIGRATED[path]}](../../{MIGRATED[path]}) lists each step and edge"
-        parity = "source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord"
+        parity = "source authored; publish test added; shadow/runtime parity pending; each widening variable is listed in its declaration's `exposes` and needs its owner's approval (see the exposure table below)"
     else:
         parity = "pending"
     lines.append(f"| `{path}` | {form} | {parity} |")
@@ -149,6 +149,23 @@ for graph, manifest_path in MIGRATED.items():
         guard = f" when `{edge['when']}`" if edge.get("when") else ""
         realized = ", ".join(f"`{link['from'].removeprefix(prefix)}` {kinds[link['from'] + ' ' + link['to']]} after `{link['to'].removeprefix(prefix)}`" for link in edge["links"])
         lines.append(f"| `{graph}` edge `{edge['from']}` `{edge['outcome']}` to `{edge['to']}`{guard} | `{manifest_path}`: {realized} | source; runtime parity pending |")
+
+lines += [
+    "",
+    "## Exposure entries awaiting the owner's approval (t30b, owner decision d4)",
+    "",
+    "A declaration may render a variable into a wider audience than it came from only if it lists the variable in `exposes` and the variable's owner approves that entry. The owner is the author of the declaration that produced the variable (the entry's step), as published. Approval is per (declaration name, entry, owner): it survives a republish of the declaration, and a new author of the producing declaration needs a new one. Until approved, a firing that renders the variable is `sensitivity-blocked`. Every entry below is listed in the source and still needs its owner's approval; none is approved by the migration itself.",
+    "",
+    "| Declaration | Exposes entry | Owner (author of) | Status |",
+    "|---|---|---|---|",
+]
+for manifest_path in dict.fromkeys(MIGRATED.values()):
+    directory = Path(manifest_path).parent
+    for file in json.loads(Path(manifest_path).read_text())["declarations"]:
+        source = json.loads((directory / file).read_text())
+        for entry in source.get("exposes", []):
+            step = entry.split(":", 1)[0] if ":" in entry else source["name"]
+            lines.append(f"| `{source['name']}` (`{directory / file}`) | `{entry}` | `{step}` | listed; needs the owner's approval |")
 
 lines += [
     "",

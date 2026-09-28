@@ -82,6 +82,12 @@ func Parse(source []byte, format Format) (*Declaration, error) {
 	if _, ok := shape["condition"]; !ok {
 		d.Condition = "true"
 	}
+	for _, entry := range d.Exposes {
+		if _, err := ParseExposureEntry(entry); err != nil {
+			return nil, err
+		}
+	}
+	d.Exposes = NormalizeExposes(d.Exposes)
 	var trigger map[string]json.RawMessage
 	if err := json.Unmarshal(shape["trigger"], &trigger); err != nil {
 		return nil, err

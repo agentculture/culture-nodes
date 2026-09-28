@@ -70,5 +70,8 @@
   "landing_node": {
     "name": "pr-upkeep-intake-orphan-done",
     "deadline": "168h"
-  }
+  },
+  "exposes": [
+    "pr-upkeep-route:work_item"
+  ]
 }

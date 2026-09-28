@@ -20,7 +20,7 @@ func declarationWriteRoutes(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`mux\.HandleFunc\("POST (/v1alpha1/(?:declarations(?:/[^" ]*)?|declaration-engine/switch|sensitivity-approvals/[^" ]*))"`)
+	re := regexp.MustCompile(`mux\.HandleFunc\("POST (/v1alpha1/(?:declarations(?:/[^" ]*)?|declaration-engine/switch|sensitivity-approvals/[^" ]*|repository-visibility))"`)
 	matches := re.FindAllStringSubmatch(string(source), -1)
 	var routes []string
 	for _, match := range matches {
@@ -30,7 +30,8 @@ func declarationWriteRoutes(t *testing.T) []string {
 }
 
 func TestDeclarationWriteRouteInventory(t *testing.T) {
-	// These are all the POST declaration and sensitivity routes in server.go.
+	// These are all the POST declaration, sensitivity and repository-visibility
+	// routes in server.go.
 	// The explicit inventory makes a new route a test failure until reviewed.
 	want := map[string]bool{
 		"/v1alpha1/declarations/validate":               true,
@@ -42,6 +43,7 @@ func TestDeclarationWriteRouteInventory(t *testing.T) {
 		"/v1alpha1/declarations/{name}/deactivate":      true,
 		"/v1alpha1/declaration-engine/switch":           true,
 		"/v1alpha1/sensitivity-approvals/{id}/decision": true,
+		"/v1alpha1/repository-visibility":               true,
 	}
 	routes := declarationWriteRoutes(t)
 	if len(routes) != len(want) {

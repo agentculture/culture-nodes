@@ -75,6 +75,23 @@ class InventoryTest(unittest.TestCase):
                 self.assertIn(item, doc)
         self.assertIn("| Target declaration form | Parity status |", doc)
 
+    def test_inventory_lists_every_exposure_entry(self):
+        # t30b (d4): the inventory says which exposes entries need the
+        # owner's approval -- every entry of every migrated declaration.
+        doc = (ROOT / "docs/migration/tca-inventory.md").read_text()
+        entries = 0
+        for directory in ("examples/pr-upkeep/declarations", "examples/jira-intake/declarations"):
+            manifest = json.loads((ROOT / directory / "manifest.json").read_text())
+            for file in manifest["declarations"]:
+                source = json.loads((ROOT / directory / file).read_text())
+                for entry in source.get("exposes", []):
+                    entries += 1
+                    with self.subTest(declaration=source["name"], entry=entry):
+                        row = f"| `{source['name']}` (`{directory}/{file}`) | `{entry}` |"
+                        self.assertIn(row, doc)
+        self.assertEqual(entries, 34)
+        self.assertIn("listed; needs the owner's approval", doc)
+
     def test_before_state_is_printed(self):
         with tempfile.TemporaryDirectory() as temp:
             output = self.render(pathlib.Path(temp) / "inventory.md")

@@ -87,21 +87,31 @@ These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
   `sweep-failed` each dispatch a small docker run in 'after', where the graph
   ran a free decision or end node.
 
-## Publish warnings (t30)
+## Exposure lists and publish warnings (t30, t30b)
 
-After linking, a validate reports one sensitivity warning for each reference
-below. Each reference renders a variable of `pr-upkeep-route` or
+After linking, a validate reports 34 sensitivity warnings, one for each
+reference below. Each reference renders a variable of `pr-upkeep-route` or
 `pr-upkeep-analyse` into a wider audience. Those variables are classed
 `code (operators audience)` because their declaration's action is
-`code.run`. Until the variable's owner approves, the firing is
-`sensitivity-blocked`. Task t30b replaces this with per-variable `exposes`
-lists.
+`code.run`.
 
-| Declaration | Target | Variables |
+Exposure is approved per variable (owner decision d4). Each declaration
+below lists the variables it renders in its `exposes` list, so every warning
+reads `exposure listed, no approval task yet`. The first firing that renders
+one is `sensitivity-blocked` and opens one approval task for that
+(declaration, entry, owner). The owner is the author of `pr-upkeep-route`
+(or `pr-upkeep-analyse` for `packages`). When the owner approves, later
+firings go through, including after the declaration is republished. A new
+author of the producing declaration needs a new approval. Nothing here is
+approved yet: every entry needs its owner's approval before cutover
+(`docs/migration/tca-inventory.md` lists them).
+
+| Declaration | Target | `exposes` |
 |---|---|---|
-| `pr-upkeep-analyse`, `pr-upkeep-analyse-orphan`, `pr-upkeep-stamp-pr`, `pr-upkeep-fix-orphan` | agent (team) | route: `source`, `repository`, `number`, `head_sha`, `work_item`, `findings` |
-| `pr-upkeep-fix` | agent (team) | the same six route variables, plus `pr-upkeep-analyse`'s `packages` |
-| `pr-upkeep-intake-orphan`, `pr-upkeep-stage-dispatch`, `pr-upkeep-stage-pr-open` | jira (team) | route: `work_item` |
+| `pr-upkeep-analyse`, `pr-upkeep-analyse-orphan`, `pr-upkeep-stamp-pr`, `pr-upkeep-fix-orphan` | agent (team) | `pr-upkeep-route:` `findings`, `head_sha`, `number`, `repository`, `source`, `work_item` |
+| `pr-upkeep-fix` | agent (team) | the same six route entries, plus `pr-upkeep-analyse:packages` |
+| `pr-upkeep-intake-orphan`, `pr-upkeep-stage-dispatch`, `pr-upkeep-stage-pr-open` | jira (team) | `pr-upkeep-route:work_item` |
 
 `internal/api/declaration_examples_test.go`
-(`TestExampleDeclarationsValidatePublishAndLink`) logs the full list.
+(`TestExampleDeclarationsValidatePublishAndLink`) logs the full list and
+fails if a widening is unlisted or the count changes.

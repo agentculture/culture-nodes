@@ -27,7 +27,7 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | `examples/harness-compare/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/independent-review/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/jira-comment-consumer/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
-| `examples/jira-intake/workflow.yaml` | [examples/jira-intake/declarations/manifest.json](../../examples/jira-intake/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord |
+| `examples/jira-intake/workflow.yaml` | [examples/jira-intake/declarations/manifest.json](../../examples/jira-intake/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; each widening variable is listed in its declaration's `exposes` and needs its owner's approval (see the exposure table below) |
 | `examples/jira-question-round-trip/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/land/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/merge-gate/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
@@ -35,8 +35,8 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | `examples/notify-message/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/parallel-live-proof/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/placement-proof/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
-| `examples/pr-upkeep/sweep-cycle.workflow.yaml` | [examples/pr-upkeep/declarations/manifest.json](../../examples/pr-upkeep/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord |
-| `examples/pr-upkeep/workflow.yaml` | [examples/pr-upkeep/declarations/manifest.json](../../examples/pr-upkeep/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; owner approval required for any Jira/timer/agent variable rendered to GitHub or Discord |
+| `examples/pr-upkeep/sweep-cycle.workflow.yaml` | [examples/pr-upkeep/declarations/manifest.json](../../examples/pr-upkeep/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; each widening variable is listed in its declaration's `exposes` and needs its owner's approval (see the exposure table below) |
+| `examples/pr-upkeep/workflow.yaml` | [examples/pr-upkeep/declarations/manifest.json](../../examples/pr-upkeep/declarations/manifest.json) lists each step and edge | source authored; publish test added; shadow/runtime parity pending; each widening variable is listed in its declaration's `exposes` and needs its owner's approval (see the exposure table below) |
 | `examples/self-hosting-loop/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/spec-chain-lane/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
 | `examples/spec-chain/workflow.yaml` | Split workflow trigger, CEL guards and actions into linked declarations | pending |
@@ -219,6 +219,47 @@ The rows below come from the declaration manifests and sources. Each declaration
 | `examples/jira-intake/workflow.yaml` edge `transition` `issue_transitioned` to `stage-intake` when `!input.id.startsWith("gh:")` | `examples/jira-intake/declarations/manifest.json`: `stage-intake` must after `transition` | source; runtime parity pending |
 | `examples/jira-intake/workflow.yaml` edge `transition` `issue_transitioned` to `picked-up` when `input.id.startsWith("gh:")` | `examples/jira-intake/declarations/manifest.json`: `picked-up-gh` must after `transition` | source; runtime parity pending |
 | `examples/jira-intake/workflow.yaml` edge `stage-intake` `comment_posted` to `picked-up` | `examples/jira-intake/declarations/manifest.json`: `picked-up` must after `stage-intake` | source; runtime parity pending |
+
+## Exposure entries awaiting the owner's approval (t30b, owner decision d4)
+
+A declaration may render a variable into a wider audience than it came from only if it lists the variable in `exposes` and the variable's owner approves that entry. The owner is the author of the declaration that produced the variable (the entry's step), as published. Approval is per (declaration name, entry, owner): it survives a republish of the declaration, and a new author of the producing declaration needs a new one. Until approved, a firing that renders the variable is `sensitivity-blocked`. Every entry below is listed in the source and still needs its owner's approval; none is approved by the migration itself.
+
+| Declaration | Exposes entry | Owner (author of) | Status |
+|---|---|---|---|
+| `pr-upkeep-intake-orphan` (`examples/pr-upkeep/declarations/intake-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stamp-pr` (`examples/pr-upkeep/declarations/stamp-pr.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stamp-pr` (`examples/pr-upkeep/declarations/stamp-pr.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stamp-pr` (`examples/pr-upkeep/declarations/stamp-pr.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stamp-pr` (`examples/pr-upkeep/declarations/stamp-pr.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stamp-pr` (`examples/pr-upkeep/declarations/stamp-pr.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stamp-pr` (`examples/pr-upkeep/declarations/stamp-pr.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse` (`examples/pr-upkeep/declarations/analyse.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse` (`examples/pr-upkeep/declarations/analyse.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse` (`examples/pr-upkeep/declarations/analyse.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse` (`examples/pr-upkeep/declarations/analyse.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse` (`examples/pr-upkeep/declarations/analyse.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse` (`examples/pr-upkeep/declarations/analyse.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse-orphan` (`examples/pr-upkeep/declarations/analyse-orphan.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse-orphan` (`examples/pr-upkeep/declarations/analyse-orphan.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse-orphan` (`examples/pr-upkeep/declarations/analyse-orphan.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse-orphan` (`examples/pr-upkeep/declarations/analyse-orphan.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse-orphan` (`examples/pr-upkeep/declarations/analyse-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-analyse-orphan` (`examples/pr-upkeep/declarations/analyse-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stage-dispatch` (`examples/pr-upkeep/declarations/stage-dispatch.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-analyse:packages` | `pr-upkeep-analyse` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix` (`examples/pr-upkeep/declarations/fix.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:findings` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:head_sha` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:number` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:repository` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `pr-upkeep-stage-pr-open` (`examples/pr-upkeep/declarations/stage-pr-open.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
 
 ## Configuration and source generation (c61 and c62)
 

@@ -817,9 +817,10 @@ func (s *Server) declarationReferenceWarningsWith(ctx context.Context, d decl.De
 			warnings = append(warnings, w)
 		}
 	}
-	// Task t30 (spec q22): publish also warns -- never refuses -- once per
-	// reference that renders a variable into a wider audience than it came
-	// from; at firing time that render is blocked until the owner approves.
+	// Task t30 (spec q22), reworked by t30b (d4): publish also warns --
+	// never refuses -- once per reference that renders a variable into a
+	// wider audience than it came from, saying whether its exposure is
+	// unlisted or listed and approved, pending, refused or withdrawn.
 	sensitivity, err := s.sensitivityWarnings(ctx, d, members)
 	if err != nil {
 		return nil, err
@@ -827,41 +828,10 @@ func (s *Server) declarationReferenceWarningsWith(ctx context.Context, d decl.De
 	return append(warnings, sensitivity...), nil
 }
 
-// sensitivityWarnings is declengine.SensitivityWarnings, except that a
-// declaration set's own not-yet-published members resolve first.
+// sensitivityWarnings is declengine.SensitivityWarnings; a declaration set's
+// own not-yet-published members resolve first (members nil otherwise).
 func (s *Server) sensitivityWarnings(ctx context.Context, d decl.Declaration, members func(string) (decl.Declaration, bool)) ([]string, error) {
-	if members == nil {
-		return declengine.SensitivityWarnings(ctx, s.Store, s.NamespaceID, d)
-	}
-	var lookupErr error
-	ws, err := decl.WideningReferences(d, func(name string) (decl.Declaration, bool) {
-		if m, ok := members(name); ok {
-			return m, true
-		}
-		v, err := s.Store.LatestDeclarationVersion(ctx, s.NamespaceID, name)
-		if err != nil {
-			if !errors.Is(err, postgres.ErrNotFound) && lookupErr == nil {
-				lookupErr = err
-			}
-			return decl.Declaration{}, false
-		}
-		var named decl.Declaration
-		if json.Unmarshal(v.Body, &named) != nil {
-			return decl.Declaration{}, false
-		}
-		return named, true
-	})
-	if err != nil {
-		return nil, err
-	}
-	if lookupErr != nil {
-		return nil, lookupErr
-	}
-	out := make([]string, 0, len(ws))
-	for _, w := range ws {
-		out = append(out, w.Warning())
-	}
-	return out, nil
+	return declengine.SensitivityWarnings(ctx, s.Store, s.NamespaceID, d, members)
 }
 
 // declarationHumanProvider names the principal providers that are people:

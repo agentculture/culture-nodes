@@ -291,26 +291,45 @@ func newDeclHarness(t *testing.T) *declHarness {
 	return h
 }
 
-// approveWidenings records the owner's approval of every step-0 reference
-// that renders the timer's variables into a wider audience (task t30: e.g.
-// into Discord or GitHub), exactly as the owner would through the
-// sensitivity inbox -- so this test keeps exercising dispatch through the
-// registry rather than the sensitivity gate in front of it.
-func (h *declHarness) approveWidenings(v postgres.DeclarationVersion, d decl.Declaration) {
-	t := h.t
+// exposeWidenings is the author's half of task t30b's per-variable exposure
+// (owner decision d4): it lists in d.Exposes every step-0 reference that
+// renders the trigger's variables into a wider audience (e.g. a timer's into
+// Discord or GitHub), exactly as an author opting in would. Without it the
+// engine blocks those firings without asking anyone.
+func exposeWidenings(t *testing.T, d decl.Declaration) decl.Declaration {
 	t.Helper()
 	refs, err := decl.ActionReferences(d.Action)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, target := decl.TriggerSensitivity(d), decl.TargetSensitivity(d.Action.Kind)
-	if !decl.Widens(source, target) {
-		return
+	if !decl.Widens(decl.TriggerSensitivity(d, "", nil), decl.TargetSensitivity(d.Action.Kind)) {
+		return d
 	}
+	exposes := append([]string(nil), d.Exposes...)
 	for _, ref := range refs {
+		if ref.Step == "0" {
+			exposes = append(exposes, decl.ExposureEntry(ref))
+		}
+	}
+	d.Exposes = decl.NormalizeExposes(exposes)
+	return d
+}
+
+// approveWidenings is the owner's half: it records the owner's approval of
+// every entry d lists in exposes, exactly as the owner would through the
+// sensitivity inbox -- so these tests keep exercising dispatch through the
+// registry rather than the sensitivity gate in front of it. Every harness
+// declaration is published by the same author, so v.Author owns each
+// entry's variable, whichever declaration produced it.
+func (h *declHarness) approveWidenings(v postgres.DeclarationVersion, d decl.Declaration) {
+	t := h.t
+	t.Helper()
+	for _, entry := range decl.NormalizeExposes(d.Exposes) {
 		a, err := (declengine.PostgresBackend{Store: h.db}).RequestSensitivityApproval(h.ctx, declengine.SensitivityApprovalRequest{
-			NamespaceID: h.ns, DeclarationID: v.DeclarationID, DeclarationVersionID: v.ID, SourceDeclarationID: v.DeclarationID,
-			SourceVersionID: v.ID, Variable: ref.Name, Owner: v.Author, EventID: "conformance", Source: source, Target: target})
+			NamespaceID: h.ns, DeclarationName: d.Name, Variable: entry, Owner: v.Author,
+			DeclarationID: v.DeclarationID, DeclarationVersionID: v.ID, SourceDeclarationID: v.DeclarationID,
+			SourceVersionID: v.ID, EventID: "conformance",
+			Source: decl.TriggerSensitivity(d, "", nil), Target: decl.TargetSensitivity(d.Action.Kind)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -334,6 +353,7 @@ func (h *declHarness) fire(kind string, with string) string {
 		Trigger:   decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
 		Condition: "true", Action: decl.Action{Kind: kind, With: json.RawMessage(with)},
 		StartNode: decl.Node{Name: "ready", Deadline: "none"}, LandingNode: decl.Node{Name: "done", Deadline: "1h"}}
+	d = exposeWidenings(t, d)
 	body, err := d.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

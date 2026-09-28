@@ -62,7 +62,8 @@ func (r *reactionHarness) flip(mode string) {
 	}
 }
 
-// publish publishes and activates d, approving any sensitivity widening.
+// publish publishes and activates d, listing and approving any step-0
+// sensitivity widening (exposeWidenings, approveWidenings).
 func (r *reactionHarness) publish(d decl.Declaration) postgres.DeclarationVersion {
 	t := r.t
 	t.Helper()
@@ -72,6 +73,7 @@ func (r *reactionHarness) publish(d decl.Declaration) postgres.DeclarationVersio
 	if d.Condition == "" {
 		d.Condition = "true"
 	}
+	d = exposeWidenings(t, d)
 	body, err := d.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

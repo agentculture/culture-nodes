@@ -48,8 +48,9 @@ back to To Do. `jira.issue.created` fires only when an issue is created.
   the stamped `origin`. No Jira emitter does that yet, and the poller drops
   the system's own comments as self-echo.
 
-## Publish warnings (t30)
+## Publish warnings (t30, t30b)
 
-After linking, a validate reports no sensitivity warnings for this set.
-Every variable comes from Jira or the agent (team audience) and renders into
-Jira or the agent (also team).
+After linking, a validate reports no sensitivity warnings for this set, so
+no declaration here needs an `exposes` list. Every variable comes from Jira
+or the agent (team audience) and renders into Jira, the agent (also team) or
+a `code.run` (narrower).

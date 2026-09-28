@@ -12,6 +12,17 @@ type Declaration struct {
 	Action      Action  `json:"action"`
 	StartNode   Node    `json:"start_node"`
 	LandingNode Node    `json:"landing_node"`
+	// Exposes lists the variable references this declaration may render
+	// into a wider audience than they came from (task t30b, #328, owner
+	// decision d4). Each entry names a reference as templates write it:
+	// `name` for the triggering event's own variable, `step:name` for a
+	// lineage one (`1:summary`, `jira-intake:reporter`). Listing an entry is
+	// the author's request; the widening fires only once the variable's
+	// owner approves it (internal/declengine/sensitivity.go). A widening
+	// reference absent from the list is blocked without asking anyone.
+	// Parse and CanonicalJSON normalize the list (exposure.go), and an empty
+	// list is omitted, so declarations without one keep their digests.
+	Exposes []string `json:"exposes,omitempty"`
 }
 
 type Trigger struct {

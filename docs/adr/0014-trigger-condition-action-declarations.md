@@ -184,6 +184,27 @@ pr-upkeep's `readiness`, `human-merges-pr` and `finish` chain.
   variable's owner approves each entry. This replaces t30's approval per
   declaration version, source version, variable and target system.
 
+How t30b implements it:
+
+- Visibility comes from a namespace-scoped, append-only record
+  (`repository_visibility`, `POST /v1alpha1/repository-visibility`) that an
+  operator or actor sets. The engine never calls GitHub at firing time. The
+  target repository is the rendered action's `input.repository`. A source's
+  repository is the `repository` variable of the event that produced it.
+- An unrecorded repository fails closed in both directions. As a target it
+  ranks public, as decided. As a source it ranks org, not public, because
+  ranking unknown data as public would let a private repository nobody
+  recorded flow anywhere.
+- The list is `exposes`. Each entry is a reference as templates write it:
+  `summary`, `1:summary` or `jira-intake:reporter`. An approval is keyed on
+  (declaration name, entry, owner). It survives a republish. A new author of
+  the producing declaration needs a new approval. Removing the entry
+  withdraws the approval, and relisting it needs the owner again. A widening
+  reference that is not listed blocks without opening a task.
+- t30's per-version tables are retired by migration 0068, not migrated.
+  Moving per-version consent onto a per-name key would widen what an owner
+  agreed to.
+
 ### Event mapping and start nodes (d6, task t38d)
 
 - A delivered event maps onto the declaration engine through its payload:

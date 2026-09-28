@@ -241,7 +241,7 @@ func TestDeclarationGenerationValidatesConfirmsAndPublishes(t *testing.T) {
 	}
 	// gen-intake is not published yet: the widening is found by resolving
 	// the set's own member, not the store.
-	if !hasSubstring(set.Warnings, `step gen-intake variable "answer" comes from human`) {
+	if !hasSubstring(set.Warnings, `step gen-intake variable "answer" (exposes entry "gen-intake:answer") comes from human`) {
 		t.Fatalf("sensitivity widening not surfaced: %v", set.Warnings)
 	}
 
@@ -261,7 +261,7 @@ func TestDeclarationGenerationValidatesConfirmsAndPublishes(t *testing.T) {
 		}
 	}
 	if hasSubstring(pset.Warnings, "reference {gen-intake:answer}") || !hasSubstring(pset.Warnings, "reference {gen-missing:x}") ||
-		!hasSubstring(pset.Warnings, `step gen-intake variable "answer" comes from human`) {
+		!hasSubstring(pset.Warnings, `step gen-intake variable "answer" (exposes entry "gen-intake:answer") comes from human`) {
 		t.Fatalf("publish warnings not surfaced: %v", pset.Warnings)
 	}
 

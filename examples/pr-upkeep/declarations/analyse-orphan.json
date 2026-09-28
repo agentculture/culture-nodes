@@ -166,5 +166,13 @@
   "landing_node": {
     "name": "pr-upkeep-analyse-done",
     "deadline": "168h"
-  }
+  },
+  "exposes": [
+    "pr-upkeep-route:findings",
+    "pr-upkeep-route:head_sha",
+    "pr-upkeep-route:number",
+    "pr-upkeep-route:repository",
+    "pr-upkeep-route:source",
+    "pr-upkeep-route:work_item"
+  ]
 }

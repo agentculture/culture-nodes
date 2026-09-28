@@ -296,6 +296,10 @@ func TestExampleDeclarationsValidatePublishAndLink(t *testing.T) {
 				t.Fatalf("link %s -> %s: %d %s", link.From, link.To, rr.Code, rr.Body.String())
 			}
 		}
+		// Task t30b (d4): every widening the set performs is LISTED in its
+		// declaration's exposes, so none is blocked without asking; each
+		// still waits for its owner (the examples README counts them).
+		sensitivity := 0
 		for _, name := range names {
 			var validation declarationValidationResp
 			rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/declarations/validate", token, declarationSourceReq{Format: "json", Source: sources[name]}, &validation)
@@ -304,7 +308,17 @@ func TestExampleDeclarationsValidatePublishAndLink(t *testing.T) {
 			}
 			for _, w := range validation.Warnings {
 				t.Logf("linked-publish warning %s: %s", name, w)
+				if !strings.HasPrefix(w, "sensitivity: ") {
+					continue
+				}
+				sensitivity++
+				if !strings.Contains(w, "exposure listed, no approval task yet") {
+					t.Errorf("%s: sensitivity warning is not a listed entry awaiting its owner: %s", name, w)
+				}
 			}
+		}
+		if want := map[string]int{"pr-upkeep": 34, "jira-intake": 0}[workflow]; sensitivity != want {
+			t.Errorf("%s: %d sensitivity warnings, want %d (examples/%s/declarations/README.md)", workflow, sensitivity, want, workflow)
 		}
 	}
 }

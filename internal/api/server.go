@@ -582,6 +582,10 @@ func (s *Server) routes() http.Handler {
 	// declsensitivity.go.
 	mux.HandleFunc("GET /v1alpha1/sensitivity-approvals", s.wrap(s.handleListSensitivityApprovals))
 	mux.HandleFunc("POST /v1alpha1/sensitivity-approvals/{id}/decision", s.wrap(s.handleDecideSensitivityApproval))
+	// Repository visibility (task t30b, #328, d4): GitHub's audience per
+	// repository, set by an operator or actor; see declsensitivity.go.
+	mux.HandleFunc("GET /v1alpha1/repository-visibility", s.wrap(s.handleListRepositoryVisibility))
+	mux.HandleFunc("POST /v1alpha1/repository-visibility", s.wrap(s.handleSetRepositoryVisibility))
 
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))

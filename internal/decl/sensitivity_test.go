@@ -47,7 +47,9 @@ func TestAudienceRanking(t *testing.T) {
 		{"timer", "discord.post", true},               // engine records -> public
 		{"no.such.trigger", "human.ask", true},        // unknown source is restricted
 		{"human.decision", "no.such.action", true},    // unknown target is public
-		{"github.pr.created", "github.review_reply", false},
+		// t30b (d4): an unknown repository ranks org as a source and public
+		// as a target, so GitHub into GitHub widens until visibility is known.
+		{"github.pr.created", "github.review_reply", true},
 	}
 	for _, c := range cases {
 		got := Widens(SourceSensitivity(c.source), TargetSensitivity(c.target))
@@ -80,7 +82,7 @@ func TestWideningReferencesWarnsOncePerWideningReference(t *testing.T) {
 	}
 	with, _ := json.Marshal(map[string]any{"text": "{jira-intake:owner} {jira-intake:owner} {gh:author} {1:x:dflt} {ghost:y}", "tags": []any{"{summary}"}})
 	d := Declaration{Name: "announce", Trigger: Trigger{Kind: "jira.issue.created"}, Action: Action{Kind: "discord.post", With: with}}
-	ws, err := WideningReferences(d, resolve)
+	ws, err := WideningReferences(d, resolve, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,17 +100,17 @@ func TestWideningReferencesWarnsOncePerWideningReference(t *testing.T) {
 		t.Errorf("step 0 marks the trigger's system: %+v", w)
 	}
 	for _, k := range []string{"1:x", "ghost:y"} {
-		if w := got[k]; w.SourceKnown || !strings.Contains(w.Warning(), "known only at firing time") {
-			t.Errorf("%s should be an unresolved-source warning: %+v %q", k, w, w.Warning())
+		if w := got[k]; w.SourceKnown || !strings.Contains(w.Warning("listed"), "known only at firing time") {
+			t.Errorf("%s should be an unresolved-source warning: %+v %q", k, w, w.Warning("listed"))
 		}
 	}
-	if w := got["jira-intake:owner"].Warning(); !strings.Contains(w, "jira (team audience)") || !strings.Contains(w, "discord (public audience)") {
+	if w := got["jira-intake:owner"].Warning("listed"); !strings.Contains(w, "jira (team audience)") || !strings.Contains(w, "discord (public audience)") {
 		t.Errorf("warning text %q must name both systems and audiences", w)
 	}
 
 	// Narrowing or same-audience references never warn.
 	narrow := Declaration{Name: "back", Trigger: Trigger{Kind: "github.pr.created"}, Action: Action{Kind: "jira.comment", With: json.RawMessage(`{"body":"{title} {gh:author}"}`)}}
-	if ws, err := WideningReferences(narrow, resolve); err != nil || len(ws) != 0 {
+	if ws, err := WideningReferences(narrow, resolve, nil); err != nil || len(ws) != 0 {
 		t.Fatalf("narrowing references warned: %+v %v", ws, err)
 	}
 }

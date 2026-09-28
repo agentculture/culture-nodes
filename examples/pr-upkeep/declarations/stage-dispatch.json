@@ -54,5 +54,8 @@
   "landing_node": {
     "name": "pr-upkeep-stage-dispatch-done",
     "deadline": "168h"
-  }
+  },
+  "exposes": [
+    "pr-upkeep-route:work_item"
+  ]
 }

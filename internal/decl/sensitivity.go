@@ -21,11 +21,21 @@ package decl
 // AudiencePublic (wider than any real source). TestSensitivityTableCoversEveryKind
 // pins that every registered kind is classified, so a new kind cannot land
 // without a deliberate row here.
+//
+// GitHub is ranked per repository (task t30b, owner decision d4): a public
+// repository is AudiencePublic, a private one AudienceOrg. The engine reads a
+// repository's visibility from a namespace-scoped table an operator sets
+// (never from GitHub at firing time), through the RepositoryVisibility
+// lookup below. An unrecorded repository fails closed in whichever direction
+// protects data: as a TARGET it is public (the widest), as a SOURCE it is
+// org (the narrower), so neither an unknown destination nor an unknown
+// origin can open a flow the owner has not seen.
 
 import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/decl/template"
 )
@@ -126,14 +136,39 @@ var kindSystem = map[string]System{
 	"declaration.overlap":       SystemEngine,
 }
 
-// Sensitivity is a variable's mark, or an action's target: a system and its
-// audience rank.
+// Visibility is what the namespace knows about a GitHub repository.
+type Visibility string
+
+const (
+	// VisibilityUnknown: no row records the repository.
+	VisibilityUnknown Visibility = ""
+	VisibilityPublic  Visibility = "public"
+	VisibilityPrivate Visibility = "private"
+)
+
+// RepositoryVisibility looks a repository up (lower-case owner/name). A nil
+// lookup knows no repository.
+type RepositoryVisibility func(repository string) Visibility
+
+func (f RepositoryVisibility) of(repository string) Visibility {
+	if f == nil || repository == "" {
+		return VisibilityUnknown
+	}
+	return f(strings.ToLower(repository))
+}
+
+// Sensitivity is a variable's mark, or an action's target: a system, its
+// audience rank, and for GitHub the repository the rank was decided for.
 type Sensitivity struct {
-	System   System
-	Audience Audience
+	System     System
+	Audience   Audience
+	Repository string
 }
 
 func (s Sensitivity) String() string {
+	if s.Repository != "" {
+		return fmt.Sprintf("%s %s (%s audience)", s.System, s.Repository, s.Audience)
+	}
 	return fmt.Sprintf("%s (%s audience)", s.System, s.Audience)
 }
 
@@ -147,32 +182,99 @@ func sensitivityOf(s System) Sensitivity {
 	return Sensitivity{System: s, Audience: systemAudience[s]}
 }
 
+// githubSensitivity ranks one repository. target selects the fail-closed
+// direction for an unknown repository: public as a target, org as a source.
+func githubSensitivity(repository string, vis RepositoryVisibility, target bool) Sensitivity {
+	s := Sensitivity{System: SystemGitHub, Audience: AudienceOrg, Repository: strings.ToLower(repository)}
+	switch vis.of(repository) {
+	case VisibilityPublic:
+		s.Audience = AudiencePublic
+	case VisibilityPrivate:
+		s.Audience = AudienceOrg
+	default:
+		if target {
+			s.Audience = AudiencePublic
+		}
+	}
+	return s
+}
+
 // SourceSensitivity marks a variable that may have come from any of the named
-// kinds: the NARROWEST of their audiences, since the mark must protect the
-// most sensitive possible source. An unknown kind, or no kind at all, is
-// restricted.
+// kinds, with no repository known: SourceSensitivityIn("", nil, ...).
 func SourceSensitivity(kindNames ...string) Sensitivity {
+	return SourceSensitivityIn("", nil, kindNames...)
+}
+
+// SourceSensitivityIn marks a variable that may have come from any of the
+// named kinds: the NARROWEST of their audiences, since the mark must protect
+// the most sensitive possible source. A GitHub kind ranks by repository (an
+// unknown one is org). An unknown kind, or no kind at all, is restricted.
+func SourceSensitivityIn(repository string, vis RepositoryVisibility, kindNames ...string) Sensitivity {
 	out := sensitivityOf(SystemUnknown)
 	for i, k := range kindNames {
 		s, ok := kindSystem[k]
 		if !ok {
 			return sensitivityOf(SystemUnknown)
 		}
-		if c := sensitivityOf(s); i == 0 || c.Audience < out.Audience {
+		c := sensitivityOf(s)
+		if s == SystemGitHub {
+			c = githubSensitivity(repository, vis, false)
+		}
+		if i == 0 || c.Audience < out.Audience {
 			out = c
 		}
 	}
 	return out
 }
 
-// TargetSensitivity is the audience an action of this kind renders into. An
-// unregistered action kind is treated as public, the widest audience.
+// TargetSensitivity is the audience an action of this kind renders into, with
+// no repository known: TargetSensitivityIn(kind, "", nil).
 func TargetSensitivity(actionKind string) Sensitivity {
+	return TargetSensitivityIn(actionKind, "", nil)
+}
+
+// TargetSensitivityIn is the audience an action of this kind renders into. A
+// GitHub action ranks by the repository it writes to (an unknown one is
+// public). An unregistered action kind is public, the widest audience.
+func TargetSensitivityIn(actionKind, repository string, vis RepositoryVisibility) Sensitivity {
 	s, ok := kindSystem[actionKind]
 	if !ok {
 		return Sensitivity{System: SystemUnknown, Audience: AudiencePublic}
 	}
+	if s == SystemGitHub {
+		return githubSensitivity(repository, vis, true)
+	}
 	return sensitivityOf(s)
+}
+
+// RepositoryInputKey is the action-input field naming the owner/name
+// repository a github.* action writes to: the key the github bridge requires
+// (adapters/github/src/github_bridge/mapping.py), and the variable GitHub
+// events carry (internal/api/githubwebhook.go).
+const RepositoryInputKey = "repository"
+
+// ActionRepository is the repository a RENDERED action writes to: its
+// with.input.repository, lower-cased. A value still holding a template
+// reference (an unrendered action, e.g. at publish) names no repository.
+func ActionRepository(a Action) string {
+	var with struct {
+		Input map[string]any `json:"input"`
+	}
+	if len(a.With) == 0 || json.Unmarshal(a.With, &with) != nil {
+		return ""
+	}
+	repo, _ := with.Input[RepositoryInputKey].(string)
+	if t, err := template.Parse(repo); err != nil || len(t.References()) > 0 {
+		return ""
+	}
+	return strings.ToLower(repo)
+}
+
+// VariableRepository is the repository a variable set (an event's payload, or
+// a lineage firing's variables) names, if any.
+func VariableRepository(vars map[string]any) string {
+	repo, _ := vars[RepositoryInputKey].(string)
+	return strings.ToLower(repo)
 }
 
 // Widens reports whether rendering a variable marked source into target
@@ -182,16 +284,18 @@ func Widens(source, target Sensitivity) bool {
 }
 
 // TriggerSensitivity marks the variables of the event that triggered d: step
-// 0, the current firing's own variables.
-func TriggerSensitivity(d Declaration) Sensitivity {
-	return SourceSensitivity(d.Trigger.Kind)
+// 0, the current firing's own variables. repository is the event's own
+// repository variable (VariableRepository), "" when it has none.
+func TriggerSensitivity(d Declaration, repository string, vis RepositoryVisibility) Sensitivity {
+	return SourceSensitivityIn(repository, vis, d.Trigger.Kind)
 }
 
 // FiringSensitivity marks the variables a fired declaration exposes to later
 // declarations in its lineage: its trigger event's variables overlaid by its
-// action's result, so the narrower of the two systems.
-func FiringSensitivity(d Declaration) Sensitivity {
-	return SourceSensitivity(d.Trigger.Kind, d.Action.Kind)
+// action's result, so the narrower of the two systems. repository is the
+// firing's own repository variable.
+func FiringSensitivity(d Declaration, repository string, vis RepositoryVisibility) Sensitivity {
+	return SourceSensitivityIn(repository, vis, d.Trigger.Kind, d.Action.Kind)
 }
 
 // ActionReferences returns every template reference in an action's `with`
@@ -241,46 +345,65 @@ func ActionReferences(a Action) ([]template.Reference, error) {
 // reach a wider audience than it came from. SourceKnown is false when the
 // source cannot be resolved without a firing's lineage (a numeric step, or a
 // named step naming no published declaration): the mark is then restricted.
+// Entry is the reference's exposes entry; Listed says whether d lists it.
 type Widening struct {
 	Reference   template.Reference
+	Entry       string
+	Listed      bool
 	Source      Sensitivity
 	Target      Sensitivity
 	SourceKnown bool
 }
 
-// Warning renders w as the publish-time warning text.
-func (w Widening) Warning() string {
-	ref := fmt.Sprintf("step %s variable %q", w.Reference.Step, w.Reference.Name)
-	if !w.SourceKnown {
-		return fmt.Sprintf("sensitivity: action.with reference to %s has a source known only at firing time and renders into %s; if it widens its audience the firing is blocked until the variable's owner approves", ref, w.Target)
+// Warning renders w as the publish-time warning text. exposure is the
+// entry's state as the caller resolved it: "unlisted", or for a listed entry
+// its approval state ("listed" when no approval task exists yet, "pending",
+// "approved", "refused", "withdrawn"), optionally followed by detail.
+func (w Widening) Warning(exposure string) string {
+	if w.Entry == "" {
+		w.Entry = ExposureEntry(w.Reference)
 	}
-	return fmt.Sprintf("sensitivity: action.with reference to %s comes from %s and renders into the wider %s; firing is blocked until the variable's owner approves", ref, w.Source, w.Target)
+	// Written without braces, so it never reads as the reference warnings
+	// (internal/api/declarations.go) that quote a template verbatim.
+	ref := fmt.Sprintf("to step %s variable %q (exposes entry %q)", w.Reference.Step, w.Reference.Name, w.Entry)
+	var flow string
+	if !w.SourceKnown {
+		flow = fmt.Sprintf("sensitivity: action.with reference %s has a source known only at firing time and renders into %s; if that widens its audience", ref, w.Target)
+	} else {
+		flow = fmt.Sprintf("sensitivity: action.with reference %s comes from %s and renders into the wider %s;", ref, w.Source, w.Target)
+	}
+	if !w.Listed {
+		return fmt.Sprintf("%s exposure unlisted: firing is blocked; add %q to exposes to request the owner's approval", flow, w.Entry)
+	}
+	return fmt.Sprintf("%s exposure listed, %s", flow, exposure)
 }
 
 // WideningReferences is the static, publish-time analysis: every action.with
 // reference of d that widens (or, with an unresolvable source, may widen) its
 // variable's audience. resolve maps a named step to that declaration's
-// current published body. Duplicate references are reported once.
-func WideningReferences(d Declaration, resolve func(name string) (Declaration, bool)) ([]Widening, error) {
+// current published body; vis ranks any GitHub repository the action names
+// literally (a templated repository is unknown, so public as a target).
+// Duplicate references are reported once.
+func WideningReferences(d Declaration, resolve func(name string) (Declaration, bool), vis RepositoryVisibility) ([]Widening, error) {
 	refs, err := ActionReferences(d.Action)
 	if err != nil {
 		return nil, err
 	}
-	target := TargetSensitivity(d.Action.Kind)
+	target := TargetSensitivityIn(d.Action.Kind, ActionRepository(d.Action), vis)
 	seen := map[string]bool{}
 	var out []Widening
 	for _, ref := range refs {
-		key := ref.Step + "\x00" + ref.Name
-		if seen[key] {
+		entry := ExposureEntry(ref)
+		if seen[entry] {
 			continue
 		}
-		seen[key] = true
-		w := Widening{Reference: ref, Target: target, Source: sensitivityOf(SystemUnknown)}
+		seen[entry] = true
+		w := Widening{Reference: ref, Entry: entry, Listed: d.Lists(entry), Target: target, Source: sensitivityOf(SystemUnknown)}
 		if ref.Step == "0" {
-			w.Source, w.SourceKnown = TriggerSensitivity(d), true
+			w.Source, w.SourceKnown = TriggerSensitivity(d, "", vis), true
 		} else if _, numeric := strconv.Atoi(ref.Step); numeric != nil && resolve != nil {
 			if named, ok := resolve(ref.Step); ok {
-				w.Source, w.SourceKnown = FiringSensitivity(named), true
+				w.Source, w.SourceKnown = FiringSensitivity(named, "", vis), true
 			}
 		}
 		if Widens(w.Source, w.Target) {

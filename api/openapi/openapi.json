@@ -4028,6 +4028,84 @@
         ],
         "type": "object"
       },
+      "RepositoryVisibility": {
+        "description": "One append-only repository visibility record (task t30b,",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "repository": {
+            "description": "owner/name",
+            "lower-case.": null,
+            "type": "string"
+          },
+          "set_by": {
+            "description": "The authenticated principal that set it.",
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repository",
+          "visibility",
+          "set_by",
+          "note",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "RepositoryVisibilityList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RepositoryVisibility"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RepositoryVisibilityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "repository": {
+            "description": "owner/name, case-insensitive.",
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository",
+          "visibility"
+        ],
+        "type": "object"
+      },
       "ResumeActorRequest": {
         "description": "POST /v1alpha1/actors/{id}/resume' body (task t9). Entirely optional: no body, an empty body, and `{}` all mean \"an operator did this and did not say who\", recorded as `cleared_by: operator` rather than as an empty attribution.",
         "properties": {
@@ -4408,7 +4486,7 @@
         "type": "object"
       },
       "SensitivityApproval": {
-        "description": "One sensitivity approval task (task t30,",
+        "description": "One exposure approval task (task t30, #328; spec q22; keyed per variable by t30b, owner decision d4): the owner's answer to whether the named declaration may expose one `exposes` entry more widely than it came from. The version, source and systems are those of the first blocked firing that opened it.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -4420,11 +4498,14 @@
             "type": "string"
           },
           "declaration_id": {
-            "description": "The declaration whose action renders the variable.",
+            "type": "string"
+          },
+          "declaration_name": {
+            "description": "The declaration whose action renders the variable; the approval covers every version of it that still lists the entry.",
             "type": "string"
           },
           "declaration_version": {
-            "description": "The version the approval covers.",
+            "description": "The version whose firing first asked.",
             "type": "string"
           },
           "first_event_id": {
@@ -4435,6 +4516,7 @@
             "type": "string"
           },
           "owner": {
+            "description": "The author of the declaration version that produced the variable.",
             "type": "string"
           },
           "source_audience": {
@@ -4454,14 +4536,15 @@
             "type": "string"
           },
           "source_version": {
-            "description": "The version that produced the variable; its author is the owner.",
+            "description": "The version that produced the variable when the task was opened.",
             "type": "string"
           },
           "status": {
             "enum": [
               "pending",
               "approved",
-              "refused"
+              "refused",
+              "withdrawn"
             ],
             "type": "string"
           },
@@ -4479,21 +4562,23 @@
             "type": "string"
           },
           "variable": {
+            "description": "The exposes entry, as templates write the reference (e.g. `summary`, `1:summary`, `jira-intake:reporter`).",
             "type": "string"
           }
         },
         "required": [
           "id",
+          "declaration_name",
+          "variable",
+          "owner",
           "declaration_id",
           "declaration_version",
           "source_declaration_id",
           "source_version",
-          "variable",
           "source_system",
           "source_audience",
           "target_system",
           "target_audience",
-          "owner",
           "first_event_id",
           "status",
           "created_at"
@@ -8230,6 +8315,78 @@
         ]
       }
     },
+    "/v1alpha1/repository-visibility": {
+      "get": {
+        "description": "Task t30b (#328, owner decision d4). GitHub's audience is decided per repository: public ranks `public`, private ranks `org`. The engine reads this record at firing time and never calls GitHub. A repository absent from the list is unknown, which fails closed: `public` as an action's target, `org` as a variable's source.",
+        "operationId": "listRepositoryVisibility",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryVisibilityList"
+                }
+              }
+            },
+            "description": "The newest record per repository, by repository name."
+          }
+        },
+        "summary": "Each recorded GitHub repository's current visibility.",
+        "tags": [
+          "declarations"
+        ]
+      },
+      "post": {
+        "description": "Task t30b (#328, owner decision d4). Appends an immutable record; the newest one per repository is its visibility. An operator (Cloudflare Access) or a registered agent actor's own bearer may set it; `set_by` is always the authenticated principal. The repository name is stored lower-case.",
+        "operationId": "setRepositoryVisibility",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepositoryVisibilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryVisibility"
+                }
+              }
+            },
+            "description": "The record was appended."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The repository is not owner/name, or the visibility is not public or private."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No authenticated principal was presented."
+          }
+        },
+        "summary": "Record a GitHub repository as public or private.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/reviews/{id}/commit": {
       "post": {
         "description": "Applies confirm/reject decisions for every record the review named, all in one transaction, or none (PRD §10.8). Refused — with nothing written — when the caller's expected ledger version no longer matches: the ledger moved, a reviewed record was superseded, or the reviewed frame no longer checksums to what was requested.\nEach decision is appended as its own immutable `review` record: human origin naming the reviewer, `confirmed` or `rejected` authority, `subject_ref` naming the record decided, and the stated `rationale` in its payload. The reviewed records are NOT rewritten — a confirmed claim still reads `authority: proposed` forever, with the decision attached to it (see GET /v1alpha1/pending-decisions for \"which claims are still undecided\", which is that join, not an authority filter).\n`rationale` is required: a confirmation with no stated reason cannot be told apart from an unread one. A reviewer the registry does not record as a human is refused with 400 (PRD §10.4).\nRequires the decision bearer token (`NODES_HUMAN_DECISION_TOKEN_SECRET`).",
@@ -9303,7 +9460,7 @@
     },
     "/v1alpha1/sensitivity-approvals": {
       "get": {
-        "description": "Task t30 (#328; spec q22). A firing whose action would render a variable into a system with a wider audience than the variable came from (internal/decl/sensitivity.go's ranking table) is recorded as `sensitivity-blocked` and not dispatched. It opens exactly one approval task per (declaration version, source version, variable, target system), addressed to the variable's owner -- the author of the declaration version that produced it. `status` is the newest append-only decision, or `pending` when there is none.",
+        "description": "Task t30 (#328; spec q22), reworked by t30b (owner decision d4). A firing whose action would render a variable into a system with a wider audience than the variable came from (internal/decl/sensitivity.go's ranking table; GitHub ranked per repository) is recorded as `sensitivity-blocked` and not dispatched. When the declaration lists the variable in its `exposes` list, the block opens exactly one approval task per (declaration name, exposes entry, owner), addressed to the variable's owner -- the author of the declaration version that produced it. Republishing the declaration keeps the task and its approval; a new author of the producing declaration is a new owner and a new task. An unlisted variable blocks without a task. `status` is the newest append-only decision, `pending` when there is none, or `withdrawn` when a version published after the approval dropped the entry.",
         "operationId": "listSensitivityApprovals",
         "parameters": [
           {
@@ -9322,7 +9479,8 @@
               "enum": [
                 "pending",
                 "approved",
-                "refused"
+                "refused",
+                "withdrawn"
               ],
               "type": "string"
             }
@@ -9358,7 +9516,7 @@
     },
     "/v1alpha1/sensitivity-approvals/{id}/decision": {
       "post": {
-        "description": "Task t30 (#328; spec q22). Appends an immutable decision that supersedes the task's previous one; the newest decision is the task's state. Only the owner, authenticated as a human principal, may decide: an agent actor's bearer and any other human are refused with 403. An approval lets later firings of that declaration version render the variable into the target system; a refusal keeps blocking them.",
+        "description": "Task t30 (#328; spec q22). Appends an immutable decision that supersedes the task's previous one; the newest decision is the task's state. Only the owner, authenticated as a human principal, may decide: an agent actor's bearer and any other human are refused with 403. An approval lets later firings of that declaration -- any version that still lists the entry -- render the variable more widely; a refusal keeps blocking them. Deciding a `withdrawn` task again is how a relisted entry is re-approved.",
         "operationId": "decideSensitivityApproval",
         "parameters": [
           {

@@ -12,7 +12,12 @@
     "condition": {"type": "string", "minLength": 1, "default": "true", "description": "CEL expression; compiled at publish."},
     "action": {"$ref": "#/$defs/action"},
     "start_node": {"$ref": "#/$defs/node"},
-    "landing_node": {"$ref": "#/$defs/node"}
+    "landing_node": {"$ref": "#/$defs/node"},
+    "exposes": {
+      "type": "array",
+      "description": "Variable references this declaration may render into a wider audience than they came from, each approved by the variable's owner: `name` for the triggering event's variable, `step:name` for a lineage one.",
+      "items": {"type": "string", "pattern": "^([a-z0-9][a-z0-9-]*:)?[^:{}\\s]+$", "maxLength": 256}
+    }
   },
   "$defs": {
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128},

@@ -522,3 +522,17 @@ nullable: NULL is "unmeasured", never true or false.
   append-only `approved` / `refused` answers, each correction superseding
   the previous head. Not `human_tasks`: that table needs a graph run and is
   resolved by UPDATE, and a blocked firing has no run.
+- `0068_decl_exposure_approvals.sql` — per-variable exposure and
+  per-repository GitHub audience (#328 t30b; owner decision d4;
+  `internal/decl/exposure.go`, `internal/declengine/sensitivity.go`):
+  `declaration_exposure_approvals` is one immutable task per (declaration
+  name, `exposes` entry, owner), so republishing a declaration keeps its
+  approved entries and a new author of the producing declaration needs a new
+  approval; `declaration_exposure_decisions` holds the append-only answers.
+  Removing an entry from `exposes` withdraws its approval (derived from the
+  versions published after the decision, no row of its own).
+  `repository_visibility` is the append-only, namespace-scoped record of
+  which GitHub repositories are public or private; an unrecorded repository
+  ranks public as a target and org as a source. 0067's per-version tables
+  are retired, not migrated (moving per-version consent onto a per-name key
+  would widen it): they stay as read-only history and refuse new rows.

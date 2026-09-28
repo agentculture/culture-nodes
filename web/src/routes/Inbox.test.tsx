@@ -5,9 +5,12 @@ import { MemoryRouter } from "react-router-dom";
 import Inbox from "./Inbox";
 import { ApiError, getLedger, getWhoami, listHumanTasks } from "../api/client";
 import {
+  BLOCKED_TASK,
   DECIDED_TASK,
   DECISION_RESULT,
   LEDGER_VERSION,
+  MERGE_HEAD_SHA,
+  MERGE_TASK,
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
 } from "../fixtures/human-tasks-fixture";
@@ -265,6 +268,105 @@ describe("Inbox pending task rendering", () => {
       PENDING_TASK.run_id,
       expect.anything(),
     );
+  });
+});
+
+/**
+ * Issue #332: a card says WHAT is being decided and WHERE it lives, from the
+ * API's resolved context — never a JSON-pointer path as the main content.
+ */
+// A PR reference is built with a template: `#` + three digits in a string
+// literal reads as a hex colour to tests/lint/webtokens_test.go.
+const prRef = (n: number) => `agentculture/culture-nodes#${n}`;
+
+describe("Inbox resolved context (issue 332)", () => {
+  function cardFor(id: string) {
+    return document.querySelector(`[data-human-task-id="${id}"]`) as HTMLElement;
+  }
+
+  it("renders a merge approval: question, PR link, finding with a file link, fix summary", async () => {
+    resolveFixture({ pending: [MERGE_TASK], decided: [] });
+    renderInbox();
+    await screen.findByText(MERGE_TASK.id);
+    const card = cardFor(MERGE_TASK.id);
+    const scoped = within(card);
+
+    expect(
+      scoped.getByRole("heading", { name: `Merge decision for PR #${326}` }),
+    ).toBeInTheDocument();
+    expect(
+      scoped.getByRole("link", { name: prRef(326) }),
+    ).toHaveAttribute("href", "https://github.com/agentculture/culture-nodes/pull/326");
+    expect(
+      scoped.getByRole("link", { name: "tests/test_hand_turn_cli.py:141" }),
+    ).toHaveAttribute(
+      "href",
+      `https://github.com/agentculture/culture-nodes/blob/${MERGE_HEAD_SHA}/tests/test_hand_turn_cli.py#L141`,
+    );
+    expect(
+      scoped.getByText("Split this composite assertion into separate assertions."),
+    ).toBeInTheDocument();
+    expect(scoped.getByText(/sonarcloud · MAJOR · CODE_SMELL · python:S9073/)).toBeInTheDocument();
+    expect(scoped.getByText(/\*\*Verdict:\*\* real defect, fixed/)).toBeInTheDocument();
+    // An unresolved ref is named with the server's reason, not faked.
+    expect(scoped.getByText(/has no succeeded attempt/)).toBeInTheDocument();
+    // The run view link.
+    expect(
+      scoped.getByRole("link", { name: MERGE_TASK.run_id }),
+    ).toHaveAttribute("href", `/runs/${MERGE_TASK.run_id}`);
+  });
+
+  it("renders a blocked declaration task: its own question, ticket link, PR link, agent reason", async () => {
+    resolveFixture({ pending: [BLOCKED_TASK], decided: [] });
+    renderInbox();
+    await screen.findByText(BLOCKED_TASK.id);
+    const scoped = within(cardFor(BLOCKED_TASK.id));
+
+    expect(
+      scoped.getByRole("heading", {
+        name: /stamp-pr agent could not complete its task/,
+      }),
+    ).toBeInTheDocument();
+    expect(scoped.getByRole("link", { name: "SCRUM-15" })).toHaveAttribute(
+      "href",
+      "https://agentculture.atlassian.net/browse/SCRUM-15",
+    );
+    expect(
+      scoped.getByRole("link", { name: prRef(329) }),
+    ).toHaveAttribute("href", "https://github.com/agentculture/culture-nodes/pull/329");
+    expect(
+      scoped.getByText("The PR has no push credential for the stamp commit."),
+    ).toBeInTheDocument();
+    expect(scoped.getByText("git push: 403 Forbidden")).toBeInTheDocument();
+    expect(scoped.getByText("stamp-pr")).toBeInTheDocument();
+  });
+
+  it("keeps the audit ids and raw refs behind a collapsed disclosure, below the decision", async () => {
+    resolveFixture({ pending: [MERGE_TASK], decided: [] });
+    renderInbox();
+    await screen.findByText(MERGE_TASK.id);
+    const card = cardFor(MERGE_TASK.id);
+
+    const details = card.querySelector("details.inbox-card__audit-details");
+    expect(details).not.toBeNull();
+    expect(details).not.toHaveAttribute("open");
+    expect(details!.querySelector("summary")).toHaveTextContent("audit");
+    // Every audit id and pointer path lives inside it, and nowhere else.
+    for (const text of [
+      "/nodes/fix/output",
+      "/run/input",
+      "tok-01M278MERGE000000000001",
+      "human-merges-pr",
+    ]) {
+      const hits = within(card).getAllByText(text, { exact: false });
+      for (const hit of hits) expect(details!.contains(hit)).toBe(true);
+    }
+    expect(within(details as HTMLElement).getByText(/readiness → passed/)).toBeInTheDocument();
+    // The disclosure comes after the decision controls.
+    const outcomes = card.querySelector(".inbox-card__outcomes")!;
+    expect(
+      outcomes.compareDocumentPosition(details!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
 

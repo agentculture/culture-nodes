@@ -118,7 +118,7 @@ func (s *Server) enrichHumanTasks(ctx context.Context, tasks []HumanTaskOut) err
 			tasks[i].Firing = &f
 		}
 	}
-	return nil
+	return s.resolveHumanTaskContexts(ctx, tasks)
 }
 
 func (s *Server) enrichPendingDecisions(ctx context.Context, groups []PendingDecisionRunOut) error {

@@ -463,6 +463,11 @@ type HumanTaskOut struct {
 	Response        json.RawMessage `json:"response,omitempty"`
 	CreatedAt       time.Time       `json:"created_at"`
 	ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
+	// ResolvedContext is request.context_refs resolved for display (issue
+	// #332): one entry per ref, `from` first then bindings by name. The raw
+	// refs stay in Request verbatim. See humantaskcontext.go for what a
+	// caller can see and the size bound.
+	ResolvedContext []HumanTaskContextValueOut `json:"resolved_context,omitempty"`
 }
 
 func humanTaskOut(t engine.HumanTask) HumanTaskOut {

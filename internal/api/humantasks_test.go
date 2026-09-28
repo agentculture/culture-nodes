@@ -105,6 +105,14 @@ func readApprovalWorkflow(t *testing.T) []byte {
 // returns the run and the human task GET response for it.
 func advanceToReview(t *testing.T, f *fixture) (apipkg.RunOut, apipkg.HumanTaskOut) {
 	t.Helper()
+	return advanceToReviewWithOutput(t, f, json.RawMessage(`{"scope":"s"}`))
+}
+
+// advanceToReviewWithOutput is advanceToReview with intake's output chosen
+// by the caller — the value review's `from: /nodes/intake/output` resolves
+// to (issue #332's resolved-context tests).
+func advanceToReviewWithOutput(t *testing.T, f *fixture, intakeOutput json.RawMessage) (apipkg.RunOut, apipkg.HumanTaskOut) {
+	t.Helper()
 
 	var published apipkg.WorkflowVersionOut
 	resp, body := doJSON(t, f.client, http.MethodPost, f.url("/v1alpha1/workflows"),
@@ -126,7 +134,7 @@ func advanceToReview(t *testing.T, f *fixture) (apipkg.RunOut, apipkg.HumanTaskO
 		Attempt:      int(claimed.Attempt),
 		TechStatus:   engine.StatusSucceeded,
 		Outcome:      "completed",
-		Output:       json.RawMessage(`{"scope":"s"}`),
+		Output:       intakeOutput,
 	}); err != nil {
 		t.Fatalf("complete intake: %v", err)
 	}

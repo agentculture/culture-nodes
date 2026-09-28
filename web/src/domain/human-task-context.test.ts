@@ -8,7 +8,7 @@ import {
 import { MERGE_TASK, PENDING_TASK_MINIMAL } from "../fixtures/human-tasks-fixture";
 import type { HumanTask } from "../api/types";
 
-describe("human task context links (issue #332)", () => {
+describe("human task context links (issue 332)", () => {
   it("links a Jira key to the site the data names, else the default", () => {
     expect(jiraBrowseHref("SCRUM-15")).toBe(`${JIRA_SITE_DEFAULT}/browse/SCRUM-15`);
     expect(jiraBrowseHref("SCRUM-15", "https://acme.atlassian.net/")).toBe(

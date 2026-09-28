@@ -9,7 +9,8 @@
 //     (postgres.DeliveredEventHandler; the call site and why it is after the
 //     commit are documented on that interface).
 //   - Driver is the periodic half the scheduler process runs: node deadlines,
-//     action.* results, and a re-runnable thaw-and-replay.
+//     action.* results, human.decision / code.result reactions, and a
+//     re-runnable thaw-and-replay.
 //   - NewPostgres builds the production engine, its dispatcher behind the
 //     switch's ShadowGate.
 //
@@ -214,12 +215,16 @@ func (d Driver) HandleDeliveredEvent(ctx context.Context, delivery postgres.Sign
 //
 //   - 'before': nothing. Open nodes were frozen by the flip, their deadlines
 //     paused; a run that fails meanwhile keeps its action.* emission for
-//     later, because EmitActionResults emits once per run, not per tick.
-//   - 'shadow': ExpireDue then EmitActionResults, so shadow firings' nodes
-//     expire exactly as real ones would.
+//     later, because EmitActionResults (and EmitActionReactions) emit once
+//     per run, not per tick.
+//   - 'shadow': ExpireDue, EmitActionResults, then EmitActionReactions
+//     (reactions.go: the human.decision / code.result reactions the control
+//     plane stamps for human.ask and code.run), so shadow firings' nodes
+//     expire exactly as real ones would and reactions are evaluated as
+//     would-fire records.
 //   - 'after': first ThawAndReplay when frozen nodes or stored events exist
 //     -- this is what covers a crash between the forward flip's commit and
-//     the route's own replay, and it is re-runnable -- then the same two.
+//     the route's own replay, and it is re-runnable -- then the same three.
 //
 // A failure in one namespace is joined, never stops the others.
 func (d Driver) Drive(ctx context.Context, now time.Time) error {
@@ -287,6 +292,10 @@ func (d Driver) driveNamespaceLocked(ctx context.Context, ns string, now time.Ti
 		failures = append(failures, err)
 	}
 	if _, err := d.Engine.EmitActionResults(ctx, ns, batch); err != nil {
+		failures = append(failures, err)
+	}
+	// t38c: the control plane stamps human.ask and code.run (reactions.go).
+	if _, err := d.Engine.EmitActionReactions(ctx, ns, batch); err != nil {
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)

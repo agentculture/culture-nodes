@@ -138,11 +138,13 @@ func (b *fakeBridge) received() []map[string]any {
 	return append([]map[string]any(nil), b.inputs...)
 }
 
-// fakeRunner speaks api/runner-protocol: 202 on execute, a terminal exit-0
-// result on the first status sample.
+// fakeRunner speaks api/runner-protocol: 202 on execute, a terminal result
+// (exit 0 unless exitCode says otherwise) on the first status sample.
 type fakeRunner struct {
 	mu  sync.Mutex
 	ops []runners.Operation
+	// exitCode is what every operation exits with (0 unless a case sets it).
+	exitCode int
 }
 
 func (f *fakeRunner) handler() http.Handler {
@@ -178,7 +180,7 @@ func (f *fakeRunner) handler() http.Handler {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			result := exitZero(*op)
+			result := exitWith(*op, f.exitCode)
 			_ = json.NewEncoder(w).Encode(runners.OperationStatus{OperationID: id, State: result.State, Result: &result})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -192,8 +194,7 @@ func (f *fakeRunner) operations() []runners.Operation {
 	return append([]runners.Operation(nil), f.ops...)
 }
 
-func exitZero(op runners.Operation) runners.Result {
-	code := 0
+func exitWith(op runners.Operation, code int) runners.Result {
 	finished := time.Now().UTC()
 	unmeasured := runners.Observation{}
 	return runners.Result{

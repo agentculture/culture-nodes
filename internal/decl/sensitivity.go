@@ -111,6 +111,7 @@ var kindSystem = map[string]System{
 	"github.pr.created":         SystemGitHub,
 	"jira.issue.created":        SystemJira,
 	"human.decision":            SystemHuman,
+	"code.result":               SystemCode,
 	"node.expired":              SystemEngine,
 	"action.failed":             SystemEngine,
 	"action.timed_out":          SystemEngine,

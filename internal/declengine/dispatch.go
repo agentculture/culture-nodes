@@ -204,6 +204,15 @@ func (r *StampingRefusal) Error() string {
 // control plane's own human-task surface, not a bridge); and a `runner://`
 // target (code.run -- a runner returns its code.result in the operation
 // result, it creates nothing external to stamp).
+//
+// Those last two are skipped because no bridge is involved, NOT because
+// their lineage may stop (task t38c, review findings C1/C2, deviation d3):
+// the control plane is the stamper for both. Once the firing's run
+// completes, the Driver's reaction pass (reactions.go, EmitActionReactions)
+// binds the produced artifact -- the decided human task, or the runner
+// operation -- to the firing's minted marker and emits the human.decision /
+// code.result reaction carrying that marker, so the reaction verifies and
+// continues this firing's lineage exactly as a bridge-stamped one does.
 func (w WorkerDispatcher) requireStamping(ctx context.Context, r DispatchRequest) error {
 	if r.Marker == "" {
 		return nil
@@ -331,6 +340,15 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	}
 	schema := map[string]any{"schema": map[string]any{"type": "object"}}
 	outcomes := map[string]any{outcome: schema}
+	// Task t38c: a nonzero exit is a code step's DOMAIN answer (`failed`,
+	// ConventionalCodeOutcomes' failure port), not a technical failure: the
+	// run completes and the code.result reaction carries it. Transport,
+	// timeout and runner trouble still fail the run (action.* results).
+	extra := []string{}
+	if nodeKind == "code" {
+		outcomes["failed"] = schema
+		extra = append(extra, "failed")
+	}
 	node := map[string]any{"kind": nodeKind, "ownerRef": "team/declarations", "input": map[string]any{"from": "/run/input"}, "contract": map[string]any{"outcomes": outcomes}}
 	if nodeKind == "approval" {
 		if with.ApproverRef == "" {
@@ -341,6 +359,11 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		delete(outcomes, outcome)
 		outcome = "approved"
 		outcomes[outcome] = schema
+		// `expired` is implied for every approval node by the compiler;
+		// an edge for it lets an expired task complete the run, so the
+		// human.decision reaction reports it (t38c) instead of the run
+		// failing on "no edge matched".
+		extra = append(extra, "rejected", "expired")
 	} else {
 		node["uses"] = with.Uses
 	}
@@ -354,12 +377,19 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		node["policy"] = map[string]any{"timeout": with.Timeout}
 	}
 	edges := []any{map[string]any{"from": "action." + outcome, "to": "finish"}}
+	for _, o := range extra {
+		edges = append(edges, map[string]any{"from": "action." + o, "to": "finish"})
+	}
+	// An approval node has no attempt and so no output; binding the run's
+	// output to it failed every decided human.ask run (found by t38c). Its
+	// decision reaches the lineage through the human.decision reaction.
+	output := "/nodes/action/output"
 	if nodeKind == "approval" {
-		edges = append(edges, map[string]any{"from": "action.rejected", "to": "finish"})
+		output = "/run/input"
 	}
 	document := map[string]any{"apiVersion": "nodes.culture.dev/v1alpha1", "kind": "Workflow", "metadata": map[string]any{"name": "decl-" + strings.ToLower(r.Firing.DeclarationID), "version": "1.0.0", "ownerRef": "team/declarations"}, "spec": map[string]any{
 		"entry": "action", "contract": map[string]any{"input": schema, "output": schema},
-		"nodes": map[string]any{"action": node, "finish": map[string]any{"kind": "end", "ownerRef": "team/declarations", "output": map[string]any{"from": "/nodes/action/output"}}}, "edges": edges}}
+		"nodes": map[string]any{"action": node, "finish": map[string]any{"kind": "end", "ownerRef": "team/declarations", "output": map[string]any{"from": output}}}, "edges": edges}}
 	source, err := json.Marshal(document)
 	if err != nil {
 		return nil, nil, err

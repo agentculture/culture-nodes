@@ -53,6 +53,12 @@ var triggers = []Kind{
 	{Name: "jira.issue.created", Version: 1, Consumes: []ArtifactType{ArtifactJiraIssue}, Produces: []ArtifactType{ArtifactJiraIssue}},
 	{Name: "jira.comment", Version: 1, Consumes: []ArtifactType{ArtifactJiraComment}, Produces: []ArtifactType{ArtifactJiraComment}},
 	{Name: "human.decision", Version: 1, Consumes: []ArtifactType{ArtifactHumanDecision}, Produces: []ArtifactType{ArtifactHumanDecision}},
+	// code.result (task t38c, #328, deviation d3): the reaction to a code.run
+	// action's runner result, the code step's counterpart of human.decision.
+	// Neither is reported by a stamping bridge; the control plane emits both
+	// (internal/declengine/reactions.go) with the firing's marker bound to
+	// the produced artifact, so a reaction continues the action's lineage.
+	{Name: "code.result", Version: 1, Consumes: []ArtifactType{ArtifactCodeResult}, Produces: []ArtifactType{ArtifactCodeResult}},
 	{Name: "node.expired", Version: 1, Consumes: []ArtifactType{ArtifactNode}, Produces: []ArtifactType{ArtifactNode}},
 	{Name: "action.failed", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},
 	{Name: "action.timed_out", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},

@@ -61,6 +61,12 @@ The nine node kinds map onto declarations as follows:
 | end | A terminal node |
 | agent, code | Actions |
 
+A code step's result is reacted to through a `code.result` trigger, the
+counterpart of `human.decision` (task t38c, deviation d3). No bridge stamps
+either: the control plane binds the decided human task or the runner
+operation to the firing's marker and emits the reaction, so a chain through a
+human decision or a code step stays one lineage.
+
 ### 2. Versions pin per firing, not per run (PRD §9.1, §9.10)
 
 A declaration upgrades live, including in chains already in flight. Every

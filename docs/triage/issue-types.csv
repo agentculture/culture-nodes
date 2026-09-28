@@ -74,3 +74,4 @@ issue,type,evidence_pointer
 328,Feature,devague frame trigger-condition-action
 327,Feature,docs/specs/2026-09-27-trigger-condition-action.md
 330,Task,#328 t32
+331,Feature,#254 #328 live-test hand-turns

@@ -6,11 +6,19 @@ package main
 // pgtest-provided PostgreSQL and skip when none is available.
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/agentculture/culture-nodes/internal/api"
+	"github.com/agentculture/culture-nodes/internal/auth"
+	idstore "github.com/agentculture/culture-nodes/internal/store"
+	"github.com/agentculture/culture-nodes/internal/store/postgres/pgtest"
 )
 
 // devagueTestdataPath resolves an absolute path into
@@ -136,6 +144,141 @@ func TestPlanImportMalformedPlanIsRefusedWithAHint(t *testing.T) {
 	assertNeverMixed(t, r)
 	if r.ExitCode != 1 {
 		t.Fatalf("exit code = %d, want 1 (the control plane refused a malformed plan)\nstderr=%s", r.ExitCode, r.Stderr)
+	}
+	assertErrorHintShape(t, r.Stderr)
+}
+
+// runDeclarationAPIServer boots a real API server whose Access listener
+// verifies a human principal -- the declaration lane's closed-by-default
+// posture needs one -- behind a stand-in for the Cloudflare edge that turns
+// the CF_Authorization cookie the CLI sends into the Cf-Access-Jwt-Assertion
+// header the control plane reads (what the real edge does in production).
+func runDeclarationAPIServer(t *testing.T) (url, cookie, actorID string) {
+	t.Helper()
+	s := pgtest.RequireStore(t, testStore)
+	ns := pgtest.MustNamespace(t, s, "cli-plan-import-decl")
+	actorID = idstore.NewULID()
+	if _, err := s.Pool().Exec(context.Background(),
+		`INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol) VALUES ($1,$2,$3,1,'human','http')`,
+		actorID, ns.ID, "cli-plan-import-human-"+actorID); err != nil {
+		t.Fatal(err)
+	}
+	cookie = "cli-plan-import-human"
+	if _, err := s.BindIdentity(context.Background(), ns.ID, "cloudflare-access", cookie, actorID, []string{string(auth.RoleNamespaceAdministrator)}); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := api.NewServer(s, ns.ID, api.WithPrincipalVerifier(accessVerifier(func(_ context.Context, tok string) (auth.Principal, error) {
+		return auth.Principal{Subject: tok, Email: tok + "@example.test", Kind: auth.PrincipalInteractive}, nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := srv.AccessHandler()
+	edge := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("CF_Authorization"); err == nil {
+			r.Header.Set("Cf-Access-Jwt-Assertion", c.Value)
+		}
+		access.ServeHTTP(w, r)
+	})
+	ts := httptest.NewServer(edge)
+	t.Cleanup(ts.Close)
+	return ts.URL, cookie, actorID
+}
+
+type accessVerifier func(context.Context, string) (auth.Principal, error)
+
+func (f accessVerifier) Verify(ctx context.Context, token string) (auth.Principal, error) {
+	return f(ctx, token)
+}
+
+// TestPlanImportDeclarationsEndToEndAgainstTestServer is the declaration
+// counterpart of TestPlanImportEndToEndAgainstTestServer (task t35, spec
+// c86/h59): the same real devague fixture, imported with
+// --output declarations, still imports the snapshot and also publishes one
+// inactive declaration per active task with a must link per real
+// dependency edge, authored by the authenticated principal.
+func TestPlanImportDeclarationsEndToEndAgainstTestServer(t *testing.T) {
+	url, cookie, actorID := runDeclarationAPIServer(t)
+	t.Setenv("NODES_OP_COOKIE", cookie)
+	dir := t.TempDir()
+
+	r := runNodes(t, dir, "plan-import",
+		"--api", url,
+		"--plan", devagueTestdataPath(t, "plan-show.json"),
+		"--deviations", devagueTestdataPath(t, "deviations.json"),
+		"--output", "declarations",
+		"--actor-ref", "actor://company/developer",
+		"--json")
+
+	assertNeverMixed(t, r)
+	if r.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr=%s", r.ExitCode, r.Stderr)
+	}
+	var payload planImportResultPayload
+	assertSingleLineJSON(t, r.Stdout, &payload)
+	if payload.ID == "" || payload.TaskCount != 5 || payload.DeviationCount != 3 {
+		t.Fatalf("snapshot not imported alongside: %+v", payload)
+	}
+	d := payload.Declarations
+	if payload.Output != "declarations" || d == nil || d.Count != 4 || d.Links != 3 || !d.Published {
+		t.Fatalf("declarations = %+v, want 4 published declarations and 3 links", d)
+	}
+	if !strings.Contains(r.Stdout, `"warnings":[]`) {
+		t.Fatalf("warnings must be surfaced as an array even when empty: %s", r.Stdout)
+	}
+
+	resp, err := http.Get(url + "/v1alpha1/declarations/plan-t22fixture-t3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var shown struct {
+		Author string `json:"author"`
+		Active bool   `json:"active"`
+		Links  []struct {
+			To, Kind string
+		} `json:"links"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&shown); err != nil {
+		t.Fatal(err)
+	}
+	if shown.Author != actorID || shown.Active || len(shown.Links) != 1 || shown.Links[0].To != "plan-t22fixture-t1" || shown.Links[0].Kind != "must" {
+		t.Fatalf("t3 = %+v, want author %s, inactive, one must link to t1", shown, actorID)
+	}
+
+	// Text mode names the declarations and the fact that nothing is active.
+	r = runNodes(t, dir, "plan-import", "--api", url,
+		"--plan", devagueTestdataPath(t, "plan-show.json"),
+		"--output", "declarations", "--actor-ref", "actor://company/developer")
+	assertNeverMixed(t, r)
+	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "declarations: 4 published (inactive") {
+		t.Fatalf("text output = %q (exit %d, stderr %q)", r.Stdout, r.ExitCode, r.Stderr)
+	}
+}
+
+// Declaration output without --actor-ref is a user error before any
+// request; without a credential the control plane refuses it (401 -> exit 1).
+func TestPlanImportDeclarationsRefusals(t *testing.T) {
+	dir := t.TempDir()
+	r := runNodes(t, dir, "plan-import", "--plan", devagueTestdataPath(t, "plan-show.json"), "--output", "declarations")
+	assertNeverMixed(t, r)
+	if r.ExitCode != 1 || !strings.Contains(r.Stderr, "--actor-ref") {
+		t.Fatalf("missing --actor-ref: exit %d stderr %q", r.ExitCode, r.Stderr)
+	}
+	assertErrorHintShape(t, r.Stderr)
+
+	r = runNodes(t, dir, "plan-import", "--plan", devagueTestdataPath(t, "plan-show.json"), "--output", "graph")
+	if r.ExitCode != 1 || !strings.Contains(r.Stderr, "--output") {
+		t.Fatalf("unknown --output: exit %d stderr %q", r.ExitCode, r.Stderr)
+	}
+
+	url, _, _ := runDeclarationAPIServer(t)
+	t.Setenv("NODES_OP_COOKIE", "")
+	r = runNodes(t, dir, "plan-import", "--api", url, "--plan", devagueTestdataPath(t, "plan-show.json"),
+		"--output", "declarations", "--actor-ref", "actor://company/developer")
+	assertNeverMixed(t, r)
+	if r.ExitCode != 1 {
+		t.Fatalf("unauthenticated declaration import: exit %d, want 1\nstderr=%s", r.ExitCode, r.Stderr)
 	}
 	assertErrorHintShape(t, r.Stderr)
 }

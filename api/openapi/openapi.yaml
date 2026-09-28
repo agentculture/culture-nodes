@@ -262,6 +262,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/workflow-generations/{id}/publish:
+    post:
+      operationId: publishWorkflowGeneration
+      tags: [workflows, declarations]
+      summary: Publish a confirmed declaration-output generation's declaration set.
+      description: >-
+        Task t35 (#328, spec c86/h59). Publishes every declaration a
+        confirmed `output: declarations` generation drafted through the
+        declaration publish path (declengine.Publish) and records its
+        must/can links. The author is the authenticated principal; a body
+        `author` is ignored. Nothing is activated -- a human activates
+        (ADR 0014 §3). Reference and sensitivity warnings never refuse and
+        are returned in `declarations.warnings`. A workflow-output
+        generation is refused: its confirmed source publishes through
+        POST /v1alpha1/workflows as before.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishWorkflowGeneration'
+      responses:
+        '201':
+          description: The set was published; `declarations.published` is true.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowGeneration'
+        '401':
+          description: No authenticated principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such generation run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The generation drafted a workflow, is not confirmed, or has no proposal yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: The drafted set does not validate; nothing was published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1alpha1/workflows/validate:
     post:
       operationId: validateWorkflow
@@ -2700,7 +2758,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/PlanImport'
         '400':
-          description: plan_show or deviations is missing or malformed.
+          description: >-
+            plan_show or deviations is missing or malformed, `output` is
+            unknown, or `output: declarations` has no valid `actor_ref`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: "`output: declarations` without an authenticated principal."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: The plan's declaration form does not validate; nothing was imported.
           content:
             application/json:
               schema:
@@ -4412,15 +4484,40 @@ components:
         base_digest:
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
+        output:
+          type: string
+          enum: [workflow, declarations]
+          default: workflow
+          description: >-
+            Task t35 (#328, spec c86): what the actor drafts. `workflow`
+            (the default, unchanged until the graph engine retires) or
+            `declarations` -- a declaration set with must/can links, validated
+            by the real declaration parser. With `base_digest`, declaration
+            output expresses that pinned workflow as declarations.
+
+    PublishWorkflowGeneration:
+      type: object
+      additionalProperties: false
+      description: >-
+        POST /v1alpha1/workflow-generations/{id}/publish's optional body
+        (task t35). `author` is decoded and never read: the recorded author
+        is always the authenticated principal.
+      properties:
+        author: {type: string}
 
     WorkflowGeneration:
       type: object
-      required: [run_id, status, valid, diagnostics]
+      required: [run_id, status, output, valid, diagnostics]
       properties:
         run_id: {type: string}
         status:
           type: string
           enum: [proposed, confirmed, rejected, exhausted]
+        output:
+          type: string
+          enum: [workflow, declarations]
+        declarations:
+          $ref: '#/components/schemas/DeclarationSet'
         base_digest: {type: string}
         format: {type: string, enum: [yaml, json]}
         source: {type: string}
@@ -7219,6 +7316,24 @@ components:
             Execution-time deviations from the confirmed plan, each carrying
             its origin (`user` or `llm` — the issue #45 "system knows" vs
             "user reports" split).
+        output:
+          type: string
+          enum: [snapshot, declarations]
+          default: snapshot
+          description: >-
+            Task t35 (#328, spec c86). `snapshot` (the default) imports the
+            plan snapshot only. `declarations` imports the snapshot AND
+            publishes one declaration per active task (agent.work to
+            `actor_ref`; roots fire on a human.decision at the plan's
+            kickoff node, dependents on github.pr.approved) with a `must`
+            link for every real dependency edge. Requires an authenticated
+            principal, who is the recorded author. Nothing is activated.
+        actor_ref:
+          type: string
+          description: The registered actor each task's agent.work action dispatches to; required when output is declarations.
+        author:
+          type: string
+          description: Decoded and never read -- declarations are authored by the authenticated principal.
 
     PlanImportTask:
       type: object
@@ -7347,6 +7462,73 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlanImportDeviation'
+        declarations:
+          $ref: '#/components/schemas/DeclarationSet'
+
+    DeclarationSetLink:
+      type: object
+      description: A must/can link between two declarations of a set; `from` depends on `to`.
+      required: [from, to, kind]
+      properties:
+        from: {type: string}
+        to: {type: string}
+        kind: {type: string, enum: [must, can]}
+
+    DeclarationSetEntry:
+      type: object
+      description: One member of a declaration set (task t35).
+      required: [format, source, valid, diagnostics, warnings]
+      properties:
+        name: {type: string}
+        format: {type: string, enum: [yaml, json]}
+        source: {type: string}
+        valid: {type: boolean}
+        digest: {type: string}
+        diagnostics:
+          type: array
+          items: {type: string}
+        warnings:
+          type: array
+          items: {type: string}
+        base_digest:
+          type: string
+          description: When the name is already published, the digest of the version this member would replace.
+        diff:
+          type: string
+          description: Line diff against `base_digest`'s canonical body.
+        version_id: {type: string}
+        version: {type: integer}
+        author:
+          type: string
+          description: Once published, the authenticated principal that published it.
+
+    DeclarationSet:
+      type: object
+      description: >-
+        The declarations a lane emits (task t35, #328, spec c86/h59):
+        workflow generation and plan import with `output: declarations`.
+        Validated with the real declaration parser; `published` is true only
+        once published through the declaration publish path. Never active.
+      required: [declarations, links, valid, published, diagnostics, warnings]
+      properties:
+        declarations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationSetEntry'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclarationSetLink'
+        valid: {type: boolean}
+        published: {type: boolean}
+        diagnostics:
+          type: array
+          items: {type: string}
+          description: Set-level problems (duplicate names, links naming unknown declarations).
+        warnings:
+          type: array
+          items: {type: string}
+          description: Every member's reference and sensitivity warnings, each prefixed with the member name. Warnings never refuse.
 
     PlanImportSummary:
       type: object

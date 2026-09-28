@@ -726,6 +726,25 @@ func (s *Server) declarationReferenceWarnings(ctx context.Context, name string, 
 // A reference with an explicit default (ref.DefaultPresent) or step "0"
 // (the current firing) never warns.
 func (s *Server) declarationReferenceWarningsForID(ctx context.Context, declarationID string, d decl.Declaration) ([]string, error) {
+	var links []postgres.DeclarationLink
+	if declarationID != "" {
+		var err error
+		links, err = s.Store.ListDeclarationLinks(ctx, s.NamespaceID, declarationID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s.declarationReferenceWarningsWith(ctx, d, links, nil, nil)
+}
+
+// declarationReferenceWarningsWith is declarationReferenceWarningsForID over
+// an explicit link set. A declaration set (declarationsets.go, task t35)
+// evaluates its members before any of them is published: pendingIDs maps a
+// member name to the id its proposed links point at, and members resolves a
+// member's parsed body for the t30 sensitivity check. Both nil means "only
+// what is published", exactly the single-declaration behaviour.
+func (s *Server) declarationReferenceWarningsWith(ctx context.Context, d decl.Declaration, links []postgres.DeclarationLink,
+	pendingIDs map[string]string, members func(string) (decl.Declaration, bool)) ([]string, error) {
 	refs, err := actionTemplateReferences(d.Action)
 	if err != nil {
 		return nil, err
@@ -734,13 +753,6 @@ func (s *Server) declarationReferenceWarningsForID(ctx context.Context, declarat
 		return []string{}, nil
 	}
 
-	var links []postgres.DeclarationLink
-	if declarationID != "" {
-		links, err = s.Store.ListDeclarationLinks(ctx, s.NamespaceID, declarationID)
-		if err != nil {
-			return nil, err
-		}
-	}
 	mustCount := 0
 	linkKindTo := map[string]string{}
 	for _, l := range links {
@@ -757,7 +769,11 @@ func (s *Server) declarationReferenceWarningsForID(ctx context.Context, declarat
 		if id, ok := nameIDCache[name]; ok {
 			return id
 		}
-		id := ""
+		id := pendingIDs[name]
+		if id != "" {
+			nameIDCache[name] = id
+			return id
+		}
 		if v, err := s.Store.LatestDeclarationVersion(ctx, s.NamespaceID, name); err == nil {
 			id = v.DeclarationID
 		}
@@ -804,11 +820,48 @@ func (s *Server) declarationReferenceWarningsForID(ctx context.Context, declarat
 	// Task t30 (spec q22): publish also warns -- never refuses -- once per
 	// reference that renders a variable into a wider audience than it came
 	// from; at firing time that render is blocked until the owner approves.
-	sensitivity, err := declengine.SensitivityWarnings(ctx, s.Store, s.NamespaceID, d)
+	sensitivity, err := s.sensitivityWarnings(ctx, d, members)
 	if err != nil {
 		return nil, err
 	}
 	return append(warnings, sensitivity...), nil
+}
+
+// sensitivityWarnings is declengine.SensitivityWarnings, except that a
+// declaration set's own not-yet-published members resolve first.
+func (s *Server) sensitivityWarnings(ctx context.Context, d decl.Declaration, members func(string) (decl.Declaration, bool)) ([]string, error) {
+	if members == nil {
+		return declengine.SensitivityWarnings(ctx, s.Store, s.NamespaceID, d)
+	}
+	var lookupErr error
+	ws, err := decl.WideningReferences(d, func(name string) (decl.Declaration, bool) {
+		if m, ok := members(name); ok {
+			return m, true
+		}
+		v, err := s.Store.LatestDeclarationVersion(ctx, s.NamespaceID, name)
+		if err != nil {
+			if !errors.Is(err, postgres.ErrNotFound) && lookupErr == nil {
+				lookupErr = err
+			}
+			return decl.Declaration{}, false
+		}
+		var named decl.Declaration
+		if json.Unmarshal(v.Body, &named) != nil {
+			return decl.Declaration{}, false
+		}
+		return named, true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if lookupErr != nil {
+		return nil, lookupErr
+	}
+	out := make([]string, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, w.Warning())
+	}
+	return out, nil
 }
 
 // declarationHumanProvider names the principal providers that are people:

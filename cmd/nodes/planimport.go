@@ -32,7 +32,28 @@ import (
 type planImportRequest struct {
 	PlanShow   json.RawMessage `json:"plan_show"`
 	Deviations json.RawMessage `json:"deviations,omitempty"`
+	// Output and ActorRef select the declaration form (task t35, spec c86);
+	// both are omitted for the default snapshot import.
+	Output   string `json:"output,omitempty"`
+	ActorRef string `json:"actor_ref,omitempty"`
 }
+
+// planImportDeclarationSetResponse is the slice of
+// components.schemas.DeclarationSet this verb reads.
+type planImportDeclarationSetResponse struct {
+	Declarations []struct {
+		Name string `json:"name"`
+	} `json:"declarations"`
+	Links     []json.RawMessage `json:"links"`
+	Published bool              `json:"published"`
+	Warnings  []string          `json:"warnings"`
+}
+
+// accessCookieEnv names the variable carrying a human's Cloudflare Access
+// session (the same one the Python CLI's declaration verbs and the
+// nodes-operator skill read). Environment only, never a flag: a credential
+// on argv is visible in ps and shell history.
+const accessCookieEnv = "NODES_OP_COOKIE"
 
 // planImportTaskResponse is the slice of components.schemas.PlanImportTask
 // this verb reads for its own summary output.
@@ -51,14 +72,15 @@ type planImportDeviationResponse struct {
 // planImportResponse is the slice of components.schemas.PlanImport this
 // verb reads.
 type planImportResponse struct {
-	ID           string                        `json:"id"`
-	Slug         string                        `json:"slug"`
-	Title        string                        `json:"title"`
-	SourceSlug   string                        `json:"source_slug"`
-	SourceStatus string                        `json:"source_status"`
-	ImportedAt   time.Time                     `json:"imported_at"`
-	Tasks        []planImportTaskResponse      `json:"tasks"`
-	Deviations   []planImportDeviationResponse `json:"deviations"`
+	ID           string                            `json:"id"`
+	Slug         string                            `json:"slug"`
+	Title        string                            `json:"title"`
+	SourceSlug   string                            `json:"source_slug"`
+	SourceStatus string                            `json:"source_status"`
+	ImportedAt   time.Time                         `json:"imported_at"`
+	Tasks        []planImportTaskResponse          `json:"tasks"`
+	Deviations   []planImportDeviationResponse     `json:"deviations"`
+	Declarations *planImportDeclarationSetResponse `json:"declarations"`
 }
 
 // planImportResultPayload is `nodes plan-import --json`'s stable result
@@ -71,6 +93,18 @@ type planImportResultPayload struct {
 	SourceStatus   string `json:"source_status"`
 	TaskCount      int    `json:"task_count"`
 	DeviationCount int    `json:"deviation_count"`
+	// Output is "snapshot" or "declarations"; Declarations is present only
+	// for the latter. Nothing the verb publishes is active.
+	Output       string                 `json:"output"`
+	Declarations *planImportDeclSummary `json:"declarations,omitempty"`
+}
+
+// planImportDeclSummary is the declaration half of the --json payload.
+type planImportDeclSummary struct {
+	Count     int      `json:"count"`
+	Links     int      `json:"links"`
+	Published bool     `json:"published"`
+	Warnings  []string `json:"warnings"`
 }
 
 // cmdPlanImport implements `nodes plan-import`.
@@ -89,6 +123,8 @@ func cmdPlanImport(args []string, jsonMode bool) (int, error) {
 	apiFlag := fs.String("api", "", "control-plane base URL (defaults to NODES_API_URL, then "+defaultAPIBaseURL+")")
 	planFlag := fs.String("plan", "", "path to a file holding 'devague plan show --json' output (required)")
 	deviationsFlag := fs.String("deviations", "", "path to a .devague/deliveries/<slug>.json delivery file (optional)")
+	outputFlag := fs.String("output", "snapshot", "snapshot (default) or declarations: also publish one inactive declaration per active task")
+	actorRefFlag := fs.String("actor-ref", "", "the registered actor each task's agent.work action dispatches to (required with --output declarations)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			clifmt.EmitResult(explainPlanImport)
@@ -111,6 +147,23 @@ func cmdPlanImport(args []string, jsonMode bool) (int, error) {
 		}
 	}
 
+	switch *outputFlag {
+	case "snapshot", "declarations":
+	default:
+		return 0, &clifmt.CliError{
+			Code:        clifmt.ExitUserError,
+			Message:     fmt.Sprintf("unknown --output %q", *outputFlag),
+			Remediation: "pass --output snapshot (the default) or --output declarations",
+		}
+	}
+	if *outputFlag == "declarations" && *actorRefFlag == "" {
+		return 0, &clifmt.CliError{
+			Code:        clifmt.ExitUserError,
+			Message:     "--output declarations needs --actor-ref",
+			Remediation: "pass --actor-ref <actor://...>: the registered actor each task's agent.work action dispatches to",
+		}
+	}
+
 	planBytes, err := os.ReadFile(*planFlag) // #nosec G304 -- the path is the operator's argument; reading it is the command.
 	if err != nil {
 		return 0, &clifmt.CliError{
@@ -121,6 +174,9 @@ func cmdPlanImport(args []string, jsonMode bool) (int, error) {
 	}
 
 	req := planImportRequest{PlanShow: json.RawMessage(planBytes)}
+	if *outputFlag == "declarations" {
+		req.Output, req.ActorRef = *outputFlag, *actorRefFlag
+	}
 	if *deviationsFlag != "" {
 		deviationsBytes, err := os.ReadFile(*deviationsFlag) // #nosec G304 -- same as above.
 		if err != nil {
@@ -176,6 +232,9 @@ func postPlanImport(client *http.Client, baseURL string, req planImportRequest) 
 		}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if cookie := os.Getenv(accessCookieEnv); cookie != "" {
+		httpReq.AddCookie(&http.Cookie{Name: "CF_Authorization", Value: cookie})
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return planImportResponse{}, &clifmt.CliError{
@@ -210,20 +269,39 @@ func postPlanImport(client *http.Client, baseURL string, req planImportRequest) 
 // emitPlanImportResult prints the verb's result: the import id, plan
 // slug/title, and task/deviation counts.
 func emitPlanImportResult(jsonMode bool, created planImportResponse) error {
-	if jsonMode {
-		return clifmt.EmitResultJSON(planImportResultPayload{
-			ID:             created.ID,
-			Slug:           created.Slug,
-			Title:          created.Title,
-			SourceSlug:     created.SourceSlug,
-			SourceStatus:   created.SourceStatus,
-			TaskCount:      len(created.Tasks),
-			DeviationCount: len(created.Deviations),
-		})
+	payload := planImportResultPayload{
+		ID:             created.ID,
+		Slug:           created.Slug,
+		Title:          created.Title,
+		SourceSlug:     created.SourceSlug,
+		SourceStatus:   created.SourceStatus,
+		TaskCount:      len(created.Tasks),
+		DeviationCount: len(created.Deviations),
+		Output:         "snapshot",
 	}
-	clifmt.EmitResult(fmt.Sprintf(
+	if set := created.Declarations; set != nil {
+		payload.Output = "declarations"
+		payload.Declarations = &planImportDeclSummary{
+			Count: len(set.Declarations), Links: len(set.Links), Published: set.Published,
+			Warnings: append([]string{}, set.Warnings...),
+		}
+	}
+	if jsonMode {
+		return clifmt.EmitResultJSON(payload)
+	}
+	text := fmt.Sprintf(
 		"plan import: %s\nslug: %s\ntitle: %s\ntasks: %d\ndeviations: %d",
-		created.ID, created.Slug, created.Title, len(created.Tasks), len(created.Deviations)))
+		created.ID, created.Slug, created.Title, len(created.Tasks), len(created.Deviations))
+	if set := created.Declarations; set != nil {
+		text += fmt.Sprintf("\ndeclarations: %d published (inactive: a human activates)\nlinks: %d", len(set.Declarations), len(set.Links))
+		for _, d := range set.Declarations {
+			text += "\n  " + d.Name
+		}
+		for _, w := range set.Warnings {
+			text += "\nwarning: " + w
+		}
+	}
+	clifmt.EmitResult(text)
 	return nil
 }
 
@@ -250,12 +328,29 @@ refused with a remediation naming what is wrong.
     nodes plan-import --plan plan-show.json
     nodes plan-import --plan plan-show.json --deviations deviations.json
     nodes plan-import --plan plan-show.json --json
+    NODES_OP_COOKIE=... nodes plan-import --plan plan-show.json \
+        --output declarations --actor-ref actor://company/developer
+
+## Declaration output (task t35)
+
+` + "`--output declarations`" + ` imports the snapshot AND publishes one
+declaration per active task: agent.work to ` + "`--actor-ref`" + `, roots firing on a
+human.decision at the plan's kickoff node, dependents on github.pr.approved,
+with a ` + "`must`" + ` link for every real dependency edge. It needs an
+authenticated human principal: the CLI sends ` + "`$NODES_OP_COOKIE`" + ` (a Cloudflare
+Access session) as the CF_Authorization cookie, and that principal -- never
+a flag -- is the recorded author. Nothing is activated: a human activates
+each declaration. Publish warnings (unresolved references, sensitivity
+widenings) never refuse and are printed as ` + "`warning:`" + ` lines.
 
 ## Flags
 
 - ` + "`--plan`" + ` (required) — path to a file holding
   ` + "`devague plan show --json`" + ` output.
 - ` + "`--deviations`" + ` — path to a ` + "`.devague/deliveries/<slug>.json`" + ` file.
+- ` + "`--output`" + ` — ` + "`snapshot`" + ` (default) or ` + "`declarations`" + `.
+- ` + "`--actor-ref`" + ` — the actor each task dispatches to (required with
+  ` + "`--output declarations`" + `).
 - ` + "`--api`" + ` — control-plane base URL (default: NODES_API_URL, then
   ` + defaultAPIBaseURL + `).
 
@@ -263,7 +358,9 @@ refused with a remediation naming what is wrong.
 
 Text mode prints ` + "`plan import:`" + `, ` + "`slug:`" + `, ` + "`title:`" + `,
 ` + "`tasks:`" + `, and ` + "`deviations:`" + ` lines; --json prints
-` + "`{id, slug, title, source_slug, source_status, task_count, deviation_count}`" + `.
+` + "`{id, slug, title, source_slug, source_status, task_count, deviation_count, output}`" + `,
+plus ` + "`declarations: {count, links, published, warnings}`" + ` for declaration
+output.
 
 ## Exit codes
 

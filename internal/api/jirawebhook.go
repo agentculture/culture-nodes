@@ -309,6 +309,16 @@ func jiraEmissions(issue map[string]any, site, project, bot string) []jiraFact {
 			}
 		}
 		facts = append(facts, jiraFact{Name: name, Payload: marshal(payload), SourceKey: "jira:" + jiraSite(site) + ":" + key + ":history:" + current.kind + ":" + current.id, Watermark: watermark, Subject: key})
+		if strings.HasPrefix(name, "pr-upkeep.jira.transitioned.") {
+			// jira.issue.transitioned (#328 t31c, d7) is the neutral reaction
+			// to a jira.transition action, emitted alongside the legacy name
+			// exactly as the poller does (pr_upkeep_jira.jira_emissions).
+			neutral := map[string]any{"source": "jira", "issue": key, "to_status": payload["status"], "site": jiraSite(site)}
+			if from := text(payload["from_status"]); from != "" {
+				neutral["from_status"] = from
+			}
+			facts = append(facts, jiraFact{Name: "jira.issue.transitioned", Payload: marshal(neutral), SourceKey: "jira:" + jiraSite(site) + ":" + key + ":transitioned:" + text(payload["status"]) + ":" + current.id, Watermark: watermark, Subject: key})
+		}
 	}
 	return facts
 }

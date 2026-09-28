@@ -110,7 +110,9 @@ func TestJiraEmissionsAddCreatedAlongsideLegacyNames(t *testing.T) {
 	// Graph workflows still trigger on pr-upkeep.jira.*, so created is added
 	// alongside the legacy names and the synthetic creation transition; the
 	// neutral renames wait for those workflows to migrate (#328 t37).
-	created, legacyCreation := 0, false
+	// jira.issue.transitioned (t31c, d7) likewise rides beside every legacy
+	// transition, one for one.
+	created, legacyTransitions, neutralTransitions := 0, 0, 0
 	for _, fact := range facts {
 		switch {
 		case fact.Name == "jira.issue.created":
@@ -118,13 +120,15 @@ func TestJiraEmissionsAddCreatedAlongsideLegacyNames(t *testing.T) {
 			if fact.SourceKey != "jira:team.example.com:"+text(issue["key"])+":created" {
 				t.Errorf("created source key = %q", fact.SourceKey)
 			}
+		case fact.Name == "jira.issue.transitioned":
+			neutralTransitions++
 		case strings.HasPrefix(fact.Name, "pr-upkeep.jira.transitioned."):
-			legacyCreation = true
+			legacyTransitions++
 		case !strings.HasPrefix(fact.Name, "pr-upkeep.jira."):
 			t.Errorf("unexpected fact name %q", fact.Name)
 		}
 	}
-	if created != 1 || !legacyCreation {
-		t.Fatalf("created=%d legacyCreation=%v, want one created fact beside the legacy transition", created, legacyCreation)
+	if created != 1 || legacyTransitions == 0 || neutralTransitions != legacyTransitions {
+		t.Fatalf("created=%d legacy=%d neutral=%d, want one created fact and one neutral transition per legacy transition", created, legacyTransitions, neutralTransitions)
 	}
 }

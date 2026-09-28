@@ -169,7 +169,8 @@ _WORKFLOW = """\
 # culture-nodes workflow
 
 Thin REST client over the workflows API (`api/openapi/openapi.yaml`,
-`workflows` tag): generate, generation-get, validate, publish, list, get.
+`workflows` tag): generate, generation-get, generation-publish, validate,
+publish, list, get.
 No engine logic lives here — every verb sends one HTTP request to the
 Culture Nodes control-plane API (the Go `nodes serve` binary) and renders
 the response.
@@ -177,7 +178,9 @@ the response.
 ## Usage
 
     culture-nodes workflow generate "DESCRIPTION" --actor-ref REF [--base-digest DIGEST]
+        [--output workflow|declarations]
     culture-nodes workflow generation-get <run-id>
+    culture-nodes workflow generation-publish <run-id>
     culture-nodes workflow validate <file.yaml|file.json>
     culture-nodes workflow publish <file.yaml|file.json>
     culture-nodes workflow list [--workflow-key KEY] [--limit N]
@@ -200,6 +203,20 @@ Dispatches the one server-side generation workflow to a registered fleet
 agent. The result stays `proposed` until its native approval node receives a
 human decision and is never published by this verb. `generation-get` returns
 the compiler diagnostics and, for an edit, the diff against `--base-digest`.
+
+`--output declarations` (task t35) asks the agent for trigger-condition-action
+declarations plus their must/can links instead of workflow source (the
+default is unchanged). `generation-get` then reports each declaration's
+validity, diagnostics and warnings from the real declaration validator, and a
+diff for any declaration that edits a published one.
+
+## generation-publish
+
+Publishes a CONFIRMED declaration-output generation through the declaration
+publish path and records its links. The author is the authenticated caller
+(`$NODES_ACTOR_TOKEN` or `$NODES_OP_COOKIE`, as for `decl`), never a flag.
+Nothing is activated: a human activates each declaration. Reference and
+sensitivity warnings never refuse and print as `warning:` lines.
 
 ## publish
 
@@ -776,6 +793,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("workflow",): _WORKFLOW,
     ("workflow", "generate"): _WORKFLOW,
     ("workflow", "generation-get"): _WORKFLOW,
+    ("workflow", "generation-publish"): _WORKFLOW,
     ("workflow", "validate"): _WORKFLOW,
     ("workflow", "publish"): _WORKFLOW,
     ("workflow", "list"): _WORKFLOW,

@@ -18,9 +18,11 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agentculture/culture-nodes/internal/contracts"
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/devague"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -29,6 +31,15 @@ import (
 type importPlanRequest struct {
 	PlanShow   json.RawMessage `json:"plan_show"`
 	Deviations json.RawMessage `json:"deviations,omitempty"`
+	// Output (task t35, spec c86): "snapshot" (the default, today's
+	// behaviour) or "declarations" -- the snapshot PLUS one published
+	// declaration per active task (plandeclarations.go), dispatched to
+	// ActorRef.
+	Output   string `json:"output,omitempty"`
+	ActorRef string `json:"actor_ref,omitempty"`
+	// Author is decoded and NEVER read (h62): declarations are authored by
+	// the authenticated principal.
+	Author string `json:"author,omitempty"`
 }
 
 // planImportTaskOut is components.schemas.PlanImportTask.
@@ -67,6 +78,9 @@ type planImportOut struct {
 	ImportedAt   time.Time                `json:"imported_at"`
 	Tasks        []planImportTaskOut      `json:"tasks"`
 	Deviations   []planImportDeviationOut `json:"deviations"`
+	// Declarations is the published declaration set (output=declarations
+	// only; absent otherwise).
+	Declarations *declarationSetOut `json:"declarations,omitempty"`
 }
 
 func planImportOutFrom(pi postgres.PlanImport) planImportOut {
@@ -133,11 +147,42 @@ func (s *Server) handleImportPlan(w http.ResponseWriter, r *http.Request) error 
 			"plan_show is required")
 	}
 
+	output, ok := parsePlanImportOutput(req.Output)
+	if !ok {
+		return badRequest(`output must be "snapshot" (the default) or "declarations"`, "unknown output %q", req.Output)
+	}
+	var principal declengine.ActivationPrincipal
+	if output == planImportOutputDeclarations {
+		if !adhocActorRefPattern.MatchString(req.ActorRef) {
+			return badRequest("output=declarations needs actor_ref: the registered actor each task's agent.work action dispatches to",
+				"malformed or missing actor_ref %q", req.ActorRef)
+		}
+		var apiErr *apiError
+		if principal, apiErr = declarationPrincipal(r); apiErr != nil {
+			return apiErr
+		}
+	}
+
 	plan, err := devague.ParsePlanShow(req.PlanShow)
 	if err != nil {
 		return badRequest(
 			"plan_show must be a valid 'devague plan show --json' document — see the message for what is wrong and fix the source plan before re-importing",
 			"%v", err)
+	}
+	// Declaration output is validated as a whole before the snapshot is
+	// written, so a set the declaration validator refuses imports nothing.
+	var setItems []declarationSetItem
+	var setLinks []declarationSetLink
+	if output == planImportOutputDeclarations {
+		setItems, setLinks = planDeclarationSet(plan, req.ActorRef)
+		checked, _, err := s.validateDeclarationSet(r.Context(), setItems, setLinks)
+		if err != nil {
+			return internalError(err)
+		}
+		if !checked.Valid {
+			return unprocessable("the plan's declaration form does not validate; import with output=snapshot, or fix the plan",
+				"declaration output invalid: %s", strings.Join(append(checked.Diagnostics, setItemDiagnostics(checked)...), "; "))
+		}
 	}
 
 	in := postgres.ImportPlanInput{
@@ -202,8 +247,26 @@ func (s *Server) handleImportPlan(w http.ResponseWriter, r *http.Request) error 
 		return classify(err)
 	}
 
-	writeJSON(w, http.StatusCreated, planImportOutFrom(created))
+	out := planImportOutFrom(created)
+	if output == planImportOutputDeclarations {
+		set, err := s.publishDeclarationSet(r.Context(), principal, setItems, setLinks)
+		if err != nil {
+			return err
+		}
+		out.Declarations = &set
+	}
+	writeJSON(w, http.StatusCreated, out)
 	return nil
+}
+
+func setItemDiagnostics(set declarationSetOut) []string {
+	var out []string
+	for _, e := range set.Declarations {
+		for _, d := range e.Diagnostics {
+			out = append(out, e.Name+": "+d)
+		}
+	}
+	return out
 }
 
 // handleGetPlanImport is GET /v1alpha1/plan-imports/{id}.

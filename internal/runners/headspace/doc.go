@@ -180,7 +180,11 @@
 // secrets-provider abstraction wired into runners.Runner today, and the
 // Operation document is part of the replay manifest, so a value can never
 // live in it. This bridge resolves each named ref from its OWN process
-// environment (os.LookupEnv) and forwards ONLY the resolved value into the
+// environment (os.LookupEnv). If NODES_RUNNER_ROTATING_ENV_FILE names a
+// readable KEY=VALUE file, requested keys in it override process values on
+// every resolution; a missing or unreadable file leaves process values in
+// place. Blank lines and comments are ignored, and matching surrounding
+// quotes are stripped. The bridge forwards ONLY the resolved values into the
 // headspace run child's envp (see process.go's buildEnv) -- exactly
 // mirroring how a real deployment injects secrets into a worker process
 // (a Kubernetes Secret mounted as env vars) and this boundary forwards the

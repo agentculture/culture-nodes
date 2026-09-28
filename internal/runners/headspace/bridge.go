@@ -363,27 +363,52 @@ func checkPolicy(p runners.Policy, reject func(runners.ErrorKind, error, string)
 	return nil
 }
 
-// resolveEnv reads each named environment_ref from this bridge process's own
-// environment. This is the bridge's secret-values side channel: the
-// runners.Operation document (task t18's replay manifest) carries only names,
-// never values, and there is no secrets-provider abstraction wired into
-// runners.Runner today, so this bridge treats its own process environment as
-// the value source -- exactly mirroring how a real deployment injects
-// secrets into a worker process (a Kubernetes Secret mounted as env vars) and
-// this boundary forwards only the named ones onward. See doc.go's "Secrets"
-// section for the full reasoning and the deviation this records.
+// resolveEnv reads named environment_refs from this bridge process's own
+// environment. When NODES_RUNNER_ROTATING_ENV_FILE is set, its KEY=VALUE
+// entries override requested names. The file is read on every call so a
+// rotated token is available without a runner restart; unreadable files fall
+// back to process values. Only requested names are returned, and values are
+// never logged. See doc.go's "Secrets" section for the boundary.
 func resolveEnv(refs []string) (values map[string]string, missing []string) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
 	values = make(map[string]string, len(refs))
+	requested := make(map[string]bool, len(refs))
 	for _, name := range refs {
+		requested[name] = true
 		v, ok := os.LookupEnv(name)
 		if !ok {
 			missing = append(missing, name)
 			continue
 		}
 		values[name] = v
+	}
+	if path := os.Getenv("NODES_RUNNER_ROTATING_ENV_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				name, value, ok := strings.Cut(line, "=")
+				name = strings.TrimSpace(name)
+				if !ok || !requested[name] {
+					continue
+				}
+				value = strings.TrimSpace(value)
+				if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
+					value = value[1 : len(value)-1]
+				}
+				values[name] = value
+			}
+			missing = missing[:0]
+			for _, name := range refs {
+				if _, ok := values[name]; !ok {
+					missing = append(missing, name)
+				}
+			}
+		}
 	}
 	return values, missing
 }

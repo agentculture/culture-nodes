@@ -15,15 +15,18 @@ def _executable(path, text):
     path.chmod(0o700)
 
 
-def _run(tmp_path, *, curl_fails=False, ssh_fails=""):
+def _run(tmp_path, *, curl_fails=False, ssh_fails="", runner_hosts="thor orin"):
     bins = tmp_path / "bin"
     bins.mkdir()
     _executable(
         bins / "curl",
         """
-printf '%s\\n' "$*" > "$FAKE_CURL_ARGS"
+count=$(cat "$FAKE_OUTPUT_DIR/curl-count" 2>/dev/null || printf 0)
+count=$((count + 1))
+printf '%s' "$count" > "$FAKE_OUTPUT_DIR/curl-count"
+printf '%s\\n' "$*" > "$FAKE_CURL_ARGS-$count"
 while (($#)); do
-  if [[ "$1" == --data ]]; then shift; printf '%s' "$1" > "$FAKE_POST_BODY"; fi
+  if [[ "$1" == --data ]]; then shift; printf '%s' "$1" > "$FAKE_POST_BODY-$count"; fi
   shift
 done
 [[ "$FAKE_CURL_FAIL" == 1 ]] && exit 22
@@ -51,6 +54,7 @@ exit 0
         PATH=f"{bins}:{os.environ['PATH']}",
         GITHUB_APP_PRIVATE_KEY=key,
         GITHUB_APP_TOKEN_ACCOUNTS="alice bob",
+        GITHUB_APP_RUNNER_HOSTS=runner_hosts,
         FAKE_OUTPUT_DIR=str(tmp_path),
         FAKE_CURL_ARGS=str(tmp_path / "curl-args"),
         FAKE_POST_BODY=str(tmp_path / "post-body"),
@@ -64,7 +68,7 @@ exit 0
 def test_mints_scoped_token_and_delivers_exact_two_lines(tmp_path):
     proc, key = _run(tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert json.loads((tmp_path / "post-body").read_text())["permissions"] == {
+    assert json.loads((tmp_path / "post-body-1").read_text())["permissions"] == {
         "contents": "write",
         "pull_requests": "write",
         "issues": "write",
@@ -73,10 +77,28 @@ def test_mints_scoped_token_and_delivers_exact_two_lines(tmp_path):
         "statuses": "read",
         "actions": "read",
     }
-    assert "/app/installations/165818005/access_tokens" in (tmp_path / "curl-args").read_text()
+    assert json.loads((tmp_path / "post-body-2").read_text())["permissions"] == {
+        "contents": "read",
+        "pull_requests": "read",
+        "issues": "read",
+        "checks": "read",
+        "statuses": "read",
+        "actions": "read",
+        "metadata": "read",
+    }
+    assert "/app/installations/165818005/access_tokens" in (tmp_path / "curl-args-1").read_text()
+    assert "/app/installations/165818005/access_tokens" in (tmp_path / "curl-args-2").read_text()
     expected = f"GITHUB_TOKEN_WORKER={TOKEN}\nGITHUB_TOKEN_EXPIRES_AT=2026-09-28T12:00:00Z\n"
     assert (tmp_path / "alice").read_text() == expected
     assert (tmp_path / "bob").read_text() == expected
+    runner_expected = f"GITHUB_TOKEN={TOKEN}\nGITHUB_TOKEN_EXPIRES_AT=2026-09-28T12:00:00Z\n"
+    assert (tmp_path / "thor").read_text() == runner_expected
+    assert (tmp_path / "orin").read_text() == runner_expected
+    runner_command = (tmp_path / "thor-command").read_text()
+    assert "umask 077" in runner_command
+    assert "chmod 600" in runner_command
+    assert "mv -f" in runner_command
+    assert "github-app-runner.env" in runner_command
     command = (tmp_path / "alice-command").read_text()
     assert "umask 077" in command
     assert "chmod 600" in command
@@ -96,3 +118,17 @@ def test_one_ssh_failure_still_attempts_other_account(tmp_path):
     assert proc.returncode != 0
     assert (tmp_path / "bob").exists()
     assert TOKEN not in proc.stdout + proc.stderr
+
+
+def test_one_runner_delivery_failure_still_attempts_other_host(tmp_path):
+    proc, _ = _run(tmp_path, ssh_fails="thor")
+    assert proc.returncode != 0
+    assert (tmp_path / "orin").exists()
+    assert TOKEN not in proc.stdout + proc.stderr
+
+
+def test_empty_runner_hosts_disables_second_mint(tmp_path):
+    proc, _ = _run(tmp_path, runner_hosts="")
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / "curl-count").read_text() == "1"
+    assert not (tmp_path / "thor").exists()

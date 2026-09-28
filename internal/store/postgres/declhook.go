@@ -18,14 +18,15 @@ import "context"
 // handler is therefore called only AFTER the delivery (or, for a schedule,
 // FireSchedule's whole transaction) has committed, holding nothing.
 //
-// Idempotency is the engine's own: Handle claims a firing once per (event,
-// declaration) under 0060's unique index, so a redelivery that the watermark
-// answered as a duplicate is passed through too -- that is what lets a
-// client retry recover a crash between the commit and this call.
+// Idempotency is the engine's own: Handle reads decided outcomes per (event,
+// declaration) and skips them on redelivery, while unfinished evaluations
+// can resume. A watermark duplicate is still passed through so a client
+// retry can recover a crash between the delivery commit and Handle.
 //
 // A handler error never fails the delivery: the fact is committed, the
-// graph engine already acted on it, and the declaration engine records every
-// evaluation failure on declaration_evaluations itself. The error is carried
+// graph engine already acted on it. Failures reached during a declaration's
+// evaluation are recorded on declaration_evaluations; an earlier read failure
+// cannot be. The error is carried
 // back on SignalDelivery.DeclarationErr for the caller to log.
 type DeliveredEventHandler interface {
 	HandleDeliveredEvent(ctx context.Context, delivery SignalDelivery) error

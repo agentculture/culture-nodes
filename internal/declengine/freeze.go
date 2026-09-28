@@ -151,8 +151,8 @@ func ThawAndReplay(ctx context.Context, e *Engine, fb FreezeBackend, namespaceID
 	// A backend that can list them has those leftovers replayed too, which
 	// is what makes this function safe to re-run (the scheduler does, on
 	// startup and every tick in 'after'). A replay that races another
-	// replay of the same event is idempotent: Handle claims a firing once
-	// per (event, declaration), and the loser records a duplicate.
+	// replay of the same event is idempotent: Handle skips declarations with
+	// a decided outcome for that event.
 	if lister, ok := fb.(storedEventLister); ok {
 		leftovers, err := lister.NodesWithStoredEvents(ctx, namespaceID)
 		if err != nil {

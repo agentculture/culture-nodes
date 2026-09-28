@@ -27,6 +27,43 @@ type memoryBackend struct {
 	deferred []deferredEntry
 }
 
+type decidingMemoryBackend struct{ *memoryBackend }
+
+func (m decidingMemoryBackend) DecidedForEvent(_ context.Context, _, eventID string) (map[string]string, error) {
+	decided := map[string]string{}
+	for _, step := range m.steps {
+		if step.EventID == eventID && step.Outcome == OutcomeConditionFalse {
+			decided[step.DeclarationID] = step.Outcome
+		}
+	}
+	return decided, nil
+}
+
+func TestDecidedOutcomeSkipsReevaluation(t *testing.T) {
+	a := active("decided")
+	a.Declaration.Condition = "false"
+	m := &memoryBackend{active: []ActiveDeclaration{a}}
+	t.Setenv("TCA_TEST_MARKER_KEY", strings.Repeat("k", 32))
+	e, err := New(Config{MarkerKeyEnv: "TCA_TEST_MARKER_KEY"}, decidingMemoryBackend{m}, &markerMemory{}, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) {
+		t.Fatal("condition-false event dispatched")
+		return DispatchResult{}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := Event{NamespaceID: "test", ID: "event-decided", Kind: "timer", Node: "ready"}
+	if err := e.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	before := len(m.steps)
+	if err := e.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.steps) != before {
+		t.Fatalf("redelivery appended %d rows", len(m.steps)-before)
+	}
+}
+
 type deferredEntry struct {
 	id            string
 	declarationID string

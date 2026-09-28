@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T03:33:02Z",
+  "updated": "2026-09-28T03:42:51Z",
   "deviations": [
     {
       "id": "d1",
@@ -46,6 +46,44 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "Sensitivity model (t30b): GitHub's audience is per repository (a public repo ranks public, a private repo org); exposure is approved per variable through a list on the declaration ('may this declaration expose data type V'), each entry approved by the variable's owner, replacing t30's per (declaration version, source version, variable, target) approval tasks",
+      "task_ref": "t30",
+      "reason": "Owner decision 2026-09-28 on decision 2: most repos, like this one, are public; a per-declaration exposure list is how the owner wants to approve exposure.",
+      "affects": [
+        "t31",
+        "t33"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "Break-glass stop powers (t19b): a break-glass credential bound to a human may deactivate a declaration and flip the engine switch to 'before', nothing else on the declaration routes; ADR 0014 section 3's break-glass clause is narrowed to that",
+      "task_ref": "t19",
+      "reason": "Owner decision 2026-09-28 on decision 4, for now, revisit if needed: an emergency needs a way to stop, not to create or activate; cortex found the clause unreachable (break-glass lacks the namespace-admin role).",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "Event mapping and start nodes (t38d): adopt t38's payload convention (payload.node, payload.origin {marker, artifact_kind, artifact_id, author, bridge_account}) as recorded design; an event without a verified marker always arrives at root; a declaration may declare start_from: any, or start_from by engine-derived node type ({host: spark|thor|orin}, {actor_kind: claude|codex|qwen|human|code}), recorded on each landing node from the action that produced it",
+      "task_ref": "t32",
+      "reason": "Owner decision 2026-09-28 on decision 3: option A plus declarations that can start from any node or from nodes of a type; types are derived from the action, not author labels.",
+      "affects": [
+        "t32"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 6
     }
   ],
   "evidence": [],

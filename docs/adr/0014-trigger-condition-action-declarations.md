@@ -152,3 +152,52 @@ Every consumer of today's run surfaces keeps a read path until it migrates:
 - **Accepted risk:** overlap detection is approximate, because CEL
   satisfiability is undecidable in general. Evaluation-record retention is not
   designed yet. Both are parked on the frame.
+
+## Addendum (2026-09-28): owner decisions during the build
+
+The build (issue #328) raised questions the spec left open. The owner decided
+them on 2026-09-28. Each is recorded as a devague deviation
+(`devague deviate --list`) and implemented as its own task.
+
+### Lineage through human decisions and code runs (d3, task t38c)
+
+No bridge stamps `human.ask` or `code.run`, so the control plane is the
+stamper for both. A scheduler pass binds the decided human task or the runner
+result to the firing's marker and emits a `human.decision` or `code.result`
+reaction that carries it. `code.result` joins the trigger vocabulary for this.
+Without it, must-links broke at every human or code step, including
+pr-upkeep's `readiness`, `human-merges-pr` and `finish` chain.
+
+### Sensitivity: per-repository audience, per-variable exposure (d4, task t30b)
+
+- GitHub's audience is decided per repository: a public repository ranks
+  public, a private one ranks org. Most repositories, this one included, are
+  public.
+- Exposure is approved per variable. A declaration carries a list of the
+  variables (data types) it may expose more widely than their source, and the
+  variable's owner approves each entry. This replaces t30's approval per
+  declaration version, source version, variable and target system.
+
+### Event mapping and start nodes (d6, task t38d)
+
+- A delivered event maps onto the declaration engine through its payload:
+  `node` names the node it arrives at (default `root`), and `origin` carries
+  `{marker, artifact_kind, artifact_id, author, bridge_account}`. The marker
+  is verified against the engine's key, and the artifact id must match the
+  one the engine recorded, so a copied or forged origin starts a fresh
+  lineage.
+- An event without a verified marker always arrives at `root`, whatever its
+  payload names.
+- A declaration may start from any node (`start_from: any`), or from nodes of
+  a type. Types are derived by the engine from the action that produced the
+  node: the host it ran on (`spark`, `thor`, `orin`) and the actor kind
+  (`claude`, `codex`, `qwen`, `human`, `code`). Authors cannot label them, so
+  they stay truthful.
+
+### Break-glass stops, it does not start (d5, task t19b)
+
+A human is a principal authenticated by Cloudflare Access. A break-glass
+credential bound to a human actor may do two things on these routes, for
+when Access is down: deactivate a declaration, and flip the engine switch to
+`before`. It cannot publish, link, alias or activate. The owner accepts this
+for now and may revisit it.

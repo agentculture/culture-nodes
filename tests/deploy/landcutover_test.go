@@ -640,7 +640,8 @@ func TestUnixUserLaneKnowsTheLandEngine(t *testing.T) {
 			t.Errorf("lanes/unix-user.sh lacks %q", want)
 		}
 	}
-	// The inventory admits the second credential file and nothing else new.
+	// The inventory admits the second credential file (and, since #331, the
+	// rotated github-token.env -- tests/test_deploy_unix_user_land.py).
 	if !strings.Contains(lane, "bridge-push.env|land-pr.env|dialin") {
 		t.Error("the account inventory does not admit land-pr.env; the provision would refuse a correctly provisioned land account")
 	}

@@ -123,3 +123,22 @@ def test_provision_land_inventory_admits_exactly_the_two_credential_files(tmp_pa
     assert "prod.env" in refused.stderr
     # The refusal names the admitted inventory, land-pr.env included.
     assert "land-pr.env" in refused.stderr
+
+
+def test_provision_inventory_admits_the_rotated_github_app_token(tmp_path: Path):
+    """#331: lanes/github-app-token.sh writes github-token.env (mode 600) into
+    each engine account. The inventory guard must admit it, or the NEXT
+    deploy refuses the account the previous deploy provisioned (spark,
+    2026-09-29), and must still hold it to mode 600."""
+    h = Harness(tmp_path)
+    _provisioned(h, THOR, "land")
+    cn = h.account_home(THOR, "land") / ".culture-nodes"
+    (cn / "github-token.env").write_text("GITHUB_TOKEN_WORKER=ghs-app\nGITHUB_TOKEN_EXPIRES_AT=x\n")
+    (cn / "github-token.env").chmod(0o600)
+    again = h.run(f"unix_user_provision {THOR} land")
+    assert again.returncode == 0, again.stderr + again.stdout
+    assert "inventory ok" in again.stdout
+    (cn / "github-token.env").chmod(0o644)
+    loose = h.run(f"unix_user_provision {THOR} land")
+    assert loose.returncode != 0
+    assert "github-token.env is mode 644" in loose.stderr

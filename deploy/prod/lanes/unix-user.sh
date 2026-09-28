@@ -469,7 +469,8 @@ echo "checkout $repo: fast-forwarded to $upstream ($(git -C "$repo" rev-parse --
 # grep is q5: the developer session must not carry the bearer that makes
 # human decisions. land-pr.env (loop-closure t5, #315) is culture-land's
 # separate pull-requests:write reply credential, delivered by
-# lanes/land-secrets.sh beside its bridge-push.env.
+# lanes/land-secrets.sh beside its bridge-push.env. github-token.env (#331)
+# is the one-hour GitHub App token lanes/github-app-token.sh rotates in.
 UNIX_USER_INVENTORY_REMOTE='set -euo pipefail
 cn=$HOME/.culture-nodes
 bad=
@@ -477,11 +478,11 @@ for entry in "$cn"/* "$cn"/.[!.]*; do
   [ -e "$entry" ] || continue
   name=${entry##*/}
   case "$name" in
-    *-bridge.env|*-bridge.json|bridge-push.env|land-pr.env|dialin|*-state|bin) ;;
+    *-bridge.env|*-bridge.json|bridge-push.env|land-pr.env|dialin|*-state|bin|github-token.env) ;;
     *) bad="$bad $name" ;;
   esac
 done
-[ -z "$bad" ] || { echo "refusing: $cn holds entries outside the engine-account inventory:$bad — an engine account carries its bridge env/config, bridge-push.env, land-pr.env, dialin/, *-state/ and bin/ only (never prod.env, runner*, backups)" >&2; exit 3; }
+[ -z "$bad" ] || { echo "refusing: $cn holds entries outside the engine-account inventory:$bad — an engine account carries its bridge env/config, bridge-push.env, land-pr.env, github-token.env, dialin/, *-state/ and bin/ only (never prod.env, runner*, backups)" >&2; exit 3; }
 for f in "$cn"/*.env "$cn"/dialin/*.env; do
   [ -f "$f" ] || continue
   m=$(stat -c %a "$f")

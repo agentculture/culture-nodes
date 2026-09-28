@@ -165,8 +165,8 @@ The graph engine pins a workflow digest per run. The declaration engine will pin
 | repair routing (`internal/repair/`) | failure trigger, bounded condition and repair action | pending |
 | hand-turns (`schemas/ledger/hand_turn_definition.schema.json`) | `human.ask` action and `human.decision` reaction | pending |
 | affinity (`internal/compiler/affinity.go`) | Actor selection on the declaration action | pending |
-| workflow generation (`internal/api/workflow_generations.go`) | Generate proposed declaration source and diagnostics | pending |
-| devague plan import (`cmd/nodes/planimport.go`, `/v1alpha1/plan-imports`) | Import plan as proposed declarations and links | pending |
+| workflow generation (`internal/api/workflow_generations.go`) | Generate proposed declaration source and diagnostics | opt-in `output: declarations` validates and publishes (t35); workflow output stays the default until t37 |
+| devague plan import (`cmd/nodes/planimport.go`, `/v1alpha1/plan-imports`) | Import plan as proposed declarations and links | opt-in `output: declarations` validates and publishes (t35); snapshot output stays the default until t37 |
 
 ## Run-surface consumers
 

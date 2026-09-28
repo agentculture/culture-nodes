@@ -2,9 +2,16 @@
 
 Every verb here is one HTTP call to the Culture Nodes control-plane API
 (``api/openapi/openapi.yaml``, ``workflows`` tag): generate, generation-get,
-validate, publish, list, get. No engine logic lives in this module (spec decision c28) — compiling,
-digesting, and storing a workflow all happen server-side; this module only
-shapes the request and renders the response.
+generation-publish, validate, publish, list, get. No engine logic lives in
+this module (spec decision c28) — compiling, digesting, and storing a
+workflow all happen server-side; this module only shapes the request and
+renders the response.
+
+``generate --output declarations`` (task t35, spec c86) asks the actor for a
+declaration set instead of workflow source; ``generation-publish`` publishes
+a confirmed declaration set through the declaration publish path. It is the
+only write here that needs a credential, resolved exactly as ``nodes decl``
+resolves one (:func:`culture_nodes.cli._commands.decl.auth_headers`).
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ import argparse
 from pathlib import Path
 
 from culture_nodes.api_client import API_PREFIX, add_api_url_argument, client_from_args
+from culture_nodes.cli._commands.decl import auth_headers
 from culture_nodes.cli._errors import EXIT_ENV_ERROR, CliError
 from culture_nodes.cli._output import JSON_FLAG_HELP, emit_json_passthrough, emit_result
 
@@ -79,8 +87,38 @@ def cmd_workflow_validate(args: argparse.Namespace) -> int:
     return 0 if (resp.payload or {}).get("valid") else 1
 
 
+def _render_declaration_set(declarations: dict) -> list[str]:
+    lines = []
+    if declarations.get("published"):
+        count = len(declarations.get("declarations") or [])
+        lines.append(f"published: {count} declaration(s), inactive (a human activates)")
+    for entry in declarations.get("declarations") or []:
+        state = "valid" if entry.get("valid") else "invalid"
+        if entry.get("version"):
+            lines.append(
+                f"  {entry.get('name', '')} v{entry['version']} author={entry.get('author', '')}"
+            )
+        else:
+            lines.append(f"declaration: {entry.get('name') or '<unparsed>'} ({state})")
+        for diag in entry.get("diagnostics") or []:
+            lines.append(f"  {diag}")
+        if entry.get("diff"):
+            lines.extend(["  diff:", entry["diff"]])
+    for link in declarations.get("links") or []:
+        lines.append(f"link: {link.get('from')} -{link.get('kind')}-> {link.get('to')}")
+    for diag in declarations.get("diagnostics") or []:
+        lines.append(f"error: {diag}")
+    for warning in declarations.get("warnings") or []:
+        lines.append(f"warning: {warning}")
+    return lines
+
+
 def _render_generation(payload: dict) -> str:
     lines = [f"status: {payload.get('status', 'proposed')}", f"run_id: {payload.get('run_id', '')}"]
+    if payload.get("output"):
+        lines.append(f"output: {payload['output']}")
+    if payload.get("declarations"):
+        lines.extend(_render_declaration_set(payload["declarations"]))
     if payload.get("digest"):
         lines.append(f"digest: {payload['digest']}")
     if payload.get("source"):
@@ -92,15 +130,14 @@ def _render_generation(payload: dict) -> str:
 
 def cmd_workflow_generate(args: argparse.Namespace) -> int:
     client = client_from_args(args)
-    resp = client.request(
-        "POST",
-        f"{API_PREFIX}/workflow-generations",
-        json_body={
-            "description": args.description,
-            "actor_ref": args.actor_ref,
-            "base_digest": args.base_digest,
-        },
-    )
+    body = {
+        "description": args.description,
+        "actor_ref": args.actor_ref,
+        "base_digest": args.base_digest,
+    }
+    if args.output:
+        body["output"] = args.output
+    resp = client.request("POST", f"{API_PREFIX}/workflow-generations", json_body=body)
     if args.json:
         emit_json_passthrough(resp.raw)
     else:
@@ -117,6 +154,23 @@ def cmd_workflow_generation_get(args: argparse.Namespace) -> int:
         emit_result(_render_generation(resp.payload or {}), json_mode=False)
     payload = resp.payload or {}
     return 1 if payload.get("status") in {"exhausted", "rejected"} else 0
+
+
+def cmd_workflow_generation_publish(args: argparse.Namespace) -> int:
+    """Publish a confirmed declaration-output generation (task t35). Warnings
+    never refuse and are rendered on stdout with the result."""
+    client = client_from_args(args)
+    resp = client.request(
+        "POST",
+        f"{API_PREFIX}/workflow-generations/{args.run_id}/publish",
+        json_body={},
+        headers=auth_headers(args),
+    )
+    if args.json:
+        emit_json_passthrough(resp.raw)
+    else:
+        emit_result(_render_generation(resp.payload or {}), json_mode=False)
+    return 0
 
 
 def cmd_workflow_publish(args: argparse.Namespace) -> int:
@@ -187,7 +241,8 @@ def cmd_workflow_get(args: argparse.Namespace) -> int:
 
 def _bare_noun(args: argparse.Namespace) -> int:
     emit_result(
-        "usage: nodes workflow {generate,generation-get,validate,publish,list,get} ...\n"
+        "usage: nodes workflow"
+        " {generate,generation-get,generation-publish,validate,publish,list,get} ...\n"
         "run 'nodes explain workflow' for details",
         json_mode=False,
     )
@@ -208,6 +263,12 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--actor-ref", required=True, help="Registered fleet actor component ref."
     )
     generate.add_argument("--base-digest", default="", help="Pinned workflow version to edit.")
+    generate.add_argument(
+        "--output",
+        choices=["workflow", "declarations"],
+        default=None,
+        help="What the actor drafts: workflow source (default) or a declaration set.",
+    )
     generate.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(generate)
     generate.set_defaults(func=cmd_workflow_generate)
@@ -219,6 +280,17 @@ def register(sub: argparse._SubParsersAction) -> None:
     generation_get.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
     add_api_url_argument(generation_get)
     generation_get.set_defaults(func=cmd_workflow_generation_get)
+
+    generation_publish = noun_sub.add_parser(
+        "generation-publish",
+        help="Publish a confirmed declaration-output generation (never activates).",
+    )
+    generation_publish.add_argument(
+        "run_id", help="Generation run id returned by workflow generate --output declarations."
+    )
+    generation_publish.add_argument("--json", action="store_true", help=JSON_FLAG_HELP)
+    add_api_url_argument(generation_publish)
+    generation_publish.set_defaults(func=cmd_workflow_generation_publish)
 
     validate = noun_sub.add_parser(
         "validate", help="Compile a workflow definition and report diagnostics."

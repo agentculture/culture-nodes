@@ -517,6 +517,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1alpha1/workflows/{digest}", s.wrap(s.handleGetWorkflow))
 	mux.HandleFunc("POST /v1alpha1/workflow-generations", s.wrap(s.handleCreateWorkflowGeneration))
 	mux.HandleFunc("GET /v1alpha1/workflow-generations/{id}", s.wrap(s.handleGetWorkflowGeneration))
+	// Task t35 (#328): publish a confirmed declaration-output generation.
+	mux.HandleFunc("POST /v1alpha1/workflow-generations/{id}/publish", s.wrap(s.handlePublishWorkflowGeneration))
 
 	mux.HandleFunc("POST /v1alpha1/adhoc-runs", s.wrap(s.handleCreateAdhocRun))
 	mux.HandleFunc("POST /v1alpha1/runs", s.wrap(s.handleCreateRun))

@@ -361,6 +361,9 @@ func reactionFacts(ctx context.Context, tx pgx.Tx, namespaceID string, c Reactio
 		}
 		payload["human_task_id"] = artifactID
 		payload["decision"] = json.RawMessage(response)
+		// node_runs.outcome is the decider's selected approval port, including
+		// authored human.ask choices. EmitReaction copies it to event.outcome;
+		// response is free-form notes and must not be used as the choice.
 	case ReactionCodeResult:
 		err = tx.QueryRow(ctx, `SELECT operation_id FROM runner_invocations WHERE namespace_id=$1 AND run_id=$2 AND node_run_id=$3
 			ORDER BY attempt DESC LIMIT 1`, namespaceID, c.FiringID, nodeRunID).Scan(&artifactID)

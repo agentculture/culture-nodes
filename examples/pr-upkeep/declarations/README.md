@@ -69,11 +69,17 @@ Every agent action can now return `blocked` with a reason. The three
 `blocked-*` declarations listen on the landing nodes shared by stamp-pr,
 analyse/analyse-orphan, and fix/fix-orphan. They show the agent's full report,
 step, PR identity, work item, and available ticket to
-`group/platform-maintainers`. The matching `close-blocked-*` declaration
-records the human decision and closes that branch. Approval records the
-maintainer's acknowledgement; it does not merge the PR or retry the
-agent. Rejection and expiry also close the attempt for inspection. The
-optional ticket reference uses a template default on keyed lineages.
+`group/platform-maintainers`. Each task offers `retry`, `abandon`, and `acknowledged` (plus implied
+`expired`). `retry-*` reuses the original actor and input templates, lands on
+the original step node, and lets the existing downstream reactions continue.
+Keyed and orphan analyse/fix retries select their matching original action.
+`abandon-*` records decision, step, work item, and ticket without changing
+Jira or the PR; `acknowledge-*` records closure. A future operator workflow
+could add a Jira comment or transition after separate approval. The blocked
+and retry declarations allow one reentry, so at most two retry dispatches
+occur in the same lineage. The `retry_of` lineage alias binds downstream
+references to the latest retried output and retains the retry input fields.
+The optional ticket reference uses a template default on keyed lineages.
 
 The blocked human routes need no new `exposes` entries: `human.ask` has the
 operators audience, which is no wider than the agent result or the route

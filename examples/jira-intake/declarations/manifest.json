@@ -7,7 +7,9 @@
     "picked-up.json",
     "picked-up-gh.json",
     "blocked-intake.json",
-    "close-blocked-intake.json"
+    "acknowledge-intake.json",
+    "abandon-intake.json",
+    "retry-intake.json"
   ],
   "entries": [
     {
@@ -82,10 +84,40 @@
       "why": "reacts to intake and reads its issue identity"
     },
     {
-      "from": "jira-intake-close-blocked-intake",
+      "from": "jira-intake-acknowledge-intake",
       "to": "jira-intake-blocked-intake",
       "kind": "must",
-      "why": "closes the blocked human decision"
+      "why": "acknowledge routes the blocked human decision"
+    },
+    {
+      "from": "jira-intake-abandon-intake",
+      "to": "jira-intake-blocked-intake",
+      "kind": "must",
+      "why": "abandon routes the blocked human decision"
+    },
+    {
+      "from": "jira-intake-retry-intake",
+      "to": "jira-intake-blocked-intake",
+      "kind": "must",
+      "why": "retries only this blocked human decision"
+    },
+    {
+      "from": "jira-intake-retry-intake",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "the original Jira issue fields are retained through the blocked lineage"
+    },
+    {
+      "from": "jira-intake-acknowledge-intake",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "records the original issue identity"
+    },
+    {
+      "from": "jira-intake-abandon-intake",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "records the original issue identity"
     }
   ],
   "steps": [

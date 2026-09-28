@@ -695,9 +695,11 @@ func (p PostgresBackend) Lineage(ctx context.Context, ns, parent string) ([]Ance
 	rows, err := p.Store.Pool().Query(ctx, `WITH RECURSIVE ancestors(id) AS (
  SELECT canonical_firing_id FROM declaration_firings WHERE namespace_id=$1 AND id=$2
  UNION SELECT e.parent_firing_id FROM declaration_lineage_edges e JOIN ancestors a ON e.child_firing_id=a.id WHERE e.namespace_id=$1)
- SELECT f.id,f.canonical_firing_id,f.declaration_id,d.name,COALESCE(ev.variables,'{}'::jsonb),COALESCE(r.output,'{}'::jsonb)
+ SELECT f.id,f.canonical_firing_id,f.declaration_id,COALESCE(v.body #>> '{action,with,retry_of}',d.name),COALESCE(ev.variables,'{}'::jsonb),
+ CASE WHEN v.body #>> '{action,with,retry_of}' IS NOT NULL THEN COALESCE(r.input,'{}'::jsonb) ELSE '{}'::jsonb END,COALESCE(r.output,'{}'::jsonb)
  FROM ancestors a JOIN declaration_firings f ON f.namespace_id=$1 AND f.id=a.id
  JOIN declarations d ON d.namespace_id=f.namespace_id AND d.id=f.declaration_id
+ LEFT JOIN declaration_versions v ON v.namespace_id=f.namespace_id AND v.id=f.declaration_version
  LEFT JOIN LATERAL (SELECT ev.firing_id,ev.variables FROM declaration_firings pf
    JOIN declaration_evaluations ev ON ev.namespace_id=pf.namespace_id AND ev.firing_id=pf.id AND ev.outcome='fired'
    WHERE pf.namespace_id=$1 AND pf.canonical_firing_id=f.id ORDER BY ev.created_at DESC,ev.id DESC LIMIT 1) ev ON true
@@ -710,8 +712,8 @@ func (p PostgresBackend) Lineage(ctx context.Context, ns, parent string) ([]Ance
 	var out []Ancestor
 	for rows.Next() {
 		var a Ancestor
-		var vars, output []byte
-		if err := rows.Scan(&a.FiringID, &a.CanonicalID, &a.DeclarationID, &a.Name, &vars, &output); err != nil {
+		var vars, input, output []byte
+		if err := rows.Scan(&a.FiringID, &a.CanonicalID, &a.DeclarationID, &a.Name, &vars, &input, &output); err != nil {
 			return nil, err
 		}
 		a.Variables = map[string]any{}
@@ -719,7 +721,7 @@ func (p PostgresBackend) Lineage(ctx context.Context, ns, parent string) ([]Ance
 		if json.Unmarshal(vars, &event) == nil {
 			a.EventRepository = decl.VariableRepository(event)
 		}
-		for _, raw := range [][]byte{vars, output} {
+		for _, raw := range [][]byte{vars, input, output} {
 			var m map[string]any
 			// A run output that is not a JSON object carries no variables.
 			if json.Unmarshal(raw, &m) != nil {

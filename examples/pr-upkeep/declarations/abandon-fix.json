@@ -1,16 +1,16 @@
 {
-  "name": "pr-upkeep-close-blocked-fix",
+  "name": "pr-upkeep-abandon-fix",
   "trigger": {
     "kind": "human.decision",
     "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "true",
+  "condition": "event.outcome == \"abandon\"",
   "action": {
     "kind": "code.run",
     "with": {
       "graph_workflow": "workflow.yaml",
-      "graph_node": "close-blocked-fix",
+      "graph_node": "abandon-fix",
       "graph_kind": "end",
       "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
       "operation": {
@@ -25,7 +25,9 @@
       },
       "input": {
         "decision": "{outcome}",
-        "blocked_step": "fix"
+        "blocked_step": "fix",
+        "work_item": "{pr-upkeep-route:work_item:}",
+        "ticket": "{pr-upkeep-stamp-pr:id:}"
       }
     }
   },
@@ -34,7 +36,7 @@
     "deadline": "168h"
   },
   "landing_node": {
-    "name": "pr-upkeep-close-blocked-fix-done",
+    "name": "pr-upkeep-abandon-fix-done",
     "deadline": "none"
   }
 }

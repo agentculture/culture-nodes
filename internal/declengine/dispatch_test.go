@@ -170,3 +170,19 @@ func TestBlockedHumanAskWeekDeadlineCompiles(t *testing.T) {
 		t.Fatalf("human deadline = %q, want 168h", got)
 	}
 }
+
+func TestHumanAskDeclaredAndDefaultOutcomes(t *testing.T) {
+	for _, tc := range []struct{ with, want string }{
+		{`{"approver_ref":"group/reviewers","outcomes":["retry","abandon","acknowledged"]}`, "abandon,acknowledged,expired,retry"},
+		{`{"approver_ref":"group/reviewers"}`, "approved,expired,rejected"},
+	} {
+		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "human.ask", With: json.RawMessage(tc.with)}}
+		cw, _, err := workerEnvelope(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(cw.IR.Spec.Nodes["action"].Outcomes, ","); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.with, got, tc.want)
+		}
+	}
+}

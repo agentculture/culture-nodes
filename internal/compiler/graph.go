@@ -32,7 +32,13 @@ func declaredOutcomes(n *node) []string {
 			set[port.Outcome] = true
 		}
 	}
-	for _, name := range impliedOutcomes[n.Kind] {
+	implied := impliedOutcomes[n.Kind]
+	// An authored approval contract replaces the legacy approved/rejected
+	// choices. Expiry remains a control-plane outcome for every approval.
+	if n.Kind == KindApproval && n.Contract != nil && len(n.Contract.Outcomes) > 0 {
+		implied = []string{"expired"}
+	}
+	for _, name := range implied {
 		set[name] = true
 	}
 	return sortedKeys(set)

@@ -1,0 +1,72 @@
+{
+  "name": "jira-intake-retry-intake",
+  "trigger": {
+    "kind": "human.decision",
+    "reentry_limit": 1,
+    "hop_limit": 20
+  },
+  "condition": "event.outcome == \"retry\"",
+  "action": {
+    "kind": "agent.work",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "retry-intake",
+      "graph_kind": "agent",
+      "uses": "actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "input": {
+        "success_outcome": "intake_drafted",
+        "instruction": "You are the intake leg of the jira-intake workflow. Using ONLY the issue fields in your input (id, title, description, description_truncated, status, severity, kind, details_url), draft a short intake comment for the Jira issue: acknowledge pickup, restate the request in one or two sentences, and name the single most important clarifying question if one exists. End with the line '- culture-nodes (Claude)'. Your FINAL message must be ONLY the comment text itself - no headers, no JSON, no code fences, no commentary about the task - because it is posted to the issue verbatim. Do not start any other work.",
+        "issue": "{jira-intake-intake:id}",
+        "title": "{jira-intake-intake:title}",
+        "description": "{jira-intake-intake:description}",
+        "description_truncated": "{jira-intake-intake:description_truncated}",
+        "status": "{jira-intake-intake:status}",
+        "severity": "{jira-intake-intake:severity}",
+        "kind": "{jira-intake-intake:kind}",
+        "details_url": "{jira-intake-intake:details_url}",
+        "id": "{jira-intake-intake:id}"
+      },
+      "timeout": "30m",
+      "graph_config": {
+        "ownerRef": "team/platform-ai",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "contract": {
+          "outcomes": {
+            "intake_drafted": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "summary"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "retry_of": "jira-intake-intake"
+    }
+  },
+  "start_node": {
+    "name": "jira-intake-blocked-intake-done",
+    "deadline": "168h"
+  },
+  "landing_node": {
+    "name": "jira-intake-intake-done",
+    "deadline": "2h"
+  }
+}

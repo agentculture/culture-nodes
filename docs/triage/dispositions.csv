@@ -208,3 +208,4 @@ issue,bucket,disposition,evidence_pointer
 325,finish work,"five below-cap confirmed findings from the 2026-09-10 code review of build/loop-closure-claude-codex, each small and independent","internal/api/runs.go, examples/cleanup/cleanup.py, adapters/*/server.py, internal/mesh/collector.go, examples/land/land_gate.py"
 328,large bets,redesign to trigger-condition-action declarations; /think then /spec-to-plan,devague frame trigger-condition-action
 327,large bets,goals and constraints as first-class state; parked as a follow-up of the #328 design (a goal could attach to an alias),docs/specs/2026-09-27-trigger-condition-action.md
+330,operator-lane enablers,verify the configured jira_bot_account_id on the next bridge comment,#328 t32

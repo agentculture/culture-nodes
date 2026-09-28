@@ -73,3 +73,4 @@ issue,type,evidence_pointer
 325,Task,"internal/api/runs.go, examples/cleanup/cleanup.py, adapters/*/server.py, internal/mesh/collector.go, examples/land/land_gate.py"
 328,Feature,devague frame trigger-condition-action
 327,Feature,docs/specs/2026-09-27-trigger-condition-action.md
+330,Task,#328 t32

@@ -5,7 +5,7 @@ package decl
 // sensitivity cannot be elevated (exposed more widely, e.g. rendered from
 // Jira into a wider Discord audience) without the owner's approval."
 //
-// The whole model is ONE table, kindSystem below, sitting next to the kind
+// The default model is the kindSystem table below, sitting next to the kind
 // vocabulary it classifies (internal/decl/kinds): every registered trigger and
 // action kind names the external system it reads from or writes to, and every
 // system has an audience rank. A variable's mark is the audience of the system
@@ -29,7 +29,9 @@ package decl
 // lookup below. An unrecorded repository fails closed in whichever direction
 // protects data: as a TARGET it is public (the widest), as a SOURCE it is
 // org (the narrower), so neither an unknown destination nor an unknown
-// origin can open a flow the owner has not seen.
+// origin can open a flow the owner has not seen. Task t49 adds a destination
+// audience record keyed by the action's actor; a recorded org destination is
+// an internal venue for known operators, team and org data (decision d20).
 
 import (
 	"encoding/json"
@@ -151,6 +153,10 @@ const (
 // lookup knows no repository.
 type RepositoryVisibility func(repository string) Visibility
 
+// DestinationAudience returns the recorded audience for an actor key. The
+// boolean distinguishes an absent record from the restricted audience.
+type DestinationAudience func(actor string) (Audience, bool)
+
 func (f RepositoryVisibility) of(repository string) Visibility {
 	if f == nil || repository == "" {
 		return VisibilityUnknown
@@ -164,11 +170,15 @@ type Sensitivity struct {
 	System     System
 	Audience   Audience
 	Repository string
+	Actor      string
 }
 
 func (s Sensitivity) String() string {
 	if s.Repository != "" {
 		return fmt.Sprintf("%s %s (%s audience)", s.System, s.Repository, s.Audience)
+	}
+	if s.Actor != "" {
+		return fmt.Sprintf("%s %s (%s audience)", s.System, s.Actor, s.Audience)
 	}
 	return fmt.Sprintf("%s (%s audience)", s.System, s.Audience)
 }
@@ -238,6 +248,12 @@ func TargetSensitivity(actionKind string) Sensitivity {
 // GitHub action ranks by the repository it writes to (an unknown one is
 // public). An unregistered action kind is public, the widest audience.
 func TargetSensitivityIn(actionKind, repository string, vis RepositoryVisibility) Sensitivity {
+	// These outward-facing families must keep the public default even when a
+	// future kind is registered before a destination actor is recorded.
+	if strings.HasPrefix(actionKind, "substack.") || strings.HasPrefix(actionKind, "reddit.") ||
+		strings.HasPrefix(actionKind, "http.post") {
+		return Sensitivity{System: SystemUnknown, Audience: AudiencePublic}
+	}
 	s, ok := kindSystem[actionKind]
 	if !ok {
 		return Sensitivity{System: SystemUnknown, Audience: AudiencePublic}
@@ -246,6 +262,35 @@ func TargetSensitivityIn(actionKind, repository string, vis RepositoryVisibility
 		return githubSensitivity(repository, vis, true)
 	}
 	return sensitivityOf(s)
+}
+
+// TargetSensitivityForAction uses an actor-specific record when one exists.
+// An absent record retains the kind ranking (public for Discord and unknown
+// kinds). A GitHub repository continues to take precedence over its actor.
+func TargetSensitivityForAction(a Action, vis RepositoryVisibility, destinations DestinationAudience) Sensitivity {
+	target := TargetSensitivityIn(a.Kind, ActionRepository(a), vis)
+	actor := ActionActor(a)
+	if actor == "" || destinations == nil {
+		return target
+	}
+	if audience, ok := destinations(actor); ok {
+		target.Audience, target.Actor = audience, actor
+	}
+	return target
+}
+
+// ActionActor extracts the stable actor key from with.uses, omitting its
+// revision digest. Only actor:// references are destination identities.
+func ActionActor(a Action) string {
+	var with struct {
+		Uses string `json:"uses"`
+	}
+	if json.Unmarshal(a.With, &with) != nil || !strings.HasPrefix(with.Uses, "actor://") {
+		return ""
+	}
+	key := strings.TrimPrefix(with.Uses, "actor://")
+	key, _, _ = strings.Cut(key, "@")
+	return strings.Trim(key, "/")
 }
 
 // RepositoryInputKey is the action-input field naming the owner/name
@@ -281,6 +326,12 @@ func VariableRepository(vars map[string]any) string {
 // Widens reports whether rendering a variable marked source into target
 // exposes it to a wider audience than it came from.
 func Widens(source, target Sensitivity) bool {
+	// d20 treats a human-recorded organization destination as an approved
+	// internal venue for known organization data, including team and operator
+	// sources. Unknown/restricted sources still require exposure approval.
+	if target.Actor != "" && target.Audience == AudienceOrg && source.Audience >= AudienceOperators {
+		return false
+	}
 	return target.Audience > source.Audience
 }
 
@@ -298,9 +349,17 @@ func TriggerSensitivity(d Declaration, repository string, vis RepositoryVisibili
 // variable, actionRepository the one the action's result names (a github
 // bridge reports the repository it posted to). Ranking both by the overlaid
 // value would let a public target mask a private source (t30b review F1).
-func FiringSensitivity(d Declaration, eventRepository, actionRepository string, vis RepositoryVisibility) Sensitivity {
+// A recorded actor audience marks the action's result when supplied.
+func FiringSensitivity(d Declaration, eventRepository, actionRepository string, vis RepositoryVisibility, destinations ...DestinationAudience) Sensitivity {
 	trigger := SourceSensitivityIn(eventRepository, vis, d.Trigger.Kind)
 	action := SourceSensitivityIn(actionRepository, vis, d.Action.Kind)
+	if len(destinations) > 0 && destinations[0] != nil {
+		if actor := ActionActor(d.Action); actor != "" {
+			if audience, ok := destinations[0](actor); ok {
+				action.Audience, action.Actor = audience, actor
+			}
+		}
+	}
 	if action.Audience < trigger.Audience {
 		return action
 	}
@@ -393,12 +452,16 @@ func (w Widening) Warning(exposure string) string {
 // current published body; vis ranks any GitHub repository the action names
 // literally (a templated repository is unknown, so public as a target).
 // Duplicate references are reported once.
-func WideningReferences(d Declaration, resolve func(name string) (Declaration, bool), vis RepositoryVisibility) ([]Widening, error) {
+func WideningReferences(d Declaration, resolve func(name string) (Declaration, bool), vis RepositoryVisibility, destinations ...DestinationAudience) ([]Widening, error) {
 	refs, err := ActionReferences(d.Action)
 	if err != nil {
 		return nil, err
 	}
-	target := TargetSensitivityIn(d.Action.Kind, ActionRepository(d.Action), vis)
+	var destination DestinationAudience
+	if len(destinations) > 0 {
+		destination = destinations[0]
+	}
+	target := TargetSensitivityForAction(d.Action, vis, destination)
 	seen := map[string]bool{}
 	var out []Widening
 	for _, ref := range refs {
@@ -412,7 +475,7 @@ func WideningReferences(d Declaration, resolve func(name string) (Declaration, b
 			w.Source, w.SourceKnown = TriggerSensitivity(d, "", vis), true
 		} else if _, numeric := strconv.Atoi(ref.Step); numeric != nil && resolve != nil {
 			if named, ok := resolve(ref.Step); ok {
-				w.Source, w.SourceKnown = FiringSensitivity(named, "", "", vis), true
+				w.Source, w.SourceKnown = FiringSensitivity(named, "", "", vis, destination), true
 			}
 		}
 		if Widens(w.Source, w.Target) {

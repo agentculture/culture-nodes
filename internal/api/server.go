@@ -587,6 +587,8 @@ func (s *Server) routes() http.Handler {
 	// repository, set by an operator or actor; see declsensitivity.go.
 	mux.HandleFunc("GET /v1alpha1/repository-visibility", s.wrap(s.handleListRepositoryVisibility))
 	mux.HandleFunc("POST /v1alpha1/repository-visibility", s.wrap(s.handleSetRepositoryVisibility))
+	mux.HandleFunc("GET /v1alpha1/destination-audiences", s.wrap(s.handleListDestinationAudiences))
+	mux.HandleFunc("POST /v1alpha1/destination-audiences", s.wrap(s.handleSetDestinationAudience))
 
 	mux.HandleFunc("POST /v1alpha1/actors", s.wrap(s.handleRegisterActor))
 	mux.HandleFunc("GET /v1alpha1/actors", s.wrap(s.handleListActors))

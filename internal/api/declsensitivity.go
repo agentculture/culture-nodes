@@ -29,6 +29,7 @@ import (
 // repositoryVisibilityPath is the one route for listing and setting
 // repository visibility; principal.go and actorbearer.go name it too.
 const repositoryVisibilityPath = "/v1alpha1/repository-visibility"
+const destinationAudiencesPath = "/v1alpha1/destination-audiences"
 
 type sensitivityApprovalList struct {
 	Items []declengine.SensitivityApproval `json:"items"`
@@ -150,6 +151,48 @@ func (s *Server) handleSetRepositoryVisibility(w http.ResponseWriter, r *http.Re
 	switch {
 	case err == nil:
 	case errors.Is(err, declengine.ErrRepositoryVisibilityInvalid):
+		return badRequest(hint, "%v", err)
+	default:
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusCreated, rec)
+	return nil
+}
+
+type destinationAudienceList struct {
+	Items []declengine.DestinationAudienceRecord `json:"items"`
+}
+type destinationAudienceRequest struct {
+	Actor    string `json:"actor"`
+	Audience string `json:"audience"`
+	Note     string `json:"note,omitempty"`
+}
+
+func (s *Server) handleListDestinationAudiences(w http.ResponseWriter, r *http.Request) error {
+	items, err := declengine.ListDestinationAudiences(r.Context(), s.Store, s.NamespaceID)
+	if err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, destinationAudienceList{Items: items})
+	return nil
+}
+
+func (s *Server) handleSetDestinationAudience(w http.ResponseWriter, r *http.Request) error {
+	principal, apiErr := declarationPrincipal(r)
+	if apiErr != nil {
+		return apiErr
+	}
+	const hint = `send {"actor":"company/notify-discord","audience":"public"|"org"|"team"|"operators","note"?}`
+	var req destinationAudienceRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil && err != io.EOF {
+		return badRequest(hint, "decode request body: %v", err)
+	}
+	rec, err := declengine.SetDestinationAudience(r.Context(), s.Store, s.NamespaceID, req.Actor, req.Audience, declengine.ResolveAuthor(principal), req.Note)
+	switch {
+	case err == nil:
+	case errors.Is(err, declengine.ErrDestinationAudienceInvalid):
 		return badRequest(hint, "%v", err)
 	default:
 		return internalError(err)

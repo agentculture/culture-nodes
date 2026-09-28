@@ -92,6 +92,77 @@ func setVisibility(t *testing.T, db *postgres.Store, ns, repo, vis string) {
 	}
 }
 
+func TestPostgresDestinationAudienceControlsDiscordExposure(t *testing.T) {
+	for _, tc := range []struct{ name, actor, recorded, trigger, sourceRepo, want string }{
+		{"recorded-org", "company/notify-discord", "org", "jira.issue.created", "", OutcomeFired},
+		{"unrecorded", "company/other-discord", "", "jira.issue.created", "", OutcomeSensitivityBlocked},
+		{"recorded-public", "company/notify-discord", "public", "jira.issue.created", "", OutcomeSensitivityBlocked},
+		{"public-source", "company/other-discord", "", "github.pr.created", "acme/open", OutcomeFired},
+		{"public-to-org", "company/notify-discord", "org", "github.pr.created", "acme/open", OutcomeFired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := pgtest.RequireStore(t, markerTestStore)
+			ns := pgtest.MustNamespace(t, db, "tca-destination-"+tc.name).ID
+			if tc.recorded != "" {
+				if _, err := SetDestinationAudience(context.Background(), db, ns, tc.actor, tc.recorded, "operator@example.com", "test"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.sourceRepo != "" {
+				setVisibility(t, db, ns, tc.sourceRepo, "public")
+			}
+			d := announceDeclaration("{summary}")
+			d.Trigger.Kind = tc.trigger
+			d.Action.With = json.RawMessage(`{"uses":"actor://` + tc.actor + `@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","input":{"text":"{summary}"}}`)
+			v := publishActiveBy(t, db, ns, "owner@example.com", d)
+			calls := 0
+			e := sensitivityEngine(t, db, &calls)
+			vars := map[string]any{"summary": "hello"}
+			if tc.sourceRepo != "" {
+				vars["repository"] = tc.sourceRepo
+			}
+			outcome, reason := handleKind(t, e, db, ns, v.DeclarationID, tc.trigger, vars)
+			if outcome != tc.want {
+				t.Fatalf("outcome %s (%s), want %s", outcome, reason, tc.want)
+			}
+			if tc.want == OutcomeFired && (calls != 1 || approvalCount(t, db, ns) != 0) {
+				t.Fatalf("calls=%d approvals=%d", calls, approvalCount(t, db, ns))
+			}
+			if tc.want == OutcomeFired && !strings.Contains(reason, "destination audience: discord") {
+				t.Fatalf("fired explanation omits destination audience: %s", reason)
+			}
+			if tc.want == OutcomeSensitivityBlocked && (!strings.Contains(reason, "discord (public audience)") || calls != 0) {
+				t.Fatalf("reason=%s calls=%d", reason, calls)
+			}
+		})
+	}
+}
+
+func TestPostgresDestinationAudienceNewestAndActorIsolation(t *testing.T) {
+	db := pgtest.RequireStore(t, markerTestStore)
+	ns := pgtest.MustNamespace(t, db, "tca-destination-history").ID
+	ctx := context.Background()
+	for _, audience := range []string{"public", "org"} {
+		if _, err := SetDestinationAudience(ctx, db, ns, "company/notify-discord", audience, "operator@example.com", "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := PostgresBackend{Store: db}
+	if got, ok, err := p.DestinationAudience(ctx, ns, "company/notify-discord"); err != nil || !ok || got != decl.AudienceOrg {
+		t.Fatalf("newest=%v %v %v", got, ok, err)
+	}
+	if _, ok, err := p.DestinationAudience(ctx, ns, "company/other-discord"); err != nil || ok {
+		t.Fatalf("other actor has record: %v %v", ok, err)
+	}
+	list, err := ListDestinationAudiences(ctx, db, ns)
+	if err != nil || len(list) != 1 || list[0].Audience != "org" {
+		t.Fatalf("list=%+v %v", list, err)
+	}
+	if _, err := db.Pool().Exec(ctx, `UPDATE destination_audiences SET audience='public' WHERE namespace_id=$1`, ns); err == nil {
+		t.Fatal("destination row was mutable")
+	}
+}
+
 // d4, part 1: GitHub's audience per repository, read from the namespace's
 // repository_visibility record. A public repository ranks public, a private
 // one org; an unknown repository is public as a target and org as a source.

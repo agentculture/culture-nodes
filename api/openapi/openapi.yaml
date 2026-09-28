@@ -1583,6 +1583,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1alpha1/destination-audiences:
+    get:
+      operationId: listDestinationAudiences
+      tags: [declarations]
+      summary: Current recorded audience for each destination actor.
+      description: An unrecorded actor uses its action kind's audience; outside-facing kinds default to public.
+      responses:
+        '200':
+          description: Newest record per actor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DestinationAudienceList'
+    post:
+      operationId: setDestinationAudience
+      tags: [declarations]
+      summary: Append a destination audience record.
+      description: Administrator human only. Actor is the stable key from action.with.uses, without scheme or digest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestinationAudienceRequest'
+      responses:
+        '201':
+          description: Record appended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DestinationAudience'
+        '400':
+          description: Invalid actor key or audience.
+        '401':
+          description: No human principal.
+        '403':
+          description: Principal lacks administrator role.
+
   /v1alpha1/repository-visibility:
     get:
       operationId: listRepositoryVisibility
@@ -1607,8 +1645,8 @@ paths:
       summary: Record a GitHub repository as public or private.
       description: >-
         Task t30b (#328, owner decision d4). Appends an immutable record; the
-        newest one per repository is its visibility. An operator (Cloudflare
-        Access) or a registered agent actor's own bearer may set it;
+        newest one per repository is its visibility. A human administrator
+        (Cloudflare Access) may set it;
         `set_by` is always the authenticated principal. The repository name
         is stored lower-case.
       requestBody:
@@ -7492,6 +7530,35 @@ components:
         note: {type: string}
         supersedes: {type: string, description: The decision this one replaces, absent for the first.}
         created_at: {type: string, format: date-time}
+
+    DestinationAudienceRequest:
+      type: object
+      required: [actor, audience]
+      additionalProperties: false
+      properties:
+        actor: {type: string, description: Stable actor key such as company/notify-discord.}
+        audience: {type: string, enum: [public, org, team, operators]}
+        note: {type: string}
+
+    DestinationAudience:
+      type: object
+      required: [id, actor, audience, set_by, note, created_at]
+      properties:
+        id: {type: string}
+        actor: {type: string}
+        audience: {type: string, enum: [public, org, team, operators]}
+        set_by: {type: string}
+        note: {type: string}
+        created_at: {type: string, format: date-time}
+
+    DestinationAudienceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DestinationAudience'
 
     RepositoryVisibilityRequest:
       type: object

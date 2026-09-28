@@ -68,6 +68,53 @@ func TestAudienceRanking(t *testing.T) {
 	}
 }
 
+func TestDestinationAudienceByActor(t *testing.T) {
+	lookup := func(actor string) (Audience, bool) {
+		if actor == "company/notify-discord" {
+			return AudienceOrg, true
+		}
+		return 0, false
+	}
+	makeAction := func(actor string) Action {
+		return Action{Kind: "discord.post", With: json.RawMessage(`{"uses":"actor://` + actor + `@sha256:abcdef","input":{"text":"{summary}"}}`)}
+	}
+	for _, tc := range []struct {
+		actor string
+		want  Audience
+		label string
+	}{
+		{"company/notify-discord", AudienceOrg, "company/notify-discord"},
+		{"company/other-discord", AudiencePublic, ""},
+	} {
+		action := makeAction(tc.actor)
+		if got := TargetSensitivityForAction(action, nil, lookup); got.Audience != tc.want || got.Actor != tc.label {
+			t.Errorf("%s: target %+v", tc.actor, got)
+		}
+		if got := ActionActor(action); got != tc.actor {
+			t.Errorf("actor = %q", got)
+		}
+	}
+	orgTarget := TargetSensitivityForAction(makeAction("company/notify-discord"), nil, lookup)
+	for _, source := range []string{"code.result", "jira.issue.created", "github.pr.created"} {
+		if Widens(SourceSensitivity(source), orgTarget) {
+			t.Errorf("%s should not widen into recorded org actor", source)
+		}
+	}
+	for _, kind := range []string{"substack.publish", "reddit.post", "http.post", "http-post"} {
+		if got := TargetSensitivity(kind); got.Audience != AudiencePublic {
+			t.Errorf("unrecorded %s target = %v", kind, got)
+		}
+	}
+	d := Declaration{Trigger: Trigger{Kind: "jira.issue.created"}, Action: makeAction("company/notify-discord")}
+	if ws, err := WideningReferences(d, nil, nil, lookup); err != nil || len(ws) != 0 {
+		t.Fatalf("org destination warnings: %+v %v", ws, err)
+	}
+	d.Action = makeAction("company/other-discord")
+	if ws, err := WideningReferences(d, nil, nil, lookup); err != nil || len(ws) != 1 {
+		t.Fatalf("unrecorded destination warnings: %+v %v", ws, err)
+	}
+}
+
 func TestWideningReferencesWarnsOncePerWideningReference(t *testing.T) {
 	jira := Declaration{Name: "jira-intake", Trigger: Trigger{Kind: "jira.issue.created"}, Action: Action{Kind: "jira.comment"}}
 	gh := Declaration{Name: "gh", Trigger: Trigger{Kind: "github.pr.created"}, Action: Action{Kind: "github.comment"}}

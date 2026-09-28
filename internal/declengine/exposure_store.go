@@ -288,3 +288,75 @@ func ListRepositoryVisibility(ctx context.Context, db *postgres.Store, ns string
 	}
 	return out, rows.Err()
 }
+
+// DestinationAudienceRecord is the current or historical mark for one actor.
+type DestinationAudienceRecord struct {
+	ID        string    `json:"id"`
+	Actor     string    `json:"actor"`
+	Audience  string    `json:"audience"`
+	SetBy     string    `json:"set_by"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+var ErrDestinationAudienceInvalid = errors.New("declengine: destination audience must name an actor key and be public, org, team or operators")
+
+// DestinationAudience reads the newest actor mark, if recorded.
+func (p PostgresBackend) DestinationAudience(ctx context.Context, ns, actor string) (decl.Audience, bool, error) {
+	if !repositoryPattern.MatchString(actor) {
+		return 0, false, nil
+	}
+	var value string
+	err := p.Store.Pool().QueryRow(ctx, `SELECT audience FROM destination_audiences WHERE namespace_id=$1 AND actor=$2
+ ORDER BY created_at DESC,id DESC LIMIT 1`, ns, actor).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	switch value {
+	case "public":
+		return decl.AudiencePublic, true, nil
+	case "org":
+		return decl.AudienceOrg, true, nil
+	case "team":
+		return decl.AudienceTeam, true, nil
+	case "operators":
+		return decl.AudienceOperators, true, nil
+	}
+	return 0, false, fmt.Errorf("invalid stored destination audience %q", value)
+}
+
+// SetDestinationAudience appends a human-set actor mark.
+func SetDestinationAudience(ctx context.Context, db *postgres.Store, ns, actor, audience, setBy, note string) (DestinationAudienceRecord, error) {
+	if !repositoryPattern.MatchString(actor) || (audience != "public" && audience != "org" && audience != "team" && audience != "operators") {
+		return DestinationAudienceRecord{}, fmt.Errorf("%w: actor %q, audience %q", ErrDestinationAudienceInvalid, actor, audience)
+	}
+	if setBy == "" {
+		return DestinationAudienceRecord{}, errors.New("declengine: destination audience needs an authenticated principal")
+	}
+	rec := DestinationAudienceRecord{ID: store.NewULID(), Actor: actor, Audience: audience, SetBy: setBy, Note: note}
+	err := db.Pool().QueryRow(ctx, `INSERT INTO destination_audiences(id,namespace_id,actor,audience,set_by,note) VALUES($1,$2,$3,$4,$5,$6) RETURNING created_at`,
+		rec.ID, ns, actor, audience, setBy, note).Scan(&rec.CreatedAt)
+	return rec, err
+}
+
+// ListDestinationAudiences returns the newest row for every recorded actor.
+func ListDestinationAudiences(ctx context.Context, db *postgres.Store, ns string) ([]DestinationAudienceRecord, error) {
+	rows, err := db.Pool().Query(ctx, `SELECT DISTINCT ON (actor) id,actor,audience,set_by,note,created_at FROM destination_audiences
+ WHERE namespace_id=$1 ORDER BY actor,created_at DESC,id DESC`, ns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DestinationAudienceRecord{}
+	for rows.Next() {
+		var rec DestinationAudienceRecord
+		if err := rows.Scan(&rec.ID, &rec.Actor, &rec.Audience, &rec.SetBy, &rec.Note, &rec.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}

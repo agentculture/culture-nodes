@@ -102,6 +102,7 @@ type SensitivityBackend interface {
 	// RepositoryVisibility is the namespace's newest record for a
 	// lower-case owner/name, or VisibilityUnknown.
 	RepositoryVisibility(ctx context.Context, namespaceID, repository string) (decl.Visibility, error)
+	DestinationAudience(ctx context.Context, namespaceID, actor string) (decl.Audience, bool, error)
 	// RequestSensitivityApproval opens the task for this key, or returns
 	// the one already open, with its current state.
 	RequestSensitivityApproval(ctx context.Context, in SensitivityApprovalRequest) (SensitivityApproval, error)
@@ -148,24 +149,51 @@ func visibilityLookup(ctx context.Context, read func(context.Context, string, st
 	}, &firstErr
 }
 
+func destinationLookup(ctx context.Context, read func(context.Context, string, string) (decl.Audience, bool, error), ns string) (decl.DestinationAudience, *error) {
+	var firstErr error
+	cache := map[string]decl.Audience{}
+	known := map[string]bool{}
+	return func(actor string) (decl.Audience, bool) {
+		if v, ok := cache[actor]; ok {
+			return v, known[actor]
+		}
+		v, ok, err := read(ctx, ns, actor)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		cache[actor], known[actor] = v, ok
+		return v, ok
+	}, &firstErr
+}
+
 // checkSensitivity returns a non-empty reason when a present variable the
 // action renders would widen its audience without a listed, approved
 // exposure.
-func (e *Engine) checkSensitivity(ctx context.Context, event Event, a ActiveDeclaration, lineage []Ancestor) (string, error) {
+func (e *Engine) checkSensitivity(ctx context.Context, event Event, a ActiveDeclaration, lineage []Ancestor) (string, decl.Sensitivity, error) {
 	sb, ok := e.backend.(SensitivityBackend)
 	if !ok {
-		return "", nil
+		return "", decl.Sensitivity{}, nil
 	}
 	refs, err := decl.ActionReferences(a.Declaration.Action)
-	if err != nil || len(refs) == 0 {
-		return "", err
+	if err != nil {
+		return "", decl.Sensitivity{}, err
 	}
 	vis, visErr := visibilityLookup(ctx, sb.RepositoryVisibility, event.NamespaceID)
+	dest, destErr := destinationLookup(ctx, sb.DestinationAudience, event.NamespaceID)
 	rendered, err := renderAction(a.Declaration.Action, event.Variables, lineage)
 	if err != nil {
-		return "", err
+		return "", decl.Sensitivity{}, err
 	}
-	target := decl.TargetSensitivityIn(a.Declaration.Action.Kind, decl.ActionRepository(rendered), vis)
+	target := decl.TargetSensitivityForAction(rendered, vis, dest)
+	if *destErr != nil {
+		return "", target, *destErr
+	}
+	if *visErr != nil {
+		return "", target, *visErr
+	}
+	if len(refs) == 0 {
+		return "", target, nil
+	}
 	var blocked []string
 	seen := map[string]bool{}
 	for _, ref := range refs {
@@ -189,13 +217,16 @@ func (e *Engine) checkSensitivity(ctx context.Context, event Event, a ActiveDecl
 			mark = decl.TriggerSensitivity(a.Declaration, decl.VariableRepository(vars), vis)
 		} else {
 			src, err = sb.FiringSource(ctx, event.NamespaceID, lineage[idx].FiringID)
-			mark = decl.FiringSensitivity(src.Declaration, strings.ToLower(lineage[idx].EventRepository), decl.VariableRepository(vars), vis)
+			mark = decl.FiringSensitivity(src.Declaration, strings.ToLower(lineage[idx].EventRepository), decl.VariableRepository(vars), vis, dest)
 		}
 		if err != nil {
-			return "", err
+			return "", target, err
 		}
 		if *visErr != nil {
-			return "", *visErr
+			return "", target, *visErr
+		}
+		if *destErr != nil {
+			return "", target, *destErr
 		}
 		if !decl.Widens(mark, target) {
 			continue
@@ -212,7 +243,7 @@ func (e *Engine) checkSensitivity(ctx context.Context, event Event, a ActiveDecl
 			Source: mark, Target: target,
 		})
 		if err != nil {
-			return "", err
+			return "", target, err
 		}
 		if approval.Status == SensitivityApproved {
 			continue
@@ -220,9 +251,9 @@ func (e *Engine) checkSensitivity(ctx context.Context, event Event, a ActiveDecl
 		blocked = append(blocked, fmt.Sprintf("%s; exposes lists it and owner %q must approve (approval %s is %s)", flow, approval.Owner, approval.ID, approval.Status))
 	}
 	if *visErr != nil {
-		return "", *visErr
+		return "", target, *visErr
 	}
-	return strings.Join(blocked, "; "), nil
+	return strings.Join(blocked, "; "), target, nil
 }
 
 func parseSource(declarationID, versionID, author string, body []byte) (SensitivitySource, error) {
@@ -293,7 +324,8 @@ func SensitivityWarnings(ctx context.Context, db *postgres.Store, ns string, d d
 		return named, true
 	}
 	vis, visErr := visibilityLookup(ctx, PostgresBackend{Store: db}.RepositoryVisibility, ns)
-	ws, err := decl.WideningReferences(d, resolve, vis)
+	dest, destErr := destinationLookup(ctx, PostgresBackend{Store: db}.DestinationAudience, ns)
+	ws, err := decl.WideningReferences(d, resolve, vis, dest)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +363,9 @@ func SensitivityWarnings(ctx context.Context, db *postgres.Store, ns string, d d
 	}
 	if *visErr != nil {
 		return nil, *visErr
+	}
+	if *destErr != nil {
+		return nil, *destErr
 	}
 	return out, nil
 }

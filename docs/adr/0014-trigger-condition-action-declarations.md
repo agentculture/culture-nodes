@@ -201,7 +201,7 @@ How t30b implements it:
 
 - Visibility comes from a namespace-scoped, append-only record
   (`repository_visibility`, `POST /v1alpha1/repository-visibility`) that an
-  operator or actor sets. The engine never calls GitHub at firing time. The
+  human administrator sets. The engine never calls GitHub at firing time. The
   target repository is the rendered action's `input.repository`. A source's
   repository is the `repository` variable of the event that produced it.
 - An unrecorded repository fails closed in both directions. As a target it
@@ -217,6 +217,22 @@ How t30b implements it:
 - t30's per-version tables are retired by migration 0068, not migrated.
   Moving per-version consent onto a per-name key would widen what an owner
   agreed to.
+
+### Destination audiences (t49, owner decision d20)
+
+An action's destination audience may be recorded for the stable actor key in
+`action.with.uses` (for example `company/notify-discord`, without the digest).
+The namespace-scoped `destination_audiences` ledger is append-only; its newest
+record for that actor wins. A human administrator sets `public`, `org`, `team`,
+or `operators` through `POST /v1alpha1/destination-audiences`. The present
+`company/notify-discord` server is private to the org and should be recorded
+as `org` after deployment. An unrecorded actor keeps the kind-based audience:
+`discord.post` and an unknown outside-facing kind rank `public`. The resolved
+target is used in publish warnings and firing exposure checks. Under d20, a
+recorded `org` actor is an internal venue for known operators, team and org
+sources, so those flows need no exposure approval; an unknown or restricted
+source still needs approval. An actor's
+record does not apply to another actor, even when both use `discord.post`.
 
 ### Event mapping and start nodes (d6, task t38d)
 

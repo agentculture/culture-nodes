@@ -419,7 +419,7 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	// Task t30 (spec q22): a present variable the action would render into
 	// a wider audience than it came from blocks the firing until its owner
 	// approves; the block opens (or reuses) that owner's approval task.
-	blockedReason, err := e.checkSensitivity(ctx, event, a, lineage)
+	blockedReason, sensitivityTarget, err := e.checkSensitivity(ctx, event, a, lineage)
 	if err != nil {
 		return fail(OutcomeEvaluationError, err)
 	}
@@ -518,6 +518,9 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 	evaluation.Outcome, evaluation.Reason = OutcomeFired, "action dispatched and landing node "+a.Declaration.LandingNode.Name+" opened"
 	if result.Shadowed {
 		evaluation.Outcome, evaluation.Reason = OutcomeShadow, "engine switch is before/shadow; action not dispatched, landing node "+a.Declaration.LandingNode.Name+" opened as a would-fire record"
+	}
+	if sensitivityTarget.System != "" {
+		evaluation.Reason += "; destination audience: " + sensitivityTarget.String()
 	}
 	if err := e.backend.Finish(ctx, Landing{NamespaceID: event.NamespaceID, FiringID: firing.ID, Node: a.Declaration.LandingNode, Deadline: deadline, ActorKind: actionActorKind(action.Kind)}, evaluation); err != nil {
 		return err

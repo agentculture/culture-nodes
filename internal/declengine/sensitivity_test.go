@@ -14,15 +14,21 @@ import (
 // upstream firing produced by a Jira declaration authored by "upstream".
 type sensitivityMemory struct {
 	memoryBackend
-	requests []SensitivityApprovalRequest
-	status   string
-	repos    map[string]decl.Visibility
+	requests     []SensitivityApprovalRequest
+	status       string
+	repos        map[string]decl.Visibility
+	destinations map[string]decl.Audience
 	// firingDecl, when set, is the upstream firing's declaration.
 	firingDecl *decl.Declaration
 }
 
 func (m *sensitivityMemory) RepositoryVisibility(_ context.Context, _, repo string) (decl.Visibility, error) {
 	return m.repos[repo], nil
+}
+
+func (m *sensitivityMemory) DestinationAudience(_ context.Context, _, actor string) (decl.Audience, bool, error) {
+	v, ok := m.destinations[actor]
+	return v, ok, nil
 }
 
 func (m *sensitivityMemory) VersionSource(_ context.Context, _, versionID string) (SensitivitySource, error) {

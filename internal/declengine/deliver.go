@@ -41,15 +41,21 @@ const DefaultMarkerKeyEnv = "NODES_DECLARATION_MARKER_KEY"
 // RootNode is the shared root node a declaration whose trigger is an outside
 // fact starts on (spec, q4: "Declarations whose trigger is an outside fact
 // (jira.issue.created) start on a shared root node"). A delivered event
-// starts there unless its payload names a node, or a verified origin marker
-// derives the node from the landing node its parent firing opened.
+// starts there unless a verified origin marker derives the node from the
+// landing node its parent firing opened (task t38d: a payload's `node`
+// alone never moves it).
 const RootNode = "root"
 
 // EventFromSignal maps one delivered signal event onto the engine's Event.
 // The payload is the event's variables (a non-object payload carries none).
 // Two payload keys are read as routing, not only as variables:
 //
-//   - "node": the start node, defaulting to RootNode;
+//   - "node": the node the event CLAIMS to arrive at (Event.ClaimedNode).
+//     The event's Node is always RootNode here (task t38d, owner decision
+//     d6): an event without a verified origin marker arrives at root,
+//     whatever its payload names. Handle moves a verified reaction to its
+//     parent firing's landing node (deriveNode), and honours the claim only
+//     for a verified parent that opened no landing node;
 //   - "origin": {marker, artifact_kind, artifact_id, author, bridge_account},
 //     the stamped-artifact facts MarkerService.Resolve verifies before any
 //     lineage is inherited. Absent, the event starts a fresh lineage.
@@ -62,16 +68,14 @@ func EventFromSignal(ev postgres.SignalEvent) Event {
 		vars = map[string]any{}
 	}
 	node := RootNode
-	if n, ok := vars["node"].(string); ok && n != "" {
-		node = n
-	}
+	claimed, _ := vars["node"].(string)
 	var origin OriginEvent
 	if o, ok := vars["origin"].(map[string]any); ok {
 		text := func(k string) string { s, _ := o[k].(string); return s }
 		origin = OriginEvent{Marker: text("marker"), ArtifactKind: text("artifact_kind"), ArtifactID: text("artifact_id"),
 			Author: text("author"), BridgeAccount: text("bridge_account")}
 	}
-	return Event{NamespaceID: ev.NamespaceID, ID: ev.ID, Kind: ev.Name, Node: node, Variables: vars, Origin: origin, Subject: ev.Subject}
+	return Event{NamespaceID: ev.NamespaceID, ID: ev.ID, Kind: ev.Name, Node: node, Variables: vars, Origin: origin, Subject: ev.Subject, ClaimedNode: claimed}
 }
 
 // Router is the declaration engine's postgres.DeliveredEventHandler.
@@ -217,14 +221,16 @@ func (d Driver) HandleDeliveredEvent(ctx context.Context, delivery postgres.Sign
 //     paused; a run that fails meanwhile keeps its action.* emission for
 //     later, because EmitActionResults (and EmitActionReactions) emit once
 //     per run, not per tick.
-//   - 'shadow': ExpireDue, EmitActionResults, then EmitActionReactions
+//   - 'shadow': RecordSettledNodeTypes (t38d: settled runs' nodes get
+//     their engine-derived types), ExpireDue, EmitActionResults, then
+//     EmitActionReactions
 //     (reactions.go: the human.decision / code.result reactions the control
 //     plane stamps for human.ask and code.run), so shadow firings' nodes
 //     expire exactly as real ones would and reactions are evaluated as
 //     would-fire records.
 //   - 'after': first ThawAndReplay when frozen nodes or stored events exist
 //     -- this is what covers a crash between the forward flip's commit and
-//     the route's own replay, and it is re-runnable -- then the same three.
+//     the route's own replay, and it is re-runnable -- then the same four.
 //
 // A failure in one namespace is joined, never stops the others.
 func (d Driver) Drive(ctx context.Context, now time.Time) error {
@@ -287,6 +293,11 @@ func (d Driver) driveNamespaceLocked(ctx context.Context, ns string, now time.Ti
 				failures = append(failures, err)
 			}
 		}
+	}
+	// t38d: settled runs' nodes get their engine-derived types recorded
+	// before any action result or reaction to them is evaluated.
+	if _, err := d.Engine.RecordSettledNodeTypes(ctx, ns); err != nil {
+		failures = append(failures, err)
 	}
 	if _, err := d.Engine.ExpireDue(ctx, ns, now, batch); err != nil {
 		failures = append(failures, err)

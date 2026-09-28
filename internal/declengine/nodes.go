@@ -92,6 +92,9 @@ type NodeRecord struct {
 	// drain-on-close seam, drainAfterClose). Empty from a backend that does
 	// not join it (the in-memory test fakes).
 	OpeningDeclarationID string
+	// Host and ActorKind are the node's engine-derived types (task t38d,
+	// nodetypes.go): empty when the engine recorded no such fact.
+	Host, ActorKind string
 }
 
 // ExpiredNode is one node.expired emission ExpireDue produced.
@@ -151,6 +154,11 @@ func (e *Engine) deriveNode(ctx context.Context, event *Event, parent string) (n
 	if !ok || parent == "" {
 		return NodeRecord{}, false, true, nil
 	}
+	// t38d: record the landing node's engine-derived types (a no-op once
+	// set, or when the node is not open) before reading it for matching.
+	if err := e.recordNodeTypes(ctx, event.NamespaceID, parent); err != nil {
+		return NodeRecord{}, false, false, err
+	}
 	node, found, err = nb.NodeByFiring(ctx, event.NamespaceID, parent)
 	if err != nil {
 		return NodeRecord{}, false, false, err
@@ -176,6 +184,9 @@ func (e *Engine) deriveNode(ctx context.Context, event *Event, parent string) (n
 		reason := fmt.Sprintf("node %q already closed (%s); reaction recorded, not fired", node.Name, node.ClosedReason)
 		return node, true, false, nb.RecordNodeNote(ctx, event.NamespaceID, event.ID, OutcomeNodeClosed, reason)
 	}
+	// The event legitimately arrived at this open node: start_from
+	// declarations match against the types the engine recorded on it.
+	event.arrival = nodeArrival{opened: true, host: node.Host, actorKind: node.ActorKind}
 	return node, true, true, nil
 }
 
@@ -388,7 +399,8 @@ func actionTriggerFor(class, techStatus string) (trigger string) {
 const nodeColumns = `id,namespace_id,opening_firing_id,node_name,state,COALESCE(closed_reason,''),
 	deadline,COALESCE(reactor_declaration_id,''),COALESCE(reactor_declaration_version,''),
 	COALESCE((SELECT f.declaration_id FROM declaration_firings f
-	  WHERE f.namespace_id=declaration_nodes.namespace_id AND f.id=declaration_nodes.opening_firing_id),'')`
+	  WHERE f.namespace_id=declaration_nodes.namespace_id AND f.id=declaration_nodes.opening_firing_id),''),
+	COALESCE(host,''),COALESCE(actor_kind,'')`
 
 // scanNode reads deadline through a nullable pointer -- a node declared
 // with deadline "none" (landingDeadline's zero Duration) never has one, and
@@ -397,7 +409,7 @@ func scanNode(row interface{ Scan(...any) error }) (NodeRecord, error) {
 	var n NodeRecord
 	var deadline *time.Time
 	err := row.Scan(&n.ID, &n.NamespaceID, &n.OpeningFiringID, &n.Name, &n.State, &n.ClosedReason,
-		&deadline, &n.ReactorDeclarationID, &n.ReactorDeclarationVersion, &n.OpeningDeclarationID)
+		&deadline, &n.ReactorDeclarationID, &n.ReactorDeclarationVersion, &n.OpeningDeclarationID, &n.Host, &n.ActorKind)
 	if err != nil {
 		return NodeRecord{}, err
 	}

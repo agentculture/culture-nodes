@@ -30,8 +30,10 @@ type DeclarationEvaluationOut struct {
 	// Outcome is one of: matched, lineage missing, lineage checked,
 	// loop-limited, condition error, condition false, condition true,
 	// evaluation failed, duplicate, dispatching, dispatch failed, stamping
-	// refused, fired, deferred, shadow, budget-blocked, overlap-suppressed.
-	// The last two are defined but not yet produced by any task (t11, t14).
+	// refused, fired, deferred, shadow, budget-blocked, overlap-suppressed,
+	// start not matched (task t38d: a start_from declaration's trigger
+	// matched but the node's engine-recorded types did not; the reason names
+	// both). overlap-suppressed is defined but not yet produced (t14).
 	Outcome string `json:"outcome"`
 	Reason  string `json:"reason"`
 	// FiringID is present once a firing was claimed for this evaluation

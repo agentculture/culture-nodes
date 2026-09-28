@@ -536,3 +536,11 @@ nullable: NULL is "unmeasured", never true or false.
   ranks public as a target and org as a source. 0067's per-version tables
   are retired, not migrated (moving per-version consent onto a per-name key
   would widen it): they stay as read-only history and refuse new rows.
+- `0069_decl_node_types.sql` — engine-derived node types (#328 t38d; owner
+  decision d6; `internal/declengine/nodetypes.go`): `declaration_nodes.host`
+  and `actor_kind` record the action that opened the node — `human` /
+  `code` from the dispatched action kind, otherwise the registration of the
+  actor the firing run's attempt ran on (`metadata.harness`, and
+  `capabilities.preflight.host.hostname` for the host). Only the engine
+  writes them, never from a payload or a declaration body; an unrecorded fact
+  stays NULL and matches no typed `start_from`.

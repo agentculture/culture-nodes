@@ -55,6 +55,10 @@ type declarationGraphDeclarationOut struct {
 	ActionKind    string `json:"action_kind"`
 	StartNode     string `json:"start_node"`
 	LandingNode   string `json:"landing_node"`
+	// StartFrom (task t38d) is present when the declaration starts from
+	// open nodes by engine-recorded type rather than from StartNode:
+	// "any", or {host, actor_kind}.
+	StartFrom *decl.StartFrom `json:"start_from,omitempty"`
 }
 
 // declarationGraphNodeOut is a drawn waiting-state node -- a declaration's
@@ -260,7 +264,7 @@ func (s *Server) handleDeclarationFocus(w http.ResponseWriter, r *http.Request) 
 		out.Declarations = append(out.Declarations, declarationGraphDeclarationOut{
 			Name: v.Name, DeclarationID: v.DeclarationID, Version: v.Version, Digest: v.Digest,
 			Distance: distanceOf[id], TriggerKind: d.Trigger.Kind, ActionKind: d.Action.Kind,
-			StartNode: d.StartNode.Name, LandingNode: d.LandingNode.Name,
+			StartNode: d.StartNode.Name, LandingNode: d.LandingNode.Name, StartFrom: d.StartFrom,
 		})
 		out.Nodes = append(out.Nodes,
 			declarationGraphNodeOut{Declaration: v.Name, Role: "start", Name: d.StartNode.Name, Deadline: d.StartNode.Deadline},

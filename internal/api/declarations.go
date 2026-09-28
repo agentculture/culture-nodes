@@ -286,6 +286,11 @@ type declarationShowOut struct {
 	Active          bool                 `json:"active"`
 	ActiveVersionID string               `json:"active_version_id,omitempty"`
 	Links           []declarationLinkOut `json:"links"`
+	// StartNode and StartFrom (task t38d) say where the newest version
+	// starts: its declared start node, and -- when present -- the node
+	// types it starts from instead ("any", or {host, actor_kind}).
+	StartNode string          `json:"start_node,omitempty"`
+	StartFrom *decl.StartFrom `json:"start_from,omitempty"`
 }
 
 type declarationLinkOut struct {
@@ -321,6 +326,11 @@ func (s *Server) handleGetDeclaration(w http.ResponseWriter, r *http.Request) er
 		return internalError(err)
 	}
 	out := declarationShowOut{declarationVersionOut: declarationVersionOutOf(v), Active: active, Links: linkOut}
+	var body decl.Declaration
+	if err := json.Unmarshal(v.Body, &body); err != nil {
+		return internalError(fmt.Errorf("decode stored declaration %q: %w", v.Name, err))
+	}
+	out.StartNode, out.StartFrom = body.StartNode.Name, body.StartFrom
 	if active {
 		out.ActiveVersionID = activeVersionID
 	}

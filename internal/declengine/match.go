@@ -37,22 +37,37 @@ func ResolveLineage(rows []Ancestor) []Ancestor {
 }
 
 func matches(d decl.Declaration, event Event) (bool, error) {
-	if d.Trigger.Kind != event.Kind || d.StartNode.Name != event.Node {
-		return false, nil
+	ok, _, err := classify(d, event)
+	return ok, err
+}
+
+// classify is matches plus, for a start_from declaration (task t38d) whose
+// trigger kind and `with` filter matched but whose start did not, the reason
+// (startMiss) the firing loop records for explain. A plain start-node
+// mismatch stays silent, exactly as before.
+func classify(d decl.Declaration, event Event) (matched bool, startMiss string, err error) {
+	if d.Trigger.Kind != event.Kind {
+		return false, "", nil
 	}
-	if len(d.Trigger.With) == 0 {
-		return true, nil
+	startOK, miss := startMatch(d, event)
+	if !startOK && miss == "" {
+		return false, "", nil
 	}
-	var fields map[string]any
-	if err := json.Unmarshal(d.Trigger.With, &fields); err != nil {
-		return false, err
-	}
-	for k, v := range fields {
-		if !reflect.DeepEqual(v, event.Variables[k]) {
-			return false, nil
+	if len(d.Trigger.With) > 0 {
+		var fields map[string]any
+		if err := json.Unmarshal(d.Trigger.With, &fields); err != nil {
+			return false, "", err
+		}
+		for k, v := range fields {
+			if !reflect.DeepEqual(v, event.Variables[k]) {
+				return false, "", nil
+			}
 		}
 	}
-	return true, nil
+	if !startOK {
+		return false, miss, nil
+	}
+	return true, "", nil
 }
 
 func checkLinks(links []postgres.DeclarationLink, lineage []Ancestor) (bool, error) {

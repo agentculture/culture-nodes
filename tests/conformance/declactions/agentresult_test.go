@@ -230,7 +230,8 @@ func TestAgentResultObeysTheSwitch(t *testing.T) {
 // The PR's github.pr marker is public -- the bridge stamps it into the pull
 // request -- and it verifies to the agent.work firing once the PR is bound.
 // An agent.result carrying it instead of the agent_work marker is forged:
-// it starts a fresh lineage, so the MUST link is unmet and nothing fires.
+// its marker is rejected, so it arrives at root (t38d) with a fresh lineage
+// and the reacting declaration is not even matched.
 // The real reaction still continues the lineage afterwards.
 func TestAgentResultWithThePRMarkerIsRejected(t *testing.T) {
 	r := newReactionHarness(t)
@@ -255,8 +256,13 @@ func TestAgentResultWithThePRMarkerIsRejected(t *testing.T) {
 	if err != nil || d.DeclarationErr != nil {
 		t.Fatalf("deliver forged: err=%v declarationErr=%v", err, d.DeclarationErr)
 	}
-	if got := r.lastOutcome(d.Event.ID, b); got != declengine.OutcomeLineageMissing {
-		t.Fatalf("forged agent.result: outcome %q, want %q (fresh lineage, MUST link unmet)", got, declengine.OutcomeLineageMissing)
+	// t38d: the rejected marker leaves the event at root, whatever its
+	// payload's node says, so the reacting declaration is not even matched.
+	if reason := r.markerRejection(d.Event.ID); reason != "reaction kind does not match marker" {
+		t.Fatalf("forged agent.result: marker rejection %q, want the kind pin's", reason)
+	}
+	if n := r.evaluationCount(d.Event.ID, b); n != 0 {
+		t.Fatalf("forged agent.result was evaluated %d times by the reacting declaration, want 0 (it arrives at root)", n)
 	}
 	if fs := r.firings(b); len(fs) != 0 {
 		t.Fatalf("forged agent.result fired the reacting declaration: %+v", fs)
@@ -351,8 +357,11 @@ func TestAgentWorkMarkerOnAnotherEventIsRejected(t *testing.T) {
 	if err != nil || d.DeclarationErr != nil {
 		t.Fatalf("deliver copied marker: err=%v declarationErr=%v", err, d.DeclarationErr)
 	}
-	if got := r.lastOutcome(d.Event.ID, c); got != declengine.OutcomeLineageMissing {
-		t.Fatalf("github.pr.created with the agent.work marker: outcome %q, want %q", got, declengine.OutcomeLineageMissing)
+	if reason := r.markerRejection(d.Event.ID); reason != "reaction kind does not match marker" {
+		t.Fatalf("github.pr.created with the agent.work marker: marker rejection %q, want the kind pin's", reason)
+	}
+	if n := r.evaluationCount(d.Event.ID, c); n != 0 {
+		t.Fatalf("github.pr.created with the agent.work marker was evaluated %d times, want 0 (t38d: it arrives at root)", n)
 	}
 	if fs := r.firings(c); len(fs) != 0 {
 		t.Fatalf("a copied agent.work marker fired %+v", fs)

@@ -454,8 +454,9 @@ func (r *reactionHarness) taskOf(run string) string {
 }
 
 // A forged reaction -- the right name and artifact, a marker the engine did
-// not mint -- is rejected and starts a fresh lineage, so B's MUST link is
-// not satisfied; the real reaction still continues the lineage afterwards.
+// not mint -- is rejected and starts a fresh lineage at root (t38d), so B,
+// which starts on the parent's landing node, is not even matched; the real
+// reaction still continues the lineage afterwards.
 func TestForgedReactionStartsAFreshLineage(t *testing.T) {
 	r := newReactionHarness(t)
 	a := r.publish(askDecl("rx-forge-ask", "ready", "asked"))
@@ -473,8 +474,13 @@ func TestForgedReactionStartsAFreshLineage(t *testing.T) {
 	if err != nil || d.DeclarationErr != nil {
 		t.Fatalf("deliver forged: err=%v declarationErr=%v", err, d.DeclarationErr)
 	}
-	if got := r.lastOutcome(d.Event.ID, b); got != declengine.OutcomeLineageMissing {
-		t.Fatalf("forged reaction: B outcome %q, want %q (fresh lineage, MUST link unmet)", got, declengine.OutcomeLineageMissing)
+	// t38d: a rejected marker leaves the event at root, whatever its
+	// payload's node says, so B is not even matched.
+	if reason := r.markerRejection(d.Event.ID); reason != "invalid MAC" {
+		t.Fatalf("forged reaction: marker rejection %q, want invalid MAC", reason)
+	}
+	if n := r.evaluationCount(d.Event.ID, b); n != 0 {
+		t.Fatalf("forged reaction was evaluated %d times by B, want 0 (it arrives at root)", n)
 	}
 	if fs := r.firings(b); len(fs) != 0 {
 		t.Fatalf("forged reaction fired B: %+v", fs)

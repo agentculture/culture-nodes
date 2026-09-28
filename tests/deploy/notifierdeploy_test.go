@@ -186,12 +186,30 @@ func TestNotifierServiceCarriesRequiredEnv(t *testing.T) {
 	for _, key := range []string{
 		"NODES_NOTIFIER_API_BASE",
 		"NODES_NOTIFIER_CURSOR_FILE",
+		"NODES_NOTIFIER_SKIP_WORKFLOWS",
 		"CULTURE_NODES_WEBHOOK_URL",
 		"DISCORD_WEBHOOK_URL",
 	} {
 		if _, ok := svc.Environment[key]; !ok {
 			t.Errorf("notifier environment missing %q", key)
 		}
+	}
+}
+
+// TestNotifierSkipsTheSweepByDefault pins task t40f (#328): the pr-upkeep
+// sweep runs every five minutes, and posting its run.created/run.completed
+// flooded the Discord channel. The skip-list defaults to the sweep's graph
+// workflow so a deploy alone turns the flood off, while prod.env can still
+// override it (compose's `:-` substitutes the default for an empty value
+// too, so unmuting everything takes a value naming no workflow).
+func TestNotifierSkipsTheSweepByDefault(t *testing.T) {
+	svc := notifierService(t)
+	got, ok := svc.Environment["NODES_NOTIFIER_SKIP_WORKFLOWS"]
+	if !ok {
+		t.Fatal("notifier environment has no NODES_NOTIFIER_SKIP_WORKFLOWS")
+	}
+	if want := "${NODES_NOTIFIER_SKIP_WORKFLOWS:-pr-upkeep-sweep-cycle,pr-upkeep-sweep}"; got != want {
+		t.Errorf("NODES_NOTIFIER_SKIP_WORKFLOWS = %q, want %q", got, want)
 	}
 }
 

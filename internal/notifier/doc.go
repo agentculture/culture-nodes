@@ -27,6 +27,18 @@
 // honesty condition "a webhook outage never stalls dispatch or the SSE
 // feed."
 //
+// # Skip-list
+//
+// Config.SkipWorkflows (NODES_NOTIFIER_SKIP_WORKFLOWS in cmd/nodes-notifier)
+// mutes named workflows: once handleFrame knows a run's workflow key it
+// checks the list (workflowSkipped, lifecycle.go) for every lifecycle event
+// type alike, and a match is consumed -- the cursor advances past it -- and
+// journaled as OutcomeSkipped instead of reaching notify.Notify. A run a
+// declaration fired is matched by its declaration name, the key the run
+// view's firing carries and the notification would show, not by the
+// "decl-<declaration id>" name of the one-node envelope workflow
+// internal/declengine compiles for it.
+//
 // # Durable cursor, mark-before-deliver
 //
 // See Cursor's doc comment (cursor.go) for the restart guarantee this

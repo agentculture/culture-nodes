@@ -116,6 +116,7 @@ type fakeControlPlane struct {
 	events           []storedEvent
 	workflowDigest   map[string]string
 	workflowKey      map[string]string // digest -> human-readable workflow key
+	firingName       map[string]string // run id -> declaration name (a declaration envelope run)
 	workflowHits     int               // GET /v1alpha1/workflows/{digest} count, for the cache assertion
 	maxFramesPerConn int               // 0 = unbounded; >0 simulates a flaky connection that drops after N frames
 	server           *httptest.Server
@@ -123,7 +124,7 @@ type fakeControlPlane struct {
 
 func newFakeControlPlane(t *testing.T) *fakeControlPlane {
 	t.Helper()
-	fcp := &fakeControlPlane{workflowDigest: map[string]string{}, workflowKey: map[string]string{}}
+	fcp := &fakeControlPlane{workflowDigest: map[string]string{}, workflowKey: map[string]string{}, firingName: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1alpha1/events", fcp.handleEvents)
 	mux.HandleFunc("/v1alpha1/runs/", fcp.handleRunDetail)
@@ -153,6 +154,15 @@ func (fcp *fakeControlPlane) setWorkflowKey(digest, key string) {
 	fcp.mu.Lock()
 	defer fcp.mu.Unlock()
 	fcp.workflowKey[digest] = key
+}
+
+// setFiring makes runID a declaration firing's envelope run named after
+// declaration, the shape GET /v1alpha1/runs/{id} returns for a run the
+// declaration engine dispatched (internal/declengine/dispatch.go).
+func (fcp *fakeControlPlane) setFiring(runID, declaration string) {
+	fcp.mu.Lock()
+	defer fcp.mu.Unlock()
+	fcp.firingName[runID] = declaration
 }
 
 func (fcp *fakeControlPlane) workflowLookups() int {
@@ -185,11 +195,19 @@ func (fcp *fakeControlPlane) handleRunDetail(w http.ResponseWriter, r *http.Requ
 	runID := strings.TrimPrefix(r.URL.Path, "/v1alpha1/runs/")
 	fcp.mu.Lock()
 	digest := fcp.workflowDigest[runID]
+	declaration := fcp.firingName[runID]
 	fcp.mu.Unlock()
 	if digest == "" {
 		digest = "sha256:unknown"
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if declaration != "" {
+		// A declaration firing's envelope run: the run view carries the
+		// firing, named after the declaration (internal/api/runscompat.go).
+		_, _ = fmt.Fprintf(w, `{"run": {"id": %q, "workflow_digest": %q, "firing": {"declaration_name": %q, "version_digest": %q}}, "node_runs": []}`,
+			runID, digest, declaration, digest)
+		return
+	}
 	_, _ = fmt.Fprintf(w, `{"run": {"id": %q, "workflow_digest": %q}, "node_runs": []}`, runID, digest)
 }
 

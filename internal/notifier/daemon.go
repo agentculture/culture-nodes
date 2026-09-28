@@ -52,6 +52,18 @@ type Config struct {
 	// internal/api/server.go's static-file fallback), so most deployments
 	// need no separate value.
 	DashboardBase string
+	// SkipWorkflows names workflows whose run-lifecycle events are never
+	// posted (task t40f, #328: the five-minute pr-upkeep sweep flooded the
+	// channel). An entry matches a run's workflow key exactly, or as a
+	// prefix when it ends in `*` -- see workflowSkipped. The key matched
+	// is the one a notification would show: a graph run's workflow key
+	// (e.g. "pr-upkeep-sweep-cycle"), or, for a declaration firing's
+	// envelope run, the DECLARATION NAME the run view carries under
+	// run.firing (e.g. "pr-upkeep-sweep"), because rundetail.go's
+	// detailFromRunResponse prefers it. A skipped event is consumed (the
+	// cursor advances past it) and journaled with OutcomeSkipped. Empty
+	// means every workflow posts.
+	SkipWorkflows []string
 	// ReconnectMin and ReconnectMax bound the exponential backoff Run
 	// applies between a dropped SSE connection and the next reconnect
 	// attempt. Default 500ms / 30s.
@@ -234,8 +246,10 @@ type sseEnvelope struct {
 }
 
 // handleFrame is the per-event decision point: skip a malformed or
-// already-seen frame, silently advance past a non-lifecycle one, or -- for
-// a new lifecycle event -- durably mark it delivered (BEFORE attempting
+// already-seen frame, silently advance past a non-lifecycle one, advance
+// past (and journal as skipped) a lifecycle event of a workflow on
+// Config.SkipWorkflows, or -- for any other new lifecycle event -- durably
+// mark it delivered (BEFORE attempting
 // delivery, see Cursor's doc comment) and hand a built Payload to
 // notify.Notify.
 //
@@ -265,13 +279,6 @@ func (d *Daemon) handleFrame(ctx context.Context, f Frame) error {
 	}
 	runID := env.Subject
 
-	// Durably mark this event delivered BEFORE attempting the webhook
-	// POST below: see Cursor's doc comment for why this ordering is what
-	// keeps a crash from ever producing a duplicate Discord message.
-	if err := d.cursor.MarkDelivered(f.ID); err != nil {
-		return fmt.Errorf("notifier: persist cursor before delivering %s: %w", f.ID, err)
-	}
-
 	detail, err := fetchRunDetail(ctx, d.detail, d.cfg.APIBase, runID)
 	if err != nil {
 		// Fail-open, matching the webhook transport's own posture: a
@@ -294,6 +301,30 @@ func (d *Daemon) handleFrame(ctx context.Context, f Frame) error {
 		} else {
 			detail.WorkflowKey = key
 		}
+	}
+
+	// The skip-list (Config.SkipWorkflows) is decided here, once the
+	// workflow key is known, for every lifecycle event type alike. A
+	// skipped event is consumed -- Advance, so no resume ever re-reads it
+	// -- and journaled as skipped, never handed to notify.Notify.
+	if workflowSkipped(detail.WorkflowKey, d.cfg.SkipWorkflows) {
+		if err := d.cursor.Advance(f.ID); err != nil {
+			return fmt.Errorf("notifier: persist cursor past skipped %s: %w", f.ID, err)
+		}
+		if d.journal != nil {
+			d.journal(notify.JournalEntry{Event: f.Type, RunID: runID, Outcome: OutcomeSkipped})
+		}
+		return nil
+	}
+
+	// Durably mark this event delivered BEFORE attempting the webhook
+	// POST below: see Cursor's doc comment for why this ordering is what
+	// keeps a crash from ever producing a duplicate Discord message. (The
+	// run-detail fetch above happens first only so the skip-list can be
+	// decided; a crash during it re-reads the event, which posts nothing
+	// twice because nothing was posted yet.)
+	if err := d.cursor.MarkDelivered(f.ID); err != nil {
+		return fmt.Errorf("notifier: persist cursor before delivering %s: %w", f.ID, err)
 	}
 
 	notify.Notify(ctx, detail.payload(f.Type, d.cfg.DashboardBase), d.journal)

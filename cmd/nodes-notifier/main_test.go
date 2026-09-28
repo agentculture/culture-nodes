@@ -8,7 +8,7 @@ import (
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{envAPIBase, envCursorFile, envRuns, envDashboardBase, envReconnectMin, envReconnectMax, envHTTPTimeout} {
+	for _, name := range []string{envAPIBase, envCursorFile, envRuns, envDashboardBase, envSkipWorkflows, envReconnectMin, envReconnectMax, envHTTPTimeout} {
 		t.Setenv(name, "")
 	}
 }
@@ -131,5 +131,36 @@ func TestRunWithNoConfigurationExitsUserError(t *testing.T) {
 	clearEnv(t)
 	if code := run([]string{}); code != 1 {
 		t.Errorf("run([]) = %d, want 1 (user error: no api-base/cursor-file configured)", code)
+	}
+}
+
+func TestResolveSkipWorkflowsFromEnvironmentAndFlag(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envSkipWorkflows, "pr-upkeep-sweep-cycle, pr-upkeep-sweep*")
+	base := []string{"--api-base", "http://localhost:8080", "--cursor-file", filepath.Join(t.TempDir(), "cursor.json")}
+
+	resolved, err := resolve(base)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := resolved.skipWorkflows; len(got) != 2 || got[0] != "pr-upkeep-sweep-cycle" || got[1] != "pr-upkeep-sweep*" {
+		t.Errorf("skipWorkflows = %v, want [pr-upkeep-sweep-cycle pr-upkeep-sweep*] from the environment", got)
+	}
+
+	resolved, err = resolve(append(base, "--skip-workflows", "only-this"))
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := resolved.skipWorkflows; len(got) != 1 || got[0] != "only-this" {
+		t.Errorf("skipWorkflows = %v, want the flag's [only-this] to win", got)
+	}
+
+	clearEnv(t)
+	resolved, err = resolve(base)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.skipWorkflows != nil {
+		t.Errorf("skipWorkflows = %v, want none when unset (every workflow posts)", resolved.skipWorkflows)
 	}
 }

@@ -53,6 +53,7 @@ const (
 	envCursorFile    = "NODES_NOTIFIER_CURSOR_FILE"
 	envRuns          = "NODES_NOTIFIER_RUNS"
 	envDashboardBase = "NODES_NOTIFIER_DASHBOARD_BASE"
+	envSkipWorkflows = "NODES_NOTIFIER_SKIP_WORKFLOWS"
 	envReconnectMin  = "NODES_NOTIFIER_RECONNECT_MIN"
 	envReconnectMax  = "NODES_NOTIFIER_RECONNECT_MAX"
 	envHTTPTimeout   = "NODES_NOTIFIER_HTTP_TIMEOUT"
@@ -75,6 +76,8 @@ Flags:
                           active run, plus lifecycle events for any run)
   --dashboard-base URL    base URL for dashboard links (defaults to
                           --api-base)
+  --skip-workflows K,K    never post lifecycle events of these workflows
+                          (default: post every workflow; see below)
   --reconnect-min D       minimum SSE reconnect backoff (default 500ms)
   --reconnect-max D       maximum SSE reconnect backoff (default 30s)
   --http-timeout D        bound on each run-detail fetch (default 10s)
@@ -86,11 +89,26 @@ Environment (flags win where both exist):
   ` + envCursorFile + `     durable cursor file path
   ` + envRuns + `           comma-separated run id scope
   ` + envDashboardBase + `  dashboard link base URL
+  ` + envSkipWorkflows + `  comma-separated workflow skip-list
   ` + envReconnectMin + `   minimum SSE reconnect backoff
   ` + envReconnectMax + `   maximum SSE reconnect backoff
   ` + envHTTPTimeout + `    run-detail fetch timeout
   CULTURE_NODES_WEBHOOK_URL   webhook URL (internal/notify; primary)
   DISCORD_WEBHOOK_URL         webhook URL (internal/notify; fallback)
+
+Skip-list: an entry matches a run's workflow key exactly, or as a prefix
+when it ends in '*'. Every lifecycle event of a matching run is consumed
+(the cursor advances past it) and journaled as outcome=skipped, never
+posted. The key matched is the one a notification shows: a graph run's
+workflow key (the pr-upkeep graph sweep is pr-upkeep-sweep-cycle), or,
+for a run a declaration fired (the declaration engine executes an action
+as a one-node envelope run whose own compiled name is decl-<declaration
+id>), the DECLARATION NAME the run view carries under run.firing -- the
+declaration-lane sweep is pr-upkeep-sweep. So
+  pr-upkeep-sweep-cycle,pr-upkeep-sweep
+mutes both sweeps exactly, and pr-upkeep-sweep* mutes both by prefix
+(it also mutes pr-upkeep-sweep-failed, not pr-upkeep-swept). A run whose
+workflow name could not be resolved is never skipped.
 
 Neither webhook variable has a flag: the URL itself embeds a bearer token,
 and a secret on a command line is visible in every process listing.
@@ -129,6 +147,7 @@ type settings struct {
 	cursorFile    string
 	runs          []string
 	dashboardBase string
+	skipWorkflows []string
 	reconnectMin  time.Duration
 	reconnectMax  time.Duration
 	httpTimeout   time.Duration
@@ -142,6 +161,7 @@ func resolve(args []string) (settings, *clifmt.CliError) {
 	cursorFile := fs.String("cursor-file", "", "durable cursor file (defaults to "+envCursorFile+")")
 	runs := fs.String("runs", "", "comma-separated run id scope (defaults to "+envRuns+")")
 	dashboardBase := fs.String("dashboard-base", "", "dashboard link base URL (defaults to "+envDashboardBase+", then --api-base)")
+	skipWorkflows := fs.String("skip-workflows", "", "comma-separated workflow skip-list; an entry ending in * is a prefix (defaults to "+envSkipWorkflows+")")
 	reconnectMin := fs.Duration("reconnect-min", 0, "minimum SSE reconnect backoff (defaults to "+envReconnectMin+")")
 	reconnectMax := fs.Duration("reconnect-max", 0, "maximum SSE reconnect backoff (defaults to "+envReconnectMax+")")
 	httpTimeout := fs.Duration("http-timeout", 0, "run-detail fetch timeout (defaults to "+envHTTPTimeout+")")
@@ -159,6 +179,7 @@ func resolve(args []string) (settings, *clifmt.CliError) {
 		cursorFile:    firstNonEmpty(*cursorFile, os.Getenv(envCursorFile)),
 		runs:          splitRuns(firstNonEmpty(*runs, os.Getenv(envRuns))),
 		dashboardBase: firstNonEmpty(*dashboardBase, os.Getenv(envDashboardBase)),
+		skipWorkflows: splitRuns(firstNonEmpty(*skipWorkflows, os.Getenv(envSkipWorkflows))),
 	}
 
 	if resolved.apiBase == "" {
@@ -220,6 +241,7 @@ func serve(args []string, jsonMode bool) error {
 		CursorPath:    resolved.cursorFile,
 		Runs:          resolved.runs,
 		DashboardBase: resolved.dashboardBase,
+		SkipWorkflows: resolved.skipWorkflows,
 		ReconnectMin:  resolved.reconnectMin,
 		ReconnectMax:  resolved.reconnectMax,
 		HTTPTimeout:   resolved.httpTimeout,
@@ -255,6 +277,7 @@ func emitStartup(resolved settings, jsonMode bool) {
 		"cursor_file":     resolved.cursorFile,
 		"dashboard_base":  resolved.dashboardBase,
 		"runs_scope":      resolved.runs,
+		"skip_workflows":  resolved.skipWorkflows,
 		"webhook_enabled": webhookEnabled,
 	}
 	if jsonMode {
@@ -269,6 +292,9 @@ func emitStartup(resolved settings, jsonMode bool) {
 		clifmt.EmitResult(fmt.Sprintf(
 			"nodes-notifier consuming %s (cursor %s, runs %s, webhook %s)",
 			resolved.apiBase, resolved.cursorFile, scope, enabledWord(webhookEnabled)))
+		if len(resolved.skipWorkflows) > 0 {
+			clifmt.EmitResult("nodes-notifier skipping workflows " + strings.Join(resolved.skipWorkflows, ","))
+		}
 	}
 	if !webhookEnabled {
 		clifmt.EmitDiagnostic("nodes-notifier: no webhook URL configured (CULTURE_NODES_WEBHOOK_URL / " +
@@ -308,6 +334,8 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// splitRuns splits a comma-separated list, trimming whitespace and dropping
+// blank entries. It serves both --runs and --skip-workflows.
 func splitRuns(raw string) []string {
 	if raw == "" {
 		return nil

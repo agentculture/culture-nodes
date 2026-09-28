@@ -44,6 +44,8 @@
 # THOR_HOST is read as ${THOR_HOST:-thor} at call time, never defaulted here:
 # lanes/preflight.sh derives it from the deploy target (`deploy.sh thor.lan`)
 # after this file is sourced, and a default set now would shadow that.
+# shellcheck source=deploy/prod/lanes/github-app-token.sh
+source "$(dirname "${BASH_SOURCE[0]}")/github-app-token.sh"
 
 # account_reachable <target> -- can the operator's key open the account?
 # BatchMode so an account that exists but refuses the key fails instead of

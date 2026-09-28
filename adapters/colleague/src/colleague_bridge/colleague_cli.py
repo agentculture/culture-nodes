@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from colleague_bridge import pushcred
 from colleague_bridge.config import Config
 
 #: Built-in colleague roles (colleague/roles.py BUILTIN_ROLES) — a role
@@ -84,7 +85,7 @@ def _common_argv(
 
 
 def _subprocess_env(cfg: Config) -> dict[str, str]:
-    env = dict(os.environ)
+    env = pushcred.fresh_environ()
     env.update(cfg.colleague_env)
     return env
 

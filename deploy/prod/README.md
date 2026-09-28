@@ -1694,3 +1694,26 @@ human) — an agent bearer is refused. A flip to `before` freezes open
 declaration nodes in the same transaction; a flip to `after` replays them once
 it commits, and the scheduler re-runs that replay if the route's attempt did
 not finish. A control plane with the engine off refuses `shadow` and `after`.
+
+## GitHub App tokens for spark agents
+
+The spark login user's `GITHUB_APP_PRIVATE_KEY` grant mints one-hour GitHub
+installation tokens for `culture-claude` and `culture-qwen`. The private key
+stays in that login user's grant. The user timer refreshes the token every
+30 minutes and delivers `~/.culture-nodes/github-token.env` into each agent
+account over SSH stdin. Bridges and Git read that file at each use, so a
+running bridge sees a rotated token without a restart. The old
+`bridge-push.env` remains a fallback if the new file is absent.
+
+`deploy.sh spark` installs the minter, user service, timer, and each account's
+URL-scoped Git credential helper. If `grant` or the private-key grant is
+missing, it prints a hint and continues the bridge deploy. After installing
+the grant, rerun the deploy or start the user timer.
+
+Verify without displaying credentials:
+
+```bash
+systemctl --user list-timers culture-nodes-github-app-token.timer
+ssh culture-claude@localhost stat ~/.culture-nodes/github-token.env
+ssh culture-qwen@localhost stat ~/.culture-nodes/github-token.env
+```

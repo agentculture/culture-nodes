@@ -52,6 +52,7 @@ import threading
 from pathlib import Path
 from typing import Any, Sequence
 
+from qwen_bridge import pushcred
 from qwen_bridge.acp import errors, gate, wire
 from qwen_bridge.acp.transport import AgentLink
 
@@ -148,7 +149,7 @@ class _Driver:
 
     def run(self) -> int:
         signal.signal(signal.SIGTERM, self._on_sigterm)
-        env = dict(os.environ)
+        env = pushcred.fresh_environ()
         env.update(self._qwen_env)
         try:
             self._proc = subprocess.Popen(  # noqa: S603 - the sanctioned boundary

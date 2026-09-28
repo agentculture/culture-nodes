@@ -44,13 +44,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from typing import Any
 
-from codex_bridge import liveness
+from codex_bridge import liveness, pushcred
 from codex_bridge.config import Config
 
 #: `codex exec --sandbox` accepts exactly these three values
@@ -148,7 +147,7 @@ def _common_argv(
 
 
 def _subprocess_env(cfg: Config) -> dict[str, str]:
-    env = dict(os.environ)
+    env = pushcred.fresh_environ()
     env.update(cfg.codex_env)
     return env
 

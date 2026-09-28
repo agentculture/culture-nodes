@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from claude_code_bridge import flightfiles
+from claude_code_bridge import flightfiles, pushcred
 from claude_code_bridge.config import Config, ConfigError
 
 #: Matches the leading `X.Y.Z` claude prints as the first token of
@@ -191,7 +191,7 @@ def _common_argv(
 
 
 def _subprocess_env(cfg: Config) -> dict[str, str]:
-    env = dict(os.environ)
+    env = pushcred.fresh_environ()
     env.update(cfg.claude_env)
     return env
 

@@ -75,6 +75,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from . import pushcred
+
 #: Bounds any single local (non-network) git plumbing subprocess. Same
 #: rationale as `workspace.py`'s own `GIT_TIMEOUT_SECONDS`: local git talking
 #: to a local repo is normally instant, but a bound still exists so a wedged
@@ -365,7 +367,7 @@ def _push_best_effort(
     whatever branch the live checkout currently has checked out. Never
     raises: a missing credential, an unreachable remote, or a rejected push
     are all ordinary `pushed=False` outcomes."""
-    env = dict(os.environ)
+    env = pushcred.fresh_environ()
     # Fail fast and honestly on a missing credential instead of hanging on
     # an interactive prompt nobody is present to answer.
     env["GIT_TERMINAL_PROMPT"] = "0"

@@ -1,0 +1,6 @@
+[Unit]
+Description=Mint scoped GitHub App token for culture-nodes agents
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/grant run --inject GITHUB_APP_PRIVATE_KEY=GITHUB_APP_PRIVATE_KEY -- /bin/bash %h/.culture-nodes/bin/github-app-token.sh

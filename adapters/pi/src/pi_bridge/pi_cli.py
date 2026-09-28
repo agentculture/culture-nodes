@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pi_bridge import pushcred
 from pi_bridge.config import Config
 
 SANDBOX_MODES = frozenset({"read-only", "workspace-write"})
@@ -46,7 +47,7 @@ class SyncRunResult:
 
 
 def _env(cfg: Config) -> dict[str, str]:
-    env = dict(os.environ)
+    env = pushcred.fresh_environ()
     env.update(cfg.pi_env)
     return env
 

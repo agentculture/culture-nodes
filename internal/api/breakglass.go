@@ -187,7 +187,7 @@ func (s *Server) inboundCredentialParty(ctx context.Context, presented string) (
 // person who passed Access with no binding gets (spec c46), rather than a
 // silent pass.
 func (s *Server) inboundCredentialPrincipal(ctx context.Context, partyKey string) (Principal, error) {
-	principal := Principal{Subject: partyKey, Provider: principalProviderInboundCredential}
+	principal := Principal{Subject: partyKey, Provider: principalProviderInboundCredential, InboundCredential: true}
 	actorRows, err := s.engineStore.ListActors(ctx)
 	if err != nil {
 		return Principal{}, err

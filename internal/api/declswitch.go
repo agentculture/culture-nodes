@@ -112,6 +112,10 @@ func (s *Server) handleFlipDeclarationSwitch(w http.ResponseWriter, r *http.Requ
 	if !declengine.ValidMode(req.Mode) {
 		return badRequest(`mode must be "before", "shadow" or "after"`, "invalid engine switch mode %q", req.Mode)
 	}
+	if p, ok := PrincipalFromContext(r.Context()); ok && p.Provider == principalProviderInboundCredential && req.Mode != declengine.ModeBefore {
+		return forbidden("use Cloudflare Access to flip the engine switch to shadow or after",
+			"a break-glass credential may only flip the engine switch to before")
+	}
 	if req.Mode != declengine.ModeBefore && s.declEngine == nil {
 		return conflict("enable the declaration engine on this control plane (NODES_DECLARATION_ENGINE=on and "+declengine.DefaultMarkerKeyEnv+") before flipping to shadow or after",
 			"the declaration engine is not running here; flipping to %q would evaluate nothing", req.Mode)

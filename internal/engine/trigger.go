@@ -128,6 +128,14 @@ func (e *Engine) TriggerEvent(ctx context.Context, tx Tx, candidate TriggerWorkf
 			}
 		}
 		if err := validatePayload(wf.InputSchema, ev.Payload); err != nil {
+			// A namespace drained to 'after' starts no new graph run (the
+			// gate below), so a published graph contract that predates a
+			// payload key must not refuse -- and roll back -- a fact the
+			// declaration engine now owns (#328 t32, found live). In
+			// 'before'/'shadow' the refusal is unchanged.
+			if allow, gateErr := e.allowNewRun(ctx); gateErr == nil && !allow {
+				continue
+			}
 			return nil, &ContractError{What: "triggered run input", Detail: err.Error()}
 		}
 

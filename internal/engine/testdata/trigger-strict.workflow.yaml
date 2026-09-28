@@ -1,0 +1,59 @@
+# trigger-subject.workflow.yaml with a closed input contract (#328 t32): a
+# payload key the published graph contract predates must not fail a delivery
+# the drained graph engine will never act on.
+apiVersion: nodes.culture.dev/v1alpha1
+kind: Workflow
+
+metadata:
+  name: engine-trigger-strict
+  version: 1.0.0
+  ownerRef: team/platform-ai
+
+spec:
+  entry: work
+
+  contract:
+    input:
+      schema:
+        type: object
+        additionalProperties: false
+    output:
+      schema:
+        type: object
+
+  triggers:
+    - onEvent: test.subject-event
+
+  limits:
+    maxDuration: 1h
+    maxTransitions: 8
+    maxVisitsPerNode: 4
+    maxParallelTokens: 1
+
+  nodes:
+    work:
+      kind: agent
+      ownerRef: team/platform-ai
+      uses: actor://company/worker@sha256:111111
+      input:
+        from: /run/input
+      contract:
+        outcomes:
+          completed:
+            schema:
+              type: object
+      policy:
+        timeout: 1m
+        retry:
+          maxAttempts: 1
+          backoff: none
+
+    finish:
+      kind: end
+      ownerRef: team/platform-ai
+      output:
+        from: /nodes/work/output
+
+  edges:
+    - from: work.completed
+      to: finish

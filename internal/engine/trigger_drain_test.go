@@ -138,3 +138,39 @@ func TestDrainGateLeavesBeforeAndShadowUnchanged(t *testing.T) {
 		t.Fatalf("'shadow' mode delivery = %+v, want exactly one new run", shadow.Triggered)
 	}
 }
+
+// #328 t32 (found live in production): after the flip, a published graph
+// workflow whose input contract predates a new payload key (pr-upkeep@12 and
+// work_item, #310) still matched the event and failed contract validation
+// BEFORE the drain gate was consulted, so the whole delivery rolled back with
+// a 500 and the declaration engine never saw the event. In 'after' the graph
+// engine creates no new run, so its stale contract must not refuse the fact;
+// in 'before' the refusal stays exactly as it was.
+func TestDrainedGraphContractDoesNotRefuseTheDelivery(t *testing.T) {
+	s := pgtest.RequireStore(t, testStore)
+	sw := declengine.PostgresSwitchStore{Store: s}
+	f := newFixtureOn(t, s, "trigger-strict.workflow.yaml", engine.WithNewRunGate(declengine.DrainGate{Switch: sw}))
+	publishFixtureWorkflow(t, f)
+	deliver := func() (storepg.SignalDelivery, error) {
+		return f.store.DeliverSignalEvent(f.ctx, storepg.DeliverSignalEventInput{
+			NamespaceID: f.ns.ID,
+			Name:        "test.subject-event",
+			Payload:     json.RawMessage(`{"work_item":"gh:o/r#1"}`),
+			Emitter:     "test",
+			Trigger:     f.engine,
+		})
+	}
+	if _, err := deliver(); err == nil {
+		t.Fatal("before the flip: a payload the graph contract refuses was delivered; want the contract error, unchanged")
+	}
+	if _, err := sw.Flip(f.ctx, f.ns.ID, declengine.ModeAfter, "human:ops", "t32 stale graph contract"); err != nil {
+		t.Fatalf("Flip(after): %v", err)
+	}
+	d, err := deliver()
+	if err != nil {
+		t.Fatalf("after the flip: delivery failed on the drained graph engine's contract: %v", err)
+	}
+	if len(d.Triggered) != 0 || d.Event.ID == "" {
+		t.Fatalf("after the flip: delivery = %+v, want the fact appended and zero graph runs", d)
+	}
+}

@@ -334,6 +334,15 @@ POSTGRES_PASSWORD optional
 # dial). Classified so an operator who sets it sees it called optional rather
 # than unknown.
 OTEL_EXPORTER_OTLP_ENDPOINT optional
+
+# The declaration engine (#328, t38; README "Declaration engine"). Absent is
+# the OFF state: a process without NODES_DECLARATION_ENGINE=on behaves exactly
+# as before t38. With it on, the marker key is required by the process itself
+# (it refuses to start without >= 32 bytes), and the producer id has a default
+# (engine_declaration_engine). So all three are optional to this audit.
+NODES_DECLARATION_ENGINE optional
+NODES_DECLARATION_MARKER_KEY optional
+NODES_DECLARATION_PRODUCER_ACTOR_ID optional
 EOF
 }
 

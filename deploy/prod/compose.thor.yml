@@ -83,6 +83,14 @@ services:
     command: ["serve"]
     environment:
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
+      # The declaration engine (#328, t38; README "Declaration engine"). Off
+      # unless NODES_DECLARATION_ENGINE=on in prod.env; with it on, the marker
+      # key (>= 32 bytes, the SAME value for api and scheduler) is required or
+      # the process refuses to start. Compose maps variables explicitly, so a
+      # value set only in prod.env never reached the container before this.
+      NODES_DECLARATION_ENGINE: ${NODES_DECLARATION_ENGINE:-}
+      NODES_DECLARATION_MARKER_KEY: ${NODES_DECLARATION_MARKER_KEY:-}
+      NODES_DECLARATION_PRODUCER_ACTOR_ID: ${NODES_DECLARATION_PRODUCER_ACTOR_ID:-}
       NODES_LISTEN: ":8080"
       # The origin the ticket page is served from (task t16, spec c10). The
       # page-link comment culture-nodes posts on a Jira ticket is rendered
@@ -225,6 +233,14 @@ services:
     environment:
       NODES_HOSTNAME: ${NODES_HOSTNAME:-thor}
       NODES_DATABASE_URL: ${NODES_DATABASE_URL:?set the bundled or external PostgreSQL URL in prod.env}
+      # The declaration engine (#328, t38; README "Declaration engine"). Off
+      # unless NODES_DECLARATION_ENGINE=on in prod.env; with it on, the marker
+      # key (>= 32 bytes, the SAME value for api and scheduler) is required or
+      # the process refuses to start. Compose maps variables explicitly, so a
+      # value set only in prod.env never reached the container before this.
+      NODES_DECLARATION_ENGINE: ${NODES_DECLARATION_ENGINE:-}
+      NODES_DECLARATION_MARKER_KEY: ${NODES_DECLARATION_MARKER_KEY:-}
+      NODES_DECLARATION_PRODUCER_ACTOR_ID: ${NODES_DECLARATION_PRODUCER_ACTOR_ID:-}
       NODES_SCHEDULER_ID: thor-scheduler-1
       # See the api service's note: whichever process mints the run renders
       # the ticket page link, so this value belongs on all three.

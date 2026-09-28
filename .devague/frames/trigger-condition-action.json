@@ -1,0 +1,2167 @@
+{
+  "slug": "trigger-condition-action",
+  "title": "trigger-condition-action",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-09-27T17:07:29Z",
+  "updated": "2026-09-27T18:51:13Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "culture-nodes has one primitive: a trigger-condition-action declaration. Every workflow, sweep and loop is a set of declarations chained by 'must follow' / 'may follow' ordering; actions are agent work, chat/GitHub/Jira messages; triggers are external facts like a PR approved or a Jira issue created; a node is the stop between an action called and the trigger that captures its reaction.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "After migration, every automation that runs in culture-nodes can be listed as named declarations, and nothing fires that is not a declaration.",
+          "status": "confirmed",
+          "instruction": "Test: with the toggle on 'after', start from a fresh store, publish only declarations, and assert the engine has no other path from an event to an action."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The basic declaration of culture-nodes is trigger-condition-action (TCA).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "A named declaration with exactly one trigger, one CEL condition (possibly 'true') and one action is the only authorable automation unit; the engine executes nothing that is not a declaration once the toggle is 'after'.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "Is one action per declaration right, or should a declaration allow an ordered action list (e.g. land, then notify Discord) that fails as a unit? One action keeps nodes meaningful; a list reduces declaration count. (Same as q1, which was misfiled on c3.)",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "User: one action per declaration. Simpler; parallel effects are several declarations from one node."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Declarations chain with two ordering relations: 'A must appear after B' and 'A can appear after B'.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "Each declaration has exactly one trigger, one condition (default 'true') and one action; parallel effects are several declarations leaving the same node.",
+          "status": "rejected",
+          "instruction": "Schema test: a declaration with two triggers or two actions is refused at publish with a hint naming the fan-out form."
+        },
+        {
+          "id": "h36",
+          "text": "'A must appear after B' and 'A can appear after B' are the only two ordering relations, with the lineage meaning confirmed in c45.",
+          "status": "confirmed",
+          "instruction": "Engine tests for both relations: A fires / does not fire depending on whether B is in the triggering event's lineage."
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Is one action per declaration right, or should a declaration allow an ordered action list (e.g. land, then notify Discord) that fails as a unit? One action keeps nodes meaningful; a list reduces declaration count.",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Misfiled duplicate of q2 (on c2); answered there: one action per declaration."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "All existing logic and configuration is split into TCA declarations.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "'A must appear after B' and 'A can appear after B' are the only two ordering relations, with the lineage meaning confirmed in c45.",
+          "status": "rejected",
+          "instruction": "Engine tests for both relations: A fires / does not fire depending on whether B is in the triggering event's lineage."
+        },
+        {
+          "id": "h37",
+          "text": "Every workflow in examples/ and every item listed in c61 (schedules, notifier posts, repair routing, hand-turns, affinity) has a declaration form, and the migration is tracked per item.",
+          "status": "confirmed",
+          "instruction": "A migration table in the spec PR lists each of the ~128 definitions and each c61 item with its declaration form and parity status."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Actions include: requesting an agent to do work, posting to a chat (Discord), messaging on GitHub, messaging on Jira.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "Every workflow in examples/ and every item listed in c61 (schedules, notifier posts, repair routing, hand-turns, affinity) has a declaration form, and the migration is tracked per item.",
+          "status": "rejected",
+          "instruction": "A migration table in the spec PR lists each of the ~128 definitions and each c61 item with its declaration form and parity status."
+        },
+        {
+          "id": "h38",
+          "text": "Agent work, Discord post, GitHub message, Jira message (comment, transition, create) and running code are each available as an action kind with a registered actor or runner behind it.",
+          "status": "confirmed",
+          "instruction": "One contract test per action kind dispatching through the real registry; the GitHub messaging actor is new (c11)."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Triggers include: GitHub PR approved, Jira issue created, etc.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "Agent work, Discord post, GitHub message, Jira message (comment, transition, create) and running code are each available as an action kind with a registered actor or runner behind it.",
+          "status": "rejected",
+          "instruction": "One contract test per action kind dispatching through the real registry; the GitHub messaging actor is new (c11)."
+        },
+        {
+          "id": "h39",
+          "text": "github.pr.approved and jira.issue.created exist as named trigger events on the signal_events log, each emitted by at least one real source.",
+          "status": "confirmed",
+          "instruction": "Integration tests: a GitHub review-approved webhook payload and a Jira created webhook payload each deliver the named event exactly once (dedup on redelivery)."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "A node is the stop between an action being called and a trigger capturing the reaction.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "github.pr.approved and jira.issue.created exist as named trigger events on the signal_events log, each emitted by at least one real source.",
+          "status": "rejected",
+          "instruction": "Integration tests: a GitHub review-approved webhook payload and a Jira created webhook payload each deliver the named event exactly once (dedup on redelivery)."
+        },
+        {
+          "id": "h40",
+          "text": "Every declaration names a start node and a landing node; a node records the action that opened it and stays visibly waiting until a declaration starting there consumes a reaction, or it closes with a recorded reason (orphaned, timed out, loop limit).",
+          "status": "confirmed",
+          "instruction": "Engine test: a node's open/closed state and reason are queryable through the API for each closing path."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "The trigger half already exists and is reused, not rebuilt: every emitter appends to one signal_events log via DeliverSignalEvent (internal/store/postgres/signal.go), and published workflows already declare spec.triggers `{onEvent, when: <CEL>}` (internal/compiler/model.go, internal/engine/trigger.go). TCA triggers are named signal events on this log.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The trigger half already exists and is reused, not rebuilt: every emitter appends to one signal_events log via DeliverSignalEvent (internal/store/postgres/signal.go), and published workflows already declare spec.triggers {onEvent, when: <CEL>} (internal/compiler/model.go, internal/engine/trigger.go). TCA triggers are named signal events on this log.",
+          "kind": "assumption",
+          "reason": "formatting only: backtick placeholders so the spec passes markdownlint MD033"
+        }
+      ]
+    },
+    {
+      "id": "c9",
+      "kind": "assumption",
+      "text": "The condition half already exists as CEL, type-checked at publish (internal/compiler/cel.go, variables input/output/outcome/event/node/budget) and evaluated at runtime by internal/engine/transition.go evaluateGuard. TCA conditions are CEL over the trigger event (plus whatever else q-scope decides).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "assumption",
+      "text": "The action half already exists as actor dispatch: agent work (adapters/codex, claude-code, pi, qwen, colleague), Discord (adapters/notify, actor://company/notify-discord), Jira (adapters/jira: post_comment, transition_issue, create_issue, read_issue), humans (adapters/human-inbox). Each is an actor record resolved from the actors table by digest-pinned uses: ref.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "GitHub messaging becomes an action with its own actor. Today no actor posts to GitHub: PR replies/comments live inside runner scripts (examples/land/land_reply.py), and the cicd skill is an operator tool outside the engine.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "A GitHub actor exposes at least post_comment and reply_to_review_thread, with a repo allowlist, and returns proposed records like the jira actor.",
+          "status": "confirmed",
+          "instruction": "Port the calls in examples/land/land_reply.py behind a new adapters/github bridge; the byte-identical shared bridge modules apply."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "'GitHub PR approved' becomes a trigger. Today it is not detectable: there is no GitHub webhook receiver, and the pr-upkeep sweep (examples/pr-upkeep/sweep.py, pr_upkeep_emit.py) emits only pr.opened / pr.merged / pr.closed; readiness.py reads unresolved threads, never reviewDecision.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "A PR review approval reaches the log as github.pr.approved via a webhook receiver (preferred, c54) with the poller as fallback emitting the same event name and payload shape.",
+          "status": "confirmed",
+          "instruction": "Add POST /v1alpha1/webhooks/github with signature verification modeled on internal/api/jirawebhook.go; extend pr_upkeep_emit.py to read reviewDecision."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "'Jira issue created' becomes a named trigger. Today creation surfaces only indirectly, as a synthetic `pr-upkeep.jira.transitioned.<initial-status>` with from_status '' built from fields.created (internal/api/jirawebhook.go jiraEmissions), and trigger event names carry the pr-upkeep.* prefix of the loop that first needed them.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "jira.issue.created is emitted by both the webhook and the JQL poller with the same payload, and the pr-upkeep.jira.* names are replaced by neutral jira.* names during migration.",
+          "status": "confirmed",
+          "instruction": "Test that a created issue yields exactly one jira.issue.created across both sources (watermark dedup)."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "'Jira issue created' becomes a named trigger. Today creation surfaces only indirectly, as a synthetic pr-upkeep.jira.transitioned.<initial-status> with from_status '' built from fields.created (internal/api/jirawebhook.go jiraEmissions), and trigger event names carry the pr-upkeep.* prefix of the loop that first needed them.",
+          "kind": "requirement",
+          "reason": "formatting only: backtick placeholders so the spec passes markdownlint MD033"
+        }
+      ]
+    },
+    {
+      "id": "c14",
+      "kind": "assumption",
+      "text": "A node (U6) maps onto the existing parked state between dispatch and reaction: an actor invocation that answered 202 and waits for callbacks (actor_invocations, migration 0009), a wait node parked on until.signal (signal_subscriptions), or an approval parked on a human decision. The TCA model names that parked state 'node' instead of naming the action step 'node'.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "assumption",
+      "text": "Ordering today is 'may follow' only: an edge from `<node>.<outcome>` (or onEvent) to a target, first match wins in normalized order. 'Must follow' has no general form; it exists only as special cases: join barriers after parallel, wait nodes, approval pauses.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Ordering today is 'may follow' only: an edge from <node>.<outcome> (or onEvent) to a target, first match wins in normalized order. 'Must follow' has no general form; it exists only as special cases: join barriers after parallel, wait nodes, approval pauses.",
+          "kind": "assumption",
+          "reason": "formatting only: backtick placeholders so the spec passes markdownlint MD033"
+        }
+      ]
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "The split of 'all existing logic and configuration' (U3) covers about 128 workflow definitions: 25 YAMLs in examples/ (pr-upkeep/workflow.yaml alone is 880 lines, 11 nodes, 18 edges, a trigger and affinity rules), plus compiler/worker/engine testdata, web __golden__ fixtures and schemas/examples.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The migration count is measured, not estimated: the spec PR lists every workflow file found by the examples guard and the testdata globs.",
+          "status": "confirmed",
+          "instruction": "Generate the list with git ls-files '*.workflow.yaml' 'examples/**/workflow.yaml' and commit it with the migration table."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "The ledger authority model is unchanged by TCA: an action executed by an agent actor still yields only proposed records; a trigger from an external system is an observed fact only where a trusted emitter measured it directly; no declaration promotes its own action's proposal (PRD \u00a710.4, CLAUDE.md design ground rules).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "An agent-backed action yields only proposed records; external triggers become observed only when emitted by a trusted receiver that measured them (webhook signature verified or poller read the source).",
+          "status": "confirmed",
+          "instruction": "Ledger tests: an actor returning observed is capped to proposed; an unsigned webhook is refused."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "Every declaration version is immutable and content-addressed (internal/contracts/canonical.go). The pin moves from the run to the firing: each firing records the exact version it evaluated (trigger, condition, action), so a live upgrade never rewrites history and 'which version did this?' is always answerable. A new version applies from the next firing, including in chains already in flight (q16). This deviates from PRD \u00a79.1/\u00a79.10 'runs pin an immutable digest' and is recorded in the ADR (c21).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Each firing's ledger record names the declaration id and exact version digest of the trigger, condition and action it evaluated.",
+          "status": "confirmed",
+          "instruction": "Engine test: upgrade a declaration mid-chain; the two firings record different digests, and both versions remain fetchable."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Declarations stay content-addressed and runs pin an immutable digest: internal/contracts/canonical.go CanonicalJSON -> sha256, idempotent POST /v1alpha1/workflows. A TCA set is published and pinned the same way; editing a declaration makes a new version, never mutates a running one.",
+          "kind": "boundary",
+          "reason": "q16 decided: pin per firing, not per chain"
+        }
+      ]
+    },
+    {
+      "id": "c19",
+      "kind": "boundary",
+      "text": "Code still executes only through the runner boundary (headspace-cli / FunctionRegistry); a TCA action never becomes a shell, script or Docker call inside the control-plane process.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "No action path executes code inside the control-plane process; code actions reach only the server-side sandbox runner or a registered remote runner.",
+          "status": "confirmed",
+          "instruction": "Extend the existing neutrality/import guards: the control-plane packages import no exec/os.StartProcess path outside the runner client."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "non_goal",
+      "text": "No stack or substrate rewrite: Go, Postgres as authority, the signal_events log, CEL, actor/runner protocols with callbacks, leases/fencing and the ledger stay. What is replaced is the graph interpreter (tokens, edges, entry/end, parallel/join, per-run pinning), which the declaration engine supersedes after migration.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "No language or stack change: the Go control plane, Postgres authority, and actor/runner protocols stay. TCA is a reshaping of the definition model and its vocabulary, not a rewrite of the runtime.",
+          "kind": "non_goal",
+          "reason": "q1 recommendation: engine core replaced, substrate kept"
+        }
+      ]
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Changing the core primitive away from the PRD's node/edge graph is recorded as an explicit deviation (ADR), not drift, per the CLAUDE.md rule 'Record deviations from the PRD explicitly'.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "An ADR records the departures from the PRD: declarations replace the node/edge graph, per-firing replaces per-run pinning, and activation-by-declaration.",
+          "status": "confirmed",
+          "instruction": "docs/adr/0014-trigger-condition-action-declarations.md, committed in the spec PR and cited by issue #328."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Code run (script, bash, python, js) is also an action, whether it runs internally or through an actor.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "A code action runs bash, python or js either in the server-side sandbox or on a registered runner, chosen per declaration.",
+          "status": "confirmed",
+          "instruction": "Runner conformance test for each language on the built-in sandbox runner."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Each declaration (a trigger-condition-action set) has a name.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "Declaration names are unique within the namespace and stable across versions; a version changes the digest, not the name.",
+          "status": "confirmed",
+          "instruction": "Store constraint plus test: publishing a second declaration with an existing name creates a new version of it."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Declarations can be viewed individually, or as declaration chains, which render as a graph.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "The UI and CLI show a single declaration or a chain rendered as a graph from the same API response.",
+          "status": "confirmed",
+          "instruction": "Web test on the new view plus a CLI golden for `show` and `chain show`."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "Focusing on a declaration shows a 'distance' neighborhood: distance 0 is only that declaration, 1 adds the declarations directly connected to it, 2 the next ring, and so on.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "Focus at distance N returns exactly the declarations within N hops (both directions, both link types, filterable, c63).",
+          "status": "confirmed",
+          "instruction": "Unit test over a fixture graph checking the returned set for N=0,1,2 and each filter."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "A declaration that appears after another can reference variables produced by earlier declarations (e.g. Jira issue owner, Jira replier, Discord replier).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "A later declaration can read variables of earlier declarations in its lineage through the {N:name:default} / {declaration:name} template.",
+          "status": "confirmed",
+          "instruction": "Engine test on a three-declaration chain reading {1:x}, {2:y} and {decl:z}."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Publish warns (never refuses) on every template reference that may be missing and has no default: it crosses only 'can' links, or step N back may not exist. Today internal/compiler/contract.go checkPointer only checks that /nodes/<id> names a declared node, not that it runs before the reader.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "Publish warns on every template reference that may be missing (crosses a 'can' link, or step N may not exist) and has no default.",
+          "status": "confirmed",
+          "instruction": "Compiler test: each case produces the warning; a reference with a default produces none."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Publish rejects a variable reference unless the referenced declaration is an ancestor on every path through a 'must appear after' relation; a reference through only a 'can appear after' relation must declare what happens when the variable is absent. Today internal/compiler/contract.go checkPointer only checks that /nodes/<id> names a declared node, not that it runs before the reader.",
+          "kind": "requirement",
+          "reason": "aligned with the user's template rule c64: warn, never refuse"
+        }
+      ]
+    },
+    {
+      "id": "c28",
+      "kind": "assumption",
+      "text": "Variable references reuse today's binding form: JSON Pointers such as /run/input/id and /nodes/intake/output/summary, or {literal: ...} (internal/compiler/model.go bindingValue; examples/jira-intake/workflow.yaml), re-rooted from /nodes/<node> to /declarations/<name>.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "assumption",
+      "text": "The chain graph and distance view build on the existing web graph stack (web/src/domain/graph.ts parseWorkflowGraph, the useElkLayout hook, web/src/routes/DesignCanvas.tsx, ActiveGraphCanvas) and add a focus-plus-radius filter. It is a new view, not a new renderer.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "The CLI and API let a user or an agent declare new declarations and build graphs from them, so agents and humans have clear control over what exists.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "Every declaration operation (declare, link, alias, activate, show, focus) has an API route and a CLI verb with --json, and agents and humans call the same routes.",
+          "status": "confirmed",
+          "instruction": "API/CLI parity test enumerating routes against CLI verbs, like tests introspecting known_paths()."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Chains can be named, like an alias.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "A chain alias resolves by name in every verb that accepts a chain.",
+          "status": "confirmed",
+          "instruction": "CLI test: `chain show <alias>` and `focus` accept the alias."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "Every CLI verb for declarations and chains (declare, list, show, link, alias, focus --distance N) is a thin client over a v1alpha1 API route with --json, so agents and humans use the same surface. This follows the existing split: Go cmd/nodes plus the Python culture_nodes/cli/_commands/workflow.py (generate / validate / publish / list / get) over /v1alpha1/workflows.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "CLI verbs are thin: they call the API and render; no declaration logic lives in the CLI.",
+          "status": "confirmed",
+          "instruction": "Test that each verb's handler only calls the API client (mocked) and formats."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "boundary",
+      "text": "Activation declarations are the root of trust, and the chain is one level deep: only a human principal can activate an activation declaration, and an activation declaration may only activate ordinary declarations, never another activation declaration. Without this, an agent could propose 'activate everything' and have it activated by a broader human-activated rule, or two agents could activate each other's rules, holding standing authority to post, comment, dispatch or run code that no human granted (PRD \u00a710.4). The owner accepts this as the current rule and may relax it later.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "An activation declaration cannot activate itself or another activation declaration by the same author, and the first activation declaration can only be activated by a human principal.",
+          "status": "rejected",
+          "instruction": "Engine tests for each refusal, with the refusal recorded as a visible record."
+        },
+        {
+          "id": "h64",
+          "text": "No path lets an activation declaration become active except a human principal's activate call, and no activation declaration's action can target an activation declaration.",
+          "status": "confirmed",
+          "instruction": "Engine and API tests: an agent-authored activation declaration stays inactive under an 'activate everything' rule; an activation declaration targeting another is refused at publish; human activation succeeds."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "An agent-authored declaration lands proposed and does not fire until a human activates it; a human may activate directly. A declaration is standing authority to act (post, comment, dispatch, run code) on future triggers, so an agent enabling its own declaration would be an actor promoting its own proposal (PRD \u00a710.4). This mirrors /v1alpha1/workflow-generations, where an actor drafts source and the response returns a diff and digest without publishing.",
+          "kind": "boundary",
+          "reason": "q13 decided: activation is itself TCA; the boundary moves to the root of trust"
+        },
+        {
+          "text": "Activation policy is itself a set of declarations (q13), and those activation declarations are the root of trust: an activation declaration cannot activate itself or another activation declaration it authored, and the first ones are activated by a human. Without this, an agent could declare 'activate everything I propose', self-activate it, and hold standing authority to post, comment, dispatch or run code with no human ever having granted it (PRD \u00a710.4: no actor promotes its own proposal).",
+          "kind": "boundary",
+          "reason": "PR #329 code review: finding 6, same-author check was bypassable"
+        }
+      ]
+    },
+    {
+      "id": "c34",
+      "kind": "assumption",
+      "text": "An alias is a movable name over a group of trigger-chains and/or other aliases (nesting allowed, q14). It does not lock declaration versions: it resolves to whatever version of each declaration is current (q16).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "A chain alias is a mutable name pointing at an immutable, content-addressed chain version, like a git branch pointing at a commit. Running or viewing by alias resolves to one pinned digest at start, so moving an alias never changes a running chain (PRD \u00a79.10, internal/contracts/canonical.go).",
+          "kind": "assumption",
+          "reason": "q14 decided: movable, nestable, groups trigger-chains"
+        },
+        {
+          "text": "An alias is a movable name over a group of trigger-chains and/or other aliases (nesting allowed, q14). Each resolution pins immutable, content-addressed declaration versions, so moving an alias changes what future triggers start, never a chain already in flight (PRD \u00a79.10, internal/contracts/canonical.go).",
+          "kind": "assumption",
+          "reason": "q16 decided: aliases do not lock; declarations upgrade live"
+        }
+      ]
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "Activation is self-governed through trigger-condition-action: a declaration becomes active when an activation declaration fires (trigger: declaration proposed; condition: author, action kinds, etc.; action: activate). An agent may self-activate when such a declaration allows it.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "decision",
+      "text": "An alias can be moved to point at a new version, and aliases can nest, so two aliases can be chained.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "decision",
+      "text": "The trigger is part of a declaration; aliases do not carry triggers. Aliases group trigger-chains.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Alias nesting is checked at write time: a move or nest that would make an alias contain itself, directly or through other aliases, is refused with the cycle named.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "Moving or nesting an alias so it contains itself is refused, naming the cycle.",
+          "status": "confirmed",
+          "instruction": "Store test with a three-alias cycle."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "Every activation, deactivation and alias move is an append-only record naming who or which declaration did it and which version it points at, so 'why is this declaration live?' is always answerable (records are immutable; corrections append with supersedes).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "Every activation, deactivation and alias move is an append-only record naming the actor or declaration that did it and the target version.",
+          "status": "confirmed",
+          "instruction": "Ledger test: the history of a declaration's activation state is reconstructable from records alone."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "Chaining carries causal context: when trigger B fires on something action A produced, B's run can read the variables of the declaration run that led to A (e.g. 'PR spec created' knows the Jira issue behind the intake that committed the PR).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "A trigger event whose origin marker traces to a firing inherits that firing's lineage; an event with no marker starts a fresh lineage.",
+          "status": "confirmed",
+          "instruction": "Engine test with stamped and unstamped PR events."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "The system suggests chain links: it knows what each action produces (e.g. a PR) and what each trigger consumes (e.g. a PR event), marks a producing->consuming pair as relevant, and the user chooses whether to chain them.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "For a new declaration, the system lists candidate predecessor/successor declarations whose produces/consumes types match, and linking is always the user's or agent's explicit choice.",
+          "status": "confirmed",
+          "instruction": "API test: suggestions are returned but no link is created without an explicit link call."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "Declaration chains need loop protection.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "Loop protection is always on: every chain is subject to the re-entry limit (default 3) and the backstops in c46.",
+          "status": "confirmed",
+          "instruction": "See the c46 tests."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "assumption",
+      "text": "Causal links resolve through origin markers stamped by actions, generalizing the marker contract in examples/jira-question-round-trip/question_correlation.py. Today the jira actor appends '[culture-nodes:jira-actor question_id=<id>]' to the comments it posts, the sweep stamps originating_question_id on the reply fact, and the consumer checks it (a wait node wakes on every event of that name with no payload filter, internal/worker/wait.go). Under TCA every action stamps its declaration-run id into what it creates (PR body or branch, Jira comment, Discord message), and an incoming trigger event traced to a marker inherits that run's variables.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "Each action and trigger kind declares a typed produces / consumes signature (e.g. agent intake produces github.pr; trigger github.pr.created consumes github.pr), which is what lets the system suggest links (the user's c41) and check variable references at publish.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "Every action and trigger kind declares a produces/consumes type from a closed, versioned vocabulary (e.g. github.pr, jira.issue, discord.message).",
+          "status": "confirmed",
+          "instruction": "Schema test that every registered kind declares its signature."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "assumption",
+      "text": "'B must appear after A' means B fires only on an event whose causal lineage contains a firing of A, so A's variables are guaranteed; 'B can appear after A' means B fires either way and A's variables are present only when the lineage contains A.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The q15 answer suggests an interpretation of q2 in lineage terms: 'B must appear after A' means B fires only on an event whose causal lineage contains a run of A, so A's variables are guaranteed; 'B can appear after A' means B fires either way and A's variables are present only when the lineage contains A. Pending the user's confirmation.",
+          "kind": "assumption",
+          "reason": "PR #329 code review: finding 8, stale 'pending confirmation' text"
+        }
+      ]
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "Loop protection works on causal lineage (c40, c43). The re-entry limit (c51) is declared on the trigger: N re-entries allowed (N+1 appearances), default 3, 0 = no re-entry. Backstops (c93): hop limit 20 on total lineage depth, no self-retrigger unless the declaration opts in, and 30 firings per declaration per hour. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. Generalizes jira_comment_is_self_echo, maxTransitions/maxVisitsPerNode, the repair bound (internal/repair) and subject deferral (deferred_triggers).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "A re-entry beyond the trigger's limit, a lineage deeper than the hop limit, an unopted self-retrigger, or a rate breach each stops the chain and writes a visible record; nothing is silently dropped.",
+          "status": "confirmed",
+          "instruction": "One engine test per limit, asserting the record."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Loop protection works on causal lineage, in layers: (1) a hop limit on lineage depth; (2) a per-lineage re-entry limit (the same declaration may appear at most N times in one lineage); (3) an event caused by a declaration's own action does not retrigger that declaration unless it opts in; (4) a per-declaration rate ceiling. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. This generalizes what exists today: jira_comment_is_self_echo (examples/pr-upkeep/pr_upkeep_jira.py), limits.maxTransitions / maxVisitsPerNode, the repair bound of 2 attempts per 24 h (internal/repair), and one active run per subject with deferral (internal/engine/trigger.go deferred_triggers).",
+          "kind": "requirement",
+          "reason": "q17 decided: re-entry default 3, 0 = none, set on the trigger"
+        },
+        {
+          "text": "Loop protection works on causal lineage (c40, c43). The re-entry limit (c51) is declared on the trigger, defaulting to 3 appearances of the same declaration in one lineage, with 0 meaning the declaration may not re-appear in its own lineage. Backstops: a hop limit on total lineage depth, no self-retrigger unless the declaration opts in, and a per-declaration rate ceiling. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. Generalizes jira_comment_is_self_echo, maxTransitions/maxVisitsPerNode, the repair bound (internal/repair) and subject deferral (deferred_triggers).",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 5, off-by-one wording"
+        }
+      ]
+    },
+    {
+      "id": "c47",
+      "kind": "decision",
+      "text": "An alias does not lock declarations: when a declaration upgrades, the new version applies wherever it is used, including chains already in flight. Every version is kept.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "decision",
+      "text": "Loop limit: default 3, configurable, and 0 is an allowed value.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "An in-flight node (an action called, its reaction not yet captured) keeps the version that called the action; the reaction is evaluated by whatever versions are current when it arrives. If the upgrade removed the declaration or changed its trigger so the reaction no longer matches, the node closes with a visible 'orphaned by upgrade vN' record, never a silent drop.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "A node whose reaction arrives after its reacting declaration was removed or changed so it no longer matches closes with an 'orphaned by upgrade' record naming both versions.",
+          "status": "confirmed",
+          "instruction": "Engine test: park a node, upgrade the reacting declaration, deliver the reaction."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c50",
+      "kind": "decision",
+      "text": "Q1 recommendation: a new, smaller engine core that executes declarations directly, built on the existing substrate, with the graph engine run side by side until the examples are migrated and then retired. One firing is one short transaction: event arrives -> match triggers -> trace lineage -> evaluate CEL condition -> dispatch action -> open a node that waits for the reaction. Kept: signal_events log and emitters, CEL (internal/compiler/cel.go), actor and runner dispatch with callbacks, leases and fencing, the ledger and its authority model, Postgres, the API server. Retired: tokens, edges, entry/end, parallel/join, per-run digest pinning. Compiling into today's IR is rejected because live upgrade (q16), cross-chain causal lineage (q3) and alias nesting (q14) do not fit a graph pinned to one digest per run.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c51",
+      "kind": "decision",
+      "text": "The loop limit counts re-entries on causal lineage: a limit of N lets the same declaration re-enter its own lineage N times (N+1 appearances in total). Default 3; 0 means it appears once and never re-enters. It is set per context, depending on the trigger.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The loop limit is a re-entry limit on causal lineage: default 3 appearances of the same declaration in one lineage, 0 = no re-appearance at all. It is set per context, depending on the trigger.",
+          "kind": "decision",
+          "reason": "PR #329 code review: finding 5, owner chose re-entries"
+        }
+      ]
+    },
+    {
+      "id": "c52",
+      "kind": "decision",
+      "text": "Nodes are declared explicitly and sit between declarations: every declaration starts on a node and lands on a node.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c53",
+      "kind": "decision",
+      "text": "All existing workflows are migrated, with a before/after toggle between the old graph engine and the new declaration engine.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c54",
+      "kind": "decision",
+      "text": "GitHub triggers: a webhook receiver is preferred; the existing poller (examples/pr-upkeep/sweep.py) is an acceptable fallback.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c55",
+      "kind": "decision",
+      "text": "Code actions run either on the server or on runners offered the way agents are offered; runners are for harder or more complex code.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c56",
+      "kind": "decision",
+      "text": "Variable syntax: {owner} reads this declaration run's variable; {1:owner} reads owner from the previous declaration in the lineage (N = steps back).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c57",
+      "kind": "assumption",
+      "text": "With q4, the graph is nodes joined by declarations: a declaration is a transition from its start node to its landing node, guarded by trigger + condition, performing its action. B follows A when A's landing node is B's start node; 'must/can' then says whether B requires A in its lineage (c45). Declarations whose trigger is an outside fact (jira.issue.created) start on a shared root node.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c58",
+      "kind": "boundary",
+      "text": "'On the server' means a built-in runner on the control-plane host, in a separate sandboxed process (headspace-style workspace), never inside the control-plane process. This keeps c19: a hung, crashing or hostile script cannot stall or tamper with the service that holds authoritative state. Remote runners are registered and offered like agent actors.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h34",
+          "text": "Server-side code runs in a separate sandboxed process with its own timeout; killing or hanging it does not stall the control plane.",
+          "status": "confirmed",
+          "instruction": "Fault test: a hanging script is killed at its timeout while API health stays green."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c59",
+      "kind": "requirement",
+      "text": "Variable resolution follows the user's template rule (c64): {N:var:default} walks N steps back along the causal lineage (or to the named declaration, c65); a missing value renders the default, and with no default the placeholder stays verbatim. Publish still reports, as a warning, every reference that can be missing (it crosses a 'can' link, or step N may not exist) and has no default, so an author sees 'Hi {1:owner}, ...' is possible before it reaches a Jira comment.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h35",
+          "text": "Template rendering follows c64 exactly: value, else default, else the placeholder text verbatim; {N:x:} renders empty.",
+          "status": "confirmed",
+          "instruction": "Table-driven renderer test covering each row of the rule."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "{N:var} resolves by walking N steps back along the causal lineage. Publish refuses {N:var} unless step N back is reached only through 'must' links and the declaration there exposes var; through a 'can' link the reference must declare a default or be optional. An unresolvable reference at runtime is a visible failure, never an empty string.",
+          "kind": "requirement",
+          "reason": "user decided template/default semantics; missing values no longer fail"
+        }
+      ]
+    },
+    {
+      "id": "c60",
+      "kind": "assumption",
+      "text": "Q6 proposal, how today's control kinds become declarations: approval = an action asking a human (human-inbox) landing on a waiting node, then declarations triggered by human.decision with condition outcome == 'approved' / 'rejected'; decision/select = several declarations from one node with mutually exclusive conditions; parallel = several declarations from one node that all match; wait(duration) = a timer trigger; continue.while = a declaration that lands back on its own start node, bounded by the re-entry limit (c51); end = a terminal node with no outgoing declarations; join = a declaration that must-follow several predecessors and fires once all are in its lineage.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c61",
+      "kind": "assumption",
+      "text": "Q7 proposal, what configuration becomes declarations: schedules (timer triggers), the nodes-notifier lifecycle Discord posts (internal/notifier; declarations on system events like run.failed), repair routing after a red merge gate (internal/repair), hand-turn definitions, and affinity rules (which actor receives the action, as part of the action). What stays configuration: the actor and runner registry, credentials and grants, deployment, and the declaration engine's own settings.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c62",
+      "kind": "assumption",
+      "text": "Q10 proposal: there is one global declaration graph. Today's workflow boundaries disappear; aliases are the only grouping, so 'appears after' may link any two declarations (jira-intake -> pr-upkeep -> land) and the distance view may cross what are separate workflows today.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c63",
+      "kind": "assumption",
+      "text": "Q11 proposal: distance counts hops in both directions (what leads here and what follows), across both must and can links, with filters for direction and link type. Distance is measured over declarations; nodes are drawn but do not count as hops.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c64",
+      "kind": "decision",
+      "text": "Variable template form is {N:Name:DefaultValue}. When there is no relevant value, the default is used; with no default given, the placeholder text itself stays in the output. {10:Name:} (empty default) renders as an empty string when there is no declaration 10 steps back.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c65",
+      "kind": "decision",
+      "text": "The step selector in a variable may be a declaration name instead of a number, e.g. {jira-intake:owner}; the name form is required when one step back is ambiguous (a join).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c66",
+      "kind": "audience",
+      "text": "Operators and workflow authors (humans), and mesh agents (codex, claude-code, colleague, pi, qwen) who declare, activate, inspect and debug automation in culture-nodes through the CLI, API and web UI.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h43",
+          "text": "Every capability offered to the audience is reachable by both a human principal and an agent principal through the same CLI verb and API route; only activation authority differs (c33).",
+          "status": "confirmed",
+          "instruction": "Parity test driving each verb once as a human session and once as an agent token."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c67",
+      "kind": "before_state",
+      "text": "Automation lives in about 128 workflow graph files (nine node kinds, edges, per-run digest pinning) plus separate schedules, the nodes-notifier daemon, repair routing and poller scripts. Causal links across systems are guessed from run input (web/src/domain/ticket-key.ts) or hand-built per flow (examples/jira-question-round-trip/question_correlation.py). There is no 'PR approved' trigger and no GitHub messaging action.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h44",
+          "text": "The before-state figures are reproduced from the tree at the spec commit, not carried from this conversation: workflow-file count, node kinds, and the absence of a PR-approved trigger and a GitHub messaging actor.",
+          "status": "confirmed",
+          "instruction": "Commit the counting commands and their output alongside the migration table."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c68",
+      "kind": "why_it_matters",
+      "text": "One primitive that humans and agents both read and write gives clear control over what reacts to what. 'When X happens, if Y, do Z' becomes one declaration instead of a new graph, and causal context replaces per-workflow plumbing for carrying facts like the Jira issue behind a PR.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h45",
+          "text": "After migration, one new 'when X, if Y, do Z' behavior is added as exactly one declaration with no engine, schema or migration change, shown once on a real behavior.",
+          "status": "confirmed",
+          "instruction": "Record the one-declaration addition in the delivery summary with its digest."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c69",
+      "kind": "after_state",
+      "text": "Every automation is a named trigger-condition-action declaration moving between declared nodes, chained causally with must/can links, grouped by movable nestable aliases, and shown as one global graph with focus and distance. Humans and agents author and activate through one CLI/API. The graph engine is retired after all workflows migrate behind a before/after toggle.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h46",
+          "text": "Each element of the after state maps to at least one success signal c70-c74, and none is claimed delivered without its signal's evidence.",
+          "status": "confirmed",
+          "instruction": "The spec export lists the element-to-signal mapping; summarize-delivery checks it."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c70",
+      "kind": "success_signal",
+      "text": "Parity in shadow: with pr-upkeep and jira-intake migrated to declarations and the switch on 'shadow', every shadow firing matches the graph step that handled the same event (same declaration outcome, same rendered variables, same ledger record kinds), across a recorded window of real traffic, before the switch flips to 'after'. A recorded comparison, not a claim.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h47",
+          "text": "The parity comparison is recorded evidence (run ids for both engines on identical inputs, with outcome and ledger-kind diff), not an agent's statement.",
+          "status": "confirmed",
+          "instruction": "A comparison script writes the diff as an observed evidence record."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Side-by-side parity: pr-upkeep and jira-intake, migrated to declarations, run with the toggle on 'after' against the same inputs as the graph engine and produce the same domain outcomes and ledger record kinds (a recorded comparison, not a claim).",
+          "kind": "success_signal",
+          "reason": "PR #329 code review: finding 7, parity cannot run with the switch on 'after'"
+        }
+      ]
+    },
+    {
+      "id": "c71",
+      "kind": "success_signal",
+      "text": "Causal context live: a Jira issue created -> agent intake commits a PR -> a 'PR spec created' declaration renders {1:key} (or {jira-intake:key}) with that Jira key, taken from the stamped lineage, with no ticket-key guessing; a human-opened PR fires the same declaration with the placeholder rendered by the template rule.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h48",
+          "text": "The rendered Jira key in the PR declaration's run comes from the stamped lineage, verified by the run's lineage record, on a live Jira issue and PR.",
+          "status": "confirmed",
+          "instruction": "Live run ids and lineage record cited in the delivery summary."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c72",
+      "kind": "success_signal",
+      "text": "Loop protection live: two declarations that re-trigger each other stop at the default re-entry limit of 3, and a trigger set to 0 stops at the first re-entry; each stop leaves a visible record.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h49",
+          "text": "Both stops (limit 3 and limit 0) occur on live declarations and each leaves a visible record queryable through the API.",
+          "status": "confirmed",
+          "instruction": "Live run ids plus the stop records."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c73",
+      "kind": "success_signal",
+      "text": "Agent control live: an agent declares a declaration, links it, validates it, and has it activated by an active activation declaration, all through `--json` CLI verbs; `focus <name> --distance 2` shows it with its neighbours.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h50",
+          "text": "The agent performs every step through CLI --json with an agent credential; no human edits happen between steps except activating the first activation declaration.",
+          "status": "confirmed",
+          "instruction": "Agent transcript and ledger records cited."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c74",
+      "kind": "success_signal",
+      "text": "Retirement: the graph engine and its node kinds are deleted, and every example in examples/ exists only as declarations.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h51",
+          "text": "The graph engine packages, node kinds and graph examples are removed from main, and tests pass without them.",
+          "status": "confirmed",
+          "instruction": "The removal PR, with the lint guard updated to glob declaration files."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c75",
+      "kind": "requirement",
+      "text": "Lineage survives at-least-once delivery: a redelivered event with the same event id is deduplicated (signal_event_watermarks) and never fires a declaration twice; a re-minted trigger (trigger_remints) keeps the original lineage, so must-appear-after and re-entry counts see one chain, not two.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h41",
+          "text": "Delivering the same event twice produces one firing, and a re-minted firing counts once toward re-entry.",
+          "status": "confirmed",
+          "instruction": "Engine tests: duplicate delivery, and remint after a failed firing, each asserting one lineage entry."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c76",
+      "kind": "decision",
+      "text": "Template grammar: the first segment is always the step, 0 = this run: {owner}, {0:owner:x}, {1:owner}, {jira-intake:owner:}. A literal brace is escaped as {{.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c77",
+      "kind": "decision",
+      "text": "One action per declaration. Simpler; several effects are several declarations leaving the same node.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c78",
+      "kind": "requirement",
+      "text": "When two declarations share similar conditions (overlapping trigger and condition), the user can see it, or be notified of it.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h42",
+          "text": "At publish and on every activation, the system reports each pair of active declarations that start on the same node with the same trigger and conditions that can both be true (checked for satisfiable overlap where CEL allows, otherwise flagged as 'possibly overlapping'); the report is shown in focus/show and, when configured, emitted as a declaration.overlap event that a declaration can turn into a notification.",
+          "status": "confirmed",
+          "instruction": "Test: two declarations on one node, same trigger, conditions priority=='High' and priority!='Low' -> reported; conditions priority=='High' and priority=='Low' -> not reported. A declaration.overlap event reaches the log."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c79",
+      "kind": "requirement",
+      "text": "Origin markers are unforgeable: at dispatch the control plane mints a marker carrying a MAC over (firing id, artifact kind, random nonce), and the bridge stamps it into what it creates. The action's result reports the created artifact's id (PR number, comment id, message id, commit SHA), which the control plane records against the firing. An incoming event inherits lineage only when its marker's MAC verifies AND its artifact id equals the one recorded for that firing; where the provider reports authorship, the artifact must also be authored by the bridge's own account. Anything else is treated as unmarked. (The artifact id cannot be inside the MAC: providers assign it only after creation, and a commit cannot contain its own SHA.) Today's markers are plain text (adapters/jira/src/jira_bridge/mapping.py marked_text), so anyone who can edit a PR body or comment could copy one to inherit another chain's variables.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h52",
+          "text": "A copied, edited or hand-written marker never yields lineage; only a marker minted for that exact artifact verifies.",
+          "status": "confirmed",
+          "instruction": "Tests: valid marker inherits; marker copied to another PR, tampered firing id, and unsigned legacy marker each start a fresh lineage and write a 'marker rejected' record."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Origin markers are unforgeable: each marker carries a MAC over (firing id, artifact kind, artifact id) keyed by the control plane, and an event inherits lineage only when its marker verifies; where the provider reports authorship, the artifact must also be authored by the bridge's own account. Anything else is treated as unmarked. Today's markers are plain text (adapters/jira/src/jira_bridge/mapping.py marked_text), so anyone who can edit a PR body or comment could copy one to inherit another chain's variables, satisfy a 'must appear after', and make actions fire.",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 1, the MAC covered an id that does not exist at creation time"
+        }
+      ]
+    },
+    {
+      "id": "c80",
+      "kind": "requirement",
+      "text": "Migration runs the declaration engine in shadow first: it evaluates triggers and conditions and records 'would fire' firings without dispatching actions, while the graph engine still acts. Because shadow dispatches nothing, it stamps no markers, so shadow derives lineage from the graph engine's real run instead (graph run id -> shadow lineage) and parity is compared hop by hop: each shadow firing against the graph step that handled the same event, with the same variables. Only after parity does the switch go to 'after', so no Jira comment, Discord post or agent session is ever produced twice.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h53",
+          "text": "While a scope is in shadow, the declaration engine dispatches zero actions; switching to 'after' stops the graph engine acting for that scope in the same transaction.",
+          "status": "confirmed",
+          "instruction": "Test: shadow mode on a real trigger produces a would-fire record and no actor invocation; flipping produces exactly one dispatcher."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Migration runs the declaration engine in shadow first: it evaluates triggers and conditions and records 'would fire' firings without dispatching actions, while the graph engine still acts. Parity (c70) compares shadow firings against graph runs. Only after parity does a scope switch to 'after', so no Jira comment, Discord post or agent session is ever produced twice.",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 2, shadow could not see lineage without markers"
+        }
+      ]
+    },
+    {
+      "id": "c81",
+      "kind": "requirement",
+      "text": "Flipping back from 'after' to 'before' is safe: open declaration nodes are frozen with a visible record (not dispatched and not dropped). Events that arrive for a frozen node are stored against it, and its deadline is paused. When the switch flips forward again, the node resumes and replays its stored events in arrival order, so nothing depends on the provider redelivering (a redelivered event id is deduplicated, c75). The graph engine never adopts declaration nodes. Rollback is a supported, tested path.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h54",
+          "text": "A flip back and forward again loses no open node and dispatches no action twice.",
+          "status": "confirmed",
+          "instruction": "Test: open a node, flip back, deliver its reaction (stored, not fired), flip forward: the node replays it and fires once; a redelivery of the same event id fires nothing."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Flipping a scope back from 'after' to 'before' is safe: open declaration nodes are frozen with a visible record (not dispatched and not dropped) and resume if the scope is flipped forward again; the graph engine never adopts declaration nodes. Rollback is a supported, tested path, not an emergency improvisation.",
+          "kind": "requirement",
+          "reason": "PR #329 code review: finding 4, rollback relied on redelivery that dedup discards"
+        }
+      ]
+    },
+    {
+      "id": "c82",
+      "kind": "requirement",
+      "text": "Every node declares a deadline (or an explicit 'none'); at expiry it emits node.expired, which declarations can take as a trigger (remind, escalate to a human, give up). Today's model already has timeout/deadline fields (internal/compiler/model.go) and scheduler timers (internal/store/postgres/timers.go); without them a node whose reaction never comes waits forever, invisible.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h55",
+          "text": "No node can be open without a deadline or a declared 'none', and an expired node always emits node.expired exactly once.",
+          "status": "confirmed",
+          "instruction": "Test with a scheduler clock: expiry fires once, and a late reaction after expiry is recorded, not fired."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c83",
+      "kind": "requirement",
+      "text": "An action's technical result is its own trigger family (action.failed, action.timed_out, action.rejected, action.capacity_exhausted), separate from domain reactions, so a declaration can route failures and a failed action never leaves its node silently open (PRD \u00a73.4: domain outcome is not technical status).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h56",
+          "text": "Every non-success actor/runner status produces exactly one action.* trigger event linked to the node.",
+          "status": "confirmed",
+          "instruction": "Test per status from internal/actors error classes."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c84",
+      "kind": "requirement",
+      "text": "Declarations keep per-subject concurrency: a declaration may cap how many of its firings are in flight per subject key (e.g. per Jira issue, per PR) and defers the rest, preserving today's limits.maxConcurrentSubjectRuns and deferred_triggers (examples/jira-intake, examples/jira-comment-consumer: 2). Without it, a burst of Jira comments dispatches one agent session each against a capped subscription window.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h57",
+          "text": "A burst of N events on one subject with cap K yields at most K in-flight firings, and the rest run later in arrival order or collapse per today's replace rule.",
+          "status": "confirmed",
+          "instruction": "Engine test mirroring internal/store/postgres/subjectconcurrency.go cases."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c85",
+      "kind": "requirement",
+      "text": "The PRD run vocabulary is mapped, not dropped: the ADR (c21) defines lineage, firing, node and attempt against run, token, node run and attempt, and every consumer of today's run surfaces keeps a working read path until migrated. Consumers: web UI (/v1alpha1/runs, /node-runs, /human-tasks, /pending-decisions, /tickets in web/src/api/client.ts), the nodes-notifier (dev.culture.nodes.run.created/completed/failed/cancelled/bounded in internal/notifier/lifecycle.go), scripts/collect-handover.py, and the nodes-operator skill.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h58",
+          "text": "The migration table lists every consumer of run/node-run/token surfaces, each with its declaration-era read path and parity status.",
+          "status": "confirmed",
+          "instruction": "Grep-derived consumer list committed with the migration table; each consumer has a test on its new read path."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c86",
+      "kind": "requirement",
+      "text": "The two lanes that produce workflow source produce declarations after migration: workflow generation (internal/api/workflow_generations.go, an actor drafting source) and devague plan import (/v1alpha1/plan-imports, cmd/nodes/planimport.go). They were missing from the c61 list.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h59",
+          "text": "Generation and plan import each emit declarations that validate and publish, with their existing tests ported.",
+          "status": "confirmed",
+          "instruction": "Port workflow_generations and planimport tests to declaration output."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c87",
+      "kind": "requirement",
+      "text": "Stamping is a capability each bridge advertises on /v1/capabilities (with its revision); the engine refuses, with a visible record, to dispatch an action that needs stamping to a bridge that does not advertise it. The codex and notify bridges are uv tool install copies that go stale silently (CLAUDE.md), so one stale bridge would otherwise produce unstamped artifacts and quietly break causal context on its lane.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h60",
+          "text": "A bridge without the stamping capability cannot receive a stamping-required dispatch; the refusal names the bridge and its revision.",
+          "status": "confirmed",
+          "instruction": "Test with a fake bridge advertising an old capability set."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c88",
+      "kind": "requirement",
+      "text": "Every trigger match is explainable: for each declaration whose trigger matched an event, the engine records the outcome (fired, condition false, required lineage missing, loop-limited, deferred, overlap-suppressed, shadow) and 'why did / didn't X fire for event E' is answerable from the API and CLI.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h61",
+          "text": "For any event id and declaration name, the API returns the evaluation outcome and its reason.",
+          "status": "confirmed",
+          "instruction": "API test covering each outcome kind."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c89",
+      "kind": "boundary",
+      "text": "The author of a declaration, which activation declarations condition on (c35, c33), is the authenticated principal recorded by the API (the Access identity or actor credential), never a field in the declaration body.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h62",
+          "text": "A declaration body claiming a different author is ignored; the recorded author matches the request principal.",
+          "status": "confirmed",
+          "instruction": "API test publishing a body with a forged author field."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c90",
+      "kind": "decision",
+      "text": "The before/after/shadow switch is global (namespace-wide) for now.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c91",
+      "kind": "decision",
+      "text": "Budgets can be set at four levels: node, machine, declaration and alias. Any of them may carry a budget.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c92",
+      "kind": "decision",
+      "text": "Variables carry a sensitivity marking; a variable's sensitivity cannot be elevated (exposed more widely, e.g. rendered from Jira into a wider Discord audience) without the owner's approval.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c93",
+      "kind": "decision",
+      "text": "Loop backstop defaults: hop (lineage depth) limit 20, rate ceiling 30 firings per declaration per hour, both configurable on the trigger.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c94",
+      "kind": "requirement",
+      "text": "Flipping to 'after' drains, it does not strand: new trigger events go to the declaration engine from the flip onward, while graph runs already open keep running on the graph engine until they end (including reactions they are waiting for). The graph engine retires only when its open-run count is zero, and that count is visible.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h63",
+          "text": "No graph run open at the flip is left without an engine: each ends on the graph engine, and new events never start graph runs after the flip.",
+          "status": "confirmed",
+          "instruction": "Test: open a graph run waiting on a callback, flip to 'after', deliver the callback (graph engine completes it) and a new trigger (declaration engine fires)."
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "A general 'must follow' relation over events that can arrive in any order, be retried or re-minted (trigger_remints), or be deduped (signal_event_watermarks) needs defined semantics under at-least-once delivery; not decidable until Q2/Q3 are answered.",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Answered by the user's confirmed c45 (must/can defined on causal lineage) and q3 (lineage ties chains); the at-least-once rules are captured as c75.",
+      "resolution_claim_id": "c45"
+    },
+    {
+      "id": "v2",
+      "text": "Issue #327 (goals and constraints as first-class state) is related but separate: a goal and its constraints could attach to an alias, the unit that groups trigger-chains. Not designed in this cycle; the declaration model must not preclude it.",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Retention and volume of per-match evaluation records (F10): every event times every matching declaration could be large; a retention policy is not designed yet (docs/operations/artifact-retention.md covers artifacts only).",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Condition overlap detection (c78) can only be approximate: CEL satisfiability is not decidable in general, so some pairs will be reported as 'possibly overlapping' and some real overlaps missed when conditions call functions.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "internal/store/postgres/signal.go + internal/engine/trigger.go",
+      "finding": "One signal_events log already fans out to three consumers: start a run (spec.triggers match), wake a wait node (signal_subscriptions), pick up inside a run (event_routes). Emitters: POST /v1alpha1/events, POST /v1alpha1/webhooks/jira, schedules (internal/scheduler/schedules.go), and the pr-upkeep poller posting to /events.",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "internal/compiler/cel.go + internal/engine/transition.go",
+      "finding": "Conditions are CEL strings on triggers, edges, decision select[] and affinity; there is no separate condition type. A guard that errors at runtime counts as no match.",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "internal/actors + adapters/*",
+      "finding": "Actions today are two dispatch paths: actor (kind agent, uses actor://, async 202 + HMAC callbacks, results capped at proposed) and runner (kind code, uses runner://, FunctionRegistry allowlist). Verbs live only inside each bridge's input parser; the engine has no verb list.",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "examples/land/land_reply.py",
+      "finding": "The only engine-driven GitHub writes are review-thread replies, resolves and one PR comment per landing, performed by a runner code node's script, not by an actor. U4's 'messaging on GitHub' has no action surface today.",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "examples/pr-upkeep/sweep.py + pr_upkeep_emit.py + readiness.py",
+      "finding": "GitHub facts reach the event log only by polling (schedule -> pr-upkeep.sweep.due -> sweep-cycle.workflow.yaml code node -> POST /events). Emitted: pr.opened, pr.merged, pr.closed, pr-upkeep.pr work items. No approval event exists.",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "internal/api/jirawebhook.go + examples/pr-upkeep/pr_upkeep_jira.py",
+      "finding": "Jira reaches the log by webhook (HMAC/URL-token, re-fetches the issue) and by JQL polling. Emitted names: pr-upkeep.jira.comment / .changed / .transitioned.*; no created event, and the namespace is tied to one loop.",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "internal/compiler/vocabulary.go (node kinds)",
+      "finding": "Today 'node' means a step: nine kinds (agent, code, action.http, decision, approval, wait, parallel, join, end). U6 redefines node as the waiting stop between an action and its reacting trigger, which is closest to wait/approval/async-invocation state, not to agent/code steps.",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "internal/compiler/graph.go + parallel.go + docs/design/2026-08-13-parallel-tokens-full.md",
+      "finding": "Edges express permitted succession; join{all|any|quorum} is the only barrier. The compiler rejects unreachable nodes, missing reachable end, end inside a split, join outside a split. U2's two relations do not map one-to-one onto today's edge/join model.",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "examples/ + */testdata + web/src/domain/__golden__",
+      "finding": "Counted about 128 workflow files. tests/lint/examplescompile_test.go compiles every example (floor 11); developmentloop_test.go and specchain_test.go pin specific node shapes; web/src/domain/workflow-document.ts round-trips YAML surgically for the canvas.",
+      "seeds": [
+        "c16"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "docs/initial-design/culture-nodes-prd-spec.md \u00a710.4 + actor result caps",
+      "finding": "Actor results are capped at authority proposed (e.g. jira post_comment returns a claim with outcome comment_posted). A TCA whose trigger is 'agent said done' must not read as verified evidence.",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "internal/contracts/canonical.go + api/openapi/openapi.yaml",
+      "finding": "Digest pinning and immutable publish are PRD ground rules (\u00a79.1, \u00a79.10) and have golden fixtures in internal/contracts/testdata/golden/.",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "internal/runners/ + CLAUDE.md runtime ground rule",
+      "finding": "Runner dispatch refuses unregistered names before any call leaves the process; the IAM policy renders from the same registry.",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "cmd/nodes + internal/* + migrations/",
+      "finding": "The runtime already has triggers, CEL, actor dispatch, event routes, subject concurrency (deferred_triggers), trigger remints and schedules; replacing it would discard 58+ migrations of durable behavior.",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "docs/initial-design/culture-nodes-prd-spec.md \u00a73, \u00a79 + docs/adr/",
+      "finding": "PRD \u00a73.1 vocabulary (workflow, node, edge, actor, run, token, node run, attempt) and \u00a79.2 node kinds define the graph as the core model; ADR 0007 (authoring slice) and the canvas decisions (docs/decisions/2026-09-03-*) build on it.",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "internal/runners/ + examples/land/land.py + examples/pr-upkeep/sweep.py",
+      "finding": "Code already runs as an action through kind: code / uses: runner:// (headspace runner on a host, or Lambda), e.g. land.py and sweep.py. 'Internally' collides with the CLAUDE.md ground rule that code never runs as a shell/script/Docker call inside the control-plane process (claim c19).",
+      "seeds": [
+        "c22",
+        "c19"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "web/src/domain/graph.ts + routes/DesignCanvas.tsx + hooks/useElkLayout",
+      "finding": "The web already parses a workflow into a graph and lays it out with ELK for the Design canvas and active runs. There is no focus-on-one-node or distance-radius view; the unit shown is a whole workflow, not a named declaration or a cross-workflow chain.",
+      "seeds": [
+        "c24",
+        "c25",
+        "c29"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "internal/compiler/model.go bindingValue + contract.go checkPointer",
+      "finding": "Bindings are JSON Pointers (/run/input/..., /nodes/<id>/output/...) or literals. checkPointer verifies the node id exists in spec.nodes but has no reachability or ordering check, so a binding to a node that never ran before the reader passes publish today.",
+      "seeds": [
+        "c26",
+        "c27",
+        "c28"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "internal/api/workflows.go handlePublishWorkflow + server.go routes",
+      "finding": "Publish compiles and stores an immutable version idempotently by digest. The handler makes no agent-versus-human distinction; authority comes only from edge auth (the Access cookie since 0.47.0). Workflows are listed and fetched by digest, with metadata.name/version as labels, not as a resolvable alias.",
+      "seeds": [
+        "c30",
+        "c33",
+        "c34"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "internal/api/workflow_generations.go + culture_nodes/cli/_commands/workflow.py",
+      "finding": "Agent authoring already exists as a proposal lane: generation runs a fixed orchestration graph in which a registered fleet actor turns prose into source; the control plane holds no model credential and the output is source + diff + digest + diagnostics, not a publish. The Python CLI exposes workflow generate/validate/publish/list/get.",
+      "seeds": [
+        "c30",
+        "c32",
+        "c33"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "examples/jira-question-round-trip/question_correlation.py + internal/worker/wait.go",
+      "finding": "A working causal-correlation prototype already exists for one case: the jira actor stamps a question_id marker on the comment it posts, the sweep carries it to the reply fact as originating_question_id, and the resumed leg checks the reply answers the question it asked. Correlation is consumer-side because wait nodes wake on every event of a name with no payload filter.",
+      "seeds": [
+        "c40",
+        "c43"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "pr_upkeep_jira.py jira_comment_is_self_echo + limits + internal/repair + deferred_triggers",
+      "finding": "Loop protection today is scattered: self-echo filtering of the system's own Jira comments by account id, per-run transition and per-node visit limits, a repair bound of 2 per 24 h, and one active run per subject. None of it works across runs along a causal chain, which is where TCA loops will live (action A posts -> trigger B -> action B posts -> trigger A).",
+      "seeds": [
+        "c42",
+        "c46"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "web/src/domain/ticket-key.ts",
+      "finding": "Today the only cross-system link from a run to its ticket is a key dug out of the run's input (ticket_key / issue_key / jira_key); there is no ticket column on runs. Causal lineage would replace this guesswork with a recorded link.",
+      "seeds": [
+        "c40",
+        "c43"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / security lens: adapters/jira/src/jira_bridge/mapping.py + examples/pr-upkeep/pr_upkeep_jira.py",
+      "finding": "Markers are unsigned text appended to comments. The self-echo check already distrusts them: a configured bot account id is authoritative 'so a human quoting the actor marker cannot suppress their own fact'. Causal lineage would raise the stakes from suppression to injection.",
+      "seeds": [
+        "c79"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / migration lens: deploy/prod/*.sh NODES_NAMESPACE_ID + o12",
+      "finding": "Prod runs one namespace, so o12's per-namespace toggle cannot stage one loop at a time, and running both engines live would duplicate every external action.",
+      "seeds": [
+        "c80"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / failure-mode lens: internal/compiler/vocabulary.go routable statuses + PRD \u00a73.4, \u00a713.5",
+      "finding": "Today technical statuses (failed, timed_out, policy_denied, contract_rejected) are routable edge outcomes. The frame had no equivalent for declarations: a failed action had no reaction trigger.",
+      "seeds": []
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / concurrency lens: internal/store/postgres/subjectconcurrency.go + examples/jira-*/workflow.yaml",
+      "finding": "Subject concurrency and deferral are load-bearing in two live loops and were absent from the frame.",
+      "seeds": [
+        "c84"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / adjacent-systems lens: web/src/api/client.ts + internal/notifier/lifecycle.go + .claude/skills/nodes-operator",
+      "finding": "Five web endpoints, the notifier's five run lifecycle event types, the handover collector and the operator skill all read run-shaped state that the frame retires.",
+      "seeds": [
+        "c85"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / operations lens: CLAUDE.md install_mode note + adapters/*/capabilities.py",
+      "finding": "Bridges advertise preflight facts and deployment revision; stamping (o3) must join that surface or staleness becomes silent context loss.",
+      "seeds": [
+        "c87"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / cheap probes: mapping.py, deploy/prod namespace, notifier lifecycle, web client endpoints, subjectconcurrency, model.go timeouts",
+      "finding": "Six read-only probes run; findings F1, F2, F4, F6, F7 and F9 each rest on one of them. Not probed: load behaviour of lineage lookups under real event rates, and GitHub webhook delivery semantics (redelivery, ordering), which were read from the frame's claims, not from GitHub's docs.",
+      "seeds": []
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / lenses examined",
+      "finding": "All six lenses swept: adjacent systems, unstated assumptions, overlooked actors/lifecycle/failure modes, security-migration-concurrency-operations-reversibility, observability-containment-rollback, cheap probes. Not examined: web UI component-level impact beyond API endpoints; the Helm and AWS deploy paths (deploy/helm, deploy/aws); cost of the engine rewrite itself.",
+      "seeds": []
+    }
+  ],
+  "lapses": [],
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c2",
+      "seam": "declaration schema + publish API",
+      "behavior": "A declaration has exactly one name, trigger, condition (default true), action, start node and landing node; anything else is refused at publish with a hint.",
+      "source_text": "The basic declaration of culture-nodes is trigger-condition-action (TCA).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c45",
+      "seam": "engine lineage evaluation",
+      "behavior": "'must appear after A' fires only when the triggering event's lineage contains a firing of A; 'can' fires regardless and exposes A's variables only when present.",
+      "source_text": "The q15 answer suggests an interpretation of q2 in lineage terms: 'B must appear after A' means B fires only on an event whose causal lineage contains a run of A, so A's variables are guaranteed; 'B can appear after A' means B fires either way and A's variables are present only when the lineage contains A. Pending the user's confirmation.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c43",
+      "seam": "every action bridge and runner (all-backends rule)",
+      "behavior": "Every action that creates an external artifact (PR, comment, message, issue) stamps the firing id into it, in all adapters (codex, claude-code, pi, qwen, colleague, jira, notify, github, human-inbox) and the runners; one bridge missing it is a bug.",
+      "source_text": "Causal links resolve through origin markers stamped by actions, generalizing the marker contract in examples/jira-question-round-trip/question_correlation.py. Today the jira actor appends '[culture-nodes:jira-actor question_id=<id>]' to the comments it posts, the sweep stamps originating_question_id on the reply fact, and the consumer checks it (a wait node wakes on every event of that name with no payload filter, internal/worker/wait.go). Under TCA every action stamps its declaration-run id into what it creates (PR body or branch, Jira comment, Discord message), and an incoming trigger event traced to a marker inherits that run's variables.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c40",
+      "seam": "trigger ingest (webhooks + pollers)",
+      "behavior": "An incoming event carrying an origin marker is resolved to its firing and inherits that lineage; an unmarked event starts a new lineage and never inherits a guessed one.",
+      "source_text": "Chaining carries causal context: when trigger B fires on something action A produced, B's run can read the variables of the declaration run that led to A (e.g. 'PR spec created' knows the Jira issue behind the intake that committed the PR).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c46",
+      "seam": "engine loop guard",
+      "behavior": "Re-entry beyond the trigger's limit (default 3, 0 = none), hop-limit breach, unopted self-retrigger, or rate breach stops the chain and writes a visible record.",
+      "source_text": "Loop protection works on causal lineage (c40, c43). The re-entry limit (c51) is declared on the trigger, defaulting to 3 appearances of the same declaration in one lineage, with 0 meaning the declaration may not re-appear in its own lineage. Backstops: a hop limit on total lineage depth, no self-retrigger unless the declaration opts in, and a per-declaration rate ceiling. Hitting any limit stops the chain and raises a visible record for a human, never a silent drop. Generalizes jira_comment_is_self_echo, maxTransitions/maxVisitsPerNode, the repair bound (internal/repair) and subject deferral (deferred_triggers).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c33",
+      "seam": "activation API + activation declarations",
+      "behavior": "Refuses an activation declaration activating itself or another by the same author; the first activation declaration requires a human principal.",
+      "source_text": "Activation policy is itself a set of declarations (q13), and those activation declarations are the root of trust: an activation declaration cannot activate itself or another activation declaration it authored, and the first ones are activated by a human. Without this, an agent could declare 'activate everything I propose', self-activate it, and hold standing authority to post, comment, dispatch or run code with no human ever having granted it (PRD \u00a710.4: no actor promotes its own proposal).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c18",
+      "seam": "ledger firing record",
+      "behavior": "Each firing records the declaration id and the version digests of the trigger, condition and action it evaluated; old versions stay fetchable.",
+      "source_text": "Every declaration version is immutable and content-addressed (internal/contracts/canonical.go). The pin moves from the run to the firing: each firing records the exact version it evaluated (trigger, condition, action), so a live upgrade never rewrites history and 'which version did this?' is always answerable. A new version applies from the next firing, including in chains already in flight (q16). This deviates from PRD \u00a79.1/\u00a79.10 'runs pin an immutable digest' and is recorded in the ADR (c21).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c76",
+      "seam": "template renderer",
+      "behavior": "Implements the grammar: first segment is the step (0 = this run, N back, or a declaration name), value else default else verbatim placeholder, {N:x:} empty, {{ escapes a brace.",
+      "source_text": "Template grammar: the first segment is always the step, 0 = this run: {owner}, {0:owner:x}, {1:owner}, {jira-intake:owner:}. A literal brace is escaped as {{.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c30",
+      "seam": "CLI <-> API",
+      "behavior": "Every declaration operation has one API route and one CLI verb with --json; the CLI holds no declaration logic.",
+      "source_text": "The CLI and API let a user or an agent declare new declarations and build graphs from them, so agents and humans have clear control over what exists.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c12",
+      "seam": "POST /v1alpha1/webhooks/github",
+      "behavior": "Verifies the GitHub signature, refuses unsigned payloads, and emits github.pr.approved exactly once per approval (redelivery deduplicated); the poller emits the same event name and payload shape.",
+      "source_text": "'GitHub PR approved' becomes a trigger. Today it is not detectable: there is no GitHub webhook receiver, and the pr-upkeep sweep (examples/pr-upkeep/sweep.py, pr_upkeep_emit.py) emits only pr.opened / pr.merged / pr.closed; readiness.py reads unresolved threads, never reviewDecision.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c13",
+      "seam": "Jira webhook + JQL poller",
+      "behavior": "A created issue yields exactly one jira.issue.created across both sources.",
+      "source_text": "'Jira issue created' becomes a named trigger. Today creation surfaces only indirectly, as a synthetic pr-upkeep.jira.transitioned.<initial-status> with from_status '' built from fields.created (internal/api/jirawebhook.go jiraEmissions), and trigger event names carry the pr-upkeep.* prefix of the loop that first needed them.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c53",
+      "seam": "engine toggle",
+      "behavior": "A before/after switch selects the graph engine or the declaration engine per namespace, is reversible, and is recorded when flipped.",
+      "source_text": "All existing workflows are migrated, with a before/after toggle between the old graph engine and the new declaration engine.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c58",
+      "seam": "server-side sandbox runner",
+      "behavior": "Runs code in a separate process with a timeout; a hanging or crashing script never stalls the control plane.",
+      "source_text": "'On the server' means a built-in runner on the control-plane host, in a separate sandboxed process (headspace-style workspace), never inside the control-plane process. This keeps c19: a hung, crashing or hostile script cannot stall or tamper with the service that holds authoritative state. Remote runners are registered and offered like agent actors.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c78",
+      "seam": "overlap detector",
+      "behavior": "Reports every pair of active declarations on the same node with the same trigger and possibly-overlapping conditions, in show/focus, and emits declaration.overlap when configured.",
+      "source_text": "When two declarations share similar conditions (overlapping trigger and condition), the user can see it, or be notified of it.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c75",
+      "seam": "signal ingest dedup",
+      "behavior": "A redelivered event id fires nothing twice; a re-minted firing keeps its lineage and counts once toward re-entry.",
+      "source_text": "Lineage survives at-least-once delivery: a redelivered event with the same event id is deduplicated (signal_event_watermarks) and never fires a declaration twice; a re-minted trigger (trigger_remints) keeps the original lineage, so must-appear-after and re-entry counts see one chain, not two.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o16",
+      "claim_id": "c49",
+      "seam": "node lifecycle",
+      "behavior": "A waiting node whose reacting declaration no longer matches closes with an 'orphaned by upgrade' record naming both versions.",
+      "source_text": "An in-flight node (an action called, its reaction not yet captured) keeps the version that called the action; the reaction is evaluated by whatever versions are current when it arrives. If the upgrade removed the declaration or changed its trigger so the reaction no longer matches, the node closes with a visible 'orphaned by upgrade vN' record, never a silent drop.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o17",
+      "claim_id": "c38",
+      "seam": "alias store",
+      "behavior": "Refuses a move or nest that creates an alias cycle, naming the cycle.",
+      "source_text": "Alias nesting is checked at write time: a move or nest that would make an alias contain itself, directly or through other aliases, is refused with the cycle named.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o18",
+      "claim_id": "c63",
+      "seam": "focus API",
+      "behavior": "Returns exactly the declarations within N hops in both directions across must and can links, filterable by direction and link type; nodes are not hops.",
+      "source_text": "Q11 proposal: distance counts hops in both directions (what leads here and what follows), across both must and can links, with filters for direction and link type. Distance is measured over declarations; nodes are drawn but do not count as hops.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o19",
+      "claim_id": "c33",
+      "seam": "activation API + activation declarations",
+      "behavior": "Only a human principal activates an activation declaration; an activation declaration's action may target only ordinary declarations, refused at publish otherwise.",
+      "source_text": "Activation declarations are the root of trust, and the chain is one level deep: only a human principal can activate an activation declaration, and an activation declaration may only activate ordinary declarations, never another activation declaration. Without this, an agent could propose 'activate everything' and have it activated by a broader human-activated rule, or two agents could activate each other's rules, holding standing authority to post, comment, dispatch or run code that no human granted (PRD \u00a710.4). The owner accepts this as the current rule and may relax it later.",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
+}

@@ -96,6 +96,8 @@ type fakeBridge struct {
 	// verbatimOutput models a Claude final JSON answer: its output is passed
 	// through without the fake artifact and bridge fields.
 	verbatimOutput bool
+	// finalAnswer is the text Claude returned before bridge mapping.
+	finalAnswer string
 	// jiraVerbs makes an unset outcome follow the real jira bridge
 	// (adapters/jira): the domain outcome is chosen by the input's verb.
 	jiraVerbs bool
@@ -120,10 +122,10 @@ func (b *fakeBridge) reply(outcome string, output map[string]any) {
 	b.outcome, b.output = outcome, output
 }
 
-func (b *fakeBridge) replyClaudeFinal(outcome string, output map[string]any) {
-	b.reply(outcome, output)
+func (b *fakeBridge) replyClaudeFinal(answer string) {
 	b.mu.Lock()
 	b.verbatimOutput = true
+	b.finalAnswer = answer
 	b.mu.Unlock()
 }
 
@@ -155,10 +157,32 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 		output["bridge"] = b.key
 	}
 	verbatimOutput := b.verbatimOutput
+	finalAnswer := b.finalAnswer
 	for k, v := range b.output {
 		output[k] = v
 	}
 	b.mu.Unlock()
+	if finalAnswer != "" {
+		// Model the Claude mapping boundary: the HTTP result is derived from
+		// its final text, including prose before the terminal JSON object.
+		start := strings.LastIndex(finalAnswer, "\n\n{")
+		if start < 0 {
+			http.Error(w, "Claude final answer has no trailing object", http.StatusInternalServerError)
+			return
+		}
+		var declared struct {
+			Outcome string         `json:"outcome"`
+			Output  map[string]any `json:"output"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(finalAnswer[start+2:])), &declared); err != nil || declared.Outcome == "" || declared.Output == nil {
+			http.Error(w, "Claude final answer is invalid", http.StatusInternalServerError)
+			return
+		}
+		outcome, output = declared.Outcome, declared.Output
+		if _, exists := output["summary"]; !exists {
+			output["summary"] = strings.TrimSpace(finalAnswer[:start])
+		}
+	}
 	if outcome == "" && b.jiraVerbs {
 		outcome = jiraBridgeOutcome(input)
 	}

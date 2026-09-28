@@ -57,6 +57,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .final_answer import declared_final_answer
+
 #: The session-classification vocabulary `pi_cli.parse_session` produces
 #: (mirrors colleague contract v1's `TaskResult.status` values).
 STATUS_OK = "ok"
@@ -325,33 +327,9 @@ def _attach_provider_telemetry(
 
 
 def declared_result_override(task_result):
-    """§13.2 lets the RESULT name the outcome; the session declares it by
-    making its final message exactly {"outcome": "<name>", "output": {...}}.
-    The bridge passes both through verbatim and the ENGINE's contract
-    validation stays the enforcer (an undeclared outcome or a schema
-    mismatch is contract_rejected there, never guessed here). Any other
-    final-message shape keeps today's envelope. Identical helper in all
-    three bridges (all-backends rule; deviation d4 of the
-    attempts-evidence-humans-loops build — two-outcome nodes were
-    undrivable because bridges hardcoded the outcome).
-    """
-    import json as _json
-
+    """Read a declared outcome from the provider final-answer field."""
     tr = task_result or {}
-    text = (tr.get("summary") or "").strip()
-    if not (text.startswith("{") and text.endswith("}")):
-        return None
-    try:
-        parsed = _json.loads(text)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    outcome = parsed.get("outcome")
-    output = parsed.get("output")
-    if isinstance(outcome, str) and outcome and isinstance(output, dict):
-        return outcome, output
-    return None
+    return declared_final_answer(tr.get("summary"))
 
 
 def output_from_task_result(task_result: dict[str, Any] | None) -> dict[str, Any]:

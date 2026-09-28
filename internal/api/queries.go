@@ -307,6 +307,9 @@ func (s *Server) listRuns(ctx context.Context, p listRunsParams) ([]RunOut, stri
 		}
 		next = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: at, ID: last.ID})
 	}
+	if err := s.enrichRuns(ctx, out); err != nil {
+		return nil, "", err
+	}
 	return out, next, nil
 }
 
@@ -740,6 +743,19 @@ func (s *Server) listNodeRunsAcrossRuns(ctx context.Context, updatedSince, updat
 	for i, r := range scanned {
 		out[i] = r.out(actorByNodeRun[r.ID], usageByNodeRun[r.ID])
 	}
+	runIDs := make([]string, len(out))
+	for i := range out {
+		runIDs[i] = out[i].RunID
+	}
+	firings, err := s.firingsForRuns(ctx, runIDs)
+	if err != nil {
+		return nil, "", err
+	}
+	for i := range out {
+		if f, ok := firings[out[i].RunID]; ok {
+			out[i].Firing = &f
+		}
+	}
 	return out, nextCursor, nil
 }
 
@@ -825,6 +841,9 @@ func (s *Server) listHumanTasks(ctx context.Context, status string, cursor *node
 		last := tasks[len(tasks)-1]
 		next = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: last.CreatedAt, ID: last.ID})
 	}
+	if err := s.enrichHumanTasks(ctx, tasks); err != nil {
+		return nil, "", err
+	}
 	return tasks, next, nil
 }
 
@@ -887,7 +906,14 @@ func (s *Server) listHumanTasksForRuns(ctx context.Context, runIDs []string) ([]
 		return nil, fmt.Errorf("api: list human tasks for runs: %w", err)
 	}
 	defer rows.Close()
-	return scanHumanTasks(rows)
+	tasks, err := scanHumanTasks(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enrichHumanTasks(ctx, tasks); err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }
 
 // isNoRowsErr reports whether err is pgx's "no rows in result set"

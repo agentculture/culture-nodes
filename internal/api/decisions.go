@@ -50,7 +50,8 @@ type PendingDecisionRecordOut struct {
 // re-derive it, and a caller that guessed wrong would be refused by the
 // staleness guard rather than told what to send.
 type PendingDecisionRunOut struct {
-	RunID string `json:"run_id"`
+	Firing *FiringOut `json:"firing,omitempty"`
+	RunID  string     `json:"run_id"`
 	// LedgerVersion is the run's current version, read in the same request.
 	// It is what POST /v1alpha1/runs/{id}/reviews wants as `ledger_version`.
 	LedgerVersion int64                      `json:"ledger_version"`
@@ -237,6 +238,9 @@ func (s *Server) listPendingDecisions(ctx context.Context, p pendingDecisionPara
 	nextCursor := ""
 	if hasMore {
 		nextCursor = encodeNodeRunCursor(nodeRunCursor{UpdatedAt: last.CreatedAt, ID: last.ID})
+	}
+	if err := s.enrichPendingDecisions(ctx, items); err != nil {
+		return nil, 0, "", err
 	}
 	return items, total, nextCursor, nil
 }

@@ -2257,6 +2257,70 @@
         ],
         "type": "object"
       },
+      "Firing": {
+        "description": "A declaration dispatch, with its immutable version and causal lineage.",
+        "properties": {
+          "action_digest": {
+            "type": "string"
+          },
+          "canonical_firing_id": {
+            "type": "string"
+          },
+          "condition_digest": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "declaration_id": {
+            "type": "string"
+          },
+          "declaration_name": {
+            "type": "string"
+          },
+          "declaration_version": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lineage_id": {
+            "type": "string"
+          },
+          "node_runs": {
+            "description": "Execution attempts for this firing, present in a run detail lineage.",
+            "items": {
+              "$ref": "#/components/schemas/NodeRun"
+            },
+            "type": "array"
+          },
+          "trigger_digest": {
+            "type": "string"
+          },
+          "version_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lineage_id",
+          "canonical_firing_id",
+          "event_id",
+          "declaration_id",
+          "declaration_name",
+          "declaration_version",
+          "version_digest",
+          "trigger_digest",
+          "condition_digest",
+          "action_digest",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "FlipDeclarationEngineSwitchRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2556,6 +2620,9 @@
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "firing": {
+            "$ref": "#/components/schemas/Firing"
           },
           "id": {
             "type": "string"
@@ -3178,6 +3245,9 @@
             "format": "date-time",
             "type": "string"
           },
+          "firing": {
+            "$ref": "#/components/schemas/Firing"
+          },
           "id": {
             "type": "string"
           },
@@ -3324,6 +3394,9 @@
       },
       "PendingDecisionRun": {
         "properties": {
+          "firing": {
+            "$ref": "#/components/schemas/Firing"
+          },
           "ledger_version": {
             "description": "The run's current ledger version, read in this same request — what POST /v1alpha1/runs/{id}/reviews wants as `ledger_version`.",
             "format": "int64",
@@ -3932,6 +4005,9 @@
             "description": "A truncated, best-effort guess at what this run is about, derived AT READ TIME from a request/instruction/task-ish top-level string field of the run's own input — never persisted, and present only when `name` is absent. A client MUST treat this as distinct from `name`: it is a guess, not something an operator actually said, and must never be presented to a user as if it were the given name.",
             "type": "string"
           },
+          "firing": {
+            "$ref": "#/components/schemas/Firing"
+          },
           "id": {
             "type": "string"
           },
@@ -4021,6 +4097,13 @@
       "RunView": {
         "description": "The Run-view payload (PRD §8.6 Run, §8.7 first visual slice): the run itself, every token, and every node run with its attempts nested — one round trip for the whole graph position and history.",
         "properties": {
+          "firings": {
+            "description": "All physical firings in this run's causal lineage, when this is a declaration execution.",
+            "items": {
+              "$ref": "#/components/schemas/Firing"
+            },
+            "type": "array"
+          },
           "node_runs": {
             "items": {
               "$ref": "#/components/schemas/NodeRun"

@@ -19,6 +19,32 @@ import (
 // human needed a name.
 const testDigest = "sha256:8d4c768f0bde3b02eea9d404046ff646b607a875d9063d13630787267f7d01ab"
 
+func TestFetchDeclarationFiringDetailUsesPinnedNameAndActor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run":{"id":"firing-1","firing":{"declaration_name":"review-pr","version_digest":"sha256:abcdef123456"}},"firings":[{"id":"firing-1","node_runs":[{"attempts":[{"actor_id":"actor-decl","started_at":"2026-09-28T00:00:00Z"}]}]}]}`))
+	}))
+	defer server.Close()
+	detail, err := fetchRunDetail(context.Background(), server.Client(), server.URL, "firing-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Actor != "actor-decl" || detail.workflowLabel() != "review-pr (abcdef1)" {
+		t.Fatalf("declaration detail = %+v, label=%q", detail, detail.workflowLabel())
+	}
+}
+
+func TestDeclarationFiringDetailWithoutHTTP(t *testing.T) {
+	var out runDetailResponse
+	if err := json.Unmarshal([]byte(`{"run":{"id":"firing-1","firing":{"declaration_name":"review-pr","version_digest":"sha256:abcdef123456"}},"firings":[{"node_runs":[{"attempts":[{"actor_id":"actor-decl","started_at":"2026-09-28T00:00:00Z"}]}]}]}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	detail := detailFromRunResponse(out)
+	if detail.Actor != "actor-decl" || detail.workflowLabel() != "review-pr (abcdef1)" {
+		t.Fatalf("detail = %+v", detail)
+	}
+}
+
 func TestFetchRunDetailParsesTheNestedRunKeyAndPicksTheLatestActor(t *testing.T) {
 	older := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 	newer := time.Now().UTC().Format(time.RFC3339)

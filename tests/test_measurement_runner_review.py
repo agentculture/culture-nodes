@@ -350,9 +350,10 @@ def test_api_client_names_itself_in_user_agent() -> None:
     assert headers["Cookie"] == "CF_Authorization=c"
 
 
-def test_get_defeats_the_edge_cache(monkeypatch) -> None:
-    """nodes.culture.dev cached a run view for 366 s; GETs must be unique."""
-    seen: list[tuple[str, dict[str, str]]] = []
+def test_get_sends_the_plain_url(monkeypatch) -> None:
+    """#305 is fixed at the edge (a zone cache rule bypasses /v1alpha1/*), so
+    the runner no longer busts the cache: a GET goes to exactly its path."""
+    seen: list[str] = []
 
     class _Resp:
         def __enter__(self):
@@ -365,17 +366,12 @@ def test_get_defeats_the_edge_cache(monkeypatch) -> None:
             return b'{"ok": true}'
 
     def fake_urlopen(req, timeout=0):
-        seen.append((req.full_url, dict(req.header_items())))
+        seen.append(req.full_url)
         return _Resp()
 
     monkeypatch.setattr(runner.fleet.urllib.request, "urlopen", fake_urlopen)
-    client = runner.ApiClient("http://example.invalid")
-    client.get("/v1alpha1/runs/x")
-    client.get("/v1alpha1/runs/x")
-    urls = [u for u, _ in seen]
-    assert all("_nocache=" in u for u in urls)
-    assert urls[0] != urls[1]
-    assert seen[0][1].get("Cache-control") == "no-cache"
+    runner.ApiClient("http://example.invalid").get("/v1alpha1/runs/x")
+    assert seen == ["http://example.invalid/v1alpha1/runs/x"]
 
 
 def test_a_grade_overridden_to_the_human_principal_aborts() -> None:

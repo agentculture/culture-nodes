@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T17:52:33Z",
+  "updated": "2026-09-28T18:48:49Z",
   "deviations": [
     {
       "id": "d1",
@@ -241,6 +241,28 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 19
+    },
+    {
+      "id": "d20",
+      "what": "Destination audiences: each posting destination (actor/channel) records its own audience, mirroring repository visibility; an unrecorded destination counts as public; the widening check compares a source's audience with the destination's actual audience; company/notify-discord is recorded org-private (t49)",
+      "task_ref": "t30",
+      "reason": "Owner 2026-09-28: every discord.post was ranked public regardless of server; 'This specific discord is private. Another discord may be public. Or it may be another TCA declaration for Substack or reddit. Then it's a risk to review.' Owner confirmed this Discord is private to the org.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 20
+    },
+    {
+      "id": "d21",
+      "what": "Notifications lead with a title and links: the notify bridge moves the cn1 marker to the embed footer; the sweep's facts carry flat PR title, first finding title and finding count (and the Jira summary); all notify templates go title-first/link-first (PR, ticket, run, inbox) (t48)",
+      "task_ref": "t33",
+      "reason": "Owner feedback on the first live Discord post: no link, no subject, marker at the top. Owner confirmed t48.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 21
     }
   ],
   "evidence": [],

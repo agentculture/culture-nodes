@@ -210,3 +210,4 @@ issue,bucket,disposition,evidence_pointer
 327,large bets,goals and constraints as first-class state; parked as a follow-up of the #328 design (a goal could attach to an alias),docs/specs/2026-09-27-trigger-condition-action.md
 330,operator-lane enablers,verify the configured jira_bot_account_id on the next bridge comment,#328 t32
 331,large bets,"Owner-led redesign of agent/bridge set-up (login per engine account, registration drift, capability re-registration, config file ownership); details from the owner in a dedicated session",#254 #328 live-test hand-turns
+332,bug tail,"Inbox cards show context_refs paths and audit ids instead of resolved content and links (PR, ticket, file, run); owner could not decide","owner 2026-09-28, task 01M278CXQZM6M6F0J7H1WHT0FV"

@@ -75,3 +75,4 @@ issue,type,evidence_pointer
 327,Feature,docs/specs/2026-09-27-trigger-condition-action.md
 330,Task,#328 t32
 331,Feature,#254 #328 live-test hand-turns
+332,Bug,"owner 2026-09-28, task 01M278CXQZM6M6F0J7H1WHT0FV"

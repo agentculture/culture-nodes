@@ -382,6 +382,18 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		outcome = primary
 	}
 	if nodeKind == "agent" {
+		// The domain outcomes are the node's whole answer vocabulary, and the
+		// bridges report `completed` unless the final answer ends with a
+		// declared outcome (final_answer.py) or input.success_outcome names
+		// one. Before this the migrated instructions never said so, and every
+		// successful stamp-pr / analyse was contract_rejected (#328, found
+		// live 2026-09-28 on PR #329).
+		domain := append([]string{outcome}, extraAgent...)
+		instruction, _ := with.Input["instruction"].(string)
+		with.Input["instruction"] = instruction + finalAnswerInstruction(domain, outcomes)
+		if _, set := with.Input["success_outcome"]; !set && len(domain) == 1 {
+			with.Input["success_outcome"] = domain[0]
+		}
 		// This is part of every agent contract, including declarations with no
 		// authored outcomes. Keep the prompt at the engine seam so every
 		// backend receives the same choice through input.instruction.
@@ -390,7 +402,7 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 			"properties": map[string]any{"reason": map[string]any{"type": "string", "minLength": 1}},
 		}}
 		extraAgent = append(extraAgent, "blocked")
-		instruction, _ := with.Input["instruction"].(string)
+		instruction, _ = with.Input["instruction"].(string)
 		with.Input["instruction"] = instruction + "\n\nIf you cannot complete this task for a reason outside your control (missing credentials, missing access, or contradictory instructions), answer with outcome blocked. In that case, override any earlier final-answer format instruction: your final answer must be exactly a JSON object {\"outcome\":\"blocked\",\"output\":{\"reason\":\"...\"}}. Report exactly what blocked you in output.reason; include your summary and evidence as additional output fields when useful.\n"
 		input, err = json.Marshal(with.Input)
 		if err != nil {
@@ -474,6 +486,41 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 		return nil, nil, fmt.Errorf("declaration worker envelope: %v", diagnostics)
 	}
 	return cw, input, nil
+}
+
+// finalAnswerInstruction tells an agent which domain outcomes it may report
+// and the JSON object its final answer must end with. Each outcome names the
+// output fields its schema requires, so the answer passes the node contract.
+func finalAnswerInstruction(domain []string, outcomes map[string]any) string {
+	var b strings.Builder
+	b.WriteString("\n\nWhen you finish, end your final answer with a JSON object {\"outcome\":\"<outcome>\",\"output\":{...}}. The outcome must be one of:\n")
+	for _, name := range domain {
+		b.WriteString("- " + name)
+		if required := requiredFields(outcomes[name]); len(required) > 0 {
+			b.WriteString(" (output requires: " + strings.Join(required, ", ") + ")")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Choose the outcome that describes what you actually did. A final answer that does not end with that object is rejected.\n")
+	return b.String()
+}
+
+// requiredFields reads an outcome spec's schema.required, whatever shape the
+// spec arrived in (authored JSON or the engine's own map).
+func requiredFields(spec any) []string {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil
+	}
+	var parsed struct {
+		Schema struct {
+			Required []string `json:"required"`
+		} `json:"schema"`
+	}
+	if json.Unmarshal(raw, &parsed) != nil {
+		return nil
+	}
+	return parsed.Schema.Required
 }
 
 // approvalRunLimit is a human.ask run's wall-clock bound. A person answers

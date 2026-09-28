@@ -134,8 +134,9 @@ These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
 
 ## Exposure lists and publish warnings (t30, t30b)
 
-After linking, a validate reports 34 sensitivity warnings, one for each
-reference below. These routes render variables of `pr-upkeep-route`
+After linking, a validate reports 65 sensitivity warnings, one for each
+reference below (34 for the original routes, 31 more for the t47 `retry-*`
+routes, which re-render the original step's inputs to the same agent). These routes render variables of `pr-upkeep-route`
 or `pr-upkeep-analyse` into a wider audience. The blocked human routes
 introduce no additional sensitivity warnings.
 
@@ -154,6 +155,8 @@ approved yet: every entry needs its owner's approval before cutover
 |---|---|---|
 | `pr-upkeep-analyse`, `pr-upkeep-analyse-orphan`, `pr-upkeep-stamp-pr`, `pr-upkeep-fix-orphan` | agent (team) | `pr-upkeep-route:` `findings`, `head_sha`, `number`, `repository`, `source`, `work_item` |
 | `pr-upkeep-fix` | agent (team) | the same six route entries, plus `pr-upkeep-analyse:packages` |
+| `pr-upkeep-retry-analyse`, `pr-upkeep-retry-analyse-orphan`, `pr-upkeep-retry-stamp-pr`, `pr-upkeep-retry-fix-orphan` (t47) | agent (team) | the same six route entries as the step they retry |
+| `pr-upkeep-retry-fix` (t47) | agent (team) | the same six route entries, plus `pr-upkeep-analyse:packages` |
 | `pr-upkeep-intake-orphan`, `pr-upkeep-stage-dispatch`, `pr-upkeep-stage-pr-open` | jira (team) | `pr-upkeep-route:work_item` |
 
 `internal/api/declaration_examples_test.go`

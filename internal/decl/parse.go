@@ -97,7 +97,8 @@ func Parse(source []byte, format Format) (*Declaration, error) {
 			return nil, fmt.Errorf("declaration agent contract: blocked is a reserved conventional outcome")
 		}
 	}
-	if d.Action.Kind == "human.ask" {
+	// An absent `with` declares no outcomes (legacy approved/rejected).
+	if d.Action.Kind == "human.ask" && len(bytes.TrimSpace(d.Action.With)) > 0 {
 		var with map[string]json.RawMessage
 		if err := json.Unmarshal(d.Action.With, &with); err != nil {
 			return nil, fmt.Errorf("human.ask with: %w", err)

@@ -89,7 +89,7 @@ class InventoryTest(unittest.TestCase):
                     with self.subTest(declaration=source["name"], entry=entry):
                         row = f"| `{source['name']}` (`{directory}/{file}`) | `{entry}` |"
                         self.assertIn(row, doc)
-        self.assertEqual(entries, 34)
+        self.assertEqual(entries, 65)
         self.assertIn("listed; needs the owner's approval", doc)
 
     def test_before_state_is_printed(self):

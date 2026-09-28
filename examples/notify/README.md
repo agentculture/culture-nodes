@@ -64,6 +64,5 @@ The routine five-minute sweep has no notification. Its failed result does.
 | `notify-sweep-failed` | `code.result` | `pr-upkeep-sweep-done` | `event.outcome == "failed"` | `PR upkeep sweep failed \| Outcome {outcome}` |
 | `notify-merge-deadline` | `node.expired` | `pr-upkeep-human-merges-pr-done` | `true` | `PR merge deadline passed \| Node {node_name}` |
 
-
 The four `human-decided-*-blocked-*` cases use condition `true`, so retry,
 abandon, and acknowledged decisions all emit their outcome notification.

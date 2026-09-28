@@ -514,7 +514,11 @@ export interface HumanTask {
   node_run_id?: string;
   kind: string;
   assigned_owner_id?: string;
-  status: "pending" | "decided";
+  /**
+   * `expired`: the engine recorded that nobody needs to decide (a merged PR,
+   * task t11) — terminal, like `decided`, but not a human decision.
+   */
+  status: "pending" | "decided" | "expired";
   request: HumanTaskRequestPayload;
   /** The decision payload, present once decided. */
   response?: unknown;

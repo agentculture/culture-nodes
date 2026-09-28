@@ -406,7 +406,7 @@ export const commitReview = (
 /** GET /v1alpha1/human-tasks query parameters (task t14). */
 export interface ListHumanTasksParams {
   /** Filter to one status; omitted returns every task, newest first. */
-  status?: "pending" | "decided";
+  status?: "pending" | "decided" | "expired";
   limit?: number;
   /** An opaque `next_cursor` from a previous page. */
   cursor?: string;

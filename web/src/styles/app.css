@@ -2404,6 +2404,18 @@ button.timeline__node {
   margin-top: 1.5rem;
 }
 
+/* The Open / Waiting / Decided filter (task t44): a count per tab, in the
+   same mono meta face as the runs board's column counts. */
+.inbox-tab__count {
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
+.inbox-card__overdue {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
 /* The accountable identity line (task t9) sits where the token panel and
    the free-text decider field used to: who a write will be recorded as, or
    why it cannot be — never an input. */

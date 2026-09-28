@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -142,6 +143,7 @@ def world(tmp_path, fake_api):
         },
         "run": run_view(THOR_ACTOR),
         "posts": [],
+        "verdict_run_ids": [],
         "auth": [],
         "routing": {
             "id": "ledger_routing_1",
@@ -190,6 +192,7 @@ def world(tmp_path, fake_api):
     def post_verdict(h, m, q, b):
         payload = json.loads(b)
         state["posts"].append(payload)
+        state["verdict_run_ids"].append(m.group(1))
         state["auth"].append(h.headers.get("Authorization"))
         # The 201 body is SuiteVerdictResult (task t32): the verdict, plus
         # where a REJECTING gate was routed. `state["routing"]` lets a test
@@ -254,6 +257,119 @@ def test_a_run_id_alone_produces_a_reviewable_diff(world):
 
     # The commit is now inspectable in the operator's own repository.
     assert git(world["operator"], "cat-file", "-t", sha) == "commit"
+
+
+def test_declaration_lineage_reads_actors_from_firings(world):
+    world["state"]["run"] = {
+        "run": {"id": RUN_ID, "lineage_id": RUN_ID},
+        "firings": [{"id": RUN_ID, "node_runs": [{"attempts": [{"actor_id": THOR_ACTOR}]}]}],
+        "node_runs": [],
+    }
+    proc = collect(world, RUN_ID)
+    assert proc.returncode == 0, proc.stderr
+    assert world["thor"][1] in proc.stdout
+
+
+def test_declaration_actor_read_prefers_firing_attempts():
+    module = runpy.run_path(str(SCRIPT))
+    actor_ids_for_run = module["actor_ids_for_run"]
+    view = {
+        "node_runs": [{"attempts": [{"actor_id": "graph-actor"}]}],
+        "firings": [
+            {"id": "firing-1", "node_runs": [{"attempts": [{"actor_id": "first"}]}]},
+            {"id": "firing-2", "node_runs": [{"attempts": [{"actor_id": "second"}]}]},
+        ],
+    }
+    assert actor_ids_for_run(view) == ["first", "second"]
+
+
+def test_child_firing_actor_pair_uses_child_id():
+    pairs = runpy.run_path(str(SCRIPT))["firing_actor_pairs"]
+    view = {
+        "run": {"id": RUN_ID},
+        "firings": [{"id": "child-1", "node_runs": [{"attempts": [{"actor_id": THOR_ACTOR}]}]}],
+    }
+    assert pairs(view) == [("child-1", THOR_ACTOR)]
+
+
+def test_collect_fetches_child_firing_ref_without_http(monkeypatch, tmp_path):
+    collect_fn = runpy.run_path(str(SCRIPT))["collect"]
+    child_id = "01M04CJT84WD20GDQEN266J9J7"
+    requested = []
+
+    def fake_request(url):
+        if url.endswith("/runs/" + RUN_ID):
+            return {
+                "run": {"id": RUN_ID},
+                "firings": [
+                    {"id": child_id, "node_runs": [{"attempts": [{"actor_id": THOR_ACTOR}]}]}
+                ],
+            }
+        return actor(THOR_ACTOR, "company/codex-thor", "thor-host")
+
+    def fake_fetch(repo, firing_id, remote):
+        requested.append(firing_id)
+        return [{"ref": handover_ref(firing_id)}]
+
+    monkeypatch.setitem(collect_fn.__globals__, "request", fake_request)
+    monkeypatch.setitem(collect_fn.__globals__, "resolve_remote", lambda actor: "configured")
+    monkeypatch.setitem(collect_fn.__globals__, "fetch_handovers", fake_fetch)
+    result = collect_fn(RUN_ID, tmp_path, "http://api")
+    assert requested == [child_id]
+    assert result["handovers"][0]["firing_id"] == child_id
+
+
+def test_child_handover_verdict_is_recorded_on_child_run(monkeypatch):
+    record = runpy.run_path(str(SCRIPT))["record_verdict"]
+    paths = []
+
+    def fake_request(url, payload, token):
+        paths.append(url)
+        return {"verdict": {"id": "record-1"}}
+
+    monkeypatch.setitem(record.__globals__, "request", fake_request)
+    monkeypatch.setitem(record.__globals__, "merge_gate_token", lambda: "test-token")
+    child_id = "01M04CJT84WD20GDQEN266J9J7"
+    record(
+        "http://api",
+        {"run_id": RUN_ID},
+        {"firing_id": child_id, "ref": handover_ref(child_id)},
+        "true",
+        ["true"],
+        0,
+        "abc123",
+        None,
+    )
+    assert paths == [f"http://api/v1alpha1/runs/{child_id}/suite-verdicts"]
+
+
+def test_lineage_fetches_child_firing_handover_namespace(world):
+    child_id = "01M04CJT84WD20GDQEN266J9J7"
+    child_ref = handover_ref(child_id)
+    git(world["thor"][0], "update-ref", child_ref, world["thor"][1])
+    world["state"]["run"] = {
+        "run": {"id": RUN_ID},
+        "firings": [
+            {"id": RUN_ID, "node_runs": []},
+            {"id": child_id, "node_runs": [{"attempts": [{"actor_id": THOR_ACTOR}]}]},
+        ],
+    }
+    proc = collect(world, RUN_ID)
+    assert proc.returncode == 0, proc.stderr
+    assert child_ref in proc.stdout
+
+    gated = collect(
+        world,
+        RUN_ID,
+        "--gate",
+        "--suite",
+        "true",
+        "--",
+        "true",
+        env_extra={"NODES_ACTOR_MERGE_GATE_TOKEN": "test-token"},
+    )
+    assert gated.returncode == 0, gated.stderr
+    assert world["state"]["verdict_run_ids"] == [child_id]
 
 
 def test_no_branch_in_the_operator_repo_is_touched(world):

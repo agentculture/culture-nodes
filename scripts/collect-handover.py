@@ -254,13 +254,26 @@ def actor_ids_for_run(run_view: dict) -> list[str]:
     dispatched to — never from the run's input or its output, which are the
     request and the report rather than the fact.
     """
-    seen: list[str] = []
-    for node_run in run_view.get("node_runs", []) or []:
-        for attempt in node_run.get("attempts", []) or []:
-            actor_id = attempt.get("actor_id")
-            if actor_id and actor_id not in seen:
-                seen.append(actor_id)
-    return seen
+    return list(dict.fromkeys(actor_id for _, actor_id in firing_actor_pairs(run_view)))
+
+
+def firing_actor_pairs(run_view: dict) -> list[tuple[str, str]]:
+    """Pair each actor with the firing namespace its bridge minted refs in."""
+    run_id = run_view.get("run", {}).get("id", "")
+    firings = run_view.get("firings") or []
+    executions = (
+        ((firing.get("id", ""), firing.get("node_runs", [])) for firing in firings)
+        if firings
+        else [(run_id, run_view.get("node_runs", []))]
+    )
+    pairs: list[tuple[str, str]] = []
+    for firing_id, node_runs in executions:
+        for node_run in node_runs or []:
+            for attempt in node_run.get("attempts", []) or []:
+                actor_id = attempt.get("actor_id")
+                if firing_id and actor_id and (firing_id, actor_id) not in pairs:
+                    pairs.append((firing_id, actor_id))
+    return pairs
 
 
 def resolve_remote(actor: dict) -> str:
@@ -468,8 +481,8 @@ def changed_paths(repo: Path, sha: str) -> list[str]:
 
 def collect(run_id: str, repo: Path, base: str) -> dict:
     run_view = request(f"{base}/v1alpha1/runs/{run_id}")
-    actor_ids = actor_ids_for_run(run_view)
-    if not actor_ids:
+    pairs = firing_actor_pairs(run_view)
+    if not pairs:
         raise Refusal(
             f"run {run_id} has no attempt with an actor, so there is nowhere to fetch a handover from",
             "check the run: a run that was never dispatched has nothing to hand over "
@@ -479,15 +492,25 @@ def collect(run_id: str, repo: Path, base: str) -> dict:
 
     handovers: list[dict] = []
     remotes: list[dict] = []
-    for actor_id in actor_ids:
-        actor = request(f"{base}/v1alpha1/actors/{actor_id}")
+    actors: dict[str, dict] = {}
+    for firing_id, actor_id in pairs:
+        validate_run_id(firing_id)
+        if actor_id not in actors:
+            actors[actor_id] = request(f"{base}/v1alpha1/actors/{actor_id}")
+        actor = actors[actor_id]
         remote = resolve_remote(actor)
         remotes.append(
-            {"actor_id": actor_id, "actor_key": actor.get("actor_key"), "remote": remote}
+            {
+                "actor_id": actor_id,
+                "actor_key": actor.get("actor_key"),
+                "remote": remote,
+                "firing_id": firing_id,
+            }
         )
-        for entry in fetch_handovers(repo, run_id, remote):
+        for entry in fetch_handovers(repo, firing_id, remote):
             entry["actor_id"] = actor_id
             entry["actor_key"] = actor.get("actor_key")
+            entry["firing_id"] = firing_id
             handovers.append(entry)
 
     return {
@@ -511,8 +534,9 @@ POSSIBILITIES = [
 
 def no_ref_refusal(result: dict) -> Refusal:
     remotes = ", ".join(entry["remote"] for entry in result["remotes"]) or "(no remote resolved)"
+    namespaces = ", ".join(f"{REF_NAMESPACE}/{entry['firing_id']}/" for entry in result["remotes"])
     return Refusal(
-        f"run {result['run_id']} has no ref under {REF_NAMESPACE}/{result['run_id']}/ on {remotes}",
+        f"run {result['run_id']} has no ref under {namespaces} on {remotes}",
         "this state is AMBIGUOUS and must not be guessed at. Either: (1) "
         + POSSIBILITIES[0]
         + "; or (2) "
@@ -636,7 +660,7 @@ def record_verdict(
     if validator:
         payload["validator_actor_id"] = validator
     return request(
-        f"{base}/v1alpha1/runs/{result['run_id']}/suite-verdicts",
+        f"{base}/v1alpha1/runs/{handover['firing_id']}/suite-verdicts",
         payload,
         token=merge_gate_token(),
     )

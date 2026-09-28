@@ -93,11 +93,18 @@ func (d runDetail) payload(event, dashboardBase string) notify.Payload {
 type runDetailResponse struct {
 	Run      runOutSlice       `json:"run"`
 	NodeRuns []nodeRunOutSlice `json:"node_runs"`
+	Firings  []struct {
+		NodeRuns []nodeRunOutSlice `json:"node_runs"`
+	} `json:"firings"`
 }
 
 type runOutSlice struct {
 	ID             string `json:"id"`
 	WorkflowDigest string `json:"workflow_digest"`
+	Firing         *struct {
+		DeclarationName string `json:"declaration_name"`
+		VersionDigest   string `json:"version_digest"`
+	} `json:"firing"`
 }
 
 type nodeRunOutSlice struct {
@@ -142,11 +149,27 @@ func fetchRunDetail(ctx context.Context, client *http.Client, apiBase, runID str
 		return runDetail{}, fmt.Errorf("notifier: decode run detail from %s: %w", url, err)
 	}
 
-	return runDetail{
+	return detailFromRunResponse(out), nil
+}
+
+func detailFromRunResponse(out runDetailResponse) runDetail {
+	detail := runDetail{
 		RunID:          out.Run.ID,
 		WorkflowDigest: out.Run.WorkflowDigest,
 		Actor:          deriveActor(out.NodeRuns),
-	}, nil
+	}
+	if out.Run.Firing != nil {
+		detail.WorkflowKey = out.Run.Firing.DeclarationName
+		detail.WorkflowDigest = out.Run.Firing.VersionDigest
+		var nodes []nodeRunOutSlice
+		for _, firing := range out.Firings {
+			nodes = append(nodes, firing.NodeRuns...)
+		}
+		if actor := deriveActor(nodes); actor != "" {
+			detail.Actor = actor
+		}
+	}
+	return detail
 }
 
 // workflowVersionSlice mirrors only the two fields of

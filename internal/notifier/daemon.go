@@ -288,10 +288,12 @@ func (d *Daemon) handleFrame(ctx context.Context, f Frame) error {
 	// reason as above, one degree softer: a name is legibility, not
 	// correctness, so a failed lookup just leaves the notification showing
 	// the digest it would have shown before this lookup existed.
-	if key, keyErr := d.workflowKeys.lookup(ctx, d.detail, d.cfg.APIBase, detail.WorkflowDigest); keyErr != nil {
-		d.diagnosef("nodes-notifier: workflow-name lookup failed for event %s (digest %s): %v", f.ID, detail.WorkflowDigest, keyErr)
-	} else {
-		detail.WorkflowKey = key
+	if detail.WorkflowKey == "" {
+		if key, keyErr := d.workflowKeys.lookup(ctx, d.detail, d.cfg.APIBase, detail.WorkflowDigest); keyErr != nil {
+			d.diagnosef("nodes-notifier: workflow-name lookup failed for event %s (digest %s): %v", f.ID, detail.WorkflowDigest, keyErr)
+		} else {
+			detail.WorkflowKey = key
+		}
 	}
 
 	notify.Notify(ctx, detail.payload(f.Type, d.cfg.DashboardBase), d.journal)

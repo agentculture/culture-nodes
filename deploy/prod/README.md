@@ -1653,6 +1653,21 @@ migration (0051's `channel` CHECK) plus a branch in
 
 ## Declaration engine (issue #328, task t38)
 
+### Destination audience after t49 deploy
+
+As a human namespace administrator, record the private Discord destination:
+
+```sh
+curl -X POST https://nodes.culture.dev/v1alpha1/destination-audiences \
+  -H 'Content-Type: application/json' \
+  -d '{"actor":"company/notify-discord","audience":"org","note":"Private organization Discord server (d20)"}'
+```
+
+Check `GET /v1alpha1/destination-audiences` for the newest row. Do this after
+the 0070 migration is deployed. Until then, and for every unrecorded Discord
+actor, the action target remains `public` and narrower sources need exposure
+approval.
+
 The trigger-condition-action declaration engine (`internal/declengine`) runs
 beside the graph engine until the graph engine retires (t37). It is **off**
 unless a process is started with `NODES_DECLARATION_ENGINE=on`, and a process

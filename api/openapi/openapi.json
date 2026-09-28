@@ -2067,6 +2067,84 @@
         ],
         "type": "object"
       },
+      "DestinationAudience": {
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "audience": {
+            "enum": [
+              "public",
+              "org",
+              "team",
+              "operators"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor",
+          "audience",
+          "set_by",
+          "note",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "DestinationAudienceList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DestinationAudience"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "DestinationAudienceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "description": "Stable actor key such as company/notify-discord.",
+            "type": "string"
+          },
+          "audience": {
+            "enum": [
+              "public",
+              "org",
+              "team",
+              "operators"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "audience"
+        ],
+        "type": "object"
+      },
       "Diagnostic": {
         "properties": {
           "code": {
@@ -7216,6 +7294,67 @@
         ]
       }
     },
+    "/v1alpha1/destination-audiences": {
+      "get": {
+        "description": "An unrecorded actor uses its action kind's audience; outside-facing kinds default to public.",
+        "operationId": "listDestinationAudiences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationAudienceList"
+                }
+              }
+            },
+            "description": "Newest record per actor."
+          }
+        },
+        "summary": "Current recorded audience for each destination actor.",
+        "tags": [
+          "declarations"
+        ]
+      },
+      "post": {
+        "description": "Administrator human only. Actor is the stable key from action.with.uses, without scheme or digest.",
+        "operationId": "setDestinationAudience",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationAudienceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationAudience"
+                }
+              }
+            },
+            "description": "Record appended."
+          },
+          "400": {
+            "description": "Invalid actor key or audience."
+          },
+          "401": {
+            "description": "No human principal."
+          },
+          "403": {
+            "description": "Principal lacks administrator role."
+          }
+        },
+        "summary": "Append a destination audience record.",
+        "tags": [
+          "declarations"
+        ]
+      }
+    },
     "/v1alpha1/dial-in-presence": {
       "get": {
         "description": "Task t6 (issues #136, #121): the read-only answer to the question a stored participant address used to answer. Every bridge dials OUT and the control plane records no address, so \"is this bridge reachable?\" becomes \"is this bridge dialled in right now?\" — and until this operation existed nothing answered it outside dispatch resolution, so an un-dialled bridge was discovered by a failing dispatch.\nNothing is dispatched and nothing is probed. Presence is a fact PostgreSQL already holds: a bridge polling `POST /v1alpha1/inbound/poll` refreshes its own `last_seen_at`, and this operation reads it. The control plane holds no address for a participant, so there is nothing to probe — reintroducing a probe would reintroduce the address.\n`connected` means a poll within `window_seconds`, which is the SAME window dispatch resolution applies when it decides whether an actor is reachable through the durable mailbox. One definition, published in the response, so a reader can see what the claim means and the view can never say connected while dispatch says otherwise.\nThe spine is the actors table, not the presence table: an actor that has never dialled in has no presence row at all and would otherwise be silently missing from exactly the view an operator consults when a bridge is missing. `connected == items.length` is the check the cutover's fallback-disable step makes.",
@@ -8558,7 +8697,7 @@
         ]
       },
       "post": {
-        "description": "Task t30b (#328, owner decision d4). Appends an immutable record; the newest one per repository is its visibility. An operator (Cloudflare Access) or a registered agent actor's own bearer may set it; `set_by` is always the authenticated principal. The repository name is stored lower-case.",
+        "description": "Task t30b (#328, owner decision d4). Appends an immutable record; the newest one per repository is its visibility. A human administrator (Cloudflare Access) may set it; `set_by` is always the authenticated principal. The repository name is stored lower-case.",
         "operationId": "setRepositoryVisibility",
         "requestBody": {
           "content": {

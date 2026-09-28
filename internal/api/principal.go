@@ -271,7 +271,7 @@ func principalPolicy(method, path string) (routePolicy, bool) {
 		p.secret = "store"
 	case strings.HasPrefix(path, "/v1alpha1/inbound/credentials"):
 		p.secret = "inbound"
-	case path == repositoryVisibilityPath:
+	case path == repositoryVisibilityPath || path == destinationAudiencesPath:
 		// Repository visibility (task t30b, #328, d4) ranks a repository's
 		// data as a sensitivity source, so only an operator sets it: an
 		// agent marking a private repository public would skip the owner's
@@ -295,7 +295,7 @@ func declarationDeactivatePath(path string) bool {
 
 func declarationSurfaceWrite(method, path string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions &&
-		(strings.HasPrefix(path, "/v1alpha1/declarations") || path == "/v1alpha1/declaration-engine/switch" || strings.HasPrefix(path, "/v1alpha1/sensitivity-approvals/") || path == repositoryVisibilityPath)
+		(strings.HasPrefix(path, "/v1alpha1/declarations") || path == "/v1alpha1/declaration-engine/switch" || strings.HasPrefix(path, "/v1alpha1/sensitivity-approvals/") || path == repositoryVisibilityPath || path == destinationAudiencesPath)
 }
 
 func hasRole(roles []auth.Role, required auth.Role) bool {

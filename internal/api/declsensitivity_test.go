@@ -227,3 +227,37 @@ func TestAgentCannotSetRepositoryVisibility(t *testing.T) {
 		}
 	}
 }
+
+func TestDestinationAudienceRoutes(t *testing.T) {
+	srv, _, token, humanActorID := newDeclarationHumanFixture(t)
+	var rec struct {
+		Actor    string `json:"actor"`
+		Audience string `json:"audience"`
+		SetBy    string `json:"set_by"`
+	}
+	rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/destination-audiences", token,
+		map[string]string{"actor": "company/notify-discord", "audience": "org", "note": "private server"}, &rec)
+	if rr.Code != http.StatusCreated || rec.Actor != "company/notify-discord" || rec.Audience != "org" || rec.SetBy != humanActorID {
+		t.Fatalf("set: %d %s", rr.Code, rr.Body.String())
+	}
+	for _, bad := range []map[string]string{{"actor": "actor://company/notify-discord", "audience": "org"}, {"actor": "company/notify-discord", "audience": "restricted"}} {
+		if rr := doAccess(t, srv, http.MethodPost, "/v1alpha1/destination-audiences", token, bad, nil); rr.Code != http.StatusBadRequest {
+			t.Fatalf("bad %v: %d", bad, rr.Code)
+		}
+	}
+	doAccess(t, srv, http.MethodPost, "/v1alpha1/destination-audiences", token, map[string]string{"actor": "company/notify-discord", "audience": "public"}, nil)
+	var list struct {
+		Items []struct{ Actor, Audience string }
+	}
+	rr = doAccess(t, srv, http.MethodGet, "/v1alpha1/destination-audiences", "", nil, &list)
+	if rr.Code != http.StatusOK || len(list.Items) != 1 || list.Items[0].Audience != "public" {
+		t.Fatalf("list: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAgentCannotSetDestinationAudience(t *testing.T) {
+	f, _ := newAgentBearerFixture(t)
+	resp, body := doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/destination-audiences"), mergeGateToken,
+		map[string]string{"actor": "company/notify-discord", "audience": "org"}, nil)
+	requireStatus(t, resp, body, http.StatusUnauthorized)
+}

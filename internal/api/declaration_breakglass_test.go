@@ -20,7 +20,7 @@ func declarationWriteRoutes(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`mux\.HandleFunc\("POST (/v1alpha1/(?:declarations(?:/[^" ]*)?|declaration-engine/switch|sensitivity-approvals/[^" ]*|repository-visibility))"`)
+	re := regexp.MustCompile(`mux\.HandleFunc\("POST (/v1alpha1/(?:declarations(?:/[^" ]*)?|declaration-engine/switch|sensitivity-approvals/[^" ]*|repository-visibility|destination-audiences))"`)
 	matches := re.FindAllStringSubmatch(string(source), -1)
 	var routes []string
 	for _, match := range matches {
@@ -44,6 +44,7 @@ func TestDeclarationWriteRouteInventory(t *testing.T) {
 		"/v1alpha1/declaration-engine/switch":           true,
 		"/v1alpha1/sensitivity-approvals/{id}/decision": true,
 		"/v1alpha1/repository-visibility":               true,
+		"/v1alpha1/destination-audiences":               true,
 	}
 	routes := declarationWriteRoutes(t)
 	if len(routes) != len(want) {

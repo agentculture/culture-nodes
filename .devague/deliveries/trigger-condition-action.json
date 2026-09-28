@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T16:57:56Z",
+  "updated": "2026-09-28T17:52:33Z",
   "deviations": [
     {
       "id": "d1",
@@ -228,6 +228,19 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 18
+    },
+    {
+      "id": "d19",
+      "what": "One place to decide: the Inbox and Decisions merge into one page (To act = human tasks that move a chain; To review = proposed ledger claims; Waiting; Decided), keeping Decisions' readable rendering and its optional note/rationale input for every decision; blocked-agent tasks offer Retry / Abandon / Acknowledge instead of approve/reject, with retry-* and abandon-* reactions; agent reports render readably (t46, t47)",
+      "task_ref": "t32",
+      "reason": "Owner 2026-09-28: approve/reject on a blocked-agent task had no distinct meaning and overlapped /decisions; owner confirmed one step to decide, keeping Decisions' parsing and optional input.",
+      "affects": [
+        "t31"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 19
     }
   ],
   "evidence": [],

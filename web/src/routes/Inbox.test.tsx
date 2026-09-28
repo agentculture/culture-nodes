@@ -5,14 +5,18 @@ import { MemoryRouter } from "react-router-dom";
 import Inbox from "./Inbox";
 import { ApiError, getLedger, getWhoami, listHumanTasks } from "../api/client";
 import {
+  BAD_DEADLINE_TASK,
   BLOCKED_TASK,
   DECIDED_TASK,
   DECISION_RESULT,
+  EXPIRED_TASK,
+  INBOX_NOW,
   LEDGER_VERSION,
   MERGE_HEAD_SHA,
   MERGE_TASK,
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
+  WAITING_TASK,
 } from "../fixtures/human-tasks-fixture";
 import {
   WHOAMI_ACTOR_ID,
@@ -93,21 +97,27 @@ const mockListHumanTasks = vi.mocked(listHumanTasks);
 const mockGetLedger = vi.mocked(getLedger);
 const mockGetWhoami = vi.mocked(getWhoami);
 
-function renderInbox() {
+/** Renders at the fixture clock (INBOX_NOW) so the deadline split is fixed. */
+function renderInbox(entry = "/inbox") {
   return render(
-    <MemoryRouter initialEntries={["/inbox"]}>
-      <Inbox />
+    <MemoryRouter initialEntries={[entry]}>
+      <Inbox now={INBOX_NOW} />
     </MemoryRouter>,
   );
 }
 
-/** Both list calls (pending, decided) resolve with the standard fixture. */
+/** The three list calls (pending, decided, expired) resolve with fixtures. */
 function resolveFixture({
   pending = [PENDING_TASK, PENDING_TASK_MINIMAL],
   decided = [DECIDED_TASK],
+  expired = [] as typeof decided,
 } = {}) {
   mockListHumanTasks.mockImplementation(async (_signal, params) =>
-    params?.status === "pending" ? { items: pending } : { items: decided },
+    params?.status === "pending"
+      ? { items: pending }
+      : params?.status === "expired"
+        ? { items: expired }
+        : { items: decided },
   );
   mockGetLedger.mockResolvedValue({
     items: [],
@@ -198,6 +208,8 @@ describe("Inbox loading/empty/error", () => {
     );
     expect(statuses).toContain("pending");
     expect(statuses).toContain("decided");
+    // Decided never returns an engine-expired task; the Decided tab needs both.
+    expect(statuses).toContain("expired");
   });
 });
 
@@ -373,7 +385,7 @@ describe("Inbox resolved context (issue 332)", () => {
 describe("Inbox decided task rendering", () => {
   it("shows a decided task read-only: response, resolved time, confirmed authority, no form", async () => {
     resolveFixture();
-    renderInbox();
+    renderInbox("/inbox?tab=decided");
     await screen.findByText(DECIDED_TASK.id);
     const card = document.querySelector(
       `[data-human-task-id="${DECIDED_TASK.id}"]`,
@@ -544,7 +556,7 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
   it("refetches on a human-task event, staying stale-while-revalidate: no loading regression, no nulled list", async () => {
     resolveFixture();
     renderInbox();
-    await screen.findByRole("heading", { name: "Pending" });
+    await screen.findByRole("button", { name: /^Open/ });
     await waitFor(() => expect(getAgentState().status).toBe("ready"));
 
     const source = FakeEventSource.instances[0];
@@ -568,9 +580,9 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
       source.emit("dev.culture.nodes.human-task.created", {}, "01EVT1");
     });
 
-    // The reload's own two listHumanTasks calls (pending, decided) join the
-    // two from the initial mount — wait for both to have started.
-    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(4));
+    // The reload's own three listHumanTasks calls (pending, decided,
+    // expired) join the three from the initial mount — wait for all of them.
+    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(6));
 
     // The reload fetch is in flight — the rendered cards and agent-state
     // must still be exactly as they were (stale-while-revalidate).
@@ -587,7 +599,7 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
   it("debounces a burst of simultaneous events into a single refetch", async () => {
     resolveFixture();
     renderInbox();
-    await screen.findByRole("heading", { name: "Pending" });
+    await screen.findByRole("button", { name: /^Open/ });
 
     const source = FakeEventSource.instances[0];
     act(() => source.open());
@@ -599,15 +611,15 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
       source.emit("dev.culture.nodes.human-task.decided", {}, "01EVT2");
     });
 
-    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockListHumanTasks).toHaveBeenCalledTimes(3));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(mockListHumanTasks).toHaveBeenCalledTimes(2);
+    expect(mockListHumanTasks).toHaveBeenCalledTimes(3);
   });
 
   it("ignores an event type this view did not subscribe to", async () => {
     resolveFixture();
     renderInbox();
-    await screen.findByRole("heading", { name: "Pending" });
+    await screen.findByRole("button", { name: /^Open/ });
 
     const source = FakeEventSource.instances[0];
     act(() => source.open());
@@ -619,5 +631,112 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(mockListHumanTasks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Task t44: "By default show only what's open. (Not the waiting expired of
+ * the past or decided), then add tabs for waiting, decided." Rendered at
+ * INBOX_NOW: PENDING_TASK (future deadline), PENDING_TASK_MINIMAL (none) and
+ * BAD_DEADLINE_TASK (unparseable, so none) are Open; WAITING_TASK (deadline
+ * twelve hours before now) is Waiting; DECIDED_TASK and EXPIRED_TASK are
+ * Decided.
+ */
+describe("Inbox tabs (task t44)", () => {
+  const ALL = {
+    pending: [PENDING_TASK, WAITING_TASK, PENDING_TASK_MINIMAL, BAD_DEADLINE_TASK],
+    decided: [DECIDED_TASK],
+    expired: [EXPIRED_TASK],
+  };
+
+  function renderedIds(): string[] {
+    return Array.from(document.querySelectorAll("[data-human-task-id]")).map(
+      (node) => node.getAttribute("data-human-task-id") ?? "",
+    );
+  }
+
+  function tabButton(name: "Open" | "Waiting" | "Decided") {
+    return screen.getByRole("button", { name: new RegExp(`^${name}`) });
+  }
+
+  it("defaults to Open: only pending tasks with a future, missing or unparseable deadline", async () => {
+    resolveFixture(ALL);
+    renderInbox();
+    await screen.findByText(PENDING_TASK.id);
+    expect(tabButton("Open")).toHaveAttribute("aria-pressed", "true");
+    expect(renderedIds()).toEqual([
+      PENDING_TASK.id,
+      PENDING_TASK_MINIMAL.id,
+      BAD_DEADLINE_TASK.id,
+    ]);
+    expect(screen.queryByText(WAITING_TASK.id)).toBeNull();
+    expect(screen.queryByText(DECIDED_TASK.id)).toBeNull();
+    expect(screen.queryByText(EXPIRED_TASK.id)).toBeNull();
+  });
+
+  it("counts every tab", async () => {
+    resolveFixture(ALL);
+    renderInbox();
+    await screen.findByText(PENDING_TASK.id);
+    const count = (name: "Open" | "Waiting" | "Decided") =>
+      tabButton(name).querySelector(".inbox-tab__count")?.textContent;
+    expect(count("Open")).toBe("3");
+    expect(count("Waiting")).toBe("1");
+    expect(count("Decided")).toBe("2");
+  });
+
+  it("Waiting shows only pending tasks past their deadline, still decidable, labelled overdue", async () => {
+    resolveFixture(ALL);
+    renderInbox("/inbox?tab=waiting");
+    await screen.findByText(WAITING_TASK.id);
+    expect(tabButton("Waiting")).toHaveAttribute("aria-pressed", "true");
+    expect(renderedIds()).toEqual([WAITING_TASK.id]);
+    const card = document.querySelector(
+      `[data-human-task-id="${WAITING_TASK.id}"]`,
+    ) as HTMLElement;
+    expect(within(card).getByText(/overdue since 12 hours ago/)).toBeInTheDocument();
+    expect(
+      card.querySelector(`time[datetime="${WAITING_TASK.request.deadline}"]`),
+    ).toBeInTheDocument();
+    expect(
+      await within(card).findByRole("button", { name: "approved" }),
+    ).toBeInTheDocument();
+  });
+
+  it("Decided shows decided and expired tasks, newest first, read-only", async () => {
+    resolveFixture(ALL);
+    renderInbox("/inbox?tab=decided");
+    await screen.findByText(DECIDED_TASK.id);
+    expect(tabButton("Decided")).toHaveAttribute("aria-pressed", "true");
+    expect(renderedIds()).toEqual([EXPIRED_TASK.id, DECIDED_TASK.id]);
+    const list = document.getElementById("inbox-decided") as HTMLElement;
+    expect(within(list).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("switches tabs on click and records the choice in the URL", async () => {
+    resolveFixture(ALL);
+    const user = userEvent.setup();
+    renderInbox();
+    await screen.findByText(PENDING_TASK.id);
+    await user.click(tabButton("Waiting"));
+    expect(tabButton("Waiting")).toHaveAttribute("aria-pressed", "true");
+    expect(renderedIds()).toEqual([WAITING_TASK.id]);
+    await user.click(tabButton("Open"));
+    expect(renderedIds()).toContain(PENDING_TASK.id);
+  });
+
+  it("falls back to Open for an unknown ?tab=", async () => {
+    resolveFixture(ALL);
+    renderInbox("/inbox?tab=bogus");
+    await screen.findByText(PENDING_TASK.id);
+    expect(tabButton("Open")).toHaveAttribute("aria-pressed", "true");
+    expect(renderedIds()).not.toContain(WAITING_TASK.id);
+  });
+
+  it("says so when a tab is empty", async () => {
+    resolveFixture({ pending: [WAITING_TASK], decided: [], expired: [] });
+    renderInbox();
+    expect(await screen.findByText("Nothing open.")).toBeInTheDocument();
+    expect(renderedIds()).toEqual([]);
   });
 });

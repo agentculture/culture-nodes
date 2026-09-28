@@ -94,11 +94,12 @@ export async function mockTicketApi(
  */
 export async function mockInboxApi(
   page: Page,
-  options: { pending?: unknown[]; decided?: unknown[] } = {},
+  options: { pending?: unknown[]; decided?: unknown[]; expired?: unknown[] } = {},
 ): Promise<CapturedRequest[]> {
   const captured: CapturedRequest[] = [];
   const pending = options.pending ?? [PENDING_TASK, PENDING_TASK_MINIMAL];
   const decided = options.decided ?? [DECIDED_TASK];
+  const expired = options.expired ?? [];
 
   await page.route("**/v1alpha1/**", async (route) => {
     const request = route.request();
@@ -122,7 +123,9 @@ export async function mockInboxApi(
     }
     if (path === "/v1alpha1/human-tasks") {
       const status = url.searchParams.get("status");
-      await route.fulfill(json({ items: status === "decided" ? decided : pending }));
+      const items =
+        status === "decided" ? decided : status === "expired" ? expired : pending;
+      await route.fulfill(json({ items }));
       return;
     }
     if (path.endsWith("/ledger")) {

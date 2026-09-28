@@ -993,6 +993,7 @@ case "$HOST" in
     # the old one.
     account_spark_preflight_doctor "$HOST" || exit 1
     account_bridges_spark_lane "$HOST"
+    github_app_token_lane || say 'WARNING: github-app-token lane failed; retry'
     ;;
   *)
     echo "unknown host role: $HOST (expected thor, orin or spark)" >&2; exit 1;;

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh culture-nodes GitHub App token
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30min
+Persistent=true
+Unit=culture-nodes-github-app-token.service
+
+[Install]
+WantedBy=timers.target

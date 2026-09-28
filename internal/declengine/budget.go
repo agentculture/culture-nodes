@@ -44,6 +44,7 @@ package declengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/agentculture/culture-nodes/internal/decl"
@@ -184,8 +185,33 @@ func (e *Engine) checkBudgets(ctx context.Context, namespaceID, node, machine st
 	return true, "", nil
 }
 
+// dispatchActs reports whether this engine's dispatch will really invoke the
+// action: false when the dispatcher is the switch's ShadowGate and the
+// namespace is not in 'after'. The read agrees with ShadowGate.Dispatch's own
+// because a production evaluation holds the namespace's shared switch lock
+// from its first mode read to its last write (switchlock.go). Any other
+// dispatcher always acts.
+func (e *Engine) dispatchActs(ctx context.Context, namespaceID string) (bool, error) {
+	var gate ShadowGate
+	switch g := e.dispatcher.(type) {
+	case ShadowGate:
+		gate = g
+	case *ShadowGate:
+		gate = *g
+	default:
+		return true, nil
+	}
+	if gate.Switch == nil {
+		return false, errors.New("declengine: shadow gate needs a switch store")
+	}
+	mode, err := gate.Switch.Mode(ctx, namespaceID)
+	return mode == ModeAfter, err
+}
+
 // chargeBudgetSpend records one dispatched firing against every scope it
 // belongs to. A no-op when the backend does not implement BudgetBackend.
+// evaluate() calls it only for a dispatch that acts (dispatchActs): shadow
+// records its would-fire firing without consuming a real budget.
 func (e *Engine) chargeBudgetSpend(ctx context.Context, namespaceID, firingID, node, machine, declarationID string) error {
 	bb, isBudgetBackend := e.backend.(BudgetBackend)
 	if !isBudgetBackend {

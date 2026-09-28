@@ -146,8 +146,10 @@ type Backend interface {
 	// OldestDeferredSubject returns the longest-queued deferred entry for a
 	// declaration, across every subject, for DrainSubject to replay.
 	OldestDeferredSubject(ctx context.Context, namespaceID, declarationID string) (DeferredSubject, bool, error)
-	// DeleteDeferredSubject removes a drained (or superseded) entry.
-	DeleteDeferredSubject(ctx context.Context, namespaceID, id string) error
+	// DeleteDeferredSubject removes a drained entry, at the version
+	// (DeferredSubject.Attempts) it was read at: an entry re-pointed since
+	// stays queued.
+	DeleteDeferredSubject(ctx context.Context, namespaceID string, d DeferredSubject) error
 }
 
 // Engine is the declaration firing loop. It holds no per-event state.
@@ -381,8 +383,17 @@ func (e *Engine) evaluate(ctx context.Context, event Event, a ActiveDeclaration,
 		}
 		return e.emitBudgetExhausted(ctx, event.NamespaceID, a.Declaration.LandingNode.Name, reason)
 	}
-	if err := e.chargeBudgetSpend(ctx, event.NamespaceID, firing.ID, a.Declaration.LandingNode.Name, actionMachine(action), a.ID); err != nil {
-		return fail(OutcomeDispatchFailed, err)
+	// Task t38b (review finding A4): only a dispatch that will really act
+	// spends real budget. A shadow firing's would-fire trail is its record;
+	// charging it would let shadow traffic budget-block real firings later.
+	acts, err := e.dispatchActs(ctx, event.NamespaceID)
+	if err != nil {
+		return fail(OutcomeEvaluationError, err)
+	}
+	if acts {
+		if err := e.chargeBudgetSpend(ctx, event.NamespaceID, firing.ID, a.Declaration.LandingNode.Name, actionMachine(action), a.ID); err != nil {
+			return fail(OutcomeDispatchFailed, err)
+		}
 	}
 	if err := record(OutcomeDispatching, "firing claimed with its component digests pinned"); err != nil {
 		return err

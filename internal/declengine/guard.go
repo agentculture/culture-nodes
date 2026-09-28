@@ -101,9 +101,14 @@ type DeferSubjectInput struct {
 }
 
 // DeferredSubject is one queued entry OldestDeferredSubject returns.
+// Attempts is the entry's version as read: DeferSubject's replace rule
+// increments it whenever the entry is re-pointed (a newer event for the
+// subject, or the replay itself deferred again), so DeleteDeferredSubject
+// can remove exactly the entry that was replayed and nothing queued since.
 type DeferredSubject struct {
-	ID    string
-	Event Event
+	ID       string
+	Event    Event
+	Attempts int
 }
 
 // checkSubjectConcurrency is c84/h57: a declaration whose trigger declares
@@ -139,15 +144,25 @@ func (e *Engine) checkSubjectConcurrency(ctx context.Context, event Event, a Act
 // task t12); draining more here would let the in-flight count run past the
 // cap the same way skipping the check on entry would. A namespace or
 // declaration with nothing queued is a no-op, not an error.
+//
+// The entry is deleted only once Handle has returned without error (task
+// t38b, review finding D1), the same delete-on-success convention
+// ThawAndReplay applies to stored events: a replay that fails leaves the
+// entry queued for the next slot that frees, rather than dropping an event
+// OutcomeDeferred promised would never be dropped. A crash between Handle
+// and the delete replays it once more, which is safe -- Handle claims one
+// firing per (event, declaration) and the repeat records a duplicate. The
+// delete is conditional on the entry's version, so a replay that deferred
+// again (or a newer event that replaced the entry meanwhile) stays queued.
 func (e *Engine) DrainSubject(ctx context.Context, namespaceID, declarationID string) error {
 	deferred, found, err := e.backend.OldestDeferredSubject(ctx, namespaceID, declarationID)
 	if err != nil || !found {
 		return err
 	}
-	if err := e.backend.DeleteDeferredSubject(ctx, namespaceID, deferred.ID); err != nil {
+	if err := e.Handle(ctx, deferred.Event); err != nil {
 		return err
 	}
-	return e.Handle(ctx, deferred.Event)
+	return e.backend.DeleteDeferredSubject(ctx, namespaceID, deferred)
 }
 
 // RecentFirings is PostgresBackend's rate-ceiling read: distinct logical
@@ -195,9 +210,9 @@ func (p PostgresBackend) DeferSubject(ctx context.Context, in DeferSubjectInput)
 func (p PostgresBackend) OldestDeferredSubject(ctx context.Context, namespaceID, declarationID string) (DeferredSubject, bool, error) {
 	var d DeferredSubject
 	var event []byte
-	err := p.Store.Pool().QueryRow(ctx, `SELECT id,event FROM declaration_subject_deferrals
+	err := p.Store.Pool().QueryRow(ctx, `SELECT id,event,attempts FROM declaration_subject_deferrals
  WHERE namespace_id=$1 AND declaration_id=$2 ORDER BY created_at,id LIMIT 1`,
-		namespaceID, declarationID).Scan(&d.ID, &event)
+		namespaceID, declarationID).Scan(&d.ID, &event, &d.Attempts)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DeferredSubject{}, false, nil
@@ -210,8 +225,9 @@ func (p PostgresBackend) OldestDeferredSubject(ctx context.Context, namespaceID,
 	return d, true, nil
 }
 
-// DeleteDeferredSubject removes a drained entry.
-func (p PostgresBackend) DeleteDeferredSubject(ctx context.Context, namespaceID, id string) error {
-	_, err := p.Store.Pool().Exec(ctx, `DELETE FROM declaration_subject_deferrals WHERE namespace_id=$1 AND id=$2`, namespaceID, id)
+// DeleteDeferredSubject removes a drained entry -- only at the version it
+// was read at; an entry re-pointed since is left queued.
+func (p PostgresBackend) DeleteDeferredSubject(ctx context.Context, namespaceID string, d DeferredSubject) error {
+	_, err := p.Store.Pool().Exec(ctx, `DELETE FROM declaration_subject_deferrals WHERE namespace_id=$1 AND id=$2 AND attempts=$3`, namespaceID, d.ID, d.Attempts)
 	return err
 }

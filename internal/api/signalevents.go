@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 )
@@ -150,6 +151,16 @@ func (s *Server) handleDeliverEvent(w http.ResponseWriter, r *http.Request) erro
 	}
 	if req.Name == "" {
 		return badRequest("name is required — the signal name subscriptions match on", "name must not be empty")
+	}
+	// Task t38g (#328, review finding A2): the control plane's own event
+	// names (human.decision, code.result, agent.result, node.expired,
+	// action.*) and its emitter are not the caller's to use. A reaction's
+	// marker proves which firing it continues, not what it says, so a
+	// delivered human.decision could otherwise carry a copied marker and a
+	// forged outcome. Refused before anything is appended; the store
+	// refuses the same for every other ingress (deliverSignalEventTx).
+	if err := kinds.CheckExternalEvent(req.Name, req.Emitter); err != nil {
+		return forbidden("deliver a name and emitter of your own; the control plane emits reactions, node.expired and action.* itself", err.Error())
 	}
 	if req.RunID != "" {
 		// A run-scoped event must name a run this server actually owns:

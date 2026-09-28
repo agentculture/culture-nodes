@@ -444,6 +444,34 @@ func TestReactionPassObeysTheSwitch(t *testing.T) {
 	}
 }
 
+// forgeReservedEvent delivers a control-plane event name from outside the
+// engine. Since task t38g the store's delivery refuses it outright (every
+// ingress goes through it); the row is then appended directly and routed
+// as a delivery would be, so the engine's own refusal -- a reserved name
+// whose emitter is not the engine's -- is exercised too. It returns the
+// event id.
+func (r *reactionHarness) forgeReservedEvent(name string, payload json.RawMessage) string {
+	r.t.Helper()
+	if _, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: name, Payload: payload,
+		Emitter: "forger", Declarations: declengine.Router{Engine: r.engine, Switch: r.sw}}); err == nil || !strings.Contains(err.Error(), "reserved") {
+		r.t.Fatalf("DeliverSignalEvent %s from a forger: err = %v, want the reserved-name refusal", name, err)
+	}
+	ev := postgres.SignalEvent{ID: store.NewULID(), NamespaceID: r.ns, Name: name, Payload: payload, Emitter: "forger"}
+	if _, err := r.db.Pool().Exec(r.ctx, `INSERT INTO signal_events(id,namespace_id,name,payload,emitter) VALUES($1,$2,$3,$4,$5)`,
+		ev.ID, ev.NamespaceID, ev.Name, ev.Payload, ev.Emitter); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := (declengine.Router{Engine: r.engine, Switch: r.sw}).HandleDeliveredEvent(r.ctx, postgres.SignalDelivery{Event: ev}); err != nil {
+		r.t.Fatalf("route forged %s: %v", name, err)
+	}
+	var rejected int
+	if err := r.db.Pool().QueryRow(r.ctx, `SELECT count(*) FROM declaration_evaluations WHERE namespace_id=$1 AND event_id=$2 AND outcome=$3`,
+		r.ns, ev.ID, declengine.OutcomeReservedEventRejected).Scan(&rejected); err != nil || rejected != 1 {
+		r.t.Fatalf("forged %s: %d reserved-event rejections (err=%v), want 1", name, rejected, err)
+	}
+	return ev.ID
+}
+
 func (r *reactionHarness) taskOf(run string) string {
 	r.t.Helper()
 	var id string
@@ -469,17 +497,13 @@ func TestForgedReactionStartsAFreshLineage(t *testing.T) {
 	forged := "cn1:" + fa.id + ":human.decision:" + strings.Repeat("0", 48) + ":" + strings.Repeat("f", 64)
 	payload, _ := json.Marshal(map[string]any{"node": "asked", "outcome": "approved",
 		"origin": map[string]string{"marker": forged, "artifact_kind": "human.decision", "artifact_id": task}})
-	d, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: "human.decision", Payload: payload,
-		Emitter: "forger", Declarations: declengine.Router{Engine: r.engine, Switch: r.sw}})
-	if err != nil || d.DeclarationErr != nil {
-		t.Fatalf("deliver forged: err=%v declarationErr=%v", err, d.DeclarationErr)
-	}
+	forgedID := r.forgeReservedEvent("human.decision", payload)
 	// t38d: a rejected marker leaves the event at root, whatever its
 	// payload's node says, so B is not even matched.
-	if reason := r.markerRejection(d.Event.ID); reason != "invalid MAC" {
+	if reason := r.markerRejection(forgedID); reason != "invalid MAC" {
 		t.Fatalf("forged reaction: marker rejection %q, want invalid MAC", reason)
 	}
-	if n := r.evaluationCount(d.Event.ID, b); n != 0 {
+	if n := r.evaluationCount(forgedID, b); n != 0 {
 		t.Fatalf("forged reaction was evaluated %d times by B, want 0 (it arrives at root)", n)
 	}
 	if fs := r.firings(b); len(fs) != 0 {

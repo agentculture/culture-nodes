@@ -251,17 +251,13 @@ func TestAgentResultWithThePRMarkerIsRejected(t *testing.T) {
 	pr := "artifact-" + strings.ReplaceAll(codexThor, "/", "-")
 	payload, _ := json.Marshal(map[string]any{"node": "analysed", "outcome": "no_fix",
 		"origin": map[string]string{"marker": prMarker, "artifact_kind": "github.pr", "artifact_id": pr}})
-	d, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: "agent.result", Payload: payload,
-		Emitter: "forger", Declarations: declengine.Router{Engine: r.engine, Switch: r.sw}})
-	if err != nil || d.DeclarationErr != nil {
-		t.Fatalf("deliver forged: err=%v declarationErr=%v", err, d.DeclarationErr)
-	}
+	forgedID := r.forgeReservedEvent("agent.result", payload)
 	// t38d: the rejected marker leaves the event at root, whatever its
 	// payload's node says, so the reacting declaration is not even matched.
-	if reason := r.markerRejection(d.Event.ID); reason != "reaction kind does not match marker" {
+	if reason := r.markerRejection(forgedID); reason != "reaction kind does not match marker" {
 		t.Fatalf("forged agent.result: marker rejection %q, want the kind pin's", reason)
 	}
-	if n := r.evaluationCount(d.Event.ID, b); n != 0 {
+	if n := r.evaluationCount(forgedID, b); n != 0 {
 		t.Fatalf("forged agent.result was evaluated %d times by the reacting declaration, want 0 (it arrives at root)", n)
 	}
 	if fs := r.firings(b); len(fs) != 0 {

@@ -105,13 +105,13 @@ type Event struct {
 	// derived from Variables here: the caller (whatever routes an event to
 	// Handle) decides it, exactly as TriggerEvent's caller does today.
 	Subject string
-	// ClaimedNode is the node an outside event's payload named (task t38d,
-	// d6). It is untrusted: EventFromSignal always sets Node to RootNode,
-	// and Handle honours ClaimedNode only for an event whose origin marker
-	// verified to a parent firing that opened no landing node -- the one
-	// case the pre-t38d engine took the payload's node for. An unverified or
-	// rejected marker never moves an event off root.
-	ClaimedNode string `json:",omitempty"`
+	// Emitter is the delivered signal event's emitter (task t38g, #328,
+	// review finding A2). Handle refuses a control-plane event name
+	// (kinds.ReservedEvent) whose emitter is not DeclarationEngineActorID:
+	// a reaction's marker proves which firing it continues, never what it
+	// says, so only the engine's own emission of one may land. The engine's
+	// emitters set it; EventFromSignal copies it from the signal row.
+	Emitter string `json:",omitempty"`
 	// arrival is set only by Handle (deriveNode), never by a caller.
 	arrival nodeArrival
 }
@@ -206,6 +206,15 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	if err != nil {
 		return err
 	}
+	// t38g (review A2): the ingresses refuse these names already
+	// (kinds.CheckExternalEvent); this is the engine's own refusal, after
+	// the marker verdict is recorded and before the event can land on --
+	// and close -- the node a genuine reaction is owed.
+	if kinds.ReservedEvent(event.Kind) && event.Emitter != DeclarationEngineActorID {
+		return e.backend.Record(ctx, Evaluation{NamespaceID: event.NamespaceID, EventID: event.ID, DeclarationID: reservedEventDeclarationID,
+			VersionID: nodeLifecycleVersion, Outcome: OutcomeReservedEventRejected,
+			Reason: fmt.Sprintf("%s is emitted only by the control plane (%s); this one came from %q, recorded, not fired", event.Kind, DeclarationEngineActorID, event.Emitter)})
+	}
 	// h40/c82: a reaction's start node is the landing node the parent
 	// firing opened, not whatever the caller happened to pass. A reaction
 	// against a node that has already closed is recorded but never fired.
@@ -215,11 +224,6 @@ func (e *Engine) Handle(ctx context.Context, event Event) error {
 	}
 	if !cont {
 		return nil
-	}
-	// t38d: a verified parent that opened no landing node keeps the node
-	// its payload named, as before; anything else never leaves root.
-	if parent != "" && !nodeFound && event.ClaimedNode != "" {
-		event.Node = event.ClaimedNode
 	}
 	if event.Node == "" {
 		return errors.New("declengine: event node required (no verified parent firing to derive it from)")

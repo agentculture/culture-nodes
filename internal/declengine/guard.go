@@ -210,9 +210,13 @@ func (p PostgresBackend) DeferSubject(ctx context.Context, in DeferSubjectInput)
 func (p PostgresBackend) OldestDeferredSubject(ctx context.Context, namespaceID, declarationID string) (DeferredSubject, bool, error) {
 	var d DeferredSubject
 	var event []byte
-	err := p.Store.Pool().QueryRow(ctx, `SELECT id,event,attempts FROM declaration_subject_deferrals
- WHERE namespace_id=$1 AND declaration_id=$2 ORDER BY created_at,id LIMIT 1`,
-		namespaceID, declarationID).Scan(&d.ID, &event, &d.Attempts)
+	var emitter *string
+	// t38g: the emitter comes from the event's own signal row, as for a
+	// frozen node's stored events (FrozenEvents).
+	err := p.Store.Pool().QueryRow(ctx, `SELECT d.id,d.event,d.attempts,se.emitter FROM declaration_subject_deferrals d
+ LEFT JOIN signal_events se ON se.namespace_id=d.namespace_id AND se.id=d.event->>'ID'
+ WHERE d.namespace_id=$1 AND d.declaration_id=$2 ORDER BY d.created_at,d.id LIMIT 1`,
+		namespaceID, declarationID).Scan(&d.ID, &event, &d.Attempts, &emitter)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DeferredSubject{}, false, nil
@@ -221,6 +225,9 @@ func (p PostgresBackend) OldestDeferredSubject(ctx context.Context, namespaceID,
 	}
 	if err := json.Unmarshal(event, &d.Event); err != nil {
 		return DeferredSubject{}, false, err
+	}
+	if emitter != nil {
+		d.Event.Emitter = *emitter
 	}
 	return d, true, nil
 }

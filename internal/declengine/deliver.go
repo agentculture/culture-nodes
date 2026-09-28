@@ -48,17 +48,20 @@ const RootNode = "root"
 
 // EventFromSignal maps one delivered signal event onto the engine's Event.
 // The payload is the event's variables (a non-object payload carries none).
-// Two payload keys are read as routing, not only as variables:
+// The event's Node is always RootNode here (task t38d, owner decision d6):
+// an event without a verified origin marker arrives at root, whatever its
+// payload names. Handle moves a verified reaction to its parent firing's
+// landing node (deriveNode); a payload's "node" key is only a variable and
+// never routes (task t38g: not even for a verified parent that opened no
+// landing node -- that reaction is recorded, not fired). One payload key is
+// read as routing:
 //
-//   - "node": the node the event CLAIMS to arrive at (Event.ClaimedNode).
-//     The event's Node is always RootNode here (task t38d, owner decision
-//     d6): an event without a verified origin marker arrives at root,
-//     whatever its payload names. Handle moves a verified reaction to its
-//     parent firing's landing node (deriveNode), and honours the claim only
-//     for a verified parent that opened no landing node;
 //   - "origin": {marker, artifact_kind, artifact_id, author, bridge_account},
 //     the stamped-artifact facts MarkerService.Resolve verifies before any
 //     lineage is inherited. Absent, the event starts a fresh lineage.
+//
+// Emitter is the signal row's emitter (task t38g): Handle refuses a
+// control-plane event name the control plane did not emit.
 //
 // Subject is the delivery's in-memory correlation key (never derived from the
 // payload here, exactly as Event.Subject's doc comment requires).
@@ -67,15 +70,13 @@ func EventFromSignal(ev postgres.SignalEvent) Event {
 	if err := json.Unmarshal(ev.Payload, &vars); err != nil || vars == nil {
 		vars = map[string]any{}
 	}
-	node := RootNode
-	claimed, _ := vars["node"].(string)
 	var origin OriginEvent
 	if o, ok := vars["origin"].(map[string]any); ok {
 		text := func(k string) string { s, _ := o[k].(string); return s }
 		origin = OriginEvent{Marker: text("marker"), ArtifactKind: text("artifact_kind"), ArtifactID: text("artifact_id"),
 			Author: text("author"), BridgeAccount: text("bridge_account")}
 	}
-	return Event{NamespaceID: ev.NamespaceID, ID: ev.ID, Kind: ev.Name, Node: node, Variables: vars, Origin: origin, Subject: ev.Subject, ClaimedNode: claimed}
+	return Event{NamespaceID: ev.NamespaceID, ID: ev.ID, Kind: ev.Name, Node: RootNode, Variables: vars, Origin: origin, Subject: ev.Subject, Emitter: ev.Emitter}
 }
 
 // Router is the declaration engine's postgres.DeliveredEventHandler.

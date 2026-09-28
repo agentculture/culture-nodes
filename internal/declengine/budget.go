@@ -238,7 +238,7 @@ func (e *Engine) emitBudgetExhausted(ctx context.Context, namespaceID, node, rea
 	if eventID == "" {
 		return nil
 	}
-	return e.Handle(ctx, Event{NamespaceID: namespaceID, ID: eventID, Kind: ActionTriggerBudgetExhausted, Node: node})
+	return e.Handle(ctx, Event{NamespaceID: namespaceID, ID: eventID, Kind: ActionTriggerBudgetExhausted, Node: node, Emitter: DeclarationEngineActorID})
 }
 
 // PostgresBackend budget methods (migration 0063).

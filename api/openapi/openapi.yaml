@@ -3474,6 +3474,14 @@ paths:
         node, onto the landing node its parent firing opened. An event
         without a verified marker always arrives at `root`, whatever the
         payload's `node` names.
+
+
+        The control plane's own event names are reserved (task t38g):
+        `human.decision`, `code.result`, `agent.result`, `node.expired`,
+        and every `action.*` name, as is its emitter
+        `engine_declaration_engine`. A marker proves which firing a
+        reaction continues, not what the reaction says, so a delivery
+        naming one is refused with 403 and nothing is appended.
       security:
         - eventBearerAuth: []
       requestBody:
@@ -3497,6 +3505,12 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           description: No bearer token was presented, it does not match the configured secret, or no secret is configured at all.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The name or the emitter is reserved for the control plane (human.decision, code.result, agent.result, node.expired, action.*, engine_declaration_engine). Nothing was appended.
           content:
             application/json:
               schema:

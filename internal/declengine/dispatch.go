@@ -26,7 +26,7 @@ import (
 // ledger_records.origin_actor_id is a foreign key to actors(id). Register it
 // the way engine_remint_scheduler was: deploy/prod/register-actor.sh --engine
 // engine_declaration_engine (a deploy hand-turn once the engine is wired in).
-const DeclarationEngineActorID = "engine_declaration_engine"
+const DeclarationEngineActorID = kinds.ControlPlaneEmitter
 
 // DispatchRequest is one claimed firing's rendered action.
 type DispatchRequest struct {

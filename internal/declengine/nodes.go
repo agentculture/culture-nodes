@@ -77,6 +77,23 @@ const (
 	OutcomeNodeClosed  = "node closed"
 	OutcomeNodeOrphan  = "orphaned by upgrade"
 	OutcomeNodeExpired = "node expired"
+	// OutcomeParentNoLandingNode (task t38g, review finding A1): the event's
+	// marker verified to a firing that never opened a landing node -- its
+	// dispatch failed after the run was created, so Finish never ran, yet
+	// the run may have executed and exposed the marker. There is no node
+	// to arrive at, and the payload's `node` is never taken instead, so the
+	// reaction is recorded and nothing fires.
+	OutcomeParentNoLandingNode = "parent opened no landing node"
+)
+
+// OutcomeReservedEventRejected (task t38g, review finding A2) is Handle's
+// refusal of a control-plane event name (kinds.ReservedEvent) that the
+// control plane did not emit. It is filed under its own reserved
+// pseudo-declaration, reservedEventDeclarationID, beside "origin-marker"
+// and "node-lifecycle".
+const (
+	OutcomeReservedEventRejected = "reserved event rejected"
+	reservedEventDeclarationID   = "reserved-event"
 )
 
 // NodeRecord is one queryable declaration_nodes row (h40): its open/closed
@@ -148,7 +165,8 @@ type NodeBackend interface {
 // continue_ reports whether Handle should keep evaluating this event at
 // all: a reaction against a node that has already closed is recorded (c82:
 // "a late reaction after expiry is recorded, not fired") and Handle stops
-// there, matching nothing.
+// there, matching nothing. So is a reaction whose verified parent opened
+// no landing node at all (task t38g): there is no node for it to arrive at.
 func (e *Engine) deriveNode(ctx context.Context, event *Event, parent string) (node NodeRecord, found bool, continue_ bool, err error) {
 	nb, ok := e.backend.(NodeBackend)
 	if !ok || parent == "" {
@@ -164,7 +182,12 @@ func (e *Engine) deriveNode(ctx context.Context, event *Event, parent string) (n
 		return NodeRecord{}, false, false, err
 	}
 	if !found {
-		return NodeRecord{}, false, true, nil
+		// t38g (A1): before t38d the payload's node was taken here, and
+		// t38d kept that as ClaimedNode -- which let anyone holding the
+		// exposed marker of a firing that opened no node pick any start
+		// node. The node is never taken from the payload.
+		reason := fmt.Sprintf("verified parent firing %s opened no landing node; reaction recorded, not fired", parent)
+		return NodeRecord{}, false, false, nb.RecordNodeNote(ctx, event.NamespaceID, event.ID, OutcomeParentNoLandingNode, reason)
 	}
 	event.Node = node.Name
 	// c81: an event arriving for a frozen node is stored against it, not
@@ -307,7 +330,7 @@ func (e *Engine) ExpireDue(ctx context.Context, namespaceID string, now time.Tim
 	}
 	var failures []error
 	for _, ev := range expired {
-		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: ev.EventID, Kind: "node.expired", Node: ev.NodeName}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: ev.EventID, Kind: "node.expired", Node: ev.NodeName, Emitter: DeclarationEngineActorID}); err != nil {
 			failures = append(failures, err)
 		}
 		// nb.ExpireDue committed this node's close before returning it, so
@@ -345,7 +368,7 @@ func (e *Engine) EmitActionResults(ctx context.Context, namespaceID string, limi
 	}
 	var failures []error
 	for _, r := range results {
-		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: r.EventID, Kind: r.Trigger, Node: r.NodeName}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: namespaceID, ID: r.EventID, Kind: r.Trigger, Node: r.NodeName, Emitter: DeclarationEngineActorID}); err != nil {
 			failures = append(failures, err)
 		}
 	}

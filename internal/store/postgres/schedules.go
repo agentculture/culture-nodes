@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store"
 )
@@ -200,6 +201,12 @@ func (s *Store) CreateSchedule(ctx context.Context, in CreateScheduleInput) (Sch
 	case !in.CatchUp.valid():
 		return Schedule{}, fmt.Errorf("postgres: CreateSchedule: unknown catch-up policy %q (want %q or %q)",
 			in.CatchUp, CatchUpFireOnce, CatchUpSkip)
+	}
+	// t38g: a schedule fires through DeliverSignalEvent's delivery, which
+	// refuses the control plane's reserved names and emitter; refusing them
+	// here keeps a schedule from being created only to fail every fire.
+	if err := kinds.CheckExternalEvent(in.EventName, in.Emitter); err != nil {
+		return Schedule{}, fmt.Errorf("postgres: CreateSchedule: %w", err)
 	}
 	if in.Emitter == "" {
 		// Attribution for operators, never an authority claim (PRD §10.4):

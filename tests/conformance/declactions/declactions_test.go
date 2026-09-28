@@ -93,6 +93,9 @@ type fakeBridge struct {
 	// outcome is the domain outcome every invocation reports ("completed"
 	// when empty); output is merged into what it reports (task t38e).
 	outcome string
+	// verbatimOutput models a Claude final JSON answer: its output is passed
+	// through without the fake artifact and bridge fields.
+	verbatimOutput bool
 	// jiraVerbs makes an unset outcome follow the real jira bridge
 	// (adapters/jira): the domain outcome is chosen by the input's verb.
 	jiraVerbs bool
@@ -115,6 +118,13 @@ func (b *fakeBridge) reply(outcome string, output map[string]any) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.outcome, b.output = outcome, output
+}
+
+func (b *fakeBridge) replyClaudeFinal(outcome string, output map[string]any) {
+	b.reply(outcome, output)
+	b.mu.Lock()
+	b.verbatimOutput = true
+	b.mu.Unlock()
 }
 
 func newFakeBridge(t *testing.T, key string) *fakeBridge {
@@ -140,7 +150,11 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 	b.mu.Lock()
 	b.inputs = append(b.inputs, input)
 	outcome := b.outcome
-	output := map[string]any{"bridge": b.key}
+	output := map[string]any{}
+	if !b.verbatimOutput {
+		output["bridge"] = b.key
+	}
+	verbatimOutput := b.verbatimOutput
 	for k, v := range b.output {
 		output[k] = v
 	}
@@ -159,13 +173,15 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"invalid cn1 marker","class":"actor_rejected_input"}`, http.StatusBadRequest)
 			return
 		}
-		output["artifact_id"] = "artifact-" + strings.ReplaceAll(b.key, "/", "-")
-		b.mu.Lock()
-		if len(b.artifacts) > 0 {
-			output["artifact_id"], b.artifacts = b.artifacts[0], b.artifacts[1:]
+		if !verbatimOutput {
+			output["artifact_id"] = "artifact-" + strings.ReplaceAll(b.key, "/", "-")
+			b.mu.Lock()
+			if len(b.artifacts) > 0 {
+				output["artifact_id"], b.artifacts = b.artifacts[0], b.artifacts[1:]
+			}
+			b.mu.Unlock()
+			output["marker"] = marker
 		}
-		b.mu.Unlock()
-		output["marker"] = marker
 	}
 	if b.jiraVerbs {
 		// The real bridge's output fields for its outcome, which the

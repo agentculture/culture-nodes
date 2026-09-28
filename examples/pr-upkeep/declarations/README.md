@@ -63,6 +63,22 @@ alternative predecessors land on the same node, or where the trigger
   row emits `pr-upkeep.sweep.due` and stays as it is. Cutover needs a second
   row that emits `timer`; that is an operator hand-turn, not made here.
 
+## Blocked agent routes
+
+Every agent action can now return `blocked` with a reason. The three
+`blocked-*` declarations listen on the landing nodes shared by stamp-pr,
+analyse/analyse-orphan, and fix/fix-orphan. They show the agent's full report,
+step, PR identity, work item, and available ticket to
+`group/platform-maintainers`. The matching `close-blocked-*` declaration
+records the human decision and closes that branch. Approval records the
+maintainer's acknowledgement; it does not merge the PR or retry the
+agent. Rejection and expiry also close the attempt for inspection. The
+optional ticket reference uses a template default on keyed lineages.
+
+The blocked human routes need no new `exposes` entries: `human.ask` has the
+operators audience, which is no wider than the agent result or the route
+fields it receives. The existing exposure approvals below still apply.
+
 ## What does not fire yet
 
 These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
@@ -113,10 +129,9 @@ These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
 ## Exposure lists and publish warnings (t30, t30b)
 
 After linking, a validate reports 34 sensitivity warnings, one for each
-reference below. Each reference renders a variable of `pr-upkeep-route` or
-`pr-upkeep-analyse` into a wider audience. Those variables are classed
-`code (operators audience)` because their declaration's action is
-`code.run`.
+reference below. These routes render variables of `pr-upkeep-route`
+or `pr-upkeep-analyse` into a wider audience. The blocked human routes
+introduce no additional sensitivity warnings.
 
 Exposure is approved per variable (owner decision d4). Each declaration
 below lists the variables it renders in its `exposes` list, so every warning

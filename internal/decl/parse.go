@@ -79,6 +79,21 @@ func Parse(source []byte, format Format) (*Declaration, error) {
 	if _, ok := kinds.Action(d.Action.Kind); !ok {
 		return nil, fmt.Errorf("declaration action kind %q is not in the registered vocabulary (internal/decl/kinds)", d.Action.Kind)
 	}
+	if d.Action.Kind == "agent.work" && len(d.Action.With) > 0 {
+		var with struct {
+			GraphConfig struct {
+				Contract struct {
+					Outcomes map[string]json.RawMessage `json:"outcomes"`
+				} `json:"contract"`
+			} `json:"graph_config"`
+		}
+		if err := json.Unmarshal(d.Action.With, &with); err != nil {
+			return nil, fmt.Errorf("declaration agent contract: %w", err)
+		}
+		if _, redefined := with.GraphConfig.Contract.Outcomes["blocked"]; redefined {
+			return nil, fmt.Errorf("declaration agent contract: blocked is a reserved conventional outcome")
+		}
+	}
 	if _, ok := shape["condition"]; !ok {
 		d.Condition = "true"
 	}

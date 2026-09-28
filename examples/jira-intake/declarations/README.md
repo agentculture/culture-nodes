@@ -56,7 +56,13 @@ back to To Do. `jira.issue.created` fires only when an issue is created.
 
 ## Publish warnings (t30, t30b)
 
-After linking, a validate reports no sensitivity warnings for this set, so
-no declaration here needs an `exposes` list. Every variable comes from Jira
-or the agent (team audience) and renders into Jira, the agent (also team) or
-a `code.run` (narrower).
+This chain has no sensitivity warnings: its variables come from Jira or the
+agent (team audience) and render into Jira, the agent, a human approver, or a
+narrower `code.run`. The blocked human route needs no `exposes` entry.
+
+## Blocked intake
+
+`jira-intake-blocked-intake` listens for an `agent.result` with outcome
+`blocked` from the intake agent. It asks `group/platform-maintainers` to
+review the agent's reason and issue identity. `jira-intake-close-blocked-intake`
+closes the branch after the human decision; it does not retry intake.

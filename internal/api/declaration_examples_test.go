@@ -107,6 +107,31 @@ func TestExampleDeclarationsParseAndCoverNodes(t *testing.T) {
 	}
 }
 
+func TestBlockedHumanRoutesNeedNoExposureApproval(t *testing.T) {
+	for _, workflow := range []string{"pr-upkeep", "jira-intake"} {
+		_, _, declarations := readExampleDeclarations(t, workflow)
+		resolve := func(name string) (decl.Declaration, bool) {
+			d, ok := declarations[name]
+			if !ok {
+				return decl.Declaration{}, false
+			}
+			return *d, true
+		}
+		for name, d := range declarations {
+			if !strings.Contains(name, "blocked-") || d.Action.Kind != "human.ask" {
+				continue
+			}
+			widenings, err := decl.WideningReferences(*d, resolve, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(widenings) != 0 {
+				t.Fatalf("%s unexpectedly widens %v", name, widenings)
+			}
+		}
+	}
+}
+
 // universalReactions react to a node or to an action's technical result,
 // not to the artifact the predecessor's action produced, so they follow any
 // action (their consumes type is `node` / `action.result`).

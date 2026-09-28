@@ -29,7 +29,20 @@ sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.
     ▼
 workflow.yaml ── analyse ──packaged──▶ fix ──completed──▶ readiness ──▶ human-merges-pr ──▶ finish
                     └─────no_fix─────────────────────────────────────────────────────────────▶ finish
+stamp-pr/analyse/fix ──blocked──▶ platform-maintainers human task ──decision──▶ close-blocked
 ```
+
+The blocked branch is implemented by the migrated declarations, not by the
+legacy `workflow.yaml` graph.
+
+If an agent cannot act because its credential is rejected, access is missing,
+or instructions conflict, it returns `blocked` with `output.reason`. Check
+the `agent.result` reaction and the matching `blocked-*` human task. The task
+shows the agent report, blocked step, PR identity, work item, and ticket when
+available. A maintainer resolves the external obstacle and approves or
+rejects the task; expiry also closes this attempt. No decision automatically
+retries the agent. A later sweep or deliberate new dispatch supplies a new
+attempt when the obstacle has been removed.
 
 Four properties make this a *repeat* process rather than a script someone
 runs:

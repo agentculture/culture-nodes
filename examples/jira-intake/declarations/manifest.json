@@ -5,7 +5,9 @@
     "transition.json",
     "stage-intake.json",
     "picked-up.json",
-    "picked-up-gh.json"
+    "picked-up-gh.json",
+    "blocked-intake.json",
+    "close-blocked-intake.json"
   ],
   "entries": [
     {
@@ -72,6 +74,18 @@
       "to": "jira-intake-intake",
       "kind": "must",
       "why": "reads the intake issue ({jira-intake-intake:*} or lineage[\"jira-intake-intake\"]); every jira-intake lineage starts at intake, so it is always present"
+    },
+    {
+      "from": "jira-intake-blocked-intake",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "why": "reacts to intake and reads its issue identity"
+    },
+    {
+      "from": "jira-intake-close-blocked-intake",
+      "to": "jira-intake-blocked-intake",
+      "kind": "must",
+      "why": "closes the blocked human decision"
     }
   ],
   "steps": [

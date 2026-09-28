@@ -122,7 +122,14 @@ item.
       │                                                            │
       │                                    approved/rejected/expired ──▶ finish
       └──no_change───────────────────────────────────────────────────────▶ finish
+
+  stamp-pr/analyse/fix.blocked ──▶ blocked-step human.ask
+                                      └──approved/rejected/expired──▶ close-blocked-step
 ```
+
+The `blocked` branch in this sketch is the declaration chain under
+[`declarations/`](declarations/README.md); the legacy `workflow.yaml` does
+not contain those added human nodes.
 
 - [`sweep-cycle.workflow.yaml`](sweep-cycle.workflow.yaml) is triggered by
   the scheduled `pr-upkeep.sweep.due` event. Its single code node runs
@@ -270,11 +277,16 @@ The v2 split makes these different states explicit:
   workflow. When its script has no new event to emit, it exits successfully
   and the run ends. The next schedule event starts a fresh discovery pass;
   no human task or parked upkeep run represents an idle repository.
-- **Blocked means one event-created run is waiting at `human-merges-pr`.**
+- **A merge decision waits at `human-merges-pr`.**
   The actor has already produced a proposed fix, and the approval node holds
   that run until a maintainer approves or rejects it, or its deadline expires.
   Each outcome routes to `finish`; it never restarts discovery or reuses the
   run for another finding.
+- **An agent blockage waits at a blocked-step human task.** A missing
+  credential, access, or conflicting instruction yields an `agent.result`
+  with `blocked` and a reason. The declaration routes that report to
+  platform maintainers. Their decision closes the attempt; retrying starts
+  only through a later, separately initiated action.
 
 ## The human-merges rule
 

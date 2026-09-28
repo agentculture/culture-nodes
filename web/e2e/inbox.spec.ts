@@ -98,7 +98,8 @@ test("never offers expired, and states the absence when a task offers no choice"
 
 test("shows a decided task read-only under the confirmed-authority chip", async ({ page }) => {
   await mockInboxApi(page);
-  await page.goto("/inbox");
+  // Decided tasks live on their own tab (task t44); Open is the default.
+  await page.goto("/inbox?tab=decided");
 
   const card = page.locator(`[data-human-task-id="${DECIDED_TASK.id}"]`);
   await expect(card.locator('[data-authority="confirmed"]')).toHaveCount(1);

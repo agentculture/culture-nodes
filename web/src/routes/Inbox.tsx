@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { setAgentState } from "../agent-state/store";
 import {
   ApiError,
@@ -12,8 +12,17 @@ import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
 import { HumanTaskAudit, HumanTaskFacts } from "../components/HumanTaskContext";
 import { taskContextFacts } from "../domain/human-task-context";
+import {
+  DEFAULT_INBOX_TAB,
+  INBOX_TABS,
+  type InboxTab,
+  parseInboxTab,
+  partitionInbox,
+} from "../domain/inbox-tabs";
+import { formatRelativeTime } from "../domain/run-board";
 import { SignedInAs } from "../components/IdentityGate";
 import OutcomeButtons from "../components/OutcomeButtons";
+import SegmentedToggle from "../components/SegmentedToggle";
 import StatusChip from "../components/StatusChip";
 import type { SharedEventType } from "../hooks/useSharedEvents";
 import { useSnapshotReconcile } from "../hooks/useSnapshotReconcile";
@@ -28,6 +37,18 @@ const INBOX_EVENT_TYPES = [
   "dev.culture.nodes.human-task.created",
   "dev.culture.nodes.human-task.decided",
 ] as const satisfies readonly SharedEventType[];
+
+const TAB_LABELS: Record<InboxTab, string> = {
+  open: "Open",
+  waiting: "Waiting",
+  decided: "Decided",
+};
+
+const TAB_EMPTY: Record<InboxTab, string> = {
+  open: "Nothing open.",
+  waiting: "Nothing waiting past its deadline.",
+  decided: "Nothing decided yet.",
+};
 
 /** Mirrors the Mesh view's attribution-refresh discipline (Mesh.tsx). */
 const REFRESH_DEBOUNCE_MS = 4000;
@@ -74,8 +95,31 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * card fetches its run's ledger once and submits the version it actually
  * read, so a concurrent write is refused by the stale guard instead of
  * silently raced.
+ *
+ * Three tabs filter the list (task t44), persisted as `?tab=`: **Open**
+ * (default) is pending with no deadline or a future one — what a person can
+ * act on now; **Waiting** is pending with a deadline already passed (stale,
+ * still decidable, labelled "overdue since …"); **Decided** is every
+ * non-pending task — decided and expired alike — newest first. Expired tasks
+ * come from their own `?status=expired` read, since `?status=decided` never
+ * returns them. The partition rule lives in `domain/inbox-tabs.ts`.
  */
-export function Inbox() {
+export interface InboxProps {
+  /** Test seam for the deadline split and relative times; defaults to now. */
+  now?: Date;
+}
+
+export function Inbox({ now }: InboxProps = {}) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseInboxTab(searchParams.get("tab"));
+  const setTab = (next: InboxTab) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next === DEFAULT_INBOX_TAB) params.delete("tab");
+      else params.set("tab", next);
+      return params;
+    });
+  };
   const [pending, setPending] = useState<HumanTask[] | null>(null);
   const [decided, setDecided] = useState<HumanTask[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -130,11 +174,13 @@ export function Inbox() {
     Promise.all([
       listHumanTasks(controller.signal, { status: "pending" }),
       listHumanTasks(controller.signal, { status: "decided" }),
+      listHumanTasks(controller.signal, { status: "expired" }),
     ])
-      .then(([pendingList, decidedList]) => {
+      .then(([pendingList, decidedList, expiredList]) => {
         if (controller.signal.aborted) return;
         setPending(pendingList.items);
-        setDecided(decidedList.items);
+        // Decided and expired are both terminal; the Decided tab shows both.
+        setDecided([...decidedList.items, ...expiredList.items]);
         if (isInitialLoad) resolveSnapshot();
         setAgentState({ status: "ready", run: null });
       })
@@ -151,6 +197,9 @@ export function Inbox() {
 
   const actorId = whoami.status === "bound" ? whoami.actorId : null;
   const loaded = pending !== null && decided !== null;
+  const clock = now ?? new Date();
+  const tabs = partitionInbox([...(pending ?? []), ...(decided ?? [])], clock);
+  const shown = tabs[tab];
 
   return (
     <section className="view-rail inbox-view">
@@ -174,32 +223,50 @@ export function Inbox() {
         </p>
       ) : (
         <>
-          <h2>Pending</h2>
-          {pending.length === 0 ? (
-            <p className="muted">Nothing is waiting on a human right now.</p>
+          <SegmentedToggle id="inbox-tabs" label="Inbox filter">
+            {INBOX_TABS.map((name) => (
+              <button
+                key={name}
+                type="button"
+                id={`inbox-tab-${name}`}
+                aria-pressed={tab === name}
+                onClick={() => setTab(name)}
+              >
+                {TAB_LABELS[name]}{" "}
+                <span className="inbox-tab__count" data-count={tabs[name].length}>
+                  {tabs[name].length}
+                </span>
+              </button>
+            ))}
+          </SegmentedToggle>
+
+          {shown.length === 0 ? (
+            <p className="muted" id="inbox-tab-empty">
+              {TAB_EMPTY[tab]}
+            </p>
+          ) : tab === "decided" ? (
+            <ul className="inbox-list" id="inbox-decided">
+              {shown.map((task) => (
+                <DecidedTaskCard key={task.id} task={task} />
+              ))}
+            </ul>
           ) : (
-            <ul className="inbox-list" id="inbox-pending">
-              {pending.map((task) => (
+            <ul className="inbox-list" id={`inbox-${tab}`}>
+              {shown.map((task) => (
                 <PendingTaskCard
                   key={task.id}
                   task={task}
                   actorId={actorId}
+                  overdueSince={
+                    tab === "waiting" && task.request?.deadline
+                      ? formatRelativeTime(task.request.deadline, clock)
+                      : undefined
+                  }
                   onDecided={() => setReloadKey((key) => key + 1)}
                 />
               ))}
             </ul>
           )}
-
-          {decided.length > 0 ? (
-            <>
-              <h2>Decided</h2>
-              <ul className="inbox-list" id="inbox-decided">
-                {decided.map((task) => (
-                  <DecidedTaskCard key={task.id} task={task} />
-                ))}
-              </ul>
-            </>
-          ) : null}
         </>
       )}
     </section>
@@ -209,11 +276,14 @@ export function Inbox() {
 function PendingTaskCard({
   task,
   actorId,
+  overdueSince,
   onDecided,
 }: {
   task: HumanTask;
   /** The signed-in principal's actor, or null when nothing can be recorded. */
   actorId: string | null;
+  /** Relative time since a passed deadline (Waiting tab); absent otherwise. */
+  overdueSince?: string;
   onDecided: () => void;
 }) {
   const [ledgerVersion, setLedgerVersion] = useState<number | null>(null);
@@ -298,6 +368,12 @@ function PendingTaskCard({
             <dt>deadline</dt>
             <dd>
               <time dateTime={request.deadline}>{request.deadline}</time>
+              {overdueSince ? (
+                <span className="inbox-card__overdue">
+                  {" "}
+                  overdue since {overdueSince}
+                </span>
+              ) : null}
             </dd>
           </div>
         ) : null}

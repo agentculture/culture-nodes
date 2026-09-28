@@ -23,7 +23,10 @@ export const PENDING_TASK: HumanTask = {
   request: {
     decision_schema_ref: "schemas/decisions/release-signoff.json",
     approver_ref: "team/platform-ai-approvers",
-    deadline: "2026-08-20T12:00:00Z",
+    // Far in the future on purpose (task t44): a pending task whose deadline
+    // has passed moves to the Inbox's Waiting tab, and the Playwright specs
+    // run on the real clock.
+    deadline: "2099-08-20T12:00:00Z",
     allowed_outcomes: ["approved", "changes_required", "rejected"],
     context_refs: {
       from: "nodes.build.output",
@@ -72,6 +75,56 @@ export const DECIDED_TASK: HumanTask = {
   response: { note: "looks right", outcome_reason: "diff matches the spec" },
   created_at: "2026-08-12T08:00:00Z",
   resolved_at: "2026-08-12T09:30:00Z",
+};
+
+/**
+ * Task t44: the clock the Inbox tab tests render with, and one task per tab
+ * edge — pending past its deadline (Waiting), pending with a deadline that
+ * does not parse (treated as no deadline: Open), and one the engine expired
+ * (Decided, never a human decision).
+ */
+export const INBOX_NOW = new Date("2026-08-15T00:00:00Z");
+
+export const WAITING_TASK: HumanTask = {
+  id: "ht-01J8XKINBOX0000000000000004",
+  run_id: "run-01J8XKINBOXRUN000000000004",
+  kind: "approval",
+  status: "pending",
+  request: {
+    allowed_outcomes: ["approved", "rejected"],
+    // Twelve hours before INBOX_NOW.
+    deadline: "2026-08-14T12:00:00Z",
+    audit: { node_id: "stale-gate" },
+  },
+  created_at: "2026-08-10T08:00:00Z",
+};
+
+export const BAD_DEADLINE_TASK: HumanTask = {
+  id: "ht-01J8XKINBOX0000000000000005",
+  run_id: "run-01J8XKINBOXRUN000000000005",
+  kind: "approval",
+  status: "pending",
+  request: {
+    allowed_outcomes: ["approved", "rejected"],
+    deadline: "not-a-timestamp",
+    audit: { node_id: "odd-gate" },
+  },
+  created_at: "2026-08-11T08:00:00Z",
+};
+
+export const EXPIRED_TASK: HumanTask = {
+  id: "ht-01J8XKINBOX0000000000000006",
+  run_id: "run-01J8XKINBOXRUN000000000006",
+  kind: "approval",
+  status: "expired",
+  request: {
+    allowed_outcomes: ["approved", "rejected", "expired"],
+    audit: { node_id: "human-merges-pr" },
+  },
+  response: { reason: "pr_merged" },
+  created_at: "2026-08-12T10:00:00Z",
+  // Resolved after DECIDED_TASK, so it sorts first on the Decided tab.
+  resolved_at: "2026-08-13T11:00:00Z",
 };
 
 /** The ledger version the run currently reports (the stale-guard read). */

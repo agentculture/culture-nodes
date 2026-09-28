@@ -47,6 +47,28 @@ export interface TaskNarrative {
   text: string;
 }
 
+/**
+ * An agent's report, read out readably (task t46). A declaration template
+ * renders every value as a string, so a `human.ask` input like
+ * `agent_report` arrives as a string that CONTAINS a JSON object; it is
+ * parsed and its known keys named here. What is not a known key — the
+ * workspace measurement, anything new — goes to `audit`, which the card
+ * keeps behind the collapsed disclosure. Raw JSON is never the main content.
+ */
+export interface AgentReport {
+  reason?: string;
+  remediation?: string;
+  /** Often markdown; the app has no renderer, so it renders preformatted. */
+  summary?: string;
+  evidence: string[];
+  changesMade?: string;
+  intendedLine?: string;
+  /** The PR the report names, linked only when its shape is a real PR ref. */
+  pr?: { label: string; href?: string };
+  /** workspace_measured and every unknown key, verbatim. */
+  audit: Record<string, unknown>;
+}
+
 export interface TaskReadiness {
   sonarGate?: string;
   openIssues?: number;
@@ -72,7 +94,8 @@ export interface TaskContextFacts {
   blockedStep?: string;
   findings: TaskFinding[];
   narratives: TaskNarrative[];
-  evidence: string[];
+  /** Agent reports (task t46), each read into named parts. */
+  reports: AgentReport[];
   readiness?: TaskReadiness;
   /** Refs that did not resolve, with the server's reason. */
   unresolved: { name: string; reason: string }[];
@@ -141,6 +164,99 @@ function humanize(id: string): string {
   return words ? words[0].toUpperCase() + words.slice(1) : id;
 }
 
+/**
+ * A string that is a JSON object, parsed; anything else (plain prose, an
+ * array, invalid JSON) is undefined and stays text.
+ */
+export function parseJsonObject(text: string): Obj | undefined {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return isObj(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const REPORT_KEYS = new Set([
+  "reason",
+  "remediation",
+  "summary",
+  "evidence",
+  "changes_made",
+  "intended_line",
+  "pr",
+]);
+
+/** An object that reads as an agent report rather than a node's output. */
+function looksLikeReport(value: Obj): boolean {
+  return ["reason", "remediation", "changes_made", "intended_line"].some(
+    (key) => key in value,
+  );
+}
+
+const PR_REF_RE = /^(?:gh:)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)$/;
+
+/** `owner/repo#N` (or `gh:owner/repo#N`, or a bare number with a known repo). */
+function readReportPr(
+  raw: unknown,
+  repository: string | undefined,
+): AgentReport["pr"] | undefined {
+  if (typeof raw === "string") {
+    const match = PR_REF_RE.exec(raw.trim());
+    if (match) {
+      const number = Number(match[2]);
+      return { label: `${match[1]}#${number}`, href: githubPullHref(match[1], number) };
+    }
+    const n = positiveInt(raw.trim());
+    if (n === undefined) return raw.trim() ? { label: raw.trim() } : undefined;
+    raw = n;
+  }
+  const number = positiveInt(raw);
+  if (number === undefined) return undefined;
+  return repository
+    ? { label: `${repository}#${number}`, href: githubPullHref(repository, number) }
+    : { label: `#${number}` };
+}
+
+/** Read an agent report object into named parts; unknown keys to audit. */
+export function readAgentReport(value: Obj, repository?: string): AgentReport {
+  const report: AgentReport = { evidence: [], audit: {} };
+  for (const [key, raw] of Object.entries(value)) {
+    if (!REPORT_KEYS.has(key)) {
+      report.audit[key] = raw;
+      continue;
+    }
+    if (key === "pr") {
+      report.pr = readReportPr(raw, repository);
+      if (!report.pr && raw !== null && raw !== undefined && raw !== "")
+        report.audit[key] = raw;
+      continue;
+    }
+    if (key === "evidence") {
+      const items = Array.isArray(raw) ? raw : [raw];
+      for (const item of items) {
+        if (typeof item === "string" && item.trim()) report.evidence.push(item);
+        else if (item !== null && item !== undefined && item !== "")
+          report.audit[key] = raw;
+      }
+      continue;
+    }
+    const text = str(raw);
+    if (text === undefined) {
+      if (raw !== null && raw !== undefined && raw !== "") report.audit[key] = raw;
+      continue;
+    }
+    if (key === "reason") report.reason = text;
+    else if (key === "remediation") report.remediation = text;
+    else if (key === "summary") report.summary = text;
+    else if (key === "changes_made") report.changesMade = text;
+    else if (key === "intended_line") report.intendedLine = text;
+  }
+  return report;
+}
+
 function readFinding(raw: unknown): TaskFinding | null {
   if (!isObj(raw)) return null;
   const finding: TaskFinding = {
@@ -195,12 +311,14 @@ export function taskContextFacts(task: HumanTask): TaskContextFacts {
     questionGiven: false,
     findings: [],
     narratives: [],
-    evidence: [],
+    reports: [],
     unresolved: [],
     truncated: false,
   };
   let jiraSite: string | undefined;
   let question: string | undefined;
+  // Reports are read after the loop, once the task's repository is known.
+  const reportValues: Obj[] = [];
 
   const entries: HumanTaskContextValue[] = task.resolved_context ?? [];
   for (const entry of entries) {
@@ -209,12 +327,22 @@ export function taskContextFacts(task: HumanTask): TaskContextFacts {
       continue;
     }
     if (entry.truncated) facts.truncated = true;
-    const value = entry.value;
+    let value = entry.value;
     const label = entry.name === "from" ? "" : entry.name;
 
     if (typeof value === "string") {
-      if (value.trim()) facts.narratives.push({ label: label || "context", text: value });
-      continue;
+      // A template-rendered value: a string that is a JSON object is read
+      // as the object it is (task t46), never shown as raw JSON.
+      const parsed = parseJsonObject(value);
+      if (parsed && (entry.name === "agent_report" || looksLikeReport(parsed))) {
+        reportValues.push(parsed);
+        continue;
+      }
+      if (!parsed) {
+        if (value.trim()) facts.narratives.push({ label: label || "context", text: value });
+        continue;
+      }
+      value = parsed;
     }
     if (!isObj(value)) continue;
 
@@ -243,14 +371,11 @@ export function taskContextFacts(task: HumanTask): TaskContextFacts {
     if (summary)
       facts.narratives.push({ label: label ? `${label} — summary` : "summary", text: summary });
     const report = value.agent_report;
-    if (typeof report === "string" && report.trim()) {
+    const reportObj = typeof report === "string" ? parseJsonObject(report) : report;
+    if (isObj(reportObj)) {
+      reportValues.push(reportObj);
+    } else if (typeof report === "string" && report.trim()) {
       facts.narratives.push({ label: "agent report", text: report });
-    } else if (isObj(report)) {
-      const reason = str(report.reason) ?? str(report.summary);
-      if (reason) facts.narratives.push({ label: "agent report — reason", text: reason });
-      if (Array.isArray(report.evidence))
-        for (const item of report.evidence)
-          if (typeof item === "string" && item.trim()) facts.evidence.push(item);
     }
     facts.readiness ??= readReadiness(value);
   }
@@ -273,6 +398,13 @@ export function taskContextFacts(task: HumanTask): TaskContextFacts {
           finding.file,
           finding.line,
         );
+  }
+
+  for (const value of reportValues) {
+    const report = readAgentReport(value, facts.repository);
+    // The PR the card already links at the top is not linked twice.
+    if (report.pr?.href && report.pr.href === facts.prHref) report.pr = undefined;
+    facts.reports.push(report);
   }
 
   if (question) {

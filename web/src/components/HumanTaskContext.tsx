@@ -7,7 +7,8 @@
  * The facts come from `taskContextFacts` (domain/human-task-context.ts), which
  * reads the API's server-side resolution of the task's context refs. There is
  * no markdown renderer in this app, so an agent's summary or reason renders
- * as preformatted text — legible, and never HTML the page did not write.
+ * as preformatted text — legible, and never HTML the page did not write. An
+ * agent report that arrives as a JSON string is read key by key (task t46).
  *
  * The PR's LIVE state (open / merged / closed) is not shown: the control
  * plane has no GitHub read to ask with until the GitHub App token work
@@ -15,7 +16,7 @@
  */
 import type { ReactNode } from "react";
 import type { HumanTask, HumanTaskBinding } from "../api/types";
-import type { TaskContextFacts } from "../domain/human-task-context";
+import type { AgentReport, TaskContextFacts } from "../domain/human-task-context";
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -93,15 +94,9 @@ export function HumanTaskFacts({ facts }: { facts: TaskContextFacts }) {
             <pre className="inbox-card__narrative">{narrative.text}</pre>
           </Fact>
         ))}
-        {facts.evidence.length > 0 ? (
-          <Fact label="agent evidence">
-            <ul className="inbox-card__findings">
-              {facts.evidence.map((item, index) => (
-                <li key={index}>{item}</li>
-              ))}
-            </ul>
-          </Fact>
-        ) : null}
+        {facts.reports.map((report, index) => (
+          <AgentReportFacts key={index} report={report} />
+        ))}
         {readiness ? (
           <Fact label="readiness">
             {readiness.sonarGate !== undefined ? (
@@ -147,6 +142,57 @@ export function HumanTaskFacts({ facts }: { facts: TaskContextFacts }) {
   );
 }
 
+/**
+ * An agent's report, key by key (task t46): why it stopped, what would
+ * unblock it, its own summary, the evidence it cites, what it changed, where
+ * it meant to report, and the PR. The workspace measurement and any key this
+ * page does not know sit in the audit disclosure instead (see
+ * HumanTaskAudit), so the card never leads with raw JSON.
+ */
+function AgentReportFacts({ report }: { report: AgentReport }) {
+  return (
+    <>
+      {report.reason ? (
+        <Fact label="agent report — reason">
+          <pre className="inbox-card__narrative">{report.reason}</pre>
+        </Fact>
+      ) : null}
+      {report.remediation ? (
+        <Fact label="what would unblock it">
+          <pre className="inbox-card__narrative">{report.remediation}</pre>
+        </Fact>
+      ) : null}
+      {report.summary ? (
+        <Fact label="agent report — summary">
+          <pre className="inbox-card__narrative">{report.summary}</pre>
+        </Fact>
+      ) : null}
+      {report.evidence.length > 0 ? (
+        <Fact label="agent evidence">
+          <ul className="inbox-card__findings">
+            {report.evidence.map((item, index) => (
+              <li key={index}>{item}</li>
+            ))}
+          </ul>
+        </Fact>
+      ) : null}
+      {report.changesMade ? <Fact label="changes made">{report.changesMade}</Fact> : null}
+      {report.intendedLine ? (
+        <Fact label="meant to report on">{report.intendedLine}</Fact>
+      ) : null}
+      {report.pr ? (
+        <Fact label="report's pull request">
+          {report.pr.href ? (
+            <External href={report.pr.href}>{report.pr.label}</External>
+          ) : (
+            <code>{report.pr.label}</code>
+          )}
+        </Fact>
+      ) : null}
+    </>
+  );
+}
+
 /** Shorten a sha256 digest the way the Workflows table does. */
 function shortDigest(digest: string): string {
   return digest.length > 21 ? `${digest.slice(0, 20)}…` : digest;
@@ -169,14 +215,20 @@ function renderBinding(ref: HumanTaskBinding): string {
 export function HumanTaskAudit({
   task,
   ledgerGuard,
+  facts,
 }: {
   task: HumanTask;
   /** The ledger-guard row's content, or undefined for a card without one. */
   ledgerGuard?: ReactNode;
+  /** The card's facts: agent-report keys it did not name land here (t46). */
+  facts?: TaskContextFacts | null;
 }) {
   const request = task.request ?? {};
   const audit = request.audit;
   const refs = request.context_refs;
+  const reportAudit = (facts?.reports ?? []).flatMap((report) =>
+    Object.entries(report.audit),
+  );
   return (
     <details className="inbox-card__audit-details">
       <summary>audit</summary>
@@ -218,6 +270,13 @@ export function HumanTaskAudit({
             </ul>
           </Fact>
         ) : null}
+        {reportAudit.map(([key, value], index) => (
+          <Fact key={`${key}-${index}`} label={`agent report · ${key}`}>
+            <pre className="inbox-card__narrative">
+              {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+            </pre>
+          </Fact>
+        ))}
       </dl>
     </details>
   );

@@ -2529,6 +2529,25 @@ button.timeline__node {
   gap: 0.35rem;
 }
 
+/* One outcome button and its one-line hint (task t46). */
+.inbox-card__outcome-choice {
+  display: inline-grid;
+  gap: 0.2rem;
+  justify-items: start;
+}
+
+.inbox-card__outcome-hint {
+  font-size: 0.8rem;
+  max-width: 18rem;
+}
+
+/* The decider's optional note on a decided task (task t46). */
+.inbox-card__note {
+  margin: 0.4rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .inbox-card__field {
   display: grid;
   gap: 0.25rem;

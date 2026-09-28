@@ -2,8 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import Decisions from "./Decisions";
-import { ApiError, getWhoami, listPendingDecisions } from "../api/client";
+import Inbox from "./Inbox";
+import {
+  ApiError,
+  getLedger,
+  getWhoami,
+  listHumanTasks,
+  listPendingDecisions,
+  listReviewedRecords,
+} from "../api/client";
 import {
   CLAIM_LEDGER_VERSION,
   CLAIM_RUN_ID,
@@ -22,18 +29,34 @@ import { resetAgentState } from "../agent-state/store";
 import { resetWhoamiForTests } from "../hooks/useWhoami";
 
 /**
- * The Inbox test's stub pattern: the READS (the list, whoami) are
- * module-mocked, and the two mutating calls are NOT — they run the real client
- * helpers against a stubbed global `fetch`, because the acceptance for t30 is
- * what the browser actually sends (the bodies — and, since task t9, that no
- * Authorization header goes with them).
+ * The Inbox's To review tab (task t46, owner decision d19): what the
+ * Decisions page (`/decisions`, task t30) did, now one tab of the one place
+ * to decide. These are the Decisions page's own tests, pointed at the tab —
+ * the review form moved intact, and so did the properties it pins: the
+ * payload in full, a verdict per record, and a REQUIRED rationale.
+ *
+ * The Inbox test's stub pattern: the READS are module-mocked, and the two
+ * mutating calls are NOT — they run the real client helpers against a
+ * stubbed global `fetch`, because the acceptance is what the browser
+ * actually sends (the bodies — and, since task t9, that no Authorization
+ * header goes with them).
  */
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, listPendingDecisions: vi.fn(), getWhoami: vi.fn() };
+  return {
+    ...actual,
+    listPendingDecisions: vi.fn(),
+    listReviewedRecords: vi.fn(),
+    listHumanTasks: vi.fn(),
+    getLedger: vi.fn(),
+    getWhoami: vi.fn(),
+  };
 });
 
 const mockListPendingDecisions = vi.mocked(listPendingDecisions);
+const mockListReviewedRecords = vi.mocked(listReviewedRecords);
+const mockListHumanTasks = vi.mocked(listHumanTasks);
+const mockGetLedger = vi.mocked(getLedger);
 const mockGetWhoami = vi.mocked(getWhoami);
 
 function headerNames(init: { headers: Record<string, string> }): string[] {
@@ -42,8 +65,8 @@ function headerNames(init: { headers: Record<string, string> }): string[] {
 
 function renderDecisions() {
   return render(
-    <MemoryRouter initialEntries={["/decisions"]}>
-      <Decisions />
+    <MemoryRouter initialEntries={["/inbox?tab=review"]}>
+      <Inbox />
     </MemoryRouter>,
   );
 }
@@ -82,6 +105,11 @@ async function findRunCard(runId = CLAIM_RUN_ID) {
 
 beforeEach(() => {
   mockListPendingDecisions.mockReset();
+  mockListReviewedRecords.mockReset();
+  mockListReviewedRecords.mockResolvedValue({ items: [] });
+  mockListHumanTasks.mockReset();
+  mockListHumanTasks.mockResolvedValue({ items: [] });
+  mockGetLedger.mockReset();
   mockGetWhoami.mockReset();
   mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
   resetWhoamiForTests();
@@ -92,18 +120,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Decisions loading, empty and error states", () => {
+describe("To review: loading, empty and error states", () => {
   it("shows a loading state before the list resolves", () => {
     mockListPendingDecisions.mockReturnValue(new Promise(() => {}));
     renderDecisions();
-    expect(screen.getByText("Loading pending decisions…")).toBeInTheDocument();
+    expect(screen.getByText("Loading inbox…")).toBeInTheDocument();
   });
 
   it("says so plainly when nothing is awaiting a decision", async () => {
     mockListPendingDecisions.mockResolvedValue({ items: [], record_count: 0 });
     renderDecisions();
     expect(
-      await screen.findByText(/Nothing is awaiting a decision\./),
+      await screen.findByText(/Nothing is awaiting a review\./),
     ).toBeInTheDocument();
   });
 
@@ -119,7 +147,7 @@ describe("Decisions loading, empty and error states", () => {
   });
 });
 
-describe("Decisions rendering", () => {
+describe("To review: rendering", () => {
   beforeEach(() => {
     mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
   });
@@ -154,7 +182,7 @@ describe("Decisions rendering", () => {
     expect(submit).toBeDisabled(); // a decision with no stated reason stays refused
     expect(within(card).queryByLabelText(/reviewer/i)).toBeNull();
     expect(screen.queryByLabelText(/token/i)).toBeNull();
-    expect(screen.getByText(/reviewing as/i)).toHaveTextContent(WHOAMI_EMAIL);
+    expect(screen.getByText(/deciding as/i)).toHaveTextContent(WHOAMI_EMAIL);
 
     await user.type(
       within(card).getByLabelText(/Why \(recorded on the decision\)/),
@@ -178,7 +206,7 @@ describe("Decisions rendering", () => {
   });
 });
 
-describe("Decisions submission", () => {
+describe("To review: submission", () => {
   beforeEach(() => {
     mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
   });
@@ -247,7 +275,7 @@ describe("Decisions submission", () => {
 
     // The queue empties...
     expect(
-      await screen.findByText(/Nothing is awaiting a decision\./),
+      await screen.findByText(/Nothing is awaiting a review\./),
     ).toBeInTheDocument();
     // ...and the operator can still see what they just recorded.
     const recorded = screen.getByRole("status");
@@ -352,7 +380,7 @@ describe("Decisions submission", () => {
 });
 
 
-describe("Decisions record payload rendering (task t27)", () => {
+describe("To review: record payload rendering (task t27)", () => {
   it("renders a claim's statement as readable text, not escaped JSON", async () => {
     mockListPendingDecisions.mockResolvedValue(PENDING_DECISIONS);
     renderDecisions();

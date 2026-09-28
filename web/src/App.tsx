@@ -11,7 +11,6 @@ import Header from "./components/Header";
 import IdentityGate from "./components/IdentityGate";
 import { useWhoami } from "./hooks/useWhoami";
 import AuthorWorkflow from "./routes/AuthorWorkflow";
-import Decisions from "./routes/Decisions";
 import Declarations from "./routes/Declarations";
 import Design from "./routes/Design";
 import DesignCanvas from "./routes/DesignCanvas";
@@ -43,7 +42,8 @@ const ROUTE_TITLES: ReadonlyArray<readonly [string, string]> = [
   ["/board", "Runs"],
   ["/jobs", "Runs"],
   ["/inbox", "Inbox"],
-  ["/decisions", "Decisions"],
+  // One place to decide (task t46): /decisions lands on the Inbox.
+  ["/decisions", "Inbox"],
   ["/mesh", "Mesh"],
   ["/stats", "Statistics"],
   ["/design", "Design"],
@@ -173,7 +173,13 @@ export function App() {
             element={<RedirectToRunsProjection view="jobs" />}
           />
           <Route path="/inbox" element={<Inbox />} />
-          <Route path="/decisions" element={<Decisions />} />
+          {/* One place to decide (task t46, owner decision d19): the
+              Decisions page became the Inbox's To review tab, and its URL
+              lands there — a redirect, not a retirement. */}
+          <Route
+            path="/decisions"
+            element={<Navigate to="/inbox?tab=review" replace />}
+          />
           <Route path="/mesh" element={<Mesh />} />
           <Route path="/stats" element={<Statistics />} />
           <Route path="/design" element={<Design />} />

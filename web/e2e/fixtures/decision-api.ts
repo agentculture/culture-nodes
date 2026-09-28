@@ -94,10 +94,19 @@ export async function mockTicketApi(
  */
 export async function mockInboxApi(
   page: Page,
-  options: { pending?: unknown[]; decided?: unknown[]; expired?: unknown[] } = {},
+  options: {
+    pending?: unknown[];
+    decided?: unknown[];
+    expired?: unknown[];
+    pendingDecisions?: unknown;
+    reviewed?: unknown[];
+  } = {},
 ): Promise<CapturedRequest[]> {
   const captured: CapturedRequest[] = [];
   const pending = options.pending ?? [PENDING_TASK, PENDING_TASK_MINIMAL];
+  // The one decision page (task t46) also reads the review half.
+  const pendingDecisions = options.pendingDecisions ?? { items: [], record_count: 0 };
+  const reviewed = options.reviewed ?? [];
   const decided = options.decided ?? [DECIDED_TASK];
   const expired = options.expired ?? [];
 
@@ -128,6 +137,14 @@ export async function mockInboxApi(
       await route.fulfill(json({ items }));
       return;
     }
+    if (path === "/v1alpha1/pending-decisions") {
+      await route.fulfill(json(pendingDecisions));
+      return;
+    }
+    if (path === "/v1alpha1/reviewed-records") {
+      await route.fulfill(json({ items: reviewed }));
+      return;
+    }
     if (path.endsWith("/ledger")) {
       await route.fulfill(json({ items: [], ledger_version: LEDGER_VERSION }));
       return;
@@ -143,10 +160,10 @@ export async function mockInboxApi(
 }
 
 /**
- * The Decisions view's slice (task t12): the pending-decisions listing both
- * tabs read, an empty human-task listing, the run lookup the Pending tab uses
- * to find each claim group's ticket, and the two review calls the Proposed
- * claims tab makes. POSTs are captured.
+ * The review slice (task t12; since task t46 the Inbox's To review tab, which
+ * `/decisions` redirects to): the pending-decisions listing, an empty
+ * human-task listing, an empty reviewed-records listing, the run lookup, and
+ * the two review calls the form makes. POSTs are captured.
  */
 export async function mockDecisionsApi(
   page: Page,
@@ -180,6 +197,10 @@ export async function mockDecisionsApi(
     }
     if (path === "/v1alpha1/pending-decisions") {
       await route.fulfill(json(PENDING_DECISIONS));
+      return;
+    }
+    if (path === "/v1alpha1/reviewed-records") {
+      await route.fulfill(json({ items: [] }));
       return;
     }
     if (path === "/v1alpha1/human-tasks") {

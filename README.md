@@ -227,9 +227,10 @@ Three things this surface refuses to be casual about:
   it. That is why "what is still undecided" is `GET /pending-decisions` — a
   join — and not a filter on authority.
 
-The same thing from a browser: the **Decisions** view (`/decisions`) lists
-every undecided record with its payload in full and records the verdict,
-reviewer and rationale. `scripts/decide-claims.py` is the terminal version,
+The same thing from a browser: the **Inbox**'s To review tab
+(`/inbox?tab=review`; the old `/decisions` URL redirects there) lists every
+undecided record with its payload in full and records the verdict, reviewer
+and rationale. `scripts/decide-claims.py` is the terminal version,
 and `scripts/ledger-gate.py` is the stage gate that fails while anything is
 still undecided.
 

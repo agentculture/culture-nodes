@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentculture/culture-nodes/internal/ledger"
 )
@@ -94,7 +95,22 @@ type HumanTaskDecisionRequest struct {
 	// approval decisions review no discrete prior record, so this is
 	// ordinarily empty.
 	RecordIDs []string
+	// Note is the decider's optional free-text reason (task t46, owner
+	// decision d19): "offer input (optional)" on every decision, as the
+	// ledger review surface offers its rationale. It is recorded on the
+	// ledger decision record (`note`), as the confirming review record's
+	// rationale, and on human_tasks.response so a decided task shows it.
+	// Optional here, unlike a review's rationale: an approval's outcome is
+	// itself the answer, and a note nobody wrote must not be synthesised.
+	// Absent (empty) leaves every key out rather than writing "". Bounded by
+	// MaxDecisionNoteRunes.
+	Note string
 }
+
+// MaxDecisionNoteRunes bounds HumanTaskDecisionRequest.Note (task t46): a
+// note is a sentence or a short paragraph a person types, recorded in three
+// places, not a document store.
+const MaxDecisionNoteRunes = 2000
 
 func (r HumanTaskDecisionRequest) validate() error {
 	switch {
@@ -104,6 +120,9 @@ func (r HumanTaskDecisionRequest) validate() error {
 		return errors.New("engine: DecideHumanTask requires the decision's domain outcome")
 	case r.DeciderActorID == "":
 		return errors.New("engine: DecideHumanTask requires a decider actor id")
+	case utf8.RuneCountInString(r.Note) > MaxDecisionNoteRunes:
+		return fmt.Errorf("engine: DecideHumanTask note is %d characters, over the %d limit",
+			utf8.RuneCountInString(r.Note), MaxDecisionNoteRunes)
 	}
 	return nil
 }
@@ -371,6 +390,8 @@ type humanTaskDecisionData struct {
 	HumanTaskID string          `json:"human_task_id"`
 	Outcome     string          `json:"outcome"`
 	Response    json.RawMessage `json:"response,omitempty"`
+	// Note is the decider's optional reason (task t46); omitted when none.
+	Note string `json:"note,omitempty"`
 }
 
 // recordDecision is PRD §10.8's review transaction, reused as the mechanism
@@ -424,6 +445,7 @@ func (d *humanTaskDecision) recordDecision(ctx context.Context) error {
 		HumanTaskID: d.task.ID,
 		Outcome:     d.req.Outcome,
 		Response:    d.req.Response,
+		Note:        d.req.Note,
 	})
 	if err != nil {
 		return fmt.Errorf("engine: encode human task %s decision: %w", d.task.ID, err)
@@ -458,7 +480,10 @@ func (d *humanTaskDecision) recordDecision(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	committed, err := l.CommitReview(ctx, review.ID, decisions, reviewVersion)
+	// The note, when the decider wrote one, is also the review's rationale
+	// (ledger.WithRationale omits the key for ""), so a reader of the review
+	// record sees why without joining to the decision record.
+	committed, err := l.CommitReview(ctx, review.ID, decisions, reviewVersion, ledger.WithRationale(d.req.Note))
 	if err != nil {
 		return err
 	}
@@ -476,6 +501,7 @@ func (d *humanTaskDecision) markDecided(ctx context.Context) error {
 		Outcome:        d.req.Outcome,
 		DeciderActorID: d.req.DeciderActorID,
 		Response:       d.req.Response,
+		Note:           d.req.Note,
 		DecidedAt:      d.now,
 	})
 	if err != nil {
@@ -497,6 +523,7 @@ type humanTaskResponse struct {
 	Outcome        string          `json:"outcome"`
 	DeciderActorID string          `json:"decider_actor_id"`
 	Response       json.RawMessage `json:"response,omitempty"`
+	Note           string          `json:"note,omitempty"`
 	DecidedAt      time.Time       `json:"decided_at"`
 }
 

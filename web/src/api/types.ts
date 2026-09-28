@@ -524,6 +524,8 @@ export interface HumanTask {
   allowed_outcomes?: string[];
   /** The decision payload, present once decided. */
   response?: unknown;
+  /** The decider's optional note (task t46), lifted out of `response`. */
+  note?: string;
   created_at: string;
   resolved_at?: string;
   /**
@@ -832,34 +834,9 @@ export interface ReviewCommitResult {
   ledger_version: number;
 }
 
-/** `POST /v1alpha1/human-tasks/{id}/decision` request body. */
-export interface HumanTaskDecisionRequest {
-  outcome: string;
-  decider_actor_id: string;
-  response?: unknown;
-  /**
-   * The run's ledger version the decider last read (`GET
-   * /runs/{id}/ledger`'s `ledger_version`). A stale expectation is refused
-   * atomically with nothing written — same guard as PRD §10.8 review
-   * commits.
-   */
-  expected_ledger_version: number;
-  record_ids?: string[];
-}
-
-/** `POST .../decision`'s result (components.schemas.HumanTaskDecisionResult). */
-export interface HumanTaskDecisionResult {
-  human_task_id: string;
-  run_id: string;
-  node_run_id: string;
-  outcome: string;
-  ledger_records: LedgerRecord[];
-  next_node_id?: string;
-  next_node_run_id?: string;
-  next_human_task_id?: string;
-  run_state: string;
-  run_output?: unknown;
-}
+// The human-task decision request/result live in decisionTypes.ts (task
+// t46), re-exported here so every existing import keeps working.
+export type { HumanTaskDecisionRequest, HumanTaskDecisionResult } from "./decisionTypes";
 
 /**
  * The ledger-producer kind a plan-import row's `origin_kind` carries (task

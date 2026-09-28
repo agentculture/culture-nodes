@@ -54,8 +54,14 @@ type sensitivityApprovalResp struct {
 // openApproval opens the task a blocked firing of version v would open.
 func openApproval(t *testing.T, s *storepg.Store, nsID, versionID, declarationID, variable, owner string) string {
 	t.Helper()
+	return openApprovalNamed(t, s, nsID, "announce", versionID, declarationID, variable, owner)
+}
+
+// openApprovalNamed is openApproval for a firing declaration called name.
+func openApprovalNamed(t *testing.T, s *storepg.Store, nsID, name, versionID, declarationID, variable, owner string) string {
+	t.Helper()
 	a, err := (declengine.PostgresBackend{Store: s}).RequestSensitivityApproval(context.Background(), declengine.SensitivityApprovalRequest{
-		NamespaceID: nsID, DeclarationName: "announce", Variable: variable, Owner: owner,
+		NamespaceID: nsID, DeclarationName: name, Variable: variable, Owner: owner,
 		DeclarationID: declarationID, DeclarationVersionID: versionID,
 		SourceDeclarationID: declarationID, SourceVersionID: versionID, EventID: "evt",
 		Source: decl.SourceSensitivity("jira.issue.created"), Target: decl.TargetSensitivity("discord.post"),
@@ -149,6 +155,12 @@ func TestAgentCannotDecideSensitivityApproval(t *testing.T) {
 		map[string]string{"decision": "approved"}, nil)
 	if resp.StatusCode < 400 {
 		t.Fatalf("agent decision: status = %d, want a refusal: %s", resp.StatusCode, body)
+	}
+	// Naming a head (the t40b correction path) does not let an agent in.
+	resp, body = doJSONBearer(t, f.client, http.MethodPost, f.url("/v1alpha1/sensitivity-approvals/"+id+"/decision"), mergeGateToken,
+		map[string]string{"decision": "approved", "supersedes": "01ANYDECISION"}, nil)
+	if resp.StatusCode < 400 {
+		t.Fatalf("agent correction: status = %d, want a refusal: %s", resp.StatusCode, body)
 	}
 	ds, err := declengine.ListSensitivityDecisions(context.Background(), f.store, f.nsID, id)
 	if err != nil || len(ds) != 0 {

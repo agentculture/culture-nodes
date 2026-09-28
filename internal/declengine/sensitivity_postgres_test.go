@@ -215,9 +215,27 @@ func TestPostgresExposureListedApprovalLifecycle(t *testing.T) {
 	if outcome, reason := handleJira(t, e, db, ns, declID, vars); outcome != OutcomeSensitivityBlocked || !strings.Contains(reason, "refused") {
 		t.Fatalf("after refusal: %q %q, want still blocked and naming the refusal", outcome, reason)
 	}
-	approval, err := DecideSensitivityApproval(ctx, db, ns, task.ID, owner, SensitivityApproved, "fine after all")
+	// t40b: a blind second decision on the refused task is refused and
+	// appends nothing; changing the answer is a correction naming the head,
+	// and a correction naming anything else is stale.
+	if _, err := DecideSensitivityApproval(ctx, db, ns, task.ID, owner, SensitivityApproved, "again"); !errors.Is(err, ErrSensitivityAlreadyDecided) {
+		t.Fatalf("second decision on a refused task err = %v, want ErrSensitivityAlreadyDecided", err)
+	}
+	if _, err := CorrectSensitivityApproval(ctx, db, ns, task.ID, owner, SensitivityApproved, "stale", "01NOTTHEHEAD"); !errors.Is(err, ErrSensitivityStaleCorrection) {
+		t.Fatalf("stale correction err = %v, want ErrSensitivityStaleCorrection", err)
+	}
+	if _, err := CorrectSensitivityApproval(ctx, db, ns, task.ID, ActivationPrincipal{Kind: PrincipalAgent, Author: "alice@example.com"}, SensitivityApproved, "", refusal.ID); !errors.Is(err, ErrSensitivityNotHuman) {
+		t.Fatalf("agent correction err = %v, want ErrSensitivityNotHuman", err)
+	}
+	if ds, _ := ListSensitivityDecisions(ctx, db, ns, task.ID); len(ds) != 1 {
+		t.Fatalf("refused repeats appended decisions: %+v", ds)
+	}
+	approval, err := CorrectSensitivityApproval(ctx, db, ns, task.ID, owner, SensitivityApproved, "fine after all", refusal.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := DecideSensitivityApproval(ctx, db, ns, task.ID, owner, SensitivityApproved, "double click"); !errors.Is(err, ErrSensitivityAlreadyDecided) {
+		t.Fatalf("second decision on an approved task err = %v, want ErrSensitivityAlreadyDecided", err)
 	}
 	if approval.SupersedesID != refusal.ID {
 		t.Fatalf("approval supersedes %q, want the refusal %q", approval.SupersedesID, refusal.ID)

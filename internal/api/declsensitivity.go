@@ -35,8 +35,19 @@ type sensitivityApprovalList struct {
 }
 
 type sensitivityDecisionRequest struct {
-	Decision string `json:"decision"`
-	Note     string `json:"note,omitempty"`
+	Decision   string `json:"decision"`
+	Note       string `json:"note,omitempty"`
+	Supersedes string `json:"supersedes,omitempty"`
+}
+
+// noStore marks an inbox response uncacheable. The origin sent no
+// Cache-Control, so the Cloudflare edge in front of nodes.culture.dev served
+// a stored copy of the pending list (#305): on 2026-09-28 it replayed a
+// 09:30 inbox -- one task, pending then, approved since -- and hid the six
+// tasks opened at 09:52, which invited a second decision on the approved one
+// (t40b, #328). An inbox read must be the database's answer, every time.
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
 }
 
 // handleListSensitivityApprovals is GET /v1alpha1/sensitivity-approvals
@@ -49,6 +60,7 @@ func (s *Server) handleListSensitivityApprovals(w http.ResponseWriter, r *http.R
 	default:
 		return badRequest("use status=pending, approved, refused or withdrawn", "unknown status %q", status)
 	}
+	noStore(w)
 	items, err := declengine.ListSensitivityApprovals(r.Context(), s.Store, s.NamespaceID, q.Get("owner"), status)
 	if err != nil {
 		return internalError(err)
@@ -58,7 +70,10 @@ func (s *Server) handleListSensitivityApprovals(w http.ResponseWriter, r *http.R
 }
 
 // handleDecideSensitivityApproval is POST
-// /v1alpha1/sensitivity-approvals/{id}/decision.
+// /v1alpha1/sensitivity-approvals/{id}/decision. A task whose answer stands
+// (approved or refused) refuses a second decision with 409 and appends
+// nothing; changing that answer is a correction that names the decision it
+// supersedes, and a correction against an older head is a 409 too.
 func (s *Server) handleDecideSensitivityApproval(w http.ResponseWriter, r *http.Request) error {
 	principal, apiErr := declarationPrincipal(r)
 	if apiErr != nil {
@@ -68,14 +83,23 @@ func (s *Server) handleDecideSensitivityApproval(w http.ResponseWriter, r *http.
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil && err != io.EOF {
-		return badRequest(`send {"decision": "approved"|"refused", "note"?}`, "decode request body: %v", err)
+		return badRequest(`send {"decision": "approved"|"refused", "note"?, "supersedes"?}`, "decode request body: %v", err)
 	}
 	if req.Decision != declengine.SensitivityApproved && req.Decision != declengine.SensitivityRefused {
-		return badRequest(`send {"decision": "approved"|"refused", "note"?}`, "decision must be approved or refused, got %q", req.Decision)
+		return badRequest(`send {"decision": "approved"|"refused", "note"?, "supersedes"?}`, "decision must be approved or refused, got %q", req.Decision)
 	}
-	d, err := declengine.DecideSensitivityApproval(r.Context(), s.Store, s.NamespaceID, r.PathValue("id"), principal, req.Decision, req.Note)
+	noStore(w)
+	var d declengine.SensitivityDecision
+	var err error
+	if req.Supersedes == "" {
+		d, err = declengine.DecideSensitivityApproval(r.Context(), s.Store, s.NamespaceID, r.PathValue("id"), principal, req.Decision, req.Note)
+	} else {
+		d, err = declengine.CorrectSensitivityApproval(r.Context(), s.Store, s.NamespaceID, r.PathValue("id"), principal, req.Decision, req.Note, req.Supersedes)
+	}
 	switch {
 	case err == nil:
+	case errors.Is(err, declengine.ErrSensitivityAlreadyDecided), errors.Is(err, declengine.ErrSensitivityStaleCorrection):
+		return conflict(`re-read the task (GET /v1alpha1/sensitivity-approvals); to change a standing answer send {"decision", "supersedes": <its decision_id>}`, "%v", err)
 	case errors.Is(err, postgres.ErrNotFound):
 		return notFound("list GET /v1alpha1/sensitivity-approvals for task ids", "%v", err)
 	case errors.Is(err, declengine.ErrSensitivityNotHuman), errors.Is(err, declengine.ErrSensitivityNotOwner):

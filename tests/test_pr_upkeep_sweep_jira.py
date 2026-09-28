@@ -629,9 +629,57 @@ class TestJiraEmissions:
                     "created", ""
                 )
                 continue
+            if fact["name"] == "jira.issue.transitioned":
+                assert fact["source_key"].startswith(
+                    f"jira:team.example.com:{fact['subject']}:transitioned:"
+                )
+                continue
             position = f"jira:team.example.com:{fact['subject']}:history:"
             assert fact["source_key"].startswith(position)
             assert fact["name"].startswith("pr-upkeep.jira.")
+
+    def test_neutral_transition_is_once_per_reported_transition_and_idempotent_on_repoll(
+        self, jira_round_trip_complete
+    ):
+        facts = jira.jira_emissions(
+            jira_round_trip_complete, site="https://team.example.com/", project="SCRUM"
+        )
+        legacy = [fact for fact in facts if fact["name"].startswith("pr-upkeep.jira.transitioned.")]
+        neutral = [fact for fact in facts if fact["name"] == "jira.issue.transitioned"]
+        assert len(neutral) == len(legacy) == 4
+        assert [fact["source_key"] for fact in neutral] == [
+            f"jira:team.example.com:SCRUM-2:transitioned:{fact['payload']['status']}:"
+            f"{fact['payload']['changelog_id']}"
+            for fact in legacy
+        ]
+        assert len({fact["source_key"] for fact in neutral}) == len(neutral)
+        for old, new in zip(legacy, neutral):
+            assert new["payload"] == {
+                "source": "jira",
+                "issue": "SCRUM-2",
+                **(
+                    {"from_status": old["payload"]["from_status"]}
+                    if old["payload"]["from_status"]
+                    else {}
+                ),
+                "to_status": old["payload"]["status"],
+                "site": "team.example.com",
+            }
+            assert new["watermark"] == old["watermark"]
+
+        seen = set()
+        appended = []
+        for _ in range(2):
+            for fact in jira.jira_emissions(
+                jira_round_trip_complete, site="https://team.example.com/", project="SCRUM"
+            ):
+                if fact["name"] != "jira.issue.transitioned":
+                    continue
+                identity = (fact["source_key"], json.dumps(fact["watermark"], sort_keys=True))
+                if identity not in seen:
+                    seen.add(identity)
+                    appended.append(fact)
+        assert len(appended) == len(neutral)
 
     def test_every_fact_correlates_to_its_own_ticket(self, jira_payload):
         keys = {issue["key"] for issue in jira_payload["issues"]}

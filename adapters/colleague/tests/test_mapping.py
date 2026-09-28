@@ -706,3 +706,10 @@ def test_terminal_event_timeout_emits_no_usage_key():
     )
     assert ev.kind == "failed"
     assert "usage" not in ev.payload
+
+
+def test_blocked_final_answer_passes_through():
+    final = '{"outcome":"blocked","output":{"reason":"GitHub token returned 401"}}'
+    assert mapping.declared_result_override({"summary": final}) == (
+        "blocked", {"reason": "GitHub token returned 401"}
+    )

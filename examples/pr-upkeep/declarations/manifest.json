@@ -18,7 +18,13 @@
     "finish-no-change.json",
     "sweep.json",
     "swept.json",
-    "sweep-failed.json"
+    "sweep-failed.json",
+    "blocked-stamp-pr.json",
+    "close-blocked-stamp-pr.json",
+    "blocked-analyse.json",
+    "close-blocked-analyse.json",
+    "blocked-fix.json",
+    "close-blocked-fix.json"
   ],
   "entries": [
     {
@@ -237,6 +243,72 @@
       "to": "pr-upkeep-sweep",
       "kind": "must",
       "why": "sole predecessor: code.result is the reaction to sweep's code.run"
+    },
+    {
+      "from": "pr-upkeep-blocked-stamp-pr",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the PR identity comes from the route step"
+    },
+    {
+      "from": "pr-upkeep-close-blocked-stamp-pr",
+      "to": "pr-upkeep-blocked-stamp-pr",
+      "kind": "must",
+      "why": "closes the human decision on the blocked agent step"
+    },
+    {
+      "from": "pr-upkeep-blocked-analyse",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the PR identity comes from the route step"
+    },
+    {
+      "from": "pr-upkeep-close-blocked-analyse",
+      "to": "pr-upkeep-blocked-analyse",
+      "kind": "must",
+      "why": "closes the human decision on the blocked agent step"
+    },
+    {
+      "from": "pr-upkeep-blocked-fix",
+      "to": "pr-upkeep-route",
+      "kind": "must",
+      "why": "the PR identity comes from the route step"
+    },
+    {
+      "from": "pr-upkeep-close-blocked-fix",
+      "to": "pr-upkeep-blocked-fix",
+      "kind": "must",
+      "why": "closes the human decision on the blocked agent step"
+    },
+    {
+      "from": "pr-upkeep-blocked-stamp-pr",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "must",
+      "why": "agent.result blocked arrives at this agent action landing node"
+    },
+    {
+      "from": "pr-upkeep-blocked-analyse",
+      "to": "pr-upkeep-analyse",
+      "kind": "can",
+      "why": "agent.result blocked arrives at this agent action landing node"
+    },
+    {
+      "from": "pr-upkeep-blocked-analyse",
+      "to": "pr-upkeep-analyse-orphan",
+      "kind": "can",
+      "why": "agent.result blocked arrives at this agent action landing node"
+    },
+    {
+      "from": "pr-upkeep-blocked-fix",
+      "to": "pr-upkeep-fix",
+      "kind": "can",
+      "why": "agent.result blocked arrives at this agent action landing node"
+    },
+    {
+      "from": "pr-upkeep-blocked-fix",
+      "to": "pr-upkeep-fix-orphan",
+      "kind": "can",
+      "why": "agent.result blocked arrives at this agent action landing node"
     }
   ],
   "steps": [

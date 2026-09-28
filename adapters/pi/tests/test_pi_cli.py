@@ -313,3 +313,10 @@ def test_parse_session_puts_the_visible_answer_in_summary_not_thinking():
     assert result["status"] == "ok"
     assert result["summary"] == "the answer"
     assert "let me think" not in result["summary"]
+
+
+def test_blocked_final_answer_passes_through():
+    final = '{"outcome":"blocked","output":{"reason":"GitHub token returned 401"}}'
+    assert mapping.declared_result_override({"summary": final}) == (
+        "blocked", {"reason": "GitHub token returned 401"}
+    )

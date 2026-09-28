@@ -96,14 +96,61 @@ func TestWorkerEnvelopeCarriesTheAgentContractOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != "no_fix,packaged" {
-		t.Fatalf("agent node outcomes = %v, want exactly the contract's [no_fix packaged]", got)
+	if strings.Join(got, ",") != "blocked,no_fix,packaged" {
+		t.Fatalf("agent node outcomes = %v, want [blocked no_fix packaged]", got)
 	}
 	got, err = envelope(`{"uses":"actor://test/worker@sha256:aaaaaa"}`)
-	if err != nil || strings.Join(got, ",") != "completed" {
-		t.Fatalf("agent node without a contract: outcomes %v (err %v), want [completed]", got, err)
+	if err != nil || strings.Join(got, ",") != "blocked,completed" {
+		t.Fatalf("agent node without a contract: outcomes %v (err %v), want [blocked completed]", got, err)
 	}
 	if _, err := envelope(`{"uses":"actor://test/worker@sha256:aaaaaa","graph_config":{"contract":{"outcomes":{"Bad Name":{}}}}}`); err == nil {
 		t.Fatal("an outcome named \"Bad Name\" compiled")
+	}
+	if _, err := envelope(`{"uses":"actor://test/worker@sha256:aaaaaa","graph_config":{"contract":{"outcomes":{"blocked":{"schema":{"type":"string"}}}}}}`); err == nil {
+		t.Fatal("a redefined blocked outcome compiled")
+	}
+}
+
+func TestConventionalOutcomesAndBlockedInstruction(t *testing.T) {
+	for _, tc := range []struct{ kind, with, outcomes string }{
+		{"agent.work", `{"uses":"actor://test/worker@sha256:aaaaaa","input":{"instruction":"Do the task"}}`, "blocked,completed"},
+		{"code.run", `{"uses":"runner://headspace/docker@sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":{"image":"python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de","argv":["python3","-V"],"network":"none","allowedOutputPaths":[]}}`, "failed,passed"},
+		{"github.comment", `{"uses":"actor://test/worker@sha256:aaaaaa"}`, "completed"},
+	} {
+		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: tc.kind, With: json.RawMessage(tc.with)}}
+		cw, input, err := workerEnvelope(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(cw.IR.Spec.Nodes["action"].Outcomes, ","); got != tc.outcomes {
+			t.Errorf("%s: %s, want %s", tc.kind, got, tc.outcomes)
+		}
+		if tc.kind == "agent.work" {
+			schema, err := json.Marshal(cw.IR.Spec.Nodes["action"].Contract.Outcomes["blocked"].Schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(schema), `"required":["reason"]`) || !strings.Contains(string(schema), `"minLength":1`) || strings.Contains(string(schema), `"additionalProperties":false`) {
+				t.Fatalf("blocked schema = %s, want a nonempty reason and extensible output", schema)
+			}
+			var value map[string]string
+			if err := json.Unmarshal(input, &value); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(value["instruction"], `"outcome":"blocked"`) || !strings.Contains(value["instruction"], "missing credentials") {
+				t.Fatal("blocked answer was not taught to the agent")
+			}
+		}
+	}
+}
+
+func TestBlockedHumanAskWeekDeadlineCompiles(t *testing.T) {
+	req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "human.ask", With: json.RawMessage(`{"approver_ref":"group/platform-maintainers","timeout":"168h","input":{"agent_report":"blocked"}}`)}}
+	cw, _, err := workerEnvelope(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cw.IR.Spec.Nodes["action"].Policy.Timeout; got != "168h" {
+		t.Fatalf("human deadline = %q, want 168h", got)
 	}
 }

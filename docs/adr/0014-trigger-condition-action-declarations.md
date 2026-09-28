@@ -296,3 +296,14 @@ for `github.pr`. An `agent.result` verifies only with an `agent.work`
 marker, so the pull request's public marker cannot claim an agent outcome.
 The outcome is the one the agent reported against the contract outcomes in
 the declaration's `graph_config`. It is a proposed claim.
+
+### Conventional blocked agent outcome (owner decision 2026-09-28, t40e)
+
+Every declaration-backed `agent.work` also offers `blocked` with an object
+output requiring a nonempty string `reason`; other output fields may carry
+the agent's report and evidence. An agent uses it when missing credentials,
+access, or contradictory instructions prevent completion. The run completes
+and emits `agent.result` with `outcome: blocked` and that output as `result`.
+Declarations cannot redefine this reserved outcome. Pr-upkeep routes it to
+platform maintainers for a human decision; that decision closes the blocked
+attempt and does not retry the action automatically.

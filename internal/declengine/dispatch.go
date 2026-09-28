@@ -364,6 +364,22 @@ func workerEnvelope(r DispatchRequest) (*compiler.CompiledWorkflow, json.RawMess
 	if primary != "" {
 		outcome = primary
 	}
+	if nodeKind == "agent" {
+		// This is part of every agent contract, including declarations with no
+		// authored outcomes. Keep the prompt at the engine seam so every
+		// backend receives the same choice through input.instruction.
+		outcomes["blocked"] = map[string]any{"schema": map[string]any{
+			"type": "object", "required": []string{"reason"},
+			"properties": map[string]any{"reason": map[string]any{"type": "string", "minLength": 1}},
+		}}
+		extraAgent = append(extraAgent, "blocked")
+		instruction, _ := with.Input["instruction"].(string)
+		with.Input["instruction"] = instruction + "\n\nIf you cannot complete this task for a reason outside your control (missing credentials, missing access, or contradictory instructions), answer with outcome blocked. In that case, override any earlier final-answer format instruction: your final answer must be exactly a JSON object {\"outcome\":\"blocked\",\"output\":{\"reason\":\"...\"}}. Report exactly what blocked you in output.reason; include your summary and evidence as additional output fields when useful.\n"
+		input, err = json.Marshal(with.Input)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	// Task t38c: a nonzero exit is a code step's DOMAIN answer (`failed`,
 	// ConventionalCodeOutcomes' failure port), not a technical failure: the
 	// run completes and the code.result reaction carries it. Transport,
@@ -435,13 +451,18 @@ var agentOutcomeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 // agentOutcomes replaces an agent node's default `completed` with the
 // declared contract's outcomes, in sorted order: primary takes the default
 // outcome's edge to finish, extra each get their own. Every other node kind,
-// and an agent node with no declared contract, keeps its default (primary
-// empty, extra empty).
+// and an agent node with no declared contract, keeps its primary default;
+// workerEnvelope then adds the conventional blocked outcome to every agent.
 func agentOutcomes(nodeKind string, declared map[string]json.RawMessage, outcomes map[string]any) (primary string, extra []string, err error) {
 	// A bridge action (action.http) reports a domain outcome too -- the jira
 	// bridge answers create_issue with issue_created (#328 t32, found live).
 	if (nodeKind != "agent" && nodeKind != "action.http") || len(declared) == 0 {
 		return "", []string{}, nil
+	}
+	if nodeKind == "agent" {
+		if _, redefined := declared["blocked"]; redefined {
+			return "", nil, fmt.Errorf("graph_config.contract.outcomes: blocked is a reserved conventional outcome")
+		}
 	}
 	names := make([]string, 0, len(declared))
 	for name := range declared {

@@ -1,0 +1,41 @@
+{
+  "name": "pr-upkeep-blocked-stamp-pr",
+  "trigger": {
+    "kind": "agent.result",
+    "reentry_limit": 0,
+    "hop_limit": 10
+  },
+  "condition": "event.outcome == \"blocked\"",
+  "action": {
+    "kind": "human.ask",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "blocked-stamp-pr",
+      "graph_kind": "approval",
+      "approver_ref": "group/platform-maintainers",
+      "input": {
+        "question": "The pr-upkeep stamp-pr agent could not complete its task. Review the reason and report; acknowledge or reject to close this blocked attempt.",
+        "blocked_step": "stamp-pr",
+        "agent_report": "{result}",
+        "repository": "{pr-upkeep-route:repository:}",
+        "number": "{pr-upkeep-route:number:}",
+        "work_item": "{pr-upkeep-route:work_item:}",
+        "ticket": "{pr-upkeep-stamp-pr:id:}"
+      },
+      "graph_config": {
+        "ownerRef": "team/platform-ai",
+        "approverRef": "group/platform-maintainers",
+        "deadline": "168h"
+      },
+      "timeout": "168h"
+    }
+  },
+  "start_node": {
+    "name": "pr-upkeep-stamp-pr-done",
+    "deadline": "168h"
+  },
+  "landing_node": {
+    "name": "pr-upkeep-blocked-stamp-pr-done",
+    "deadline": "168h"
+  }
+}

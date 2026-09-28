@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
@@ -293,4 +294,95 @@ func usesOf(t *testing.T, d decl.Declaration) string {
 		t.Fatalf("%s names no actor: %v", d.Name, err)
 	}
 	return with.Uses
+}
+
+// The fake actor's HTTP body is the bridge's §13.2 shape after Claude's
+// final JSON answer is parsed: outcome and output are passed through.
+func TestPRUpkeepBlockedAgentRoutesToHuman(t *testing.T) {
+	routeSrc := realDeclaration(t, "route.json")
+	analyseSrc := realDeclaration(t, "analyse.json")
+	blockedSrc := realDeclaration(t, "blocked-analyse.json")
+	closeSrc := realDeclaration(t, "close-blocked-analyse.json")
+	if blockedSrc.StartNode.Name != analyseSrc.LandingNode.Name || blockedSrc.Trigger.Kind != "agent.result" || closeSrc.StartNode.Name != blockedSrc.LandingNode.Name {
+		t.Fatal("blocked route does not follow the real agent and human landing nodes")
+	}
+	r := newReactionHarness(t)
+	developer := r.addBridge(actors.ActorKeyOf(usesOf(t, analyseSrc)))
+	developer.replyClaudeFinal("blocked", map[string]any{"reason": "GitHub token returned 401", "summary": "Could not read the PR"})
+	versions := map[string]postgres.DeclarationVersion{
+		routeSrc.Name:   r.publishReal(runnableHere(t, routeSrc)),
+		analyseSrc.Name: r.publishReal(analyseSrc),
+		blockedSrc.Name: r.publishReal(blockedSrc),
+		closeSrc.Name:   r.publishReal(runnableHere(t, closeSrc)),
+	}
+	route, analyse, blocked, close := versions[routeSrc.Name], versions[analyseSrc.Name], versions[blockedSrc.Name], versions[closeSrc.Name]
+	raw, err := os.ReadFile(filepath.Join(prUpkeepDeclarations, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Links []struct{ From, To, Kind string } `json:"links"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range manifest.Links {
+		from, okFrom := versions[link.From]
+		to, okTo := versions[link.To]
+		if okFrom && okTo {
+			if err := r.db.LinkDeclarations(r.ctx, r.ns, from.DeclarationID, to.DeclarationID, link.Kind); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	item := map[string]any{"source": "github_pr", "repository": "agentculture/culture-nodes", "number": 328, "head_sha": "abc123", "work_item": "SCRUM-7", "findings": []any{map[string]any{"id": "f1", "rule": "go:S1192", "file": "internal/x.go"}}}
+	payload, _ := json.Marshal(item)
+	ev, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: routeSrc.Trigger.Kind, Payload: payload, Emitter: "conformance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.engine.Handle(r.ctx, declengine.Event{NamespaceID: r.ns, ID: ev.Event.ID, Kind: routeSrc.Trigger.Kind, Node: declengine.RootNode, Variables: item}); err != nil {
+		t.Fatal(err)
+	}
+	fr := r.onlyFiring(route)
+	if state := r.settle(fr.id, false); state != "completed" {
+		t.Fatalf("route: %s", state)
+	}
+	r.drive()
+	fa := r.assertContinues(fr, analyse, "code.result", "passed", r.runner.operations()[0].OperationID)
+	if state := r.settle(fa.id, false); state != "completed" {
+		t.Fatalf("blocked agent run: %s", state)
+	}
+	r.drive()
+	rx := r.agentResults(fa.id)
+	if len(rx) != 1 || rx[0].Payload.Outcome != "blocked" || rx[0].Payload.Origin.ArtifactKind != "agent.work" || rx[0].Payload.Origin.ArtifactID != fa.id {
+		t.Fatalf("blocked agent.result = %+v", rx)
+	}
+	fh := r.onlyFiring(blocked)
+	if fh.parent != fa.id || fh.lineage != fr.lineage || fh.eventID != rx[0].ID {
+		t.Fatalf("blocked human firing = %+v, want child of %s", fh, fa.id)
+	}
+	var input []byte
+	if err := r.db.Pool().QueryRow(r.ctx, `SELECT input FROM runs WHERE namespace_id=$1 AND id=$2`, r.ns, fh.id).Scan(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(input), "GitHub token returned 401") || !strings.Contains(string(input), "agentculture/culture-nodes") || !strings.Contains(string(input), "analyse") {
+		t.Fatalf("human input missing context: %s", input)
+	}
+	var humanInput map[string]any
+	if err := json.Unmarshal(input, &humanInput); err != nil {
+		t.Fatal(err)
+	}
+	if humanInput["ticket"] != "" {
+		t.Fatalf("keyed PR without an orphan ticket rendered ticket %v", humanInput["ticket"])
+	}
+	if state := r.settle(fh.id, true); state != "running" || r.pendingTask(fh.id) == "" {
+		t.Fatalf("human ask state %s, task %q", state, r.pendingTask(fh.id))
+	}
+	task := r.decide(fh.id, "approved")
+	r.drive()
+	fc := r.assertContinues(fh, close, "human.decision", "approved", task)
+	if state := r.settle(fc.id, false); state != "completed" {
+		t.Fatalf("close blocked: %s", state)
+	}
 }

@@ -808,3 +808,10 @@ def test_terminal_timeout_retains_usage_reported_before_incomplete_stop():
     assert ev.kind == "failed"
     assert ev.payload["usage"]["input_tokens"] == 55
     assert ev.payload["usage"]["output_tokens"] == 2
+
+
+def test_blocked_final_answer_passes_through():
+    final = '{"outcome":"blocked","output":{"reason":"GitHub token returned 401"}}'
+    assert mapping.declared_result_override({"summary": final}) == (
+        "blocked", {"reason": "GitHub token returned 401"}
+    )

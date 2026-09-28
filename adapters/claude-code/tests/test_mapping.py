@@ -862,3 +862,10 @@ def test_the_two_unknown_sentinels_say_different_things():
     assert mapping.MODEL_NOT_REPORTED.startswith("unknown:")
     assert "cannot-report" not in mapping.MODEL_NOT_REPORTED
     assert "did-not-report" in mapping.MODEL_NOT_REPORTED
+
+
+def test_blocked_final_answer_passes_through():
+    final = '{"outcome":"blocked","output":{"reason":"GitHub token returned 401"}}'
+    assert mapping.declared_result_override({"result": final}) == (
+        "blocked", {"reason": "GitHub token returned 401"}
+    )

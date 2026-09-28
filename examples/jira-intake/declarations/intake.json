@@ -1,0 +1,91 @@
+{
+  "name": "jira-intake-intake",
+  "trigger": {
+    "kind": "jira.issue.created",
+    "with": {
+      "legacy_event": "pr-upkeep.jira.transitioned.to-do",
+      "legacy_condition": "event.payload.source == \"jira\""
+    },
+    "hop_limit": 9,
+    "max_concurrent_subject": 2
+  },
+  "condition": "event.payload.source == \"jira\" && event.payload.status == \"To Do\"",
+  "action": {
+    "kind": "agent.work",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "intake",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/platform-ai",
+        "uses": "actor://company/intake@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "input": {
+          "bindings": {
+            "success_outcome": {
+              "literal": "intake_drafted"
+            },
+            "instruction": {
+              "literal": "You are the intake leg of the jira-intake workflow. Using ONLY the issue fields in your input (id, title, description, description_truncated, status, severity, kind, details_url), draft a short intake comment for the Jira issue: acknowledge pickup, restate the request in one or two sentences, and name the single most important clarifying question if one exists. End with the line '- culture-nodes (Claude)'. Your FINAL message must be ONLY the comment text itself - no headers, no JSON, no code fences, no commentary about the task - because it is posted to the issue verbatim. Do not start any other work."
+            },
+            "issue": "/run/input/id",
+            "title": "/run/input/title",
+            "description": "/run/input/description",
+            "description_truncated": "/run/input/description_truncated",
+            "status": "/run/input/status",
+            "severity": "/run/input/severity",
+            "kind": "/run/input/kind",
+            "details_url": "/run/input/details_url"
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "intake_drafted": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "summary"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "timeout": "30m",
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "variables": {
+        "issue": "{id}",
+        "title": "{title}",
+        "description": "{description}",
+        "description_truncated": "{description_truncated}",
+        "status": "{status}",
+        "severity": "{severity}",
+        "kind": "{kind}",
+        "details_url": "{details_url}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "root",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "intake-done",
+    "deadline": "2h"
+  }
+}

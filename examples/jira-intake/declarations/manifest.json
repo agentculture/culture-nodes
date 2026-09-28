@@ -1,0 +1,100 @@
+{
+  "declarations": [
+    "intake.json",
+    "post-comment.json",
+    "transition.json",
+    "stage-intake.json",
+    "picked-up.json"
+  ],
+  "links": [
+    {
+      "from": "jira-intake-post-comment",
+      "to": "jira-intake-intake",
+      "kind": "must"
+    },
+    {
+      "from": "jira-intake-transition",
+      "to": "jira-intake-post-comment",
+      "kind": "must"
+    },
+    {
+      "from": "jira-intake-stage-intake",
+      "to": "jira-intake-transition",
+      "kind": "can"
+    },
+    {
+      "from": "jira-intake-picked-up",
+      "to": "jira-intake-transition",
+      "kind": "can"
+    },
+    {
+      "from": "jira-intake-picked-up",
+      "to": "jira-intake-stage-intake",
+      "kind": "can"
+    }
+  ],
+  "steps": [
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "intake",
+      "declaration": "jira-intake-intake"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "post-comment",
+      "declaration": "jira-intake-post-comment"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "transition",
+      "declaration": "jira-intake-transition"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "stage-intake",
+      "declaration": "jira-intake-stage-intake"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "picked-up",
+      "declaration": "jira-intake-picked-up"
+    }
+  ],
+  "edges": [
+    {
+      "from": "jira-intake-post-comment",
+      "to": "jira-intake-intake",
+      "kind": "must",
+      "outcome": "intake_drafted",
+      "when": null
+    },
+    {
+      "from": "jira-intake-transition",
+      "to": "jira-intake-post-comment",
+      "kind": "must",
+      "outcome": "comment_posted",
+      "when": null
+    },
+    {
+      "from": "jira-intake-stage-intake",
+      "to": "jira-intake-transition",
+      "kind": "can",
+      "outcome": "issue_transitioned",
+      "when": "!input.id.startsWith(\"gh:\")"
+    },
+    {
+      "from": "jira-intake-picked-up",
+      "to": "jira-intake-transition",
+      "kind": "can",
+      "outcome": "issue_transitioned",
+      "when": "input.id.startsWith(\"gh:\")"
+    },
+    {
+      "from": "jira-intake-picked-up",
+      "to": "jira-intake-stage-intake",
+      "kind": "can",
+      "outcome": "comment_posted",
+      "when": null
+    }
+  ]
+}

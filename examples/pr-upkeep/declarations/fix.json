@@ -1,0 +1,95 @@
+{
+  "name": "pr-upkeep-fix",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "analyse",
+          "outcome": "packaged",
+          "when": "input.work_item.startsWith(\"gh:\")"
+        },
+        {
+          "from": "stage-dispatch",
+          "outcome": "comment_posted",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 10
+  },
+  "condition": "true",
+  "action": {
+    "kind": "agent.work",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "fix",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/developer-experience",
+        "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "input": {
+          "bindings": {
+            "instruction": {
+              "literal": "Take the FIRST entry of the `packages` list bound below and\nwork only that package. `pr` names the repository, the pull\nrequest number and the head sha to work against.\n\nA package is one rule in one file, and every finding id in it\nis answered by ONE change — thirteen instances of a literal\nduplication are one constant, not thirteen commits. Do not\nre-rank the packages, do not merge two of them, and do not\ntouch findings outside the one you took: the analysis already\ndecided that the rest of this file waits for the re-scan after\nyour push, when their line numbers are current again.\n\nImplement the fix on a branch and open or update a pull request\nfor it. NEVER merge anything: this graph's merge step is a\nseparate human-approval node, and an agent merging here would\nbypass it.\n\nIf the package is not actually a defect — a false positive, or\none whose fix would be wrong — say so plainly and submit\n`no_change` with the reason. A stated non-fix is a better\noutcome than a manufactured one.\n\nReport which package you took, what you changed, and the PR you\nopened or updated.\n"
+            },
+            "package": "/nodes/analyse/output/packages",
+            "pr": "/run/input"
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "completed": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "summary"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "no_change": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        }
+      },
+      "variables": {
+        "package": "{pr-upkeep-analyse:packages:}"
+      },
+      "actor_selection": [
+        {
+          "name": "security-findings",
+          "node": "fix",
+          "actor": "actor://company/security-developer",
+          "when": "event.payload.findings.exists(f, f.kind == \"security\")"
+        },
+        {
+          "name": "general-findings",
+          "node": "fix",
+          "actor": "actor://company/developer"
+        }
+      ]
+    }
+  },
+  "start_node": {
+    "name": "fix-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "fix-done",
+    "deadline": "168h"
+  }
+}

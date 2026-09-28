@@ -1,0 +1,76 @@
+{
+  "name": "pr-upkeep-stage-dispatch",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "analyse",
+          "outcome": "packaged",
+          "when": "!input.work_item.startsWith(\"gh:\")"
+        }
+      ]
+    },
+    "hop_limit": 10
+  },
+  "condition": "true",
+  "action": {
+    "kind": "jira.comment",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "stage-dispatch",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/platform-ai",
+        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "input": {
+          "bindings": {
+            "verb": {
+              "literal": "post_comment"
+            },
+            "issue": "/run/input/work_item",
+            "comment": {
+              "literal": "culture-nodes:stage=dispatch\nThe pr-upkeep loop analysed the open findings on this ticket's pull request and dispatched a developer session for the highest-priority package of them; the run, its per-finding verdicts and its ledger are in the culture-nodes control plane under this ticket's key."
+            }
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "comment_posted": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "issue",
+                  "comment_id"
+                ]
+              }
+            }
+          }
+        },
+        "policy": {
+          "timeout": "10m",
+          "retry": {
+            "maxAttempts": 2
+          }
+        }
+      },
+      "variables": {
+        "issue": "{work_item}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "stage-dispatch-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "stage-dispatch-done",
+    "deadline": "168h"
+  }
+}

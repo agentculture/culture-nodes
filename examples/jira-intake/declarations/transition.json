@@ -1,0 +1,75 @@
+{
+  "name": "jira-intake-transition",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "post-comment",
+          "outcome": "comment_posted",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 9
+  },
+  "condition": "true",
+  "action": {
+    "kind": "jira.transition",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "transition",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/platform-ai",
+        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "input": {
+          "bindings": {
+            "verb": {
+              "literal": "transition_issue"
+            },
+            "issue": "/run/input/id",
+            "target": {
+              "literal": "In Progress"
+            }
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "issue_transitioned": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "issue"
+                ]
+              }
+            }
+          }
+        },
+        "policy": {
+          "timeout": "10m",
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "variables": {
+        "issue": "{id}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "transition-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "transition-done",
+    "deadline": "2h"
+  }
+}

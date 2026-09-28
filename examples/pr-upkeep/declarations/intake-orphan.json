@@ -1,0 +1,96 @@
+{
+  "name": "pr-upkeep-intake-orphan",
+  "trigger": {
+    "kind": "timer",
+    "with": {
+      "legacy_reactions": [
+        {
+          "from": "route",
+          "outcome": "orphan",
+          "when": null
+        }
+      ]
+    },
+    "hop_limit": 10
+  },
+  "condition": "true",
+  "action": {
+    "kind": "jira.create",
+    "with": {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "intake-orphan",
+      "graph_kind": "agent",
+      "legacy": {
+        "kind": "agent",
+        "ownerRef": "team/platform-ai",
+        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ledger": {
+          "propose": [
+            "claim"
+          ]
+        },
+        "input": {
+          "bindings": {
+            "verb": {
+              "literal": "create_issue"
+            },
+            "project": {
+              "literal": "SCRUM"
+            },
+            "summary": "/run/input/work_item",
+            "description": {
+              "literal": "Auto-created by the pr-upkeep loop for a pull request that had no Jira ticket. The summary names the repository and the PR number as gh:<owner>/<repo>#<n>; open pull request <n> of <owner>/<repo> on GitHub. The loop wrote this key into the PR body so later findings on the PR arrive keyed to this ticket."
+            },
+            "labels": {
+              "literal": [
+                "orphan",
+                "auto-created",
+                "source:github",
+                "repo:agentculture/culture-nodes"
+              ]
+            }
+          }
+        },
+        "contract": {
+          "outcomes": {
+            "issue_created": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "issue",
+                  "id"
+                ],
+                "properties": {
+                  "issue": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "timeout": "10m",
+          "retry": {
+            "maxAttempts": 1
+          }
+        }
+      },
+      "variables": {
+        "summary": "{work_item}"
+      }
+    }
+  },
+  "start_node": {
+    "name": "intake-orphan-ready",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "intake-orphan-done",
+    "deadline": "168h"
+  }
+}

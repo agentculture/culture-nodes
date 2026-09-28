@@ -1,0 +1,301 @@
+{
+  "declarations": [
+    "route.json",
+    "intake-orphan.json",
+    "stamp-pr.json",
+    "stage-dispatch.json",
+    "analyse.json",
+    "fix.json",
+    "stage-pr-open.json",
+    "readiness.json",
+    "human-merges-pr.json",
+    "finish.json",
+    "sweep.json",
+    "swept.json",
+    "sweep-failed.json"
+  ],
+  "links": [
+    {
+      "from": "pr-upkeep-intake-orphan",
+      "to": "pr-upkeep-route",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-analyse",
+      "to": "pr-upkeep-route",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-stamp-pr",
+      "to": "pr-upkeep-intake-orphan",
+      "kind": "must"
+    },
+    {
+      "from": "pr-upkeep-analyse",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-stage-dispatch",
+      "to": "pr-upkeep-analyse",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-fix",
+      "to": "pr-upkeep-analyse",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-analyse",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-fix",
+      "to": "pr-upkeep-stage-dispatch",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-stage-pr-open",
+      "to": "pr-upkeep-fix",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-readiness",
+      "to": "pr-upkeep-fix",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-readiness",
+      "to": "pr-upkeep-stage-pr-open",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-human-merges-pr",
+      "to": "pr-upkeep-readiness",
+      "kind": "must"
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-fix",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-human-merges-pr",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-swept",
+      "to": "pr-upkeep-sweep",
+      "kind": "can"
+    },
+    {
+      "from": "pr-upkeep-sweep-failed",
+      "to": "pr-upkeep-sweep",
+      "kind": "can"
+    }
+  ],
+  "steps": [
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "route",
+      "declaration": "pr-upkeep-route"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "intake-orphan",
+      "declaration": "pr-upkeep-intake-orphan"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "stamp-pr",
+      "declaration": "pr-upkeep-stamp-pr"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "stage-dispatch",
+      "declaration": "pr-upkeep-stage-dispatch"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "analyse",
+      "declaration": "pr-upkeep-analyse"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "fix",
+      "declaration": "pr-upkeep-fix"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "stage-pr-open",
+      "declaration": "pr-upkeep-stage-pr-open"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "readiness",
+      "declaration": "pr-upkeep-readiness"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "human-merges-pr",
+      "declaration": "pr-upkeep-human-merges-pr"
+    },
+    {
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "finish",
+      "declaration": "pr-upkeep-finish"
+    },
+    {
+      "graph_workflow": "sweep-cycle.workflow.yaml",
+      "graph_node": "sweep",
+      "declaration": "pr-upkeep-sweep"
+    },
+    {
+      "graph_workflow": "sweep-cycle.workflow.yaml",
+      "graph_node": "swept",
+      "declaration": "pr-upkeep-swept"
+    },
+    {
+      "graph_workflow": "sweep-cycle.workflow.yaml",
+      "graph_node": "sweep-failed",
+      "declaration": "pr-upkeep-sweep-failed"
+    }
+  ],
+  "edges": [
+    {
+      "from": "pr-upkeep-intake-orphan",
+      "to": "pr-upkeep-route",
+      "kind": "can",
+      "outcome": "orphan",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-analyse",
+      "to": "pr-upkeep-route",
+      "kind": "can",
+      "outcome": "keyed",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-stamp-pr",
+      "to": "pr-upkeep-intake-orphan",
+      "kind": "must",
+      "outcome": "issue_created",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-analyse",
+      "to": "pr-upkeep-stamp-pr",
+      "kind": "can",
+      "outcome": "stamped",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-stage-dispatch",
+      "to": "pr-upkeep-analyse",
+      "kind": "can",
+      "outcome": "packaged",
+      "when": "!input.work_item.startsWith(\"gh:\")"
+    },
+    {
+      "from": "pr-upkeep-fix",
+      "to": "pr-upkeep-analyse",
+      "kind": "can",
+      "outcome": "packaged",
+      "when": "input.work_item.startsWith(\"gh:\")"
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-analyse",
+      "kind": "can",
+      "outcome": "no_fix",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-fix",
+      "to": "pr-upkeep-stage-dispatch",
+      "kind": "can",
+      "outcome": "comment_posted",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-stage-pr-open",
+      "to": "pr-upkeep-fix",
+      "kind": "can",
+      "outcome": "completed",
+      "when": "!input.work_item.startsWith(\"gh:\")"
+    },
+    {
+      "from": "pr-upkeep-readiness",
+      "to": "pr-upkeep-fix",
+      "kind": "can",
+      "outcome": "completed",
+      "when": "input.work_item.startsWith(\"gh:\")"
+    },
+    {
+      "from": "pr-upkeep-readiness",
+      "to": "pr-upkeep-stage-pr-open",
+      "kind": "can",
+      "outcome": "comment_posted",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-human-merges-pr",
+      "to": "pr-upkeep-readiness",
+      "kind": "must",
+      "outcome": "passed",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-human-merges-pr",
+      "to": "pr-upkeep-readiness",
+      "kind": "must",
+      "outcome": "failed",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-fix",
+      "kind": "can",
+      "outcome": "no_change",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-human-merges-pr",
+      "kind": "can",
+      "outcome": "approved",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-human-merges-pr",
+      "kind": "can",
+      "outcome": "rejected",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-finish",
+      "to": "pr-upkeep-human-merges-pr",
+      "kind": "can",
+      "outcome": "expired",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-swept",
+      "to": "pr-upkeep-sweep",
+      "kind": "can",
+      "outcome": "passed",
+      "when": null
+    },
+    {
+      "from": "pr-upkeep-sweep-failed",
+      "to": "pr-upkeep-sweep",
+      "kind": "can",
+      "outcome": "failed",
+      "when": null
+    }
+  ]
+}

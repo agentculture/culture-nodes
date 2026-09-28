@@ -243,6 +243,14 @@ def _merged_pull(number, key, merged_at):
     }
 
 
+def _history_events(calls):
+    """Events other than jira.issue.created (task t31, deviation d1): the
+    creation fact is emitted for every issue on every tick and deduplicated
+    by the control plane on its source key, so it is never stage-gated and
+    these stage tests are about the history and lifecycle facts."""
+    return [event for event in calls["events"] if event[0] != "jira.issue.created"]
+
+
 def _tick(monkeypatch, *, pulls, closed, issues, sonar_pr=None):
     monkeypatch.setenv("PR_UPKEEP_REPOSITORIES", json.dumps(GRANT))
     monkeypatch.setenv("JIRA_ACCOUNT_EMAIL", "robot@example.com")
@@ -277,7 +285,7 @@ class TestATickAgainstARecordedStage:
         )
         assert sweep.main() == 0
         capsys.readouterr()
-        assert [event[0] for event in calls["events"]] == ["pr.merged"]
+        assert [event[0] for event in _history_events(calls)] == ["pr.merged"]
 
     def test_a_ticket_at_pr_open_emits_nothing_for_its_intake_transition(self, monkeypatch, capsys):
         issue = _issue(
@@ -288,7 +296,7 @@ class TestATickAgainstARecordedStage:
         calls = _tick(monkeypatch, pulls=[], closed=[], issues=[issue])
         assert sweep.main() == 0
         capsys.readouterr()
-        assert calls["events"] == []
+        assert _history_events(calls) == []
 
     def test_a_merge_after_the_recorded_stage_is_a_new_transition_and_is_emitted(
         self, monkeypatch, capsys
@@ -306,7 +314,7 @@ class TestATickAgainstARecordedStage:
         )
         assert sweep.main() == 0
         capsys.readouterr()
-        assert [event[0] for event in calls["events"]] == ["pr.merged"]
+        assert [event[0] for event in _history_events(calls)] == ["pr.merged"]
 
     def test_finding_dispatch_is_not_held_back_by_the_ticket_stage(self, monkeypatch, capsys):
         # The lane's promise: a finding is not blocked by the run before it.
@@ -366,8 +374,8 @@ class TestATickAgainstARecordedStage:
         assert sweep.main() == 0
         assert sweep.main() == 0
         capsys.readouterr()
-        assert [event[0] for event in calls["events"]] == ["pr.merged", "pr.merged"]
-        first, second = calls["events"]
+        assert [event[0] for event in _history_events(calls)] == ["pr.merged", "pr.merged"]
+        first, second = _history_events(calls)
         assert first[2] == second[2] == "github:owner.example/repo:pr:41:merged"
         assert first[3] == second[3] == {"merged_at": "2026-09-04T11:00:00Z"}
 
@@ -437,7 +445,7 @@ class TestLifecycleFactsAreNeverStageGated:
         calls = _tick(monkeypatch, pulls=[], closed=[closed], issues=[issue])
         assert sweep.main() == 0
         capsys.readouterr()
-        assert [event[0] for event in calls["events"]] == ["pr.closed"]
+        assert [event[0] for event in _history_events(calls)] == ["pr.closed"]
 
     def test_a_failing_sonar_surface_does_not_hold_back_a_merge_fact(self, monkeypatch, capsys):
         # The lifecycle facts are read from their own listing and emitted
@@ -464,4 +472,4 @@ class TestLifecycleFactsAreNeverStageGated:
         monkeypatch.setattr(sweep, "fetch_sonar_issues", unreachable_sonar)
         assert sweep.main() == 1
         assert "sweep failed while" in capsys.readouterr().err
-        assert [event[0] for event in calls["events"]] == ["pr.opened", "pr.merged"]
+        assert [event[0] for event in _history_events(calls)] == ["pr.opened", "pr.merged"]

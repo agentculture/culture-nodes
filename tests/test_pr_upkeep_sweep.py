@@ -803,7 +803,14 @@ class TestEmitterMain:
 
         assert sweep.main() == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["emitted"] == 2
+        # Two history facts plus the jira.issue.created fact (t31, deviation
+        # d1), which is emitted once per issue per tick and deduplicated by
+        # the control plane on its jira:<site>:<issue>:created source key.
+        assert report["emitted"] == 3
+        created = [event for event in calls["events"] if event[0] == "jira.issue.created"]
+        assert len(created) == 1
+        assert created[0][2].endswith(":created") and created[0][2].startswith("jira:")
+        calls["events"] = [event for event in calls["events"] if event[0] != "jira.issue.created"]
         assert calls["events"][0][2].endswith(":history:changelog:0")
         # task t9: the issue's current status names the event, distinct from
         # "a comment appeared" — the fixture issue's status is "To Do".
@@ -840,7 +847,7 @@ class TestEmitterMain:
         )
 
         assert sweep.main() == 0
-        names = [name for name, *_rest in calls["events"]]
+        names = [name for name, *_rest in calls["events"] if name != "jira.issue.created"]
         assert names[0] == "pr-upkeep.jira.transitioned.to-do"
         assert names[-2:] == [
             "pr-upkeep.jira.transitioned.to-do",

@@ -1453,7 +1453,10 @@ paths:
         producing declaration is a new owner and a new task. An unlisted
         variable blocks without a task. `status` is the newest append-only
         decision, `pending` when there is none, or `withdrawn` when a
-        version published after the approval dropped the entry.
+        version published after the approval dropped the entry. The
+        response carries `Cache-Control: no-store` (t40b): an edge cache
+        replaying an older inbox is how an approved task was once listed
+        as pending and newer tasks hidden (#305).
       parameters:
         - name: owner
           in: query
@@ -1493,7 +1496,11 @@ paths:
         with 403. An approval lets later firings of that declaration -- any
         version that still lists the entry -- render the variable more
         widely; a refusal keeps blocking them. Deciding a `withdrawn` task
-        again is how a relisted entry is re-approved.
+        again is how a relisted entry is re-approved. A task whose answer
+        stands (`approved` or `refused`) refuses a second decision with 409
+        and appends nothing (t40b); changing that answer is a correction
+        whose `supersedes` names the task's current `decision_id`, and a
+        correction naming any other decision is a 409 too.
       parameters:
         - name: id
           in: path
@@ -1534,6 +1541,15 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           description: No approval task with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            The task is already decided and no `supersedes` was sent, or
+            `supersedes` is not the task's current decision. Nothing is
+            appended.
           content:
             application/json:
               schema:
@@ -7268,6 +7284,11 @@ components:
       properties:
         decision: {type: string, enum: [approved, refused]}
         note: {type: string}
+        supersedes:
+          type: string
+          description: >-
+            Only to change a standing answer: the task's current
+            `decision_id`. Omit it for a pending or withdrawn task.
 
     SensitivityDecision:
       type: object

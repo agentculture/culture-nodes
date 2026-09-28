@@ -123,11 +123,41 @@ func ListSensitivityApprovals(ctx context.Context, db *postgres.Store, ns, owner
 	return out, rows.Err()
 }
 
-// DecideSensitivityApproval appends the owner's answer. The decider is always
-// the authenticated principal; it must be human and must be the owner. The
-// new decision supersedes the current head, so the record is a linear,
-// append-only history whose newest entry is the task's state.
+// ErrSensitivityAlreadyDecided refuses a second, blind decision on a task
+// whose newest decision still stands (approved or refused). A repeated POST
+// -- a double click, a retry, a stale inbox -- must not append a second
+// answer (t40b, #328). A deliberate correction names the decision it
+// replaces (CorrectSensitivityApproval).
+var ErrSensitivityAlreadyDecided = errors.New("declengine: this sensitivity approval task is already decided")
+
+// ErrSensitivityStaleCorrection refuses a correction whose supersedes is not
+// the task's current newest decision: whoever sent it was looking at an
+// older state.
+var ErrSensitivityStaleCorrection = errors.New("declengine: a sensitivity correction must supersede the task's current decision")
+
+// DecideSensitivityApproval appends the owner's answer to a task that has
+// none standing: a pending task, or a withdrawn one (a relisted entry needs
+// the owner again). A task whose newest decision is approved or refused is
+// refused with ErrSensitivityAlreadyDecided and nothing is appended; change
+// such an answer with CorrectSensitivityApproval. The decider is always the
+// authenticated principal; it must be human and must be the owner.
 func DecideSensitivityApproval(ctx context.Context, db *postgres.Store, ns, approvalID string, principal ActivationPrincipal, decision, note string) (SensitivityDecision, error) {
+	return appendSensitivityDecision(ctx, db, ns, approvalID, principal, decision, note, "")
+}
+
+// CorrectSensitivityApproval appends an answer that replaces the task's
+// current newest decision, which supersedes must name exactly (optimistic
+// concurrency: a correction made against an older state is refused with
+// ErrSensitivityStaleCorrection). The record stays a linear, append-only
+// history whose newest entry is the task's state.
+func CorrectSensitivityApproval(ctx context.Context, db *postgres.Store, ns, approvalID string, principal ActivationPrincipal, decision, note, supersedes string) (SensitivityDecision, error) {
+	if supersedes == "" {
+		return SensitivityDecision{}, fmt.Errorf("%w: a correction names the decision it supersedes", ErrSensitivityStaleCorrection)
+	}
+	return appendSensitivityDecision(ctx, db, ns, approvalID, principal, decision, note, supersedes)
+}
+
+func appendSensitivityDecision(ctx context.Context, db *postgres.Store, ns, approvalID string, principal ActivationPrincipal, decision, note, supersedes string) (SensitivityDecision, error) {
 	if decision != SensitivityApproved && decision != SensitivityRefused {
 		return SensitivityDecision{}, fmt.Errorf("declengine: sensitivity decision must be %q or %q, got %q", SensitivityApproved, SensitivityRefused, decision)
 	}
@@ -151,6 +181,12 @@ func DecideSensitivityApproval(ctx context.Context, db *postgres.Store, ns, appr
 	}
 	if approval.Owner != ResolveAuthor(principal) {
 		return SensitivityDecision{}, fmt.Errorf("%w: approval %s belongs to %q, not %q", ErrSensitivityNotOwner, approvalID, approval.Owner, principal.Author)
+	}
+	switch {
+	case supersedes != "" && supersedes != approval.DecisionID:
+		return SensitivityDecision{}, fmt.Errorf("%w: approval %s is %s by decision %q, not %q", ErrSensitivityStaleCorrection, approvalID, approval.Status, approval.DecisionID, supersedes)
+	case supersedes == "" && (approval.Status == SensitivityApproved || approval.Status == SensitivityRefused):
+		return SensitivityDecision{}, fmt.Errorf("%w: approval %s is %s by decision %s", ErrSensitivityAlreadyDecided, approvalID, approval.Status, approval.DecisionID)
 	}
 	d := SensitivityDecision{ID: store.NewULID(), ApprovalID: approvalID, Decision: decision, Decider: ResolveAuthor(principal), Note: note, SupersedesID: approval.DecisionID}
 	if err := tx.QueryRow(ctx, `INSERT INTO declaration_exposure_decisions(id,namespace_id,approval_id,decision,decider,note,supersedes_id)

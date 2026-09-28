@@ -4698,6 +4698,10 @@
           },
           "note": {
             "type": "string"
+          },
+          "supersedes": {
+            "description": "Only to change a standing answer: the task's current `decision_id`. Omit it for a pending or withdrawn task.",
+            "type": "string"
           }
         },
         "required": [
@@ -9514,7 +9518,7 @@
     },
     "/v1alpha1/sensitivity-approvals": {
       "get": {
-        "description": "Task t30 (#328; spec q22), reworked by t30b (owner decision d4). A firing whose action would render a variable into a system with a wider audience than the variable came from (internal/decl/sensitivity.go's ranking table; GitHub ranked per repository) is recorded as `sensitivity-blocked` and not dispatched. When the declaration lists the variable in its `exposes` list, the block opens exactly one approval task per (declaration name, exposes entry, owner), addressed to the variable's owner -- the author of the declaration version that produced it. Republishing the declaration keeps the task and its approval; a new author of the producing declaration is a new owner and a new task. An unlisted variable blocks without a task. `status` is the newest append-only decision, `pending` when there is none, or `withdrawn` when a version published after the approval dropped the entry.",
+        "description": "Task t30 (#328; spec q22), reworked by t30b (owner decision d4). A firing whose action would render a variable into a system with a wider audience than the variable came from (internal/decl/sensitivity.go's ranking table; GitHub ranked per repository) is recorded as `sensitivity-blocked` and not dispatched. When the declaration lists the variable in its `exposes` list, the block opens exactly one approval task per (declaration name, exposes entry, owner), addressed to the variable's owner -- the author of the declaration version that produced it. Republishing the declaration keeps the task and its approval; a new author of the producing declaration is a new owner and a new task. An unlisted variable blocks without a task. `status` is the newest append-only decision, `pending` when there is none, or `withdrawn` when a version published after the approval dropped the entry. The response carries `Cache-Control: no-store` (t40b): an edge cache replaying an older inbox is how an approved task was once listed as pending and newer tasks hidden (#305).",
         "operationId": "listSensitivityApprovals",
         "parameters": [
           {
@@ -9570,7 +9574,7 @@
     },
     "/v1alpha1/sensitivity-approvals/{id}/decision": {
       "post": {
-        "description": "Task t30 (#328; spec q22). Appends an immutable decision that supersedes the task's previous one; the newest decision is the task's state. Only the owner, authenticated as a human principal, may decide: an agent actor's bearer and any other human are refused with 403. An approval lets later firings of that declaration -- any version that still lists the entry -- render the variable more widely; a refusal keeps blocking them. Deciding a `withdrawn` task again is how a relisted entry is re-approved.",
+        "description": "Task t30 (#328; spec q22). Appends an immutable decision that supersedes the task's previous one; the newest decision is the task's state. Only the owner, authenticated as a human principal, may decide: an agent actor's bearer and any other human are refused with 403. An approval lets later firings of that declaration -- any version that still lists the entry -- render the variable more widely; a refusal keeps blocking them. Deciding a `withdrawn` task again is how a relisted entry is re-approved. A task whose answer stands (`approved` or `refused`) refuses a second decision with 409 and appends nothing (t40b); changing that answer is a correction whose `supersedes` names the task's current `decision_id`, and a correction naming any other decision is a 409 too.",
         "operationId": "decideSensitivityApproval",
         "parameters": [
           {
@@ -9643,6 +9647,16 @@
               }
             },
             "description": "No approval task with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The task is already decided and no `supersedes` was sent, or `supersedes` is not the task's current decision. Nothing is appended."
           }
         },
         "summary": "Append the owner's approval or refusal of a widening.",

@@ -400,6 +400,10 @@ deploy action.
    runner host, compare the **key names only** in `runner.env` and
    `runner-secrets.env` with `GET /v1alpha1/declarations/grants`, especially
    `GITHUB_TOKEN`, `SONAR_TOKEN`, and `NODES_EVENT_TOKEN`. Do not print values.
+   The sweep and readiness `GITHUB_TOKEN` comes from the read-only GitHub App
+   file `github-app-runner.env` on each runner, refreshed every 30 minutes;
+   the runner reads it at each run and uses its process grant only if the file
+   is unavailable.
 1. With operator authentication, `POST /v1alpha1/schedules`:
 
    ```json

@@ -165,6 +165,7 @@ if [ -n "$PR_UPKEEP_SWEEP_SOURCE_URL" ] && [ -n "$PR_UPKEEP_SWEEP_SOURCE_SHA256"
 	{ printf '%s\n' \
 		'NODES_RUNNER_LISTEN=:17070' \
 		"NODES_RUNNER_SECRET_FILE=$target_home/.culture-nodes/runner.secret" \
+		"NODES_RUNNER_ROTATING_ENV_FILE=$target_home/.culture-nodes/github-app-runner.env" \
 		"NODES_RUNNER_STATE_DIR=$target_home/.culture-nodes/runner-state" \
 		'NODES_RUNNER_HEADSPACE_PROFILES=sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de=python3.12' \
 		"NODES_RUNNER_HEADSPACE_BIN=$target_home/.local/bin/headspace" \

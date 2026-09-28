@@ -7,6 +7,8 @@ APP_ID=${GITHUB_APP_ID:-5109433}
 INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID:-165818005}
 ACCOUNTS=${GITHUB_APP_TOKEN_ACCOUNTS:-culture-claude culture-qwen}
 PERMISSIONS=${GITHUB_APP_TOKEN_PERMISSIONS:-'{"contents":"write","pull_requests":"write","issues":"write","metadata":"read","checks":"read","statuses":"read","actions":"read"}'}
+RUNNER_HOSTS=${GITHUB_APP_RUNNER_HOSTS-"thor orin"}
+RUNNER_PERMISSIONS=${GITHUB_APP_RUNNER_PERMISSIONS:-'{"contents":"read","pull_requests":"read","issues":"read","checks":"read","statuses":"read","actions":"read","metadata":"read"}'}
 
 key_file=$(mktemp)
 response_file=$(mktemp)
@@ -22,15 +24,17 @@ if ! signature=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sig
   exit 1
 fi
 jwt="$header.$payload.$signature"
-if ! body=$(GITHUB_APP_TOKEN_PERMISSIONS="$PERMISSIONS" python3 -c 'import json,os; p=json.loads(os.environ["GITHUB_APP_TOKEN_PERMISSIONS"]); assert isinstance(p,dict); print(json.dumps({"permissions":p},separators=(",",":")))' 2>/dev/null); then
-  echo 'github-app-token: invalid permissions JSON' >&2
-  exit 1
-fi
-if ! curl -fsS -X POST -H "Authorization: Bearer $jwt" -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' --data "$body" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" > "$response_file" 2>/dev/null; then
-  echo 'github-app-token: minting failed' >&2
-  exit 1
-fi
-if ! parsed=$(python3 - "$response_file" <<'PY' 2>/dev/null
+mint_token() { # permissions JSON; prints token and expiration on separate lines
+  local body parsed
+  if ! body=$(GITHUB_APP_TOKEN_PERMISSIONS="$1" python3 -c 'import json,os; p=json.loads(os.environ["GITHUB_APP_TOKEN_PERMISSIONS"]); assert isinstance(p,dict); print(json.dumps({"permissions":p},separators=(",",":")))' 2>/dev/null); then
+    echo 'github-app-token: invalid permissions JSON' >&2
+    return 1
+  fi
+  if ! curl -fsS -X POST -H "Authorization: Bearer $jwt" -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' --data "$body" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" > "$response_file" 2>/dev/null; then
+    echo 'github-app-token: minting failed' >&2
+    return 1
+  fi
+  if ! parsed=$(python3 - "$response_file" <<'PY' 2>/dev/null
 import json, sys
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 token, expires = data["token"], data["expires_at"]
@@ -41,12 +45,16 @@ if not isinstance(expires, str) or not expires or "\n" in expires or "\r" in exp
 print(token)
 print(expires)
 PY
-); then
-  echo 'github-app-token: invalid mint response' >&2
-  exit 1
-fi
-token=${parsed%%$'\n'*}
-expires=${parsed#*$'\n'}
+  ); then
+    echo 'github-app-token: invalid mint response' >&2
+    return 1
+  fi
+  printf '%s\n' "$parsed"
+}
+
+account_mint=$(mint_token "$PERMISSIONS") || exit 1
+token=${account_mint%%$'\n'*}
+expires=${account_mint#*$'\n'}
 rc=0
 for account in $ACCOUNTS; do
   if printf 'GITHUB_TOKEN_WORKER=%s\nGITHUB_TOKEN_EXPIRES_AT=%s\n' "$token" "$expires" \
@@ -57,4 +65,21 @@ for account in $ACCOUNTS; do
     rc=1
   fi
 done
+if [ -n "$RUNNER_HOSTS" ]; then
+  if runner_mint=$(mint_token "$RUNNER_PERMISSIONS"); then
+    token=${runner_mint%%$'\n'*}
+    expires=${runner_mint#*$'\n'}
+    for host in $RUNNER_HOSTS; do
+      if printf 'GITHUB_TOKEN=%s\nGITHUB_TOKEN_EXPIRES_AT=%s\n' "$token" "$expires" \
+        | ssh "$host" 'umask 077; mkdir -p ~/.culture-nodes; cat > ~/.culture-nodes/github-app-runner.env.tmp && chmod 600 ~/.culture-nodes/github-app-runner.env.tmp && mv -f ~/.culture-nodes/github-app-runner.env.tmp ~/.culture-nodes/github-app-runner.env' >/dev/null 2>&1; then
+        printf '%s: wrote runner token (expires %s)\n' "$host" "$expires"
+      else
+        printf '%s: runner token write failed\n' "$host" >&2
+        rc=1
+      fi
+    done
+  else
+    rc=1
+  fi
+fi
 exit "$rc"

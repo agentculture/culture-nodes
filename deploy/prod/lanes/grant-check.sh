@@ -14,7 +14,8 @@
 #
 # NAMES ONLY, on every path. The diff is between two sets of KEY NAMES: the
 # names a workflow declares in environmentRefs, and the names present in
-# runner.env + runner-secrets.env. No grant VALUE is read off the host — the
+# runner.env + runner-secrets.env + github-app-runner.env. No grant VALUE is
+# read off the host — the
 # remote command emits names and nothing else — so the refusal is safe to paste
 # into an issue, which is what an operator does with it.
 #
@@ -65,14 +66,14 @@
 # refused by its own preflight for not having granted it yet.
 # tests/deploy/grantsafety_test.go derives the same list from the lane and
 # fails if this one falls behind it.
-GRANT_CHECK_DEPLOY_GRANTS='NODES_RUNNER_LISTEN NODES_RUNNER_SECRET_FILE NODES_RUNNER_STATE_DIR NODES_RUNNER_HEADSPACE_PROFILES NODES_RUNNER_HEADSPACE_BIN NODES_API_URL PR_UPKEEP_SWEEP_SOURCE_URL PR_UPKEEP_SWEEP_SOURCE_SHA256 PR_UPKEEP_SWEEP_JIRA_SOURCE_URL PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256 PR_UPKEEP_SWEEP_EMIT_SOURCE_URL PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256 PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256 PR_UPKEEP_READINESS_SOURCE_URL PR_UPKEEP_READINESS_SOURCE_SHA256 PR_UPKEEP_READINESS_GITHUB_API PR_UPKEEP_READINESS_SONAR_API PR_UPKEEP_READINESS_SONAR_COMPONENT PR_UPKEEP_READINESS_DEVAGUE_ROOT PR_UPKEEP_READINESS_DEVAGUE_SLUG PR_UPKEEP_REPOSITORIES JIRA_TRANSITION_TARGETS JIRA_TRANSITION_PROJECT_PREFIX JIRA_API_BASE'
+GRANT_CHECK_DEPLOY_GRANTS='NODES_RUNNER_LISTEN NODES_RUNNER_SECRET_FILE NODES_RUNNER_ROTATING_ENV_FILE NODES_RUNNER_STATE_DIR NODES_RUNNER_HEADSPACE_PROFILES NODES_RUNNER_HEADSPACE_BIN NODES_API_URL PR_UPKEEP_SWEEP_SOURCE_URL PR_UPKEEP_SWEEP_SOURCE_SHA256 PR_UPKEEP_SWEEP_JIRA_SOURCE_URL PR_UPKEEP_SWEEP_JIRA_SOURCE_SHA256 PR_UPKEEP_SWEEP_EMIT_SOURCE_URL PR_UPKEEP_SWEEP_EMIT_SOURCE_SHA256 PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL PR_UPKEEP_SWEEP_GITHUB_SOURCE_SHA256 PR_UPKEEP_READINESS_SOURCE_URL PR_UPKEEP_READINESS_SOURCE_SHA256 PR_UPKEEP_READINESS_GITHUB_API PR_UPKEEP_READINESS_SONAR_API PR_UPKEEP_READINESS_SONAR_COMPONENT PR_UPKEEP_READINESS_DEVAGUE_ROOT PR_UPKEEP_READINESS_DEVAGUE_SLUG PR_UPKEEP_REPOSITORIES JIRA_TRANSITION_TARGETS JIRA_TRANSITION_PROJECT_PREFIX JIRA_API_BASE'
 
-# grant_check_names_on_host <host> -- the key names in both grant files, one
+# grant_check_names_on_host <host> -- the key names in all grant files, one
 # per line. `sed` prints capture group 1 and discards the rest of the line, so
 # a value cannot leave the host even by accident.
 grant_check_names_on_host() { # host
   # shellcheck disable=SC2016 # the expansions are deliberately remote
-  ssh "$1" 'for f in "$HOME/.culture-nodes/runner.env" "$HOME/.culture-nodes/runner-secrets.env"; do
+  ssh "$1" 'for f in "$HOME/.culture-nodes/runner.env" "$HOME/.culture-nodes/runner-secrets.env" "$HOME/.culture-nodes/github-app-runner.env"; do
   [ -f "$f" ] || continue
   sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p" "$f"
 done'
@@ -410,7 +411,7 @@ grant_check_host() { # host
       if printf '%s\n' "$report" | grep -q '^missing: '; then
         echo "preflight failed on $host: a workflow the control plane can start today declares an environment grant the runner on $host does not have. Nothing on $host was changed."
         printf '%s\n' "$report" | grep '^missing: '
-        echo "Grant each named key on $host — secrets in ~/.culture-nodes/runner-secrets.env, non-secrets in ~/.culture-nodes/runner.env — then re-run this deploy. See deploy/prod/README.md, 'Runner grants'."
+        echo "Grant each named key on $host — rotating GITHUB_TOKEN in ~/.culture-nodes/github-app-runner.env, other secrets in ~/.culture-nodes/runner-secrets.env, non-secrets in ~/.culture-nodes/runner.env — then re-run this deploy. See deploy/prod/README.md, 'Runner grants'."
       fi
       echo "Only key NAMES are printed here; this check never reads a value off the host."
     } >&2

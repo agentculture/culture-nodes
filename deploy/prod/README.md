@@ -395,17 +395,17 @@ APIs and the working directory.
 
 ### Runner grants: what lives where, and how to put it back
 
-The grants that keep the pr-upkeep loop running live in **two files**
-on each runner host, for one reason: `deploy.sh` rewrites `runner.env` on
-every deploy, so anything that must survive a deploy without being retyped
-belongs in the other file.
+The grants that keep the pr-upkeep loop running live in `runner.env`,
+`runner-secrets.env`, and the rotating GitHub App file on each runner host.
+`deploy.sh` rewrites `runner.env` on every deploy; persistent manual secrets
+belong in `runner-secrets.env`.
 
 | Grant | File | Who writes it |
 | --- | --- | --- |
 | `PR_UPKEEP_SWEEP_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_JIRA_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_EMIT_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_SWEEP_GITHUB_SOURCE_URL` / `_SHA256`, `PR_UPKEEP_REPOSITORIES` | `~/.culture-nodes/runner.env` | `deploy.sh` (`lanes/runner-env-write.sh`), every deploy, from the deploying shell or by retaining the existing line |
 | `PR_UPKEEP_READINESS_SOURCE_URL` / `_SHA256`, and `PR_UPKEEP_READINESS_GITHUB_API` / `_SONAR_API` / `_SONAR_COMPONENT` / `_DEVAGUE_ROOT` / `_DEVAGUE_SLUG` | `~/.culture-nodes/runner.env` | the same lane, same deploy. The two source values default to the shipped revision's `readiness.py`; the other five are granted **empty** — see below |
 | `JIRA_ACCOUNT_EMAIL` + `JIRA_API_TOKEN` | `~/.culture-nodes/runner-secrets.env` | `install-secrets.sh`'s Jira lane, **merged** — it replaces these two keys and no other |
-| `GITHUB_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
+| `GITHUB_TOKEN` | `~/.culture-nodes/github-app-runner.env`, with a temporary fallback in `runner-secrets.env` | the spark GitHub App timer writes the rotating file; the classic PAT in `runner-secrets.env` is retained only until an App-backed sweep tick succeeds |
 | `SONAR_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
 | `NODES_EVENT_TOKEN` | `~/.culture-nodes/runner-secrets.env` | **by hand.** No lane in this repo writes it |
 
@@ -430,7 +430,8 @@ ssh thor 'systemctl --user restart nodes-runner'   # the unit reads it at start
 runs in preflight: it reads the latest version of every `workflow_key` the
 control plane can start today (one with a trigger, or one an enabled schedule
 fires) and diffs the `environmentRefs` those versions declare against the key
-*names* present in `runner.env` + `runner-secrets.env` on the host. A missing
+*names* present in `runner.env`, `runner-secrets.env`, and
+`github-app-runner.env` on the host. A missing
 grant fails the deploy, naming the key and the workflow that declares it,
 while nothing on the host has been touched. It prints key names only — never a
 value, on any path — so the refusal can be pasted into an issue as-is. When
@@ -1705,6 +1706,15 @@ account over SSH stdin. Bridges and Git read that file at each use, so a
 running bridge sees a rotated token without a restart. The old
 `bridge-push.env` remains a fallback if the new file is absent.
 
+The same timer also mints a separate installation token with read-only
+`contents`, `pull_requests`, `issues`, `checks`, `statuses`, `actions`, and
+`metadata` permissions. It delivers `github-app-runner.env` to `thor` and
+`orin` by default. Their runners read it for the sweep and readiness
+`GITHUB_TOKEN` ref on each run, so rotation needs no runner restart. If the
+file is missing or unreadable, the runner falls back to its process
+environment, including the existing classic PAT while it remains granted.
+Set `GITHUB_APP_RUNNER_HOSTS=""` to disable runner delivery.
+
 `deploy.sh spark` installs the minter, user service, timer, and each account's
 URL-scoped Git credential helper. If `grant` or the private-key grant is
 missing, it prints a hint and continues the bridge deploy. After installing
@@ -1714,6 +1724,14 @@ Verify without displaying credentials:
 
 ```bash
 systemctl --user list-timers culture-nodes-github-app-token.timer
-ssh culture-claude@localhost stat ~/.culture-nodes/github-token.env
-ssh culture-qwen@localhost stat ~/.culture-nodes/github-token.env
+ssh culture-claude@localhost 'stat ~/.culture-nodes/github-token.env'
+ssh culture-qwen@localhost 'stat ~/.culture-nodes/github-token.env'
+ssh thor 'stat ~/.culture-nodes/github-app-runner.env'
+ssh orin 'stat ~/.culture-nodes/github-app-runner.env'
 ```
+
+After the next sweep tick, inspect its run's `exit_code` using
+`uv run nodes run get <run-id>` without displaying token values. Once a
+sweep tick has run on the App token, remove `GITHUB_TOKEN` from each host's
+`runner-secrets.env` and revoke the classic PAT. Keep the rotating file in
+place; the grant check includes its key names.

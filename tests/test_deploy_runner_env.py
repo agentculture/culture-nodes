@@ -186,6 +186,10 @@ def test_runner_env_paths_are_absolute_on_the_target(tmp_path):
     assert (
         f"NODES_RUNNER_SECRET_FILE={tmp_path / 'host'}/.culture-nodes/runner.secret" in written
     ), written
+    assert (
+        f"NODES_RUNNER_ROTATING_ENV_FILE={tmp_path / 'host'}/.culture-nodes/github-app-runner.env"
+        in written
+    ), written
 
 
 # --- the standalone entry (PR #282 review, Qodo "Standalone lane exits with

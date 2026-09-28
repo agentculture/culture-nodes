@@ -634,6 +634,10 @@ func (p PostgresBackend) Lineage(ctx context.Context, ns, parent string) ([]Ance
 			return nil, err
 		}
 		a.Variables = map[string]any{}
+		var event map[string]any
+		if json.Unmarshal(vars, &event) == nil {
+			a.EventRepository = decl.VariableRepository(event)
+		}
 		for _, raw := range [][]byte{vars, output} {
 			var m map[string]any
 			// A run output that is not a JSON object carries no variables.

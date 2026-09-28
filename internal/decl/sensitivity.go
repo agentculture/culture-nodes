@@ -292,10 +292,18 @@ func TriggerSensitivity(d Declaration, repository string, vis RepositoryVisibili
 
 // FiringSensitivity marks the variables a fired declaration exposes to later
 // declarations in its lineage: its trigger event's variables overlaid by its
-// action's result, so the narrower of the two systems. repository is the
-// firing's own repository variable.
-func FiringSensitivity(d Declaration, repository string, vis RepositoryVisibility) Sensitivity {
-	return SourceSensitivityIn(repository, vis, d.Trigger.Kind, d.Action.Kind)
+// action's result, so the narrower of the two systems. Each is ranked by its
+// own repository: eventRepository is the trigger event's repository
+// variable, actionRepository the one the action's result names (a github
+// bridge reports the repository it posted to). Ranking both by the overlaid
+// value would let a public target mask a private source (t30b review F1).
+func FiringSensitivity(d Declaration, eventRepository, actionRepository string, vis RepositoryVisibility) Sensitivity {
+	trigger := SourceSensitivityIn(eventRepository, vis, d.Trigger.Kind)
+	action := SourceSensitivityIn(actionRepository, vis, d.Action.Kind)
+	if action.Audience < trigger.Audience {
+		return action
+	}
+	return trigger
 }
 
 // ActionReferences returns every template reference in an action's `with`
@@ -403,7 +411,7 @@ func WideningReferences(d Declaration, resolve func(name string) (Declaration, b
 			w.Source, w.SourceKnown = TriggerSensitivity(d, "", vis), true
 		} else if _, numeric := strconv.Atoi(ref.Step); numeric != nil && resolve != nil {
 			if named, ok := resolve(ref.Step); ok {
-				w.Source, w.SourceKnown = FiringSensitivity(named, "", vis), true
+				w.Source, w.SourceKnown = FiringSensitivity(named, "", "", vis), true
 			}
 		}
 		if Widens(w.Source, w.Target) {

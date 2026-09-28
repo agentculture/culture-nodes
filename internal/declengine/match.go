@@ -17,6 +17,11 @@ import (
 type Ancestor struct {
 	FiringID, CanonicalID, DeclarationID, Name string
 	Variables                                  map[string]any
+	// EventRepository is the repository variable of the firing's trigger
+	// event, before its run output overlays Variables: a github action's
+	// output names the repository it posted to, which ranks the action, not
+	// the event the firing's data came from (t30b review F1).
+	EventRepository string
 }
 
 func ResolveLineage(rows []Ancestor) []Ancestor {

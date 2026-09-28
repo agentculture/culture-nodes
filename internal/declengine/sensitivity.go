@@ -189,7 +189,7 @@ func (e *Engine) checkSensitivity(ctx context.Context, event Event, a ActiveDecl
 			mark = decl.TriggerSensitivity(a.Declaration, decl.VariableRepository(vars), vis)
 		} else {
 			src, err = sb.FiringSource(ctx, event.NamespaceID, lineage[idx].FiringID)
-			mark = decl.FiringSensitivity(src.Declaration, decl.VariableRepository(vars), vis)
+			mark = decl.FiringSensitivity(src.Declaration, strings.ToLower(lineage[idx].EventRepository), decl.VariableRepository(vars), vis)
 		}
 		if err != nil {
 			return "", err

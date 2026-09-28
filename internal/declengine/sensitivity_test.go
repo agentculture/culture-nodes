@@ -17,6 +17,8 @@ type sensitivityMemory struct {
 	requests []SensitivityApprovalRequest
 	status   string
 	repos    map[string]decl.Visibility
+	// firingDecl, when set, is the upstream firing's declaration.
+	firingDecl *decl.Declaration
 }
 
 func (m *sensitivityMemory) RepositoryVisibility(_ context.Context, _, repo string) (decl.Visibility, error) {
@@ -33,6 +35,9 @@ func (m *sensitivityMemory) VersionSource(_ context.Context, _, versionID string
 }
 
 func (m *sensitivityMemory) FiringSource(_ context.Context, _, firingID string) (SensitivitySource, error) {
+	if m.firingDecl != nil {
+		return SensitivitySource{DeclarationID: m.firingDecl.Name, VersionID: m.firingDecl.Name + "-v1", Author: "upstream", Declaration: *m.firingDecl}, nil
+	}
 	return SensitivitySource{DeclarationID: "jira-intake", VersionID: "jira-intake-v1", Author: "upstream",
 		Declaration: decl.Declaration{Name: "jira-intake", Trigger: decl.Trigger{Kind: "jira.issue.created"}, Action: decl.Action{Kind: "jira.comment"}}}, nil
 }
@@ -172,5 +177,34 @@ func TestSensitivityGitHubTargetFromRenderedRepository(t *testing.T) {
 	}
 	if len(m.requests) != 0 {
 		t.Fatalf("unlisted references opened tasks: %+v", m.requests)
+	}
+}
+
+// Cortex review F1 (t30b): an ancestor's variables are its trigger event's
+// overlaid by its run output, and a github bridge's output names the repository
+// it POSTED TO. The ancestor's trigger component must still rank by the
+// event's own repository: a private-repo PR whose url was commented onto a
+// public repo is still private data, and rendering it to Discord widens.
+func TestLineageSourceRankKeepsTheEventRepository(t *testing.T) {
+	a := active("announce")
+	a.Declaration.Condition = "true"
+	a.Declaration.Action = decl.Action{Kind: "discord.post", With: json.RawMessage(`{"uses":"actor://discord","input":{"text":"{gh-src:url}"}}`)}
+	m := &sensitivityMemory{status: SensitivityApproved, repos: map[string]decl.Visibility{
+		"acme/private": decl.VisibilityPrivate, "acme/public": decl.VisibilityPublic}}
+	m.firingDecl = &decl.Declaration{Name: "gh-src", Trigger: decl.Trigger{Kind: "github.pr.approved"}, Action: decl.Action{Kind: "github.comment"}}
+	m.active = []ActiveDeclaration{a}
+	m.ancestors = []Ancestor{{FiringID: "f1", CanonicalID: "f1", DeclarationID: "gh-src", Name: "gh-src",
+		EventRepository: "acme/private",
+		Variables:       map[string]any{"repository": "acme/public", "url": "https://github.com/acme/private/pull/7"}}}
+	e := newTestEngine(t, &m.memoryBackend, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) {
+		t.Fatal("a private repository's variable rendered into discord without an exposes entry")
+		return DispatchResult{}, nil
+	}))
+	e.backend = m
+	if err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e1", Kind: "timer", Node: "ready"}, a, "", m.ancestors); err != nil {
+		t.Fatal(err)
+	}
+	if last := m.steps[len(m.steps)-1]; last.Outcome != OutcomeSensitivityBlocked || !strings.Contains(last.Reason, `add "gh-src:url" to exposes`) {
+		t.Fatalf("outcome %q %q, want blocked: the source is the private event repository", last.Outcome, last.Reason)
 	}
 }

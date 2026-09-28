@@ -306,6 +306,9 @@ func (d Driver) driveNamespaceLocked(ctx context.Context, ns string, now time.Ti
 	if _, err := d.Engine.EmitActionResults(ctx, ns, batch); err != nil {
 		failures = append(failures, err)
 	}
+	if _, err := d.Engine.EmitHumanRequested(ctx, ns, batch); err != nil {
+		failures = append(failures, err)
+	}
 	// t38c: the control plane stamps human.ask and code.run (reactions.go).
 	if _, err := d.Engine.EmitActionReactions(ctx, ns, batch); err != nil {
 		failures = append(failures, err)

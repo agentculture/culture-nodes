@@ -261,13 +261,64 @@ A declaration may render a variable into a wider audience than it came from only
 | `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:source` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `pr-upkeep-fix-orphan` (`examples/pr-upkeep/declarations/fix-orphan.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
 | `pr-upkeep-stage-pr-open` (`examples/pr-upkeep/declarations/stage-pr-open.json`) | `pr-upkeep-route:work_item` | `pr-upkeep-route` | listed; needs the owner's approval |
+| `notify-pr-work-item` (`examples/notify/declarations/pr-work-item.json`) | `work_item` | `notify-pr-work-item` | listed; needs the owner's approval |
+| `notify-jira-intake` (`examples/notify/declarations/jira-intake.json`) | `id` | `notify-jira-intake` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-analyse-orphan` (`examples/notify/declarations/action-failed-pr-upkeep-analyse-orphan.json`) | `class` | `notify-action-failed-pr-upkeep-analyse-orphan` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-analyse` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-blocked-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-blocked-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-blocked-analyse` | listed; needs the owner's approval |
+| `notify-human-needed-pr-upkeep-blocked-analyse` (`examples/notify/declarations/human-needed-pr-upkeep-blocked-analyse.json`) | `human_task_id` | `notify-human-needed-pr-upkeep-blocked-analyse` | listed; needs the owner's approval |
+| `notify-human-decided-pr-upkeep-blocked-analyse` (`examples/notify/declarations/human-decided-pr-upkeep-blocked-analyse.json`) | `outcome` | `notify-human-decided-pr-upkeep-blocked-analyse` | listed; needs the owner's approval |
+| `notify-agent-blocked-pr-upkeep-blocked-analyse` (`examples/notify/declarations/agent-blocked-pr-upkeep-blocked-analyse.json`) | `outcome` | `notify-agent-blocked-pr-upkeep-blocked-analyse` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-blocked-fix` (`examples/notify/declarations/action-failed-pr-upkeep-blocked-fix.json`) | `class` | `notify-action-failed-pr-upkeep-blocked-fix` | listed; needs the owner's approval |
+| `notify-human-needed-pr-upkeep-blocked-fix` (`examples/notify/declarations/human-needed-pr-upkeep-blocked-fix.json`) | `human_task_id` | `notify-human-needed-pr-upkeep-blocked-fix` | listed; needs the owner's approval |
+| `notify-human-decided-pr-upkeep-blocked-fix` (`examples/notify/declarations/human-decided-pr-upkeep-blocked-fix.json`) | `outcome` | `notify-human-decided-pr-upkeep-blocked-fix` | listed; needs the owner's approval |
+| `notify-agent-blocked-pr-upkeep-blocked-fix` (`examples/notify/declarations/agent-blocked-pr-upkeep-blocked-fix.json`) | `outcome` | `notify-agent-blocked-pr-upkeep-blocked-fix` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/action-failed-pr-upkeep-blocked-stamp-pr.json`) | `class` | `notify-action-failed-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
+| `notify-human-needed-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/human-needed-pr-upkeep-blocked-stamp-pr.json`) | `human_task_id` | `notify-human-needed-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
+| `notify-human-decided-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/human-decided-pr-upkeep-blocked-stamp-pr.json`) | `outcome` | `notify-human-decided-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
+| `notify-agent-blocked-pr-upkeep-blocked-stamp-pr` (`examples/notify/declarations/agent-blocked-pr-upkeep-blocked-stamp-pr.json`) | `outcome` | `notify-agent-blocked-pr-upkeep-blocked-stamp-pr` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-close-blocked-analyse` (`examples/notify/declarations/action-failed-pr-upkeep-close-blocked-analyse.json`) | `class` | `notify-action-failed-pr-upkeep-close-blocked-analyse` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-close-blocked-fix` (`examples/notify/declarations/action-failed-pr-upkeep-close-blocked-fix.json`) | `class` | `notify-action-failed-pr-upkeep-close-blocked-fix` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-close-blocked-stamp-pr` (`examples/notify/declarations/action-failed-pr-upkeep-close-blocked-stamp-pr.json`) | `class` | `notify-action-failed-pr-upkeep-close-blocked-stamp-pr` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-finish-expired` (`examples/notify/declarations/action-failed-pr-upkeep-finish-expired.json`) | `class` | `notify-action-failed-pr-upkeep-finish-expired` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-finish-no-change` (`examples/notify/declarations/action-failed-pr-upkeep-finish-no-change.json`) | `class` | `notify-action-failed-pr-upkeep-finish-no-change` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-finish-no-fix` (`examples/notify/declarations/action-failed-pr-upkeep-finish-no-fix.json`) | `class` | `notify-action-failed-pr-upkeep-finish-no-fix` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-finish` (`examples/notify/declarations/action-failed-pr-upkeep-finish.json`) | `class` | `notify-action-failed-pr-upkeep-finish` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-fix-orphan` (`examples/notify/declarations/action-failed-pr-upkeep-fix-orphan.json`) | `class` | `notify-action-failed-pr-upkeep-fix-orphan` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-fix` (`examples/notify/declarations/action-failed-pr-upkeep-fix.json`) | `class` | `notify-action-failed-pr-upkeep-fix` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-human-merges-pr` (`examples/notify/declarations/action-failed-pr-upkeep-human-merges-pr.json`) | `class` | `notify-action-failed-pr-upkeep-human-merges-pr` | listed; needs the owner's approval |
+| `notify-human-needed-pr-upkeep-human-merges-pr` (`examples/notify/declarations/human-needed-pr-upkeep-human-merges-pr.json`) | `human_task_id` | `notify-human-needed-pr-upkeep-human-merges-pr` | listed; needs the owner's approval |
+| `notify-human-decided-pr-upkeep-human-merges-pr` (`examples/notify/declarations/human-decided-pr-upkeep-human-merges-pr.json`) | `outcome` | `notify-human-decided-pr-upkeep-human-merges-pr` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-intake-orphan` (`examples/notify/declarations/action-failed-pr-upkeep-intake-orphan.json`) | `class` | `notify-action-failed-pr-upkeep-intake-orphan` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-readiness-orphan` (`examples/notify/declarations/action-failed-pr-upkeep-readiness-orphan.json`) | `class` | `notify-action-failed-pr-upkeep-readiness-orphan` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-readiness` (`examples/notify/declarations/action-failed-pr-upkeep-readiness.json`) | `class` | `notify-action-failed-pr-upkeep-readiness` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-route` (`examples/notify/declarations/action-failed-pr-upkeep-route.json`) | `class` | `notify-action-failed-pr-upkeep-route` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-stage-dispatch` (`examples/notify/declarations/action-failed-pr-upkeep-stage-dispatch.json`) | `class` | `notify-action-failed-pr-upkeep-stage-dispatch` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-stage-pr-open` (`examples/notify/declarations/action-failed-pr-upkeep-stage-pr-open.json`) | `class` | `notify-action-failed-pr-upkeep-stage-pr-open` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-stamp-pr` (`examples/notify/declarations/action-failed-pr-upkeep-stamp-pr.json`) | `class` | `notify-action-failed-pr-upkeep-stamp-pr` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-sweep-failed` (`examples/notify/declarations/action-failed-pr-upkeep-sweep-failed.json`) | `class` | `notify-action-failed-pr-upkeep-sweep-failed` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-sweep` (`examples/notify/declarations/action-failed-pr-upkeep-sweep.json`) | `class` | `notify-action-failed-pr-upkeep-sweep` | listed; needs the owner's approval |
+| `notify-action-failed-pr-upkeep-swept` (`examples/notify/declarations/action-failed-pr-upkeep-swept.json`) | `class` | `notify-action-failed-pr-upkeep-swept` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-blocked-intake` (`examples/notify/declarations/action-failed-jira-intake-blocked-intake.json`) | `class` | `notify-action-failed-jira-intake-blocked-intake` | listed; needs the owner's approval |
+| `notify-human-needed-jira-intake-blocked-intake` (`examples/notify/declarations/human-needed-jira-intake-blocked-intake.json`) | `human_task_id` | `notify-human-needed-jira-intake-blocked-intake` | listed; needs the owner's approval |
+| `notify-human-decided-jira-intake-blocked-intake` (`examples/notify/declarations/human-decided-jira-intake-blocked-intake.json`) | `outcome` | `notify-human-decided-jira-intake-blocked-intake` | listed; needs the owner's approval |
+| `notify-agent-blocked-jira-intake-blocked-intake` (`examples/notify/declarations/agent-blocked-jira-intake-blocked-intake.json`) | `outcome` | `notify-agent-blocked-jira-intake-blocked-intake` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-close-blocked-intake` (`examples/notify/declarations/action-failed-jira-intake-close-blocked-intake.json`) | `class` | `notify-action-failed-jira-intake-close-blocked-intake` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-intake` (`examples/notify/declarations/action-failed-jira-intake-intake.json`) | `class` | `notify-action-failed-jira-intake-intake` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-picked-up-gh` (`examples/notify/declarations/action-failed-jira-intake-picked-up-gh.json`) | `class` | `notify-action-failed-jira-intake-picked-up-gh` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-picked-up` (`examples/notify/declarations/action-failed-jira-intake-picked-up.json`) | `class` | `notify-action-failed-jira-intake-picked-up` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-post-comment` (`examples/notify/declarations/action-failed-jira-intake-post-comment.json`) | `class` | `notify-action-failed-jira-intake-post-comment` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-stage-intake` (`examples/notify/declarations/action-failed-jira-intake-stage-intake.json`) | `class` | `notify-action-failed-jira-intake-stage-intake` | listed; needs the owner's approval |
+| `notify-action-failed-jira-intake-transition` (`examples/notify/declarations/action-failed-jira-intake-transition.json`) | `class` | `notify-action-failed-jira-intake-transition` | listed; needs the owner's approval |
+| `notify-sweep-failed` (`examples/notify/declarations/sweep-failed.json`) | `outcome` | `notify-sweep-failed` | listed; needs the owner's approval |
+| `notify-merge-deadline` (`examples/notify/declarations/merge-deadline.json`) | `node_name` | `notify-merge-deadline` | listed; needs the owner's approval |
 
 ## Configuration and source generation (c61 and c62)
 
 | Current item | Target declaration form | Parity status |
 |---|---|---|
 | schedules (`internal/scheduler/schedules.go`) | `timer` trigger to the scheduled action | pending |
-| notifier posts (`internal/notifier/`) | lifecycle event trigger to `discord.post` action | pending |
+| notifier posts (`internal/notifier/`) | `examples/notify/declarations/manifest.json`: per-case `discord.post` declarations; mute by deactivation | source; runtime parity pending; graph daemon retained until t37 |
 | repair routing (`internal/repair/`) | failure trigger, bounded condition and repair action | pending |
 | hand-turns (`schemas/ledger/hand_turn_definition.schema.json`) | `human.ask` action and `human.decision` reaction | pending |
 | affinity (`internal/compiler/affinity.go`) | Actor selection on the declaration action | pending |
@@ -285,10 +336,10 @@ The current read path remains available until each consumer has a declaration-er
 | web UI `/v1alpha1/human-tasks` (`web/src/api/client.ts`) | List open `human.ask` nodes and decisions | pending; graph read path retained |
 | web UI `/v1alpha1/pending-decisions` (`web/src/api/client.ts`) | List outstanding human decision nodes | pending; graph read path retained |
 | web UI `/v1alpha1/tickets` (`web/src/api/client.ts`) | Resolve ticket context through verified lineage | pending; graph read path retained |
-| nodes-notifier `dev.culture.nodes.run.created` (`internal/notifier/lifecycle.go`) | Lineage or firing lifecycle event to `discord.post`; keep graph event delivery | pending; graph read path retained |
-| nodes-notifier `dev.culture.nodes.run.completed` (`internal/notifier/lifecycle.go`) | Lineage or firing lifecycle event to `discord.post`; keep graph event delivery | pending; graph read path retained |
-| nodes-notifier `dev.culture.nodes.run.failed` (`internal/notifier/lifecycle.go`) | Lineage or firing lifecycle event to `discord.post`; keep graph event delivery | pending; graph read path retained |
-| nodes-notifier `dev.culture.nodes.run.cancelled` (`internal/notifier/lifecycle.go`) | Lineage or firing lifecycle event to `discord.post`; keep graph event delivery | pending; graph read path retained |
-| nodes-notifier `dev.culture.nodes.run.bounded` (`internal/notifier/lifecycle.go`) | Lineage or firing lifecycle event to `discord.post`; keep graph event delivery | pending; graph read path retained |
+| nodes-notifier `dev.culture.nodes.run.created` (`internal/notifier/lifecycle.go`) | `examples/notify/declarations/manifest.json`: relevant milestone, failure or human-needed fact to `discord.post`; legacy graph event delivery remains until t37 | source; runtime parity pending; graph read path retained |
+| nodes-notifier `dev.culture.nodes.run.completed` (`internal/notifier/lifecycle.go`) | `examples/notify/declarations/manifest.json`: relevant milestone, failure or human-needed fact to `discord.post`; legacy graph event delivery remains until t37 | source; runtime parity pending; graph read path retained |
+| nodes-notifier `dev.culture.nodes.run.failed` (`internal/notifier/lifecycle.go`) | `examples/notify/declarations/manifest.json`: relevant milestone, failure or human-needed fact to `discord.post`; legacy graph event delivery remains until t37 | source; runtime parity pending; graph read path retained |
+| nodes-notifier `dev.culture.nodes.run.cancelled` (`internal/notifier/lifecycle.go`) | `examples/notify/declarations/manifest.json`: relevant milestone, failure or human-needed fact to `discord.post`; legacy graph event delivery remains until t37 | source; runtime parity pending; graph read path retained |
+| nodes-notifier `dev.culture.nodes.run.bounded` (`internal/notifier/lifecycle.go`) | `examples/notify/declarations/manifest.json`: relevant milestone, failure or human-needed fact to `discord.post`; legacy graph event delivery remains until t37 | source; runtime parity pending; graph read path retained |
 | `scripts/collect-handover.py` run/node-run/attempt detail | Resolve lineage, firing and action attempt for handover; keep graph detail reads | pending; graph read path retained |
 | nodes-operator (`.claude/skills/nodes-operator/scripts/nodes-op.sh`) run/node-run/attempt detail | Resolve lineage, firing and action attempt for operator commands; keep graph detail reads | pending; graph read path retained |

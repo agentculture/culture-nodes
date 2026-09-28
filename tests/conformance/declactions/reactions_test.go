@@ -353,6 +353,28 @@ func jiraDecl(name, trigger, start, landing string) decl.Declaration {
 		StartNode: decl.Node{Name: start, Deadline: "none"}, LandingNode: decl.Node{Name: landing, Deadline: "1h"}}
 }
 
+func TestPendingDeclarationHumanTaskEmitsRequestedOnce(t *testing.T) {
+	r := newReactionHarness(t)
+	a := r.publish(askDecl("rx-request", "ready", "asked"))
+	r.start("ready")
+	f := r.onlyFiring(a)
+	task := r.pendingTask(f.id)
+	if task == "" {
+		t.Fatal("human.ask has no pending task")
+	}
+	for i := 0; i < 2; i++ {
+		r.drive()
+	}
+	var count int
+	var payload []byte
+	if err := r.db.Pool().QueryRow(r.ctx, `SELECT count(*),max(payload::text) FROM signal_events WHERE namespace_id=$1 AND run_id=$2 AND name='human.requested'`, r.ns, f.id).Scan(&count, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || !strings.Contains(string(payload), task) || !strings.Contains(string(payload), `"node_name": "asked"`) && !strings.Contains(string(payload), `"node_name":"asked"`) {
+		t.Fatalf("human.requested count=%d payload=%s, want task %s at asked", count, payload, task)
+	}
+}
+
 // A human.ask firing, decided through the real decision path, is followed
 // by a human.decision reaction that continues its lineage: B (MUST after A)
 // fires with A as its parent and a two-entry lineage. Every decision

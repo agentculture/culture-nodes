@@ -78,7 +78,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 usage() {
   cat >&2 <<'EOF'
 usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
-                        [--metadata KEY=VALUE]... [--os-user NAME]
+                        [--metadata KEY=VALUE]... [--os-user NAME] [--stamping-cn1]
        register-actor.sh --engine <actor_id>
        register-actor.sh --human <actor_key> [--metadata KEY=VALUE]...
        register-actor.sh --runner-account <actor_key> --os-user NAME \
@@ -98,6 +98,8 @@ usage: register-actor.sh <actor_key> <endpoint_url> [auth_token_env] \
                   dedicated Unix account a bridge runs as (culture-codex,
                   culture-claude, culture-qwen), so the registry can be read
                   as a lane tag (#204). NAME must match ^[a-z_][a-z0-9_-]*$.
+  --stamping-cn1   Record the bridge's verified cn1 stamping capability on
+                   this new actor revision (required for declaration actions).
   --engine        register an in-process engine producer with no endpoint;
                   the actor id and actor key are both <actor_id>.
   --human         register a PERSON as a kind=human actor with no endpoint
@@ -132,6 +134,7 @@ POSITIONAL=()
 ENGINE_ACTOR=""
 HUMAN_ACTOR=""
 RUNNER_ACCOUNT_ACTOR=""
+STAMPING_CN1=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --metadata)
@@ -192,6 +195,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || { echo "register-actor: --runner-account needs an actor key" >&2; exit 1; }
       RUNNER_ACCOUNT_ACTOR=$2
       shift 2
+      ;;
+    --stamping-cn1)
+      STAMPING_CN1=1
+      shift
       ;;
     -h|--help) usage; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
@@ -371,7 +378,7 @@ overlay_json="{$(IFS=,; echo "${overlay_pairs[*]}")}"
 # metadata-only change is visible to the idempotency check. Comparing only
 # endpoint and auth_token_env would report "unchanged" for a registration whose
 # whole purpose was to add handover_remote.
-current=$(run_psql "SELECT revision, endpoint_ref, coalesce((metadata || '$overlay_json'::jsonb) = metadata, false) FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1")
+current=$(run_psql "SELECT revision, endpoint_ref, coalesce((metadata || '$overlay_json'::jsonb) = metadata, false) AND ('$STAMPING_CN1' = '' OR capabilities->'stamping'->>'marker' = 'cn1') FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1")
 
 current_revision=""
 current_endpoint=""
@@ -389,13 +396,17 @@ fi
 # --- New revision -----------------------------------------------------
 next_revision=$(( ${current_revision:-0} + 1 ))
 actor_id="actor_register_$(date +%s%N)_$$"
+capabilities_json='{}'
+if [ -n "$STAMPING_CN1" ]; then
+  capabilities_json='{"stamping":{"marker":"cn1","version":1}}'
+fi
 
 if [ -n "$current_revision" ]; then
   # Carry the previous revision's metadata, kind and protocol forward and
   # overlay only what was asked for. INSERT ... SELECT does the merge inside
   # Postgres so the stored JSON never round-trips through the shell -- which
   # also means no stored value can be re-interpolated into this statement.
-  run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) SELECT '$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, kind, protocol, nullif('$ENDPOINT_URL', ''), metadata || '$overlay_json'::jsonb FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1" >/dev/null
+  run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata, capabilities) SELECT '$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, kind, protocol, nullif('$ENDPOINT_URL', ''), metadata || '$overlay_json'::jsonb, COALESCE(capabilities,'{}'::jsonb) || '$capabilities_json'::jsonb FROM actors WHERE namespace_id = '$NAMESPACE_ID' AND actor_key = '$ACTOR_KEY' ORDER BY revision DESC LIMIT 1" >/dev/null
 else
   # First revision: there is nothing to carry forward, so the kind/protocol
   # defaults apply. An actor that is not an http agent is registered by
@@ -411,7 +422,7 @@ else
     # runner executes it as the os_user account; no HTTP endpoint exists).
     run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'runner', NULL, '$overlay_json'::jsonb)" >/dev/null
   else
-    run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$overlay_json'::jsonb)" >/dev/null
+    run_psql "INSERT INTO actors (id, namespace_id, actor_key, revision, kind, protocol, endpoint_ref, metadata, capabilities) VALUES ('$actor_id', '$NAMESPACE_ID', '$ACTOR_KEY', $next_revision, 'agent', 'http', '$ENDPOINT_URL', '$overlay_json'::jsonb, '$capabilities_json'::jsonb)" >/dev/null
   fi
 fi
 

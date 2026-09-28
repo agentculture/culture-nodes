@@ -1,0 +1,465 @@
+{
+  "declarations": [
+    "pr-work-item.json",
+    "jira-intake.json",
+    "action-failed-pr-upkeep-analyse-orphan.json",
+    "action-failed-pr-upkeep-analyse.json",
+    "action-failed-pr-upkeep-blocked-analyse.json",
+    "human-needed-pr-upkeep-blocked-analyse.json",
+    "human-decided-pr-upkeep-blocked-analyse.json",
+    "agent-blocked-pr-upkeep-blocked-analyse.json",
+    "action-failed-pr-upkeep-blocked-fix.json",
+    "human-needed-pr-upkeep-blocked-fix.json",
+    "human-decided-pr-upkeep-blocked-fix.json",
+    "agent-blocked-pr-upkeep-blocked-fix.json",
+    "action-failed-pr-upkeep-blocked-stamp-pr.json",
+    "human-needed-pr-upkeep-blocked-stamp-pr.json",
+    "human-decided-pr-upkeep-blocked-stamp-pr.json",
+    "agent-blocked-pr-upkeep-blocked-stamp-pr.json",
+    "action-failed-pr-upkeep-close-blocked-analyse.json",
+    "action-failed-pr-upkeep-close-blocked-fix.json",
+    "action-failed-pr-upkeep-close-blocked-stamp-pr.json",
+    "action-failed-pr-upkeep-finish-expired.json",
+    "action-failed-pr-upkeep-finish-no-change.json",
+    "action-failed-pr-upkeep-finish-no-fix.json",
+    "action-failed-pr-upkeep-finish.json",
+    "action-failed-pr-upkeep-fix-orphan.json",
+    "action-failed-pr-upkeep-fix.json",
+    "action-failed-pr-upkeep-human-merges-pr.json",
+    "human-needed-pr-upkeep-human-merges-pr.json",
+    "human-decided-pr-upkeep-human-merges-pr.json",
+    "action-failed-pr-upkeep-intake-orphan.json",
+    "action-failed-pr-upkeep-readiness-orphan.json",
+    "action-failed-pr-upkeep-readiness.json",
+    "action-failed-pr-upkeep-route.json",
+    "action-failed-pr-upkeep-stage-dispatch.json",
+    "action-failed-pr-upkeep-stage-pr-open.json",
+    "action-failed-pr-upkeep-stamp-pr.json",
+    "action-failed-pr-upkeep-sweep-failed.json",
+    "action-failed-pr-upkeep-sweep.json",
+    "action-failed-pr-upkeep-swept.json",
+    "action-failed-jira-intake-blocked-intake.json",
+    "human-needed-jira-intake-blocked-intake.json",
+    "human-decided-jira-intake-blocked-intake.json",
+    "agent-blocked-jira-intake-blocked-intake.json",
+    "action-failed-jira-intake-close-blocked-intake.json",
+    "action-failed-jira-intake-intake.json",
+    "action-failed-jira-intake-picked-up-gh.json",
+    "action-failed-jira-intake-picked-up.json",
+    "action-failed-jira-intake-post-comment.json",
+    "action-failed-jira-intake-stage-intake.json",
+    "action-failed-jira-intake-transition.json",
+    "sweep-failed.json",
+    "merge-deadline.json"
+  ],
+  "entries": [
+    {
+      "file": "pr-work-item.json",
+      "name": "notify-pr-work-item",
+      "trigger": "pr-upkeep.pr",
+      "start_node": "root",
+      "condition": "true",
+      "message": "PR upkeep work item | Work item {work_item}"
+    },
+    {
+      "file": "jira-intake.json",
+      "name": "notify-jira-intake",
+      "trigger": "jira.issue.created",
+      "start_node": "root",
+      "condition": "event.source == \"jira\" && event.status == \"To Do\"",
+      "message": "Jira intake requested | Issue {id}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-analyse-orphan.json",
+      "name": "notify-action-failed-pr-upkeep-analyse-orphan",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-analyse-done",
+      "condition": "true",
+      "message": "Action failed: analyse-orphan | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-analyse",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-analyse-done",
+      "condition": "true",
+      "message": "Action failed: analyse | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-blocked-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-blocked-analyse",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-blocked-analyse-done",
+      "condition": "true",
+      "message": "Action failed: blocked-analyse | Class {class}"
+    },
+    {
+      "file": "human-needed-pr-upkeep-blocked-analyse.json",
+      "name": "notify-human-needed-pr-upkeep-blocked-analyse",
+      "trigger": "human.requested",
+      "start_node": "pr-upkeep-blocked-analyse-done",
+      "condition": "true",
+      "message": "Decision needed: pr-upkeep-blocked-analyse | Task {human_task_id}"
+    },
+    {
+      "file": "human-decided-pr-upkeep-blocked-analyse.json",
+      "name": "notify-human-decided-pr-upkeep-blocked-analyse",
+      "trigger": "human.decision",
+      "start_node": "pr-upkeep-blocked-analyse-done",
+      "condition": "true",
+      "message": "Decision made: pr-upkeep-blocked-analyse | Outcome {outcome}"
+    },
+    {
+      "file": "agent-blocked-pr-upkeep-blocked-analyse.json",
+      "name": "notify-agent-blocked-pr-upkeep-blocked-analyse",
+      "trigger": "agent.result",
+      "start_node": "pr-upkeep-analyse-done",
+      "condition": "event.outcome == \"blocked\"",
+      "message": "Agent blocked: pr-upkeep-blocked-analyse | Outcome {outcome}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-blocked-fix.json",
+      "name": "notify-action-failed-pr-upkeep-blocked-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-blocked-fix-done",
+      "condition": "true",
+      "message": "Action failed: blocked-fix | Class {class}"
+    },
+    {
+      "file": "human-needed-pr-upkeep-blocked-fix.json",
+      "name": "notify-human-needed-pr-upkeep-blocked-fix",
+      "trigger": "human.requested",
+      "start_node": "pr-upkeep-blocked-fix-done",
+      "condition": "true",
+      "message": "Decision needed: pr-upkeep-blocked-fix | Task {human_task_id}"
+    },
+    {
+      "file": "human-decided-pr-upkeep-blocked-fix.json",
+      "name": "notify-human-decided-pr-upkeep-blocked-fix",
+      "trigger": "human.decision",
+      "start_node": "pr-upkeep-blocked-fix-done",
+      "condition": "true",
+      "message": "Decision made: pr-upkeep-blocked-fix | Outcome {outcome}"
+    },
+    {
+      "file": "agent-blocked-pr-upkeep-blocked-fix.json",
+      "name": "notify-agent-blocked-pr-upkeep-blocked-fix",
+      "trigger": "agent.result",
+      "start_node": "pr-upkeep-fix-done",
+      "condition": "event.outcome == \"blocked\"",
+      "message": "Agent blocked: pr-upkeep-blocked-fix | Outcome {outcome}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-blocked-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-blocked-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-blocked-stamp-pr-done",
+      "condition": "true",
+      "message": "Action failed: blocked-stamp-pr | Class {class}"
+    },
+    {
+      "file": "human-needed-pr-upkeep-blocked-stamp-pr.json",
+      "name": "notify-human-needed-pr-upkeep-blocked-stamp-pr",
+      "trigger": "human.requested",
+      "start_node": "pr-upkeep-blocked-stamp-pr-done",
+      "condition": "true",
+      "message": "Decision needed: pr-upkeep-blocked-stamp-pr | Task {human_task_id}"
+    },
+    {
+      "file": "human-decided-pr-upkeep-blocked-stamp-pr.json",
+      "name": "notify-human-decided-pr-upkeep-blocked-stamp-pr",
+      "trigger": "human.decision",
+      "start_node": "pr-upkeep-blocked-stamp-pr-done",
+      "condition": "true",
+      "message": "Decision made: pr-upkeep-blocked-stamp-pr | Outcome {outcome}"
+    },
+    {
+      "file": "agent-blocked-pr-upkeep-blocked-stamp-pr.json",
+      "name": "notify-agent-blocked-pr-upkeep-blocked-stamp-pr",
+      "trigger": "agent.result",
+      "start_node": "pr-upkeep-stamp-pr-done",
+      "condition": "event.outcome == \"blocked\"",
+      "message": "Agent blocked: pr-upkeep-blocked-stamp-pr | Outcome {outcome}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-close-blocked-analyse.json",
+      "name": "notify-action-failed-pr-upkeep-close-blocked-analyse",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-close-blocked-analyse-done",
+      "condition": "true",
+      "message": "Action failed: close-blocked-analyse | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-close-blocked-fix.json",
+      "name": "notify-action-failed-pr-upkeep-close-blocked-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-close-blocked-fix-done",
+      "condition": "true",
+      "message": "Action failed: close-blocked-fix | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-close-blocked-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-close-blocked-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-close-blocked-stamp-pr-done",
+      "condition": "true",
+      "message": "Action failed: close-blocked-stamp-pr | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-finish-expired.json",
+      "name": "notify-action-failed-pr-upkeep-finish-expired",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-finish-done",
+      "condition": "true",
+      "message": "Action failed: finish-expired | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-finish-no-change.json",
+      "name": "notify-action-failed-pr-upkeep-finish-no-change",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-finish-done",
+      "condition": "true",
+      "message": "Action failed: finish-no-change | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-finish-no-fix.json",
+      "name": "notify-action-failed-pr-upkeep-finish-no-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-finish-done",
+      "condition": "true",
+      "message": "Action failed: finish-no-fix | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-finish.json",
+      "name": "notify-action-failed-pr-upkeep-finish",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-finish-done",
+      "condition": "true",
+      "message": "Action failed: finish | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-fix-orphan.json",
+      "name": "notify-action-failed-pr-upkeep-fix-orphan",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-fix-done",
+      "condition": "true",
+      "message": "Action failed: fix-orphan | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-fix.json",
+      "name": "notify-action-failed-pr-upkeep-fix",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-fix-done",
+      "condition": "true",
+      "message": "Action failed: fix | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-human-merges-pr.json",
+      "name": "notify-action-failed-pr-upkeep-human-merges-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-human-merges-pr-done",
+      "condition": "true",
+      "message": "Action failed: human-merges-pr | Class {class}"
+    },
+    {
+      "file": "human-needed-pr-upkeep-human-merges-pr.json",
+      "name": "notify-human-needed-pr-upkeep-human-merges-pr",
+      "trigger": "human.requested",
+      "start_node": "pr-upkeep-human-merges-pr-done",
+      "condition": "true",
+      "message": "Decision needed: pr-upkeep-human-merges-pr | Task {human_task_id}"
+    },
+    {
+      "file": "human-decided-pr-upkeep-human-merges-pr.json",
+      "name": "notify-human-decided-pr-upkeep-human-merges-pr",
+      "trigger": "human.decision",
+      "start_node": "pr-upkeep-human-merges-pr-done",
+      "condition": "true",
+      "message": "Decision made: pr-upkeep-human-merges-pr | Outcome {outcome}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-intake-orphan.json",
+      "name": "notify-action-failed-pr-upkeep-intake-orphan",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-intake-orphan-done",
+      "condition": "true",
+      "message": "Action failed: intake-orphan | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-readiness-orphan.json",
+      "name": "notify-action-failed-pr-upkeep-readiness-orphan",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-readiness-done",
+      "condition": "true",
+      "message": "Action failed: readiness-orphan | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-readiness.json",
+      "name": "notify-action-failed-pr-upkeep-readiness",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-readiness-done",
+      "condition": "true",
+      "message": "Action failed: readiness | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-route.json",
+      "name": "notify-action-failed-pr-upkeep-route",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-route-done",
+      "condition": "true",
+      "message": "Action failed: route | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-stage-dispatch.json",
+      "name": "notify-action-failed-pr-upkeep-stage-dispatch",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-stage-dispatch-done",
+      "condition": "true",
+      "message": "Action failed: stage-dispatch | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-stage-pr-open.json",
+      "name": "notify-action-failed-pr-upkeep-stage-pr-open",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-stage-pr-open-done",
+      "condition": "true",
+      "message": "Action failed: stage-pr-open | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-stamp-pr.json",
+      "name": "notify-action-failed-pr-upkeep-stamp-pr",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-stamp-pr-done",
+      "condition": "true",
+      "message": "Action failed: stamp-pr | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-sweep-failed.json",
+      "name": "notify-action-failed-pr-upkeep-sweep-failed",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-sweep-failed-done",
+      "condition": "true",
+      "message": "Action failed: sweep-failed | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-sweep.json",
+      "name": "notify-action-failed-pr-upkeep-sweep",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-sweep-done",
+      "condition": "true",
+      "message": "Action failed: sweep | Class {class}"
+    },
+    {
+      "file": "action-failed-pr-upkeep-swept.json",
+      "name": "notify-action-failed-pr-upkeep-swept",
+      "trigger": "action.failed",
+      "start_node": "pr-upkeep-swept-done",
+      "condition": "true",
+      "message": "Action failed: swept | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-blocked-intake.json",
+      "name": "notify-action-failed-jira-intake-blocked-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-blocked-intake-done",
+      "condition": "true",
+      "message": "Action failed: blocked-intake | Class {class}"
+    },
+    {
+      "file": "human-needed-jira-intake-blocked-intake.json",
+      "name": "notify-human-needed-jira-intake-blocked-intake",
+      "trigger": "human.requested",
+      "start_node": "jira-intake-blocked-intake-done",
+      "condition": "true",
+      "message": "Decision needed: jira-intake-blocked-intake | Task {human_task_id}"
+    },
+    {
+      "file": "human-decided-jira-intake-blocked-intake.json",
+      "name": "notify-human-decided-jira-intake-blocked-intake",
+      "trigger": "human.decision",
+      "start_node": "jira-intake-blocked-intake-done",
+      "condition": "true",
+      "message": "Decision made: jira-intake-blocked-intake | Outcome {outcome}"
+    },
+    {
+      "file": "agent-blocked-jira-intake-blocked-intake.json",
+      "name": "notify-agent-blocked-jira-intake-blocked-intake",
+      "trigger": "agent.result",
+      "start_node": "jira-intake-intake-done",
+      "condition": "event.outcome == \"blocked\"",
+      "message": "Agent blocked: jira-intake-blocked-intake | Outcome {outcome}"
+    },
+    {
+      "file": "action-failed-jira-intake-close-blocked-intake.json",
+      "name": "notify-action-failed-jira-intake-close-blocked-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-close-blocked-intake-done",
+      "condition": "true",
+      "message": "Action failed: close-blocked-intake | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-intake.json",
+      "name": "notify-action-failed-jira-intake-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-intake-done",
+      "condition": "true",
+      "message": "Action failed: intake | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-picked-up-gh.json",
+      "name": "notify-action-failed-jira-intake-picked-up-gh",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-picked-up-done",
+      "condition": "true",
+      "message": "Action failed: picked-up-gh | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-picked-up.json",
+      "name": "notify-action-failed-jira-intake-picked-up",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-picked-up-done",
+      "condition": "true",
+      "message": "Action failed: picked-up | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-post-comment.json",
+      "name": "notify-action-failed-jira-intake-post-comment",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-post-comment-done",
+      "condition": "true",
+      "message": "Action failed: post-comment | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-stage-intake.json",
+      "name": "notify-action-failed-jira-intake-stage-intake",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-stage-intake-done",
+      "condition": "true",
+      "message": "Action failed: stage-intake | Class {class}"
+    },
+    {
+      "file": "action-failed-jira-intake-transition.json",
+      "name": "notify-action-failed-jira-intake-transition",
+      "trigger": "action.failed",
+      "start_node": "jira-intake-transition-done",
+      "condition": "true",
+      "message": "Action failed: transition | Class {class}"
+    },
+    {
+      "file": "sweep-failed.json",
+      "name": "notify-sweep-failed",
+      "trigger": "code.result",
+      "start_node": "pr-upkeep-sweep-done",
+      "condition": "event.outcome == \"failed\"",
+      "message": "PR upkeep sweep failed | Outcome {outcome}"
+    },
+    {
+      "file": "merge-deadline.json",
+      "name": "notify-merge-deadline",
+      "trigger": "node.expired",
+      "start_node": "pr-upkeep-human-merges-pr-done",
+      "condition": "true",
+      "message": "PR merge deadline passed | Node {node_name}"
+    }
+  ]
+}

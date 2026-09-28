@@ -90,6 +90,22 @@ func TestRegisterActorScriptContainsInsertOnly(t *testing.T) {
 	}
 }
 
+func TestRegisterNotifyActorCarriesCN1Capability(t *testing.T) {
+	fake, _, inserts := newFakePsql(t, t.TempDir(), "namespace_1", "")
+	out, code := runRegisterActorArgs(t, []string{"PSQL_CMD=" + fake, "NODES_NAMESPACE_ID=namespace_1"},
+		"company/notify-discord", "http://192.168.1.157:8088", "NOTIFY_DISCORD_BRIDGE_TOKEN", "--stamping-cn1")
+	if code != 0 {
+		t.Fatalf("register notify: exit %d: %s", code, out)
+	}
+	query, err := os.ReadFile(inserts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(query), "capabilities") || !strings.Contains(string(query), `"marker":"cn1"`) {
+		t.Fatalf("registration omitted cn1 capability: %s", query)
+	}
+}
+
 // TestRegisterActorScriptRefusesNonIPv4Hosts is the static half of the
 // IP-only refusal requirement: the script must actually contain the check,
 // not just claim to in its usage text. Worker containers cannot resolve

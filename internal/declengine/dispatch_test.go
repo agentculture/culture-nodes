@@ -83,6 +83,22 @@ func TestWorkerEnvelopeCarriesABridgeActionsContractOutcomes(t *testing.T) {
 	}
 }
 
+func TestDiscordPostDefaultsToRealBridgeOutcomes(t *testing.T) {
+	for _, with := range []string{
+		`{"uses":"actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","input":{"content":"notice","require_delivery":false}}`,
+		`{"uses":"actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","input":{"content":"notice"},"graph_config":{"contract":{"outcomes":{"sent":{"schema":{"type":"object"}}}}}}`,
+	} {
+		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "discord.post", With: json.RawMessage(with)}}
+		cw, _, err := workerEnvelope(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(cw.IR.Spec.Nodes["action"].Outcomes, ","); got != "delivery_failed,sent" {
+			t.Fatalf("discord.post outcomes = %s, want delivery_failed,sent", got)
+		}
+	}
+}
+
 func TestWorkerEnvelopeCarriesTheAgentContractOutcomes(t *testing.T) {
 	envelope := func(with string) ([]string, error) {
 		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "agent.work", With: json.RawMessage(with)}}

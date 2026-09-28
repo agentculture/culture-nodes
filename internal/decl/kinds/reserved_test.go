@@ -10,7 +10,7 @@ import (
 // registered now or later -- and the outside facts are not.
 func TestReservedEventsAreTheControlPlanesOwn(t *testing.T) {
 	for _, k := range Triggers() {
-		engineOwn := k.Name == "timer" || k.Name == "human.decision" || k.Name == "code.result" || k.Name == "agent.result"
+		engineOwn := k.Name == "timer" || k.Name == "human.decision" || k.Name == "human.requested" || k.Name == "code.result" || k.Name == "agent.result"
 		for _, c := range k.Consumes {
 			if c == ArtifactActionResult || c == ArtifactNode {
 				engineOwn = true

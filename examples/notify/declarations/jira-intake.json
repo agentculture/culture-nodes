@@ -1,0 +1,56 @@
+{
+  "name": "notify-jira-intake",
+  "trigger": {
+    "kind": "jira.issue.created",
+    "reentry_limit": 0,
+    "hop_limit": 8
+  },
+  "condition": "event.source == \"jira\" && event.status == \"To Do\"",
+  "action": {
+    "kind": "discord.post",
+    "with": {
+      "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "title": "Jira intake requested",
+        "description": "Issue {id}",
+        "require_delivery": false
+      },
+      "graph_config": {
+        "ownerRef": "team/platform-ai",
+        "contract": {
+          "outcomes": {
+            "sent": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "delivered",
+                  "status_code"
+                ]
+              }
+            },
+            "delivery_failed": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "delivered",
+                  "status_code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "root",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "notify-jira-intake-done",
+    "deadline": "5m"
+  },
+  "exposes": [
+    "id"
+  ]
+}

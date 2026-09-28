@@ -271,3 +271,27 @@ func TestSignalEmissionAuth(t *testing.T) {
 		t.Errorf("emitter = %q, want it derived from the verified attempt", emitter)
 	}
 }
+
+// Task t38g (#328, review finding A2): an actor may not emit the control
+// plane's own reactions, node.expired or action.* results. The emission is
+// the actor's rejection -- nothing appended, the session unharmed -- not an
+// infrastructure failure the bridge would redeliver.
+func TestSignalEmissionRefusesTheControlPlanesReservedNames(t *testing.T) {
+	f := newAsyncFixture(t)
+	for i, name := range []string{"human.decision", "code.result", "agent.result", "node.expired", "action.failed"} {
+		result := f.handle(signalEvent(fmt.Sprintf("ev-reserved-%d", i), int64(i+1), actors.SignalPayload{Name: name}))
+		if result.Disposition != actors.DispositionRejected || !strings.Contains(result.Diagnostic, name) {
+			t.Fatalf("emitting %s: disposition %q diagnostic %q, want rejected naming the kind", name, result.Disposition, result.Diagnostic)
+		}
+	}
+	var n int
+	if err := f.store.Pool().QueryRow(f.ctx, `SELECT count(*) FROM signal_events WHERE namespace_id=$1`, f.ns.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rejected emissions appended %d signal events, want 0", n)
+	}
+	if got := f.handle(completedEvent("ev-reserved-terminal", 6, "unharmed")).Disposition; got != actors.DispositionCommitted {
+		t.Fatalf("completion after rejected emissions = %q, want committed", got)
+	}
+}

@@ -7141,7 +7141,7 @@
         ]
       },
       "post": {
-        "description": "The inbound half of the events surface (task t10, issue #39, spec decision c35): appends the event to the append-only signal_events fact table and, in the same transaction, resumes every node run whose pending until.signal subscription matches the name (and run_id, when the event is run-scoped). Resumed runs complete through their normal edges — delivery makes the parked work item claimable again and a worker commits the completion through the ordinary engine transaction; delivery itself never completes anything.\nAn event with no waiting subscription is still appended — a fact, not an error; `resumed` is simply empty. A subscription created AFTER the event does not retroactively fire (documented limitation, issue #43): subscription-then-event resumes, event-then-subscription stays parked.\nRequires a bearer token matching the server's configured event secret (`NODES_EVENT_TOKEN_SECRET`) — its own secret, separate from the decision and registration secrets, since emitting a named event can resume any signal-parked run in the namespace.\n\nWith the declaration engine enabled, the delivered event is also offered to declarations (task t38; ADR 0014 addendum d6, task t38d). The payload's `origin` {marker, artifact_kind, artifact_id, author, bridge_account} is verified against the engine's marker key; only a verified marker moves the event off the shared `root` node, onto the landing node its parent firing opened. An event without a verified marker always arrives at `root`, whatever the payload's `node` names.",
+        "description": "The inbound half of the events surface (task t10, issue #39, spec decision c35): appends the event to the append-only signal_events fact table and, in the same transaction, resumes every node run whose pending until.signal subscription matches the name (and run_id, when the event is run-scoped). Resumed runs complete through their normal edges — delivery makes the parked work item claimable again and a worker commits the completion through the ordinary engine transaction; delivery itself never completes anything.\nAn event with no waiting subscription is still appended — a fact, not an error; `resumed` is simply empty. A subscription created AFTER the event does not retroactively fire (documented limitation, issue #43): subscription-then-event resumes, event-then-subscription stays parked.\nRequires a bearer token matching the server's configured event secret (`NODES_EVENT_TOKEN_SECRET`) — its own secret, separate from the decision and registration secrets, since emitting a named event can resume any signal-parked run in the namespace.\n\nWith the declaration engine enabled, the delivered event is also offered to declarations (task t38; ADR 0014 addendum d6, task t38d). The payload's `origin` {marker, artifact_kind, artifact_id, author, bridge_account} is verified against the engine's marker key; only a verified marker moves the event off the shared `root` node, onto the landing node its parent firing opened. An event without a verified marker always arrives at `root`, whatever the payload's `node` names.\n\nThe control plane's own event names are reserved (task t38g): `human.decision`, `code.result`, `agent.result`, `node.expired`, and every `action.*` name, as is its emitter `engine_declaration_engine`. A marker proves which firing a reaction continues, not what the reaction says, so a delivery naming one is refused with 403 and nothing is appended.",
         "operationId": "deliverEvent",
         "requestBody": {
           "content": {
@@ -7183,6 +7183,16 @@
               }
             },
             "description": "No bearer token was presented, it does not match the configured secret, or no secret is configured at all."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The name or the emitter is reserved for the control plane (human.decision, code.result, agent.result, node.expired, action.*, engine_declaration_engine). Nothing was appended."
           },
           "404": {
             "content": {

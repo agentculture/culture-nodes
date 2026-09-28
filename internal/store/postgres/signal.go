@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/ledger"
 	"github.com/agentculture/culture-nodes/internal/store"
@@ -522,6 +523,11 @@ func (in DeliverSignalEventInput) validate() error {
 // It does not commit and does not roll back: the caller owns tx's lifetime,
 // including the rollback that undoes everything this wrote.
 func (s *Store) deliverSignalEventTx(ctx context.Context, tx pgx.Tx, in DeliverSignalEventInput) (SignalDelivery, error) {
+	// t38g (A2): every caller appends for an outside party; the engine's
+	// own emitters never come through here (kinds.CheckExternalEvent).
+	if err := kinds.CheckExternalEvent(in.Name, in.Emitter); err != nil {
+		return SignalDelivery{}, fmt.Errorf("postgres: DeliverSignalEvent: %w", err)
+	}
 	if issueKey, ok := jiraCreatedIssueSourceKey(in.SourceKey); ok {
 		// jira.issue.created (#328 t25) stands where the synthetic creation
 		// transition (changelog "0") stands: an issue adopted at the history

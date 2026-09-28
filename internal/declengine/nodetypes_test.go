@@ -21,9 +21,11 @@ func TestEventFromSignalAlwaysArrivesAtRoot(t *testing.T) {
 			t.Errorf("payload %s: arrival set by EventFromSignal", payload)
 		}
 	}
-	ev := EventFromSignal(postgres.SignalEvent{ID: "e", NamespaceID: "ns", Name: "timer", Payload: json.RawMessage(`{"node":"waiting"}`)})
-	if ev.ClaimedNode != "waiting" {
-		t.Fatalf("ClaimedNode = %q, want the payload's claim kept for a verified parent without a landing node", ev.ClaimedNode)
+	// t38g: the payload's node is only a variable; the emitter is the
+	// signal row's, for Handle's reserved-name check.
+	ev := EventFromSignal(postgres.SignalEvent{ID: "e", NamespaceID: "ns", Name: "timer", Emitter: "jira-webhook", Payload: json.RawMessage(`{"node":"waiting"}`)})
+	if ev.Node != RootNode || ev.Variables["node"] != "waiting" || ev.Emitter != "jira-webhook" {
+		t.Fatalf("EventFromSignal = node %q, variables %v, emitter %q; want root, the payload kept as variables, the row's emitter", ev.Node, ev.Variables, ev.Emitter)
 	}
 }
 

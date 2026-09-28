@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/agentculture/culture-nodes/internal/decl/kinds"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/handover"
 	"github.com/agentculture/culture-nodes/internal/telemetry"
@@ -653,6 +654,14 @@ func emitSignal(ctx context.Context, deps CallbackDeps, inv PendingInvocation, e
 	if payload.Name == "" {
 		return deps.rejectSignal(ctx, inv, ev, fmt.Sprintf(
 			"signal event %s names no event to emit; set payload.name", ev.EventID))
+	}
+	// Task t38g (#328, review finding A2): an actor emits facts about its
+	// own work, never the control plane's reactions, node.expired or
+	// action.* results -- the store would refuse the append anyway, and
+	// refusing here makes it the actor's rejection, not an infrastructure
+	// failure the bridge would redeliver.
+	if err := kinds.CheckExternalEvent(payload.Name, signalEmitter(inv)); err != nil {
+		return deps.rejectSignal(ctx, inv, ev, fmt.Sprintf("signal event %s: %v", ev.EventID, err))
 	}
 	switch payload.Scope {
 	case "", SignalScopeRun, SignalScopeNamespace:

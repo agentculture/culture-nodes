@@ -223,11 +223,23 @@ How t30b implements it:
 
 How t38d implements it:
 
-- `EventFromSignal` always starts a delivered event at `root` and keeps the
-  payload's `node` only as a claim. `Handle` moves a verified reaction to the
-  landing node its parent firing opened, as before. It honours the claim only
-  for a verified parent that opened no landing node. An unverified or
-  rejected marker never leaves `root`.
+- `EventFromSignal` always starts a delivered event at `root`. The payload's
+  `node` is only a variable. `Handle` moves a verified reaction to the landing
+  node its parent firing opened, as before. An unverified or rejected marker
+  never leaves `root`.
+- Task t38g removed one exception t38d had kept. A verified parent that
+  opened no landing node no longer lets the payload name the node. Such a
+  firing's dispatch failed after its run was created, so the run could still
+  expose its marker, and anyone holding that marker could have picked any
+  start node. The reaction is recorded as `parent opened no landing node`
+  and nothing fires.
+- Also from t38g: a verified marker proves which firing an event continues,
+  not what the event says. So the control plane's own event names are
+  reserved: `human.decision`, `code.result`, `agent.result`, `node.expired`
+  and every `action.*` name. Every ingress refuses them and the engine's own
+  emitter (`kinds.CheckExternalEvent`). `Handle` also records
+  `reserved event rejected` and fires nothing for such a name from any other
+  emitter.
 - `declaration_nodes.host` and `actor_kind` (migration 0069) are written only
   by the engine. `human.ask` records `human` and `code.run` records `code` when
   the node opens. Otherwise the types come from the actor row the firing

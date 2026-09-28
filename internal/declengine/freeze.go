@@ -307,8 +307,12 @@ func (p PostgresBackend) StoreFrozenEvent(ctx context.Context, namespaceID, node
 
 // FrozenEvents implements FreezeBackend.
 func (p PostgresBackend) FrozenEvents(ctx context.Context, namespaceID, nodeID string) ([]Event, error) {
-	rows, err := p.Store.Pool().Query(ctx, `SELECT event FROM declaration_node_frozen_events
-	 WHERE namespace_id=$1 AND node_id=$2 ORDER BY arrival_order`, namespaceID, nodeID)
+	// t38g: the emitter is read back from the event's own signal row, the
+	// authoritative copy, so a stored reaction replays with the emitter it
+	// was delivered with -- including one stored before Event carried it.
+	rows, err := p.Store.Pool().Query(ctx, `SELECT fe.event,se.emitter FROM declaration_node_frozen_events fe
+	 LEFT JOIN signal_events se ON se.namespace_id=fe.namespace_id AND se.id=fe.event_id
+	 WHERE fe.namespace_id=$1 AND fe.node_id=$2 ORDER BY fe.arrival_order`, namespaceID, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -316,12 +320,16 @@ func (p PostgresBackend) FrozenEvents(ctx context.Context, namespaceID, nodeID s
 	var out []Event
 	for rows.Next() {
 		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		var emitter *string
+		if err := rows.Scan(&raw, &emitter); err != nil {
 			return nil, err
 		}
 		var ev Event
 		if err := json.Unmarshal(raw, &ev); err != nil {
 			return nil, err
+		}
+		if emitter != nil {
+			ev.Emitter = *emitter
 		}
 		out = append(out, ev)
 	}

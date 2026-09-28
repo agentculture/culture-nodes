@@ -45,9 +45,14 @@ back to To Do. `jira.issue.created` fires only when an issue is created.
   `agent.result`, and the worker envelope carries the agent's own outcome
   (`intake_drafted`, from `graph_config.contract.outcomes`) instead of
   `completed`.
-- A `jira.comment` reaction continues the lineage only if the emitter passes
-  the stamped `origin`. No Jira emitter does that yet, and the poller drops
-  the system's own comments as self-echo.
+- Since t38f the Jira poller and webhook pass the stamped `origin`, so
+  `post-comment` → `transition` (on `jira.comment`) and `transition` →
+  `stage-intake` / `picked-up-gh` (on `jira.issue.transitioned`, raised by
+  the marker comment the transition posts) continue the lineage. That needs
+  the emitter's configured bot account (`jira_bot_account_id`, or the
+  webhook's). Without one no origin is attached and each hop starts a fresh
+  lineage. `stage-intake` → `picked-up` rides the same `jira.comment`
+  reaction but is not covered by a conformance test yet.
 
 ## Publish warnings (t30, t30b)
 

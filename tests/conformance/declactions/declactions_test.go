@@ -94,6 +94,17 @@ type fakeBridge struct {
 	// when empty); output is merged into what it reports (task t38e).
 	outcome string
 	output  map[string]any
+	// artifacts, when set, are the provider ids the next stamped
+	// invocations report, in order (task t38f: an emitter reads each one
+	// back from a distinct Jira comment); otherwise "artifact-<key>".
+	artifacts []string
+}
+
+// nextArtifacts queues the artifact ids the next stamped invocations report.
+func (b *fakeBridge) nextArtifacts(ids ...string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.artifacts = append(b.artifacts, ids...)
 }
 
 // reply sets what the bridge reports from now on.
@@ -143,6 +154,11 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		output["artifact_id"] = "artifact-" + strings.ReplaceAll(b.key, "/", "-")
+		b.mu.Lock()
+		if len(b.artifacts) > 0 {
+			output["artifact_id"], b.artifacts = b.artifacts[0], b.artifacts[1:]
+		}
+		b.mu.Unlock()
 		output["marker"] = marker
 	}
 	body, _ := json.Marshal(output)

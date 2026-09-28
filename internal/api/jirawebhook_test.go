@@ -55,7 +55,15 @@ func TestJiraReplayMatchesPythonSweepSeam(t *testing.T) {
 	if err != nil {
 		t.Skip("python3 is absent")
 	}
-	fixture := filepath.Join("testdata", "jira_issue.json")
+	// jira_issue_marked.json (task t38f) carries stamped artifacts: marked
+	// bot and human comments, a transition's marker comment and a marked
+	// description, so the origin-bearing reactions are pinned too.
+	for _, name := range []string{"jira_issue.json", "jira_issue_marked.json"} {
+		t.Run(name, func(t *testing.T) { assertJiraSeam(t, python, filepath.Join("testdata", name)) })
+	}
+}
+
+func assertJiraSeam(t *testing.T, python, fixture string) {
 	body, err := os.ReadFile(fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +132,8 @@ func TestJiraEmissionsAddCreatedAlongsideLegacyNames(t *testing.T) {
 			neutralTransitions++
 		case strings.HasPrefix(fact.Name, "pr-upkeep.jira.transitioned."):
 			legacyTransitions++
+		case fact.Name == "jira.comment":
+			// t38f: the neutral comment reaction rides beside the legacy one.
 		case !strings.HasPrefix(fact.Name, "pr-upkeep.jira."):
 			t.Errorf("unexpected fact name %q", fact.Name)
 		}

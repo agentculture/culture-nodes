@@ -85,7 +85,10 @@ func (s PostgresSwitchStore) Mode(ctx context.Context, namespaceID string) (stri
 
 // Flip appends one engine_switch_history row inside a transaction that
 // also runs every hook, so a future gate (t17/t18) can make its own
-// namespace-scoped change atomic with the flip that authorizes it.
+// namespace-scoped change atomic with the flip that authorizes it. It holds
+// the namespace's exclusive switch lock (switchlock.go), so it waits for
+// every evaluation already acting on the old mode; a caller that must also
+// replay under that lock uses FlipSwitch.
 func (s PostgresSwitchStore) Flip(ctx context.Context, namespaceID, mode, actor, reason string, hooks ...FlipHook) (string, error) {
 	if namespaceID == "" || actor == "" {
 		return "", errors.New("declengine: namespace id and actor required")
@@ -93,6 +96,16 @@ func (s PostgresSwitchStore) Flip(ctx context.Context, namespaceID, mode, actor,
 	if !ValidMode(mode) {
 		return "", fmt.Errorf("declengine: invalid engine switch mode %q", mode)
 	}
+	var previous string
+	err := s.HoldExclusive(ctx, namespaceID, func(ctx context.Context) error {
+		var err error
+		previous, err = s.flip(ctx, namespaceID, mode, actor, reason, hooks)
+		return err
+	})
+	return previous, err
+}
+
+func (s PostgresSwitchStore) flip(ctx context.Context, namespaceID, mode, actor, reason string, hooks []FlipHook) (string, error) {
 	tx, err := s.Store.Pool().Begin(ctx)
 	if err != nil {
 		return "", err

@@ -88,15 +88,24 @@ func (r Router) HandleDeliveredEvent(ctx context.Context, d postgres.SignalDeliv
 		return errors.New("declengine: router needs an engine and a switch store")
 	}
 	event := EventFromSignal(d.Event)
-	mode, err := r.Switch.Mode(ctx, event.NamespaceID)
-	if err != nil {
-		return err
+	if event.NamespaceID == "" {
+		return errors.New("declengine: delivered event has no namespace")
 	}
-	if mode == ModeBefore {
-		_, err := r.Engine.StoreIfFrozen(ctx, event)
-		return err
-	}
-	return r.Engine.Handle(ctx, event)
+	// The mode is read, and acted on, under the namespace's shared switch
+	// lock, so no flip can commit between the read and the last write this
+	// evaluation makes (switchlock.go). This runs after the delivery's own
+	// commit; the lock never spans the delivery transaction.
+	return holdShared(ctx, r.Switch, event.NamespaceID, func(ctx context.Context) error {
+		mode, err := r.Switch.Mode(ctx, event.NamespaceID)
+		if err != nil {
+			return err
+		}
+		if mode == ModeBefore {
+			_, err := r.Engine.StoreIfFrozen(ctx, event)
+			return err
+		}
+		return r.Engine.Handle(ctx, event)
+	})
 }
 
 // StoreIfFrozen is the whole of what the engine does with an event in
@@ -118,7 +127,10 @@ func (e *Engine) StoreIfFrozen(ctx context.Context, event Event) (stored bool, e
 	event.Origin.NamespaceID, event.Origin.EventID = event.NamespaceID, event.ID
 	// Binding a completed run's artifact is not a dispatch -- it records what
 	// an 'after'-era action already created -- so it runs in 'before' too,
-	// even though ShadowGate's own PrepareOrigin skips outside 'after'.
+	// even though ShadowGate's own PrepareOrigin skips outside 'after'. It is
+	// the ONE write 'before' allows besides storing a frozen node's event
+	// (review finding A3, kept by t38b; TestPostgresBeforeWritesOnlyTheBinding
+	// AndTheStoredEvent pins that nothing else is written).
 	if err := e.bindCompletedArtifact(ctx, event.Origin); err != nil {
 		return false, err
 	}
@@ -245,7 +257,15 @@ func (d Driver) Drive(ctx context.Context, now time.Time) error {
 	return errors.Join(failures...)
 }
 
+// driveNamespace holds the namespace's shared switch lock for the whole
+// pass, exactly as Router does for one delivery (switchlock.go).
 func (d Driver) driveNamespace(ctx context.Context, ns string, now time.Time, batch int) error {
+	return holdShared(ctx, d.switchStore(), ns, func(ctx context.Context) error {
+		return d.driveNamespaceLocked(ctx, ns, now, batch)
+	})
+}
+
+func (d Driver) driveNamespaceLocked(ctx context.Context, ns string, now time.Time, batch int) error {
 	mode, err := d.switchStore().Mode(ctx, ns)
 	if err != nil || mode == ModeBefore {
 		return err

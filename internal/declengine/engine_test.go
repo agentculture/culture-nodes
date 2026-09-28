@@ -32,6 +32,7 @@ type deferredEntry struct {
 	declarationID string
 	subject       string
 	event         Event
+	attempts      int
 }
 
 func (m *memoryBackend) RecentFirings(_ context.Context, _, declarationID string, _ time.Time) (int, error) {
@@ -50,23 +51,24 @@ func (m *memoryBackend) DeferSubject(_ context.Context, in DeferSubjectInput) er
 	for i, d := range m.deferred {
 		if d.declarationID == in.DeclarationID && d.subject == in.Subject {
 			m.deferred[i].event = in.Event
+			m.deferred[i].attempts++
 			return nil
 		}
 	}
-	m.deferred = append(m.deferred, deferredEntry{id: fmt.Sprint(len(m.deferred) + 1), declarationID: in.DeclarationID, subject: in.Subject, event: in.Event})
+	m.deferred = append(m.deferred, deferredEntry{id: fmt.Sprint(len(m.deferred) + 1), declarationID: in.DeclarationID, subject: in.Subject, event: in.Event, attempts: 1})
 	return nil
 }
 func (m *memoryBackend) OldestDeferredSubject(_ context.Context, _, declarationID string) (DeferredSubject, bool, error) {
 	for _, d := range m.deferred {
 		if d.declarationID == declarationID {
-			return DeferredSubject{ID: d.id, Event: d.event}, true, nil
+			return DeferredSubject{ID: d.id, Event: d.event, Attempts: d.attempts}, true, nil
 		}
 	}
 	return DeferredSubject{}, false, nil
 }
-func (m *memoryBackend) DeleteDeferredSubject(_ context.Context, _, id string) error {
+func (m *memoryBackend) DeleteDeferredSubject(_ context.Context, _ string, del DeferredSubject) error {
 	for i, d := range m.deferred {
-		if d.id == id {
+		if d.id == del.ID && d.attempts == del.Attempts {
 			m.deferred = append(m.deferred[:i], m.deferred[i+1:]...)
 			return nil
 		}

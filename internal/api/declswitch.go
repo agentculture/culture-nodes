@@ -23,7 +23,9 @@ import (
 //     principal is refused. A flip to 'before' freezes open declaration
 //     nodes inside the flip's own transaction (FreezeHook); a flip to
 //     'after' thaws and replays them once the flip has committed
-//     (ThawAndReplay cannot be a hook -- see freeze.go).
+//     (ThawAndReplay cannot be a hook -- see freeze.go). Both run through
+//     declengine.FlipSwitch, under the namespace's exclusive switch lock,
+//     so a flip never lands underneath an in-flight evaluation (t38b).
 
 // WithDeclarationEngine wires the declaration engine into this server's
 // event deliveries and lets the switch route flip to 'shadow' or 'after'.
@@ -114,22 +116,18 @@ func (s *Server) handleFlipDeclarationSwitch(w http.ResponseWriter, r *http.Requ
 		return conflict("enable the declaration engine on this control plane (NODES_DECLARATION_ENGINE=on and "+declengine.DefaultMarkerKeyEnv+") before flipping to shadow or after",
 			"the declaration engine is not running here; flipping to %q would evaluate nothing", req.Mode)
 	}
-	ctx := r.Context()
-	fb := declengine.PostgresBackend{Store: s.Store}
-	var hooks []declengine.FlipHook
-	if req.Mode == declengine.ModeBefore {
-		hooks = append(hooks, declengine.FreezeHook(fb))
-	}
-	previous, err := (declengine.PostgresSwitchStore{Store: s.Store}).Flip(ctx, s.NamespaceID, req.Mode, principal.Author, req.Reason, hooks...)
+	// FlipSwitch holds the namespace's exclusive switch lock across the flip
+	// and, on 'after', its thaw and replay: it waits for every declaration
+	// evaluation already in flight, and none starts until it is done.
+	previous, replayErr, err := declengine.FlipSwitch(r.Context(), declengine.PostgresSwitchStore{Store: s.Store}, s.declEngine,
+		s.NamespaceID, req.Mode, principal.Author, req.Reason, time.Now)
 	if err != nil {
 		return internalError(err)
 	}
 	out := DeclarationEngineSwitchOut{NamespaceID: s.NamespaceID, Mode: req.Mode, Previous: previous, EngineEnabled: s.declEngine != nil}
-	if req.Mode == declengine.ModeAfter {
-		if err := declengine.ThawAndReplay(ctx, s.declEngine, fb, s.NamespaceID, time.Now().UTC()); err != nil {
-			out.ReplayError = err.Error()
-			s.log.Warn("declaration engine: thaw and replay after flip", "namespace_id", s.NamespaceID, "error", err)
-		}
+	if replayErr != nil {
+		out.ReplayError = replayErr.Error()
+		s.log.Warn("declaration engine: thaw and replay after flip", "namespace_id", s.NamespaceID, "error", replayErr)
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil

@@ -187,7 +187,7 @@ func TestPRUpkeepStageDispatchCommentContinuesToFix(t *testing.T) {
 	}
 	r := newReactionHarness(t)
 	developer := r.addBridge(actors.ActorKeyOf(usesOf(t, analyseSrc)))
-	jira := r.addBridge(actors.ActorKeyOf(usesOf(t, stageSrc)))
+	jira := r.addJiraBridge(actors.ActorKeyOf(usesOf(t, stageSrc)))
 	developer.reply("packaged", map[string]any{
 		"verdicts": []any{map[string]any{"id": "f1", "verdict": "FIX", "reason": "unanswered and real"}},
 		"packages": []any{map[string]any{"rule": "go:S1192", "file": "internal/x.go", "finding_ids": []any{"f1"}}},
@@ -299,7 +299,7 @@ func runIntakeToPostComment(r *reactionHarness, files ...string) intakeChain {
 	r.linkManifest(jiraIntakeDeclarations, c.versions)
 	agent := r.addBridge(actors.ActorKeyOf(usesOf(t, srcs["intake.json"])))
 	agent.reply("intake_drafted", map[string]any{"summary": "Drafted intake."})
-	c.jira = r.addBridge(actors.ActorKeyOf(usesOf(t, srcs["post-comment.json"])))
+	c.jira = r.addJiraBridge(actors.ActorKeyOf(usesOf(t, srcs["post-comment.json"])))
 	c.jira.nextArtifacts("40001", "40002")
 
 	facts := r.jiraWebhook(jiraBot, jiraIssue("10008", "SCRUM-8", "To Do", jiraHuman, nil, nil))

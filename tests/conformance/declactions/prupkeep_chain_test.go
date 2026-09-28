@@ -191,7 +191,7 @@ func TestPRUpkeepAnalyseToStageDispatchIsOneLineage(t *testing.T) {
 	// The files name production actors; the harness registers stand-ins
 	// under exactly those keys, so `uses` stays as authored.
 	developer := r.addBridge(actors.ActorKeyOf(usesOf(t, analyseSrc)))
-	jira := r.addBridge(actors.ActorKeyOf(usesOf(t, stageSrc)))
+	jira := r.addJiraBridge(actors.ActorKeyOf(usesOf(t, stageSrc)))
 	developer.reply("packaged", map[string]any{
 		"verdicts": []any{map[string]any{"id": "f1", "verdict": "FIX", "reason": "unanswered and real"}},
 		"packages": []any{map[string]any{"rule": "go:S1192", "file": "internal/x.go", "finding_ids": []any{"f1"}}},

@@ -93,7 +93,10 @@ type fakeBridge struct {
 	// outcome is the domain outcome every invocation reports ("completed"
 	// when empty); output is merged into what it reports (task t38e).
 	outcome string
-	output  map[string]any
+	// jiraVerbs makes an unset outcome follow the real jira bridge
+	// (adapters/jira): the domain outcome is chosen by the input's verb.
+	jiraVerbs bool
+	output    map[string]any
 	// artifacts, when set, are the provider ids the next stamped
 	// invocations report, in order (task t38f: an emitter reads each one
 	// back from a distinct Jira comment); otherwise "artifact-<key>".
@@ -142,6 +145,9 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 		output[k] = v
 	}
 	b.mu.Unlock()
+	if outcome == "" && b.jiraVerbs {
+		outcome = jiraBridgeOutcome(input)
+	}
 	if outcome == "" {
 		outcome = "completed"
 	}
@@ -160,6 +166,24 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 		}
 		b.mu.Unlock()
 		output["marker"] = marker
+	}
+	if b.jiraVerbs {
+		// The real bridge's output fields for its outcome, which the
+		// migrated contracts require: {issue, comment_id} for a comment,
+		// {issue, id} for a created issue, {issue} for a transition.
+		id, _ := output["artifact_id"].(string)
+		if id == "" {
+			id = "10001"
+		}
+		issue, _ := input["issue"].(string)
+		switch outcome {
+		case "issue_created":
+			output["issue"], output["id"] = "SCRUM-NEW", id
+		case "comment_posted":
+			output["issue"], output["comment_id"] = issue, id
+		case "issue_transitioned", "issue_read":
+			output["issue"] = issue
+		}
 	}
 	body, _ := json.Marshal(output)
 	w.Header().Set("Content-Type", "application/json")
@@ -324,6 +348,31 @@ func newDeclHarness(t *testing.T) *declHarness {
 
 // addBridge registers one more stamping bridge under key, the way the
 // harness registers bridgeKeys.
+// jiraBridgeOutcome is the real jira bridge's domain outcome per verb
+// (adapters/jira/src/jira_bridge: create_issue.py, transition_issue.py,
+// read_issue.py, mapping.py). A test that drives the migrated declarations
+// must see these, not `completed` (#328 t32: `completed` hid that the
+// engine offered bridge actions no contract outcomes).
+func jiraBridgeOutcome(input map[string]any) string {
+	switch input["verb"] {
+	case "create_issue":
+		return "issue_created"
+	case "transition_issue":
+		return "issue_transitioned"
+	case "read_issue":
+		return "issue_read"
+	default:
+		return "comment_posted"
+	}
+}
+
+// addJiraBridge is addBridge for the real jira bridge's contract.
+func (h *declHarness) addJiraBridge(key string) *fakeBridge {
+	b := h.addBridge(key)
+	b.jiraVerbs = true
+	return b
+}
+
 func (h *declHarness) addBridge(key string) *fakeBridge {
 	h.t.Helper()
 	b := newFakeBridge(h.t, key)

@@ -438,7 +438,9 @@ var agentOutcomeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 // and an agent node with no declared contract, keeps its default (primary
 // empty, extra empty).
 func agentOutcomes(nodeKind string, declared map[string]json.RawMessage, outcomes map[string]any) (primary string, extra []string, err error) {
-	if nodeKind != "agent" || len(declared) == 0 {
+	// A bridge action (action.http) reports a domain outcome too -- the jira
+	// bridge answers create_issue with issue_created (#328 t32, found live).
+	if (nodeKind != "agent" && nodeKind != "action.http") || len(declared) == 0 {
 		return "", []string{}, nil
 	}
 	names := make([]string, 0, len(declared))
@@ -449,11 +451,11 @@ func agentOutcomes(nodeKind string, declared map[string]json.RawMessage, outcome
 	delete(outcomes, "completed")
 	for _, name := range names {
 		if !agentOutcomeName.MatchString(name) {
-			return "", nil, fmt.Errorf("agent.work graph_config.contract.outcomes: %q is not an outcome name", name)
+			return "", nil, fmt.Errorf("graph_config.contract.outcomes: %q is not an outcome name", name)
 		}
 		var spec map[string]any
 		if err := json.Unmarshal(declared[name], &spec); err != nil || spec == nil {
-			return "", nil, fmt.Errorf("agent.work graph_config.contract.outcomes.%s must be an object with a schema", name)
+			return "", nil, fmt.Errorf("graph_config.contract.outcomes.%s must be an object with a schema", name)
 		}
 		if _, ok := spec["schema"]; !ok {
 			spec["schema"] = map[string]any{"type": "object"}

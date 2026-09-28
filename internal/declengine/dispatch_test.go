@@ -67,6 +67,22 @@ func TestWorkerEnvelopeOwnsTheMarkerKey(t *testing.T) {
 // migrated contract declares, so the agent's own outcome is carried rather
 // than collapsed to `completed`; with no contract it keeps `completed`, and
 // a name that is not an outcome name is refused before anything compiles.
+// #328 t32 (found live in 'after'): a bridge action reports its own domain
+// outcome too -- the jira bridge answers create_issue with issue_created --
+// so its node must offer the declaration's migrated contract outcomes, not a
+// bare `completed` that turns a created ticket into contract_rejected.
+func TestWorkerEnvelopeCarriesABridgeActionsContractOutcomes(t *testing.T) {
+	req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "jira.create",
+		With: json.RawMessage(`{"uses":"actor://company/jira-comment@sha256:aaaaaa","input":{"verb":"create_issue"},"graph_config":{"contract":{"outcomes":{"issue_created":{"schema":{"type":"object","required":["issue","id"]}}}}}}`)}}
+	cw, _, err := workerEnvelope(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cw.IR.Spec.Nodes["action"].Outcomes; strings.Join(got, ",") != "issue_created" {
+		t.Fatalf("jira.create node outcomes = %v, want the contract's [issue_created]", got)
+	}
+}
+
 func TestWorkerEnvelopeCarriesTheAgentContractOutcomes(t *testing.T) {
 	envelope := func(with string) ([]string, error) {
 		req := DispatchRequest{Firing: postgres.DeclarationFiring{ID: "f1", DeclarationID: "01KABCDEF01234567890123456"}, Action: decl.Action{Kind: "agent.work", With: json.RawMessage(with)}}

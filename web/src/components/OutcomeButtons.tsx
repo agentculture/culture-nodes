@@ -40,6 +40,15 @@
  */
 const ENGINE_ONLY_OUTCOME = "expired";
 
+/**
+ * A button reads as the verb a person performs. Only outcomes whose raw name
+ * reads badly as a button are relabelled; the POSTed outcome is always the
+ * raw name. `acknowledged` is the one answer a notice takes (task t45).
+ */
+const OUTCOME_LABELS: Record<string, string> = {
+  acknowledged: "Acknowledge",
+};
+
 export function OutcomeButtons({
   taskId,
   outcomes,
@@ -72,7 +81,7 @@ export function OutcomeButtons({
           disabled={disabled || busy}
           onClick={() => onChoose(outcome)}
         >
-          {outcome}
+          {OUTCOME_LABELS[outcome] ?? outcome}
         </button>
       ))}
     </div>

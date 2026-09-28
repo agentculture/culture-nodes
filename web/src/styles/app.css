@@ -3127,3 +3127,11 @@ button.timeline__node {
 .design-canvas__canvas { border-radius: var(--radius); overflow: hidden; }
 .culture-source { font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5; max-height: 420px; }
 @media (max-width: 900px) { .design-canvas-layout { grid-template-columns: 1fr; } }
+
+/* Task t45: a notice asks nothing; its hint and the "cannot be decided
+   here" note on an undecidable task read as quiet context, not as errors. */
+.inbox-card__notice-hint,
+.inbox-card__undecidable {
+  margin: 0.35rem 0 0;
+  font-style: italic;
+}

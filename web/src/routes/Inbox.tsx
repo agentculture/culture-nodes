@@ -12,15 +12,18 @@ import AuthorityChip from "../components/AuthorityChip";
 import ErrorNotice from "../components/ErrorNotice";
 import { HumanTaskAudit, HumanTaskFacts } from "../components/HumanTaskContext";
 import { taskContextFacts } from "../domain/human-task-context";
+import { isNoticeTask, taskAllowedOutcomes } from "../domain/human-task-notice";
 import {
   DEFAULT_INBOX_TAB,
   INBOX_TABS,
   type InboxTab,
+  isUndecidable,
   parseInboxTab,
   partitionInbox,
 } from "../domain/inbox-tabs";
 import { formatRelativeTime } from "../domain/run-board";
 import { SignedInAs } from "../components/IdentityGate";
+import NoticeFacts from "../components/NoticeFacts";
 import OutcomeButtons from "../components/OutcomeButtons";
 import SegmentedToggle from "../components/SegmentedToggle";
 import StatusChip from "../components/StatusChip";
@@ -103,6 +106,12 @@ const REFRESH_DEBOUNCE_MS = 4000;
  * non-pending task — decided and expired alike — newest first. Expired tasks
  * come from their own `?status=expired` read, since `?status=decided` never
  * returns them. The partition rule lives in `domain/inbox-tabs.ts`.
+ *
+ * A notice (task t45 — `trigger_remint_exhausted`, `schedule_failing`) asks
+ * nothing: its card reads the notice out (reason, attempts, window, event,
+ * subject) and offers one button, Acknowledge. A pending task offering no
+ * selectable outcome at all sits in Waiting, labelled "cannot be decided
+ * here" — never counted as open, never hidden.
  */
 export interface InboxProps {
   /** Test seam for the deadline split and relative times; defaults to now. */
@@ -338,7 +347,9 @@ function PendingTaskCard({
     }
   };
 
-  const facts = taskContextFacts(task);
+  const notice = isNoticeTask(task);
+  const facts = notice ? null : taskContextFacts(task);
+  const undecidable = isUndecidable(task);
 
   return (
     <li className="inbox-card" data-human-task-id={task.id}>
@@ -348,7 +359,7 @@ function PendingTaskCard({
         <span className="inbox-card__kind">{task.kind}</span>
       </div>
 
-      <HumanTaskFacts facts={facts} />
+      {facts ? <HumanTaskFacts facts={facts} /> : <NoticeFacts task={task} />}
 
       <dl className="inbox-card__request">
         <div>
@@ -395,9 +406,14 @@ function PendingTaskCard({
 
       {result === null ? (
         <>
+          {undecidable ? (
+            <p className="muted inbox-card__undecidable">
+              cannot be decided here
+            </p>
+          ) : null}
           <OutcomeButtons
             taskId={task.id}
-            outcomes={request.allowed_outcomes ?? []}
+            outcomes={taskAllowedOutcomes(task)}
             disabled={actorId === null || ledgerVersion === null}
             busy={submitting}
             onChoose={(outcome) => void decide(outcome)}

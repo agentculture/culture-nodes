@@ -520,6 +520,8 @@ export interface HumanTask {
    */
   status: "pending" | "decided" | "expired";
   request: HumanTaskRequestPayload;
+  /** Decidable set (t45; legacy notice → ["acknowledged"]); read via taskAllowedOutcomes. */
+  allowed_outcomes?: string[];
   /** The decision payload, present once decided. */
   response?: unknown;
   created_at: string;

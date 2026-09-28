@@ -150,6 +150,9 @@ func (d *humanTaskDecision) do(ctx context.Context) error {
 	if handled, err := d.decideTicketScopedTask(ctx); handled || err != nil {
 		return err
 	}
+	if handled, err := d.decideNotice(ctx); handled || err != nil {
+		return err
+	}
 	if err := d.guard(ctx); err != nil {
 		return err
 	}
@@ -343,7 +346,9 @@ func (d *humanTaskDecision) checkOutcome() error {
 	// never by rewriting the stored set. Without this a decider could hand-
 	// produce the outcome that is supposed to mean "the control plane read a
 	// fact", which inverts the authority model (PRD §10.4).
-	allowed := request.AllowedOutcomes
+	// A legacy notice declares nothing and is read as [acknowledged]
+	// (humannotice.go) — the same rule the API views present.
+	allowed := effectiveAllowedOutcomes(d.task.Kind, request.AllowedOutcomes)
 	if d.expiry == nil {
 		allowed = DecidableOutcomes(allowed)
 	}

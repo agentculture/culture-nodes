@@ -74,8 +74,10 @@ func (s *Store) ScheduleRunRemint(ctx context.Context, namespaceID, runID, nodeR
 			return fmt.Errorf("postgres: schedule run re-mint: count: %w", err)
 		}
 		if count >= RemintMaxAttempts {
-			request, _ := json.Marshal(map[string]any{"reason": "trigger re-mint attempts exhausted", "original_event_id": eventID, "attempts": count, "window_seconds": int(RemintWindow.Seconds()), "subject": subject})
-			_, err = etx.InsertHumanTask(ctx, engine.HumanTask{RunID: runID, NodeRunID: nodeRunID, Kind: "trigger_remint_exhausted", Status: engine.HumanTaskStatusPending, Request: request, CreatedAt: now})
+			// A notice (engine/humannotice.go): it asks nothing, so the one
+			// answer it takes — acknowledged — is declared at creation (t45).
+			request, _ := json.Marshal(map[string]any{"reason": "trigger re-mint attempts exhausted", "original_event_id": eventID, "attempts": count, "window_seconds": int(RemintWindow.Seconds()), "subject": subject, "allowed_outcomes": engine.NoticeAllowedOutcomes()})
+			_, err = etx.InsertHumanTask(ctx, engine.HumanTask{RunID: runID, NodeRunID: nodeRunID, Kind: engine.HumanTaskKindTriggerRemintExhausted, Status: engine.HumanTaskStatusPending, Request: request, CreatedAt: now})
 			return err
 		}
 		if count == 0 {

@@ -410,3 +410,71 @@ func equalStringSlice(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+// Task t45: a legacy notice (schedule_failing written with no
+// allowed_outcomes and no node run) is reported as ["acknowledged"] by both
+// task views, and acknowledging it over the API decides it without touching
+// the run's own approval task.
+func TestLegacyNoticeIsReportedAcknowledgeableAndCanBeAcknowledged(t *testing.T) {
+	f := newFixtureWithDecisionAuth(t, decisionAuthSecret)
+	run, approval := advanceToReview(t, f)
+
+	noticeID := store.NewULID()
+	if _, err := f.store.Pool().Exec(context.Background(), `INSERT INTO human_tasks
+		(id,namespace_id,run_id,kind,status,request,created_at)
+		VALUES ($1,$2,$3,'schedule_failing','pending','{"reason":"boom","consecutive_failures":3}',now())`,
+		noticeID, f.nsID, run.ID); err != nil {
+		t.Fatalf("insert legacy notice: %v", err)
+	}
+
+	var fetched apipkg.HumanTaskOut
+	resp, body := doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks/"+noticeID), nil, &fetched)
+	requireStatus(t, resp, body, http.StatusOK)
+	equalStringSlice(t, fetched.AllowedOutcomes, []string{engine.OutcomeAcknowledged})
+	if bytes.Contains(fetched.Request, []byte("allowed_outcomes")) {
+		t.Errorf("request was rewritten, want the stored payload verbatim: %s", fetched.Request)
+	}
+
+	var pending apipkg.HumanTaskListOut
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks?status=pending"), nil, &pending)
+	requireStatus(t, resp, body, http.StatusOK)
+	for _, item := range pending.Items {
+		switch item.ID {
+		case noticeID:
+			equalStringSlice(t, item.AllowedOutcomes, []string{engine.OutcomeAcknowledged})
+		case approval.ID:
+			equalStringSlice(t, item.AllowedOutcomes, []string{"approved", "expired", "rejected"})
+		}
+	}
+
+	// An approval refuses the notice's outcome.
+	decider := f.insertActorKind("owner", "human")
+	resp, body = authedDecide(t, f, approval.ID, decisionAuthSecret, decideHumanTaskReq{
+		Outcome: engine.OutcomeAcknowledged, DeciderActorID: decider, ExpectedLedgerVersion: 0,
+	})
+	requireStatus(t, resp, body, http.StatusBadRequest)
+
+	resp, body = authedDecide(t, f, noticeID, decisionAuthSecret, decideHumanTaskReq{
+		Outcome: engine.OutcomeAcknowledged, DeciderActorID: decider, ExpectedLedgerVersion: 0,
+	})
+	requireStatus(t, resp, body, http.StatusOK)
+	var result apipkg.HumanTaskDecisionResultOut
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if result.Outcome != engine.OutcomeAcknowledged || result.NextNodeID != "" {
+		t.Errorf("result = %+v, want acknowledged with nothing routed", result)
+	}
+
+	// The approval the run is actually waiting on is still waiting.
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks/"+approval.ID), nil, &fetched)
+	requireStatus(t, resp, body, http.StatusOK)
+	if fetched.Status != "pending" {
+		t.Errorf("approval status = %q after the notice was acknowledged, want pending", fetched.Status)
+	}
+	resp, body = doJSON(t, f.client, http.MethodGet, f.url("/v1alpha1/human-tasks/"+noticeID), nil, &fetched)
+	requireStatus(t, resp, body, http.StatusOK)
+	if fetched.Status != "decided" {
+		t.Errorf("notice status = %q, want decided", fetched.Status)
+	}
+}

@@ -4301,6 +4301,14 @@ paths:
         task decides exactly once: a second decision on an already-decided
         task is refused with 409 rather than resuming the run again.
 
+        A notice (`trigger_remint_exhausted`, `schedule_failing` — a task
+        that informs rather than asks) takes exactly one outcome,
+        `acknowledged`, including a legacy notice whose stored request
+        declares none (task t45). Acknowledging records the decision and
+        the decider through the same human review transaction and marks the
+        task decided; it moves nothing — no node run transitions and the
+        run the notice names is left exactly as it was.
+
         Unlike every other operation in this API — authless by phase-1
         design, spec decision c45 — this one requires a bearer token
         (`Authorization: Bearer <token>`) matching the server's configured
@@ -6380,7 +6388,7 @@ components:
 
     HumanTask:
       type: object
-      required: [id, run_id, kind, status, request, created_at]
+      required: [id, run_id, kind, status, request, allowed_outcomes, created_at]
       description: >-
         One human_tasks row (PRD §9.9): what an approval node's dispatch
         wrote instead of enqueuing work. `request` carries every field the
@@ -6409,6 +6417,17 @@ components:
         request:
           type: object
           description: The PRD §9.9 task payload (decision_schema_ref, approver_ref, deadline, allowed_outcomes, context_refs, audit).
+        allowed_outcomes:
+          type: array
+          items: {type: string}
+          description: >-
+            The outcome set POST /human-tasks/{id}/decision judges a decision
+            against: request.allowed_outcomes verbatim, except that a notice
+            (`trigger_remint_exhausted`, `schedule_failing`) whose stored
+            request declares none reads as `["acknowledged"]` (task t45).
+            Always present; `request` itself stays the verbatim stored
+            payload. `expired` may appear here and is still never a decider's
+            choice.
         response:
           type: object
           description: Set once the task is decided — outcome, decider_actor_id, response, decided_at.
@@ -8805,9 +8824,10 @@ components:
           items: {type: string}
           description: >-
             Exactly the outcomes POST /human-tasks/{id}/decision will accept.
-            Always present; an EMPTY array means this task declares none (an
-            alert rather than a choice, e.g. `schedule_failing`) and must be
-            distinguishable from an omitted field.
+            Always present; an EMPTY array means this task declares none and
+            must be distinguishable from an omitted field. A notice
+            (`trigger_remint_exhausted`, `schedule_failing`) always reports
+            `["acknowledged"]`, even a legacy one stored with none (task t45).
         decision_schema_ref:
           type: string
           description: The node's authored decisionSchemaRef, unresolved.

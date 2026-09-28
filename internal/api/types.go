@@ -460,6 +460,12 @@ type HumanTaskOut struct {
 	AssignedOwnerID string          `json:"assigned_owner_id,omitempty"`
 	Status          string          `json:"status"`
 	Request         json.RawMessage `json:"request"`
+	// AllowedOutcomes is the set DecideHumanTask judges a decision against
+	// (engine.HumanTaskAllowedOutcomes): request.allowed_outcomes, except that
+	// a notice written before task t45 with none reads as ["acknowledged"].
+	// Always present; empty means the task declares nothing a person can
+	// choose. Request stays the verbatim stored payload.
+	AllowedOutcomes []string        `json:"allowed_outcomes"`
 	Response        json.RawMessage `json:"response,omitempty"`
 	CreatedAt       time.Time       `json:"created_at"`
 	ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
@@ -479,6 +485,7 @@ func humanTaskOut(t engine.HumanTask) HumanTaskOut {
 		AssignedOwnerID: t.AssignedOwnerID,
 		Status:          t.Status,
 		Request:         t.Request,
+		AllowedOutcomes: humanTaskAllowedOutcomes(t.Kind, t.Request),
 		Response:        nonNullJSON(t.Response),
 		CreatedAt:       t.CreatedAt,
 	}
@@ -487,6 +494,13 @@ func humanTaskOut(t engine.HumanTask) HumanTaskOut {
 		out.ResolvedAt = &resolvedAt
 	}
 	return out
+}
+
+// humanTaskAllowedOutcomes is HumanTaskOut.AllowedOutcomes: the engine's
+// effective set (a legacy notice reads as ["acknowledged"], task t45), never
+// null on the wire.
+func humanTaskAllowedOutcomes(kind string, request json.RawMessage) []string {
+	return nonNilJSONStrings(engine.HumanTaskAllowedOutcomes(engine.HumanTask{Kind: kind, Request: request}))
 }
 
 // HumanTaskListOut is components.schemas.HumanTaskList.

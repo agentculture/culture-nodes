@@ -14,8 +14,10 @@ import {
   LEDGER_VERSION,
   MERGE_HEAD_SHA,
   MERGE_TASK,
+  NOTICE_TASK,
   PENDING_TASK,
   PENDING_TASK_MINIMAL,
+  UNDECIDABLE_TASK,
   WAITING_TASK,
 } from "../fixtures/human-tasks-fixture";
 import {
@@ -738,5 +740,68 @@ describe("Inbox tabs (task t44)", () => {
     renderInbox();
     expect(await screen.findByText("Nothing open.")).toBeInTheDocument();
     expect(renderedIds()).toEqual([]);
+  });
+});
+
+describe("Inbox notices (task t45)", () => {
+  function cardOf(id: string) {
+    return document.querySelector(`[data-human-task-id="${id}"]`) as HTMLElement;
+  }
+
+  it("reads a legacy notice out and offers Acknowledge, which posts outcome acknowledged", async () => {
+    resolveFixture({ pending: [NOTICE_TASK], decided: [] });
+    const fetchMock = stubDecisionFetch({
+      ...DECISION_RESULT,
+      human_task_id: NOTICE_TASK.id,
+      run_id: NOTICE_TASK.run_id,
+      outcome: "acknowledged",
+      next_node_id: undefined,
+      run_state: "failed",
+    });
+    const user = userEvent.setup();
+    renderInbox();
+    await screen.findByText(NOTICE_TASK.id);
+    const card = cardOf(NOTICE_TASK.id);
+
+    expect(within(card).getByText("Trigger re-mint attempts exhausted")).toBeInTheDocument();
+    expect(within(card).getByText("trigger re-mint attempts exhausted")).toBeInTheDocument();
+    expect(within(card).getByText("SCRUM-194")).toBeInTheDocument();
+    expect(within(card).getByText("2")).toBeInTheDocument();
+    expect(within(card).getByText("within 24h")).toBeInTheDocument();
+    expect(within(card).getByText("evt-01J8XKINBOXEVT000000000007")).toBeInTheDocument();
+    expect(within(card).queryByText("cannot be decided here")).toBeNull();
+
+    const button = within(card).getByRole("button", { name: "Acknowledge" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+
+    await screen.findByText(/decision recorded/i);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`/v1alpha1/human-tasks/${NOTICE_TASK.id}/decision`);
+    expect(JSON.parse(init.body as string)).toEqual({
+      outcome: "acknowledged",
+      decider_actor_id: WHOAMI_ACTOR_ID,
+      expected_ledger_version: LEDGER_VERSION,
+    });
+  });
+
+  it("counts a notice in Open and a task with no outcome in Waiting, labelled, never hidden", async () => {
+    resolveFixture({ pending: [NOTICE_TASK, UNDECIDABLE_TASK], decided: [] });
+    renderInbox();
+    await screen.findByText(NOTICE_TASK.id);
+    expect(screen.queryByText(UNDECIDABLE_TASK.id)).toBeNull();
+    const count = (name: string) =>
+      screen
+        .getByRole("button", { name: new RegExp(`^${name}`) })
+        .querySelector(".inbox-tab__count")?.textContent;
+    expect(count("Open")).toBe("1");
+    expect(count("Waiting")).toBe("1");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^Waiting/ }));
+    await screen.findByText(UNDECIDABLE_TASK.id);
+    const card = cardOf(UNDECIDABLE_TASK.id);
+    expect(within(card).getByText("cannot be decided here")).toBeInTheDocument();
+    expect(within(card).queryAllByRole("button")).toHaveLength(0);
   });
 });

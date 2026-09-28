@@ -2799,6 +2799,13 @@
       "HumanTask": {
         "description": "One human_tasks row (PRD §9.9): what an approval node's dispatch wrote instead of enqueuing work. `request` carries every field the PRD says the task must contain that is not already one of this object's own properties — decision_schema_ref, approver_ref, deadline, allowed_outcomes, context_refs, audit — exactly as the engine stored it, so a reader sees precisely what the human was shown.",
         "properties": {
+          "allowed_outcomes": {
+            "description": "The outcome set POST /human-tasks/{id}/decision judges a decision against: request.allowed_outcomes verbatim, except that a notice (`trigger_remint_exhausted`, `schedule_failing`) whose stored request declares none reads as `[\"acknowledged\"]` (task t45). Always present; `request` itself stays the verbatim stored payload. `expired` may appear here and is still never a decider's choice.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "assigned_owner_id": {
             "type": "string"
           },
@@ -2855,6 +2862,7 @@
           "kind",
           "status",
           "request",
+          "allowed_outcomes",
           "created_at"
         ],
         "type": "object"
@@ -5206,7 +5214,7 @@
         "description": "One pending human task on a ticket, shaped for the surface that decides it (task t18). Every field is read back out of the task's own recorded request — what the human was actually shown (PRD §9.9) — never re-derived from the workflow.",
         "properties": {
           "allowed_outcomes": {
-            "description": "Exactly the outcomes POST /human-tasks/{id}/decision will accept. Always present; an EMPTY array means this task declares none (an alert rather than a choice, e.g. `schedule_failing`) and must be distinguishable from an omitted field.",
+            "description": "Exactly the outcomes POST /human-tasks/{id}/decision will accept. Always present; an EMPTY array means this task declares none and must be distinguishable from an omitted field. A notice (`trigger_remint_exhausted`, `schedule_failing`) always reports `[\"acknowledged\"]`, even a legacy one stored with none (task t45).",
             "items": {
               "type": "string"
             },
@@ -7565,7 +7573,7 @@
     },
     "/v1alpha1/human-tasks/{id}/decision": {
       "post": {
-        "description": "Validates outcome against the task's own allowed_outcomes (PRD §9.9), records the decision as a human-authority review through the same atomic, ledger-version-guarded review transaction PRD §10.8's review commit uses, transitions the waiting_human node run, and routes the edge the outcome selects — all in one transaction, or none of it. A task decides exactly once: a second decision on an already-decided task is refused with 409 rather than resuming the run again.\nUnlike every other operation in this API — authless by phase-1 design, spec decision c45 — this one requires a bearer token (`Authorization: Bearer \u003ctoken\u003e`) matching the server's configured decision secret (`NODES_HUMAN_DECISION_TOKEN_SECRET`): a decision here writes human authority into the run's ledger on whoever's behalf presents the token. An unauthenticated or wrongly authenticated request is refused with 401 before the body is even read.",
+        "description": "Validates outcome against the task's own allowed_outcomes (PRD §9.9), records the decision as a human-authority review through the same atomic, ledger-version-guarded review transaction PRD §10.8's review commit uses, transitions the waiting_human node run, and routes the edge the outcome selects — all in one transaction, or none of it. A task decides exactly once: a second decision on an already-decided task is refused with 409 rather than resuming the run again.\nA notice (`trigger_remint_exhausted`, `schedule_failing` — a task that informs rather than asks) takes exactly one outcome, `acknowledged`, including a legacy notice whose stored request declares none (task t45). Acknowledging records the decision and the decider through the same human review transaction and marks the task decided; it moves nothing — no node run transitions and the run the notice names is left exactly as it was.\nUnlike every other operation in this API — authless by phase-1 design, spec decision c45 — this one requires a bearer token (`Authorization: Bearer \u003ctoken\u003e`) matching the server's configured decision secret (`NODES_HUMAN_DECISION_TOKEN_SECRET`): a decision here writes human authority into the run's ledger on whoever's behalf presents the token. An unauthenticated or wrongly authenticated request is refused with 401 before the body is even read.",
         "operationId": "decideHumanTask",
         "parameters": [
           {

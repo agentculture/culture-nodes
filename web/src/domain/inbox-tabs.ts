@@ -1,4 +1,5 @@
 import type { HumanTask } from "../api/types";
+import { taskDecidableOutcomes } from "./human-task-notice";
 
 /**
  * The Inbox's three tabs (task t44, issue 332 follow-up). The owner's rule:
@@ -8,7 +9,10 @@ import type { HumanTask } from "../api/types";
  * - `open`: pending, with no deadline or a deadline still in the future —
  *   the actionable ones, and the default.
  * - `waiting`: pending, but the deadline has already passed and nobody
- *   decided (graph-era approvals, mostly). Still decidable.
+ *   decided (graph-era approvals, mostly). Still decidable. Also every
+ *   pending task that offers NO outcome a person may select (task t45): it
+ *   is not something to act on now, so it does not count in Open — but it
+ *   is never hidden either; its card says it "cannot be decided here".
  * - `decided`: every task that is no longer pending — decided, expired, or
  *   any other terminal status — newest first, read-only.
  */
@@ -35,6 +39,16 @@ export function taskDeadlineMs(task: HumanTask): number | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
   const ms = Date.parse(raw);
   return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * A pending task with nothing a person may select — no declared outcome, or
+ * only the engine's own `expired`. Since task t45 the API reports
+ * `["acknowledged"]` for every notice, so this should not occur; the guard
+ * keeps such a task visible (Waiting) instead of counting it as open work.
+ */
+export function isUndecidable(task: HumanTask): boolean {
+  return task.status === "pending" && taskDecidableOutcomes(task).length === 0;
 }
 
 /** A pending task whose deadline is at or before `now`. */
@@ -70,7 +84,7 @@ export function partitionInbox(
     if (seen.has(task.id)) continue;
     seen.add(task.id);
     if (task.status !== "pending") out.decided.push(task);
-    else if (isOverdue(task, now)) out.waiting.push(task);
+    else if (isOverdue(task, now) || isUndecidable(task)) out.waiting.push(task);
     else out.open.push(task);
   }
   // Newest resolution first; Array.prototype.sort is stable, so ties keep

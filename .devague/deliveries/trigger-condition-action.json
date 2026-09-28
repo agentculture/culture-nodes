@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T18:48:49Z",
+  "updated": "2026-09-28T18:51:52Z",
   "deviations": [
     {
       "id": "d1",
@@ -263,6 +263,17 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 21
+    },
+    {
+      "id": "d22",
+      "what": "Review only what needs a human: a control-plane deterministic validator writes derived verification for proposed claims fully covered by measured facts (notify-send by the engine-received delivery outcome; code steps by runner-observed exit); agent completion claims are settled by measured downstream evidence in their lineage (readiness gate, merge decision, blocked task); To review shows only claims a declaration routes for review or whose evidence is missing/contradictory; the pre-cutover backlog is archived unreviewed, never confirmed in the owner's name (t50)",
+      "task_ref": "t32",
+      "reason": "Owner 2026-09-28: 'I shouldn't have to confirm every notification ... our work here should handle that part'. The To review queue held 463 unreviewed agent claims (244 developer completion claims since 9 Aug, 110 codex, 9 notify-send receipts). Owner confirmed d22.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 22
     }
   ],
   "evidence": [],

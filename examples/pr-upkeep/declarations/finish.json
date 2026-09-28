@@ -2,46 +2,32 @@
   "name": "pr-upkeep-finish",
   "trigger": {
     "kind": "human.decision",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "analyse",
-          "outcome": "no_fix",
-          "when": null
-        },
-        {
-          "from": "fix",
-          "outcome": "no_change",
-          "when": null
-        },
-        {
-          "from": "human-merges-pr",
-          "outcome": "approved",
-          "when": null
-        },
-        {
-          "from": "human-merges-pr",
-          "outcome": "rejected",
-          "when": null
-        },
-        {
-          "from": "human-merges-pr",
-          "outcome": "expired",
-          "when": null
-        }
-      ]
-    },
+    "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "true",
+  "condition": "event.outcome == \"approved\" || event.outcome == \"rejected\" || event.outcome == \"expired\"",
   "action": {
     "kind": "code.run",
     "with": {
       "graph_workflow": "workflow.yaml",
       "graph_node": "finish",
       "graph_kind": "end",
-      "legacy": {
-        "kind": "end",
+      "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+      "operation": {
+        "image": "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os\nprint(json.dumps(json.loads(os.environ[\"NODES_INPUT_JSON\"]), sort_keys=True))\n"
+        ],
+        "network": "none",
+        "allowedOutputPaths": []
+      },
+      "input": {
+        "outcome": "{outcome}",
+        "work_item": "{pr-upkeep-route:work_item}"
+      },
+      "graph_config": {
         "ownerRef": "team/platform-ai",
         "output": {
           "from": "/nodes/analyse/output"
@@ -50,11 +36,11 @@
     }
   },
   "start_node": {
-    "name": "finish-ready",
-    "deadline": "none"
+    "name": "pr-upkeep-human-merges-pr-done",
+    "deadline": "168h"
   },
   "landing_node": {
-    "name": "finish-done",
+    "name": "pr-upkeep-finish-done",
     "deadline": "168h"
   }
 }

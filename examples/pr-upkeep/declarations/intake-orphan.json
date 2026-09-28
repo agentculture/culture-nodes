@@ -1,55 +1,37 @@
 {
   "name": "pr-upkeep-intake-orphan",
   "trigger": {
-    "kind": "timer",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "route",
-          "outcome": "orphan",
-          "when": null
-        }
-      ]
-    },
+    "kind": "code.result",
+    "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "true",
+  "condition": "event.outcome == \"passed\" && lineage[\"pr-upkeep-route\"].work_item.startsWith(\"gh:\")",
   "action": {
     "kind": "jira.create",
     "with": {
       "graph_workflow": "workflow.yaml",
       "graph_node": "intake-orphan",
       "graph_kind": "agent",
-      "legacy": {
-        "kind": "agent",
+      "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "verb": "create_issue",
+        "project": "SCRUM",
+        "summary": "{pr-upkeep-route:work_item}",
+        "description": "Auto-created by the pr-upkeep loop for a pull request that had no Jira ticket. The summary names the repository and the PR number as gh:<owner>/<repo>#<n>; open pull request <n> of <owner>/<repo> on GitHub. The loop wrote this key into the PR body so later findings on the PR arrive keyed to this ticket.",
+        "labels": [
+          "orphan",
+          "auto-created",
+          "source:github",
+          "repo:agentculture/culture-nodes"
+        ]
+      },
+      "timeout": "10m",
+      "graph_config": {
         "ownerRef": "team/platform-ai",
-        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "ledger": {
           "propose": [
             "claim"
           ]
-        },
-        "input": {
-          "bindings": {
-            "verb": {
-              "literal": "create_issue"
-            },
-            "project": {
-              "literal": "SCRUM"
-            },
-            "summary": "/run/input/work_item",
-            "description": {
-              "literal": "Auto-created by the pr-upkeep loop for a pull request that had no Jira ticket. The summary names the repository and the PR number as gh:<owner>/<repo>#<n>; open pull request <n> of <owner>/<repo> on GitHub. The loop wrote this key into the PR body so later findings on the PR arrive keyed to this ticket."
-            },
-            "labels": {
-              "literal": [
-                "orphan",
-                "auto-created",
-                "source:github",
-                "repo:agentculture/culture-nodes"
-              ]
-            }
-          }
         },
         "contract": {
           "outcomes": {
@@ -74,23 +56,19 @@
           }
         },
         "policy": {
-          "timeout": "10m",
           "retry": {
             "maxAttempts": 1
           }
         }
-      },
-      "variables": {
-        "summary": "{work_item}"
       }
     }
   },
   "start_node": {
-    "name": "intake-orphan-ready",
-    "deadline": "none"
+    "name": "pr-upkeep-route-done",
+    "deadline": "168h"
   },
   "landing_node": {
-    "name": "intake-orphan-done",
+    "name": "pr-upkeep-intake-orphan-done",
     "deadline": "168h"
   }
 }

@@ -1,21 +1,8 @@
 {
   "name": "jira-intake-picked-up",
   "trigger": {
-    "kind": "timer",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "transition",
-          "outcome": "issue_transitioned",
-          "when": "input.id.startsWith(\"gh:\")"
-        },
-        {
-          "from": "stage-intake",
-          "outcome": "comment_posted",
-          "when": null
-        }
-      ]
-    },
+    "kind": "jira.comment",
+    "reentry_limit": 0,
     "hop_limit": 9
   },
   "condition": "true",
@@ -25,8 +12,21 @@
       "graph_workflow": "workflow.yaml",
       "graph_node": "picked-up",
       "graph_kind": "end",
-      "legacy": {
-        "kind": "end",
+      "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+      "operation": {
+        "image": "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os\nprint(json.dumps(json.loads(os.environ[\"NODES_INPUT_JSON\"]), sort_keys=True))\n"
+        ],
+        "network": "none",
+        "allowedOutputPaths": []
+      },
+      "input": {
+        "issue": "{jira-intake-intake:id}"
+      },
+      "graph_config": {
         "ownerRef": "team/platform-ai",
         "output": {
           "from": "/nodes/transition/output"
@@ -35,11 +35,11 @@
     }
   },
   "start_node": {
-    "name": "picked-up-ready",
-    "deadline": "none"
+    "name": "jira-intake-stage-intake-done",
+    "deadline": "2h"
   },
   "landing_node": {
-    "name": "picked-up-done",
+    "name": "jira-intake-picked-up-done",
     "deadline": "2h"
   }
 }

@@ -1,16 +1,16 @@
 {
-  "name": "pr-upkeep-sweep-failed",
+  "name": "pr-upkeep-finish-expired",
   "trigger": {
-    "kind": "code.result",
+    "kind": "node.expired",
     "reentry_limit": 0,
-    "hop_limit": 5
+    "hop_limit": 10
   },
-  "condition": "event.outcome == \"failed\"",
+  "condition": "true",
   "action": {
     "kind": "code.run",
     "with": {
-      "graph_workflow": "sweep-cycle.workflow.yaml",
-      "graph_node": "sweep-failed",
+      "graph_workflow": "workflow.yaml",
+      "graph_node": "finish",
       "graph_kind": "end",
       "uses": "runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
       "operation": {
@@ -24,23 +24,22 @@
         "allowedOutputPaths": []
       },
       "input": {
-        "outcome": "{outcome}",
-        "result": "{result}"
+        "outcome": "expired"
       },
       "graph_config": {
         "ownerRef": "team/platform-ai",
         "output": {
-          "from": "/nodes/sweep/output"
+          "from": "/nodes/analyse/output"
         }
       }
     }
   },
   "start_node": {
-    "name": "pr-upkeep-sweep-done",
-    "deadline": "1h"
+    "name": "pr-upkeep-human-merges-pr-done",
+    "deadline": "168h"
   },
   "landing_node": {
-    "name": "pr-upkeep-sweep-failed-done",
-    "deadline": "1h"
+    "name": "pr-upkeep-finish-done",
+    "deadline": "168h"
   }
 }

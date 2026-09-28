@@ -30,7 +30,10 @@ type Kind struct {
 }
 
 var actions = []Kind{
-	{Name: "agent.work", Version: 1, Consumes: []ArtifactType{ArtifactNone}, Produces: []ArtifactType{ArtifactGitHubPR}},
+	// agent.work's second product (task t31b) is the agent run itself, the
+	// artifact its agent.result reaction consumes. ArtifactGitHubPR stays
+	// first: the engine mints a firing's marker for Produces[0].
+	{Name: "agent.work", Version: 1, Consumes: []ArtifactType{ArtifactNone}, Produces: []ArtifactType{ArtifactGitHubPR, ArtifactAgentWork}},
 	{Name: "discord.post", Version: 1, Consumes: []ArtifactType{ArtifactNone}, Produces: []ArtifactType{ArtifactDiscordMessage}},
 	{Name: "github.comment", Version: 1, Consumes: []ArtifactType{ArtifactGitHubPR}, Produces: []ArtifactType{ArtifactGitHubComment}},
 	{Name: "github.review_reply", Version: 1, Consumes: []ArtifactType{ArtifactGitHubPR}, Produces: []ArtifactType{ArtifactGitHubComment}},
@@ -59,6 +62,27 @@ var triggers = []Kind{
 	// (internal/declengine/reactions.go) with the firing's marker bound to
 	// the produced artifact, so a reaction continues the action's lineage.
 	{Name: "code.result", Version: 1, Consumes: []ArtifactType{ArtifactCodeResult}, Produces: []ArtifactType{ArtifactCodeResult}},
+	// Task t31b (#328) registers three reactions the migrated pr-upkeep and
+	// jira-intake declarations (examples/*/declarations) chain on. They are
+	// vocabulary only: no emitter produces them under these names yet, so a
+	// declaration triggered on one does not fire until an emitter does. Each
+	// needs an owner decision (a devague deviation) before t32 relies on it.
+	//
+	// pr-upkeep.pr is the live sweep's work-item fact
+	// (examples/pr-upkeep/pr_upkeep_emit.py), already on the log under this
+	// exact name: registering it lets the pr-upkeep entry trigger on the fact
+	// the graph workflow triggers on, without renaming a live event.
+	{Name: "pr-upkeep.pr", Version: 1, Consumes: []ArtifactType{ArtifactGitHubPR}, Produces: []ArtifactType{ArtifactGitHubPR}},
+	// agent.result is the reaction to a completed agent.work run: its
+	// outcome and output as the agent reported them -- a proposed claim,
+	// never evidence (PRD §10.4). Intended payload, mirroring code.result:
+	// {node, outcome, result, origin}. Nothing emits it yet (the t38c
+	// reaction pass covers only human.decision and code.result).
+	{Name: "agent.result", Version: 1, Consumes: []ArtifactType{ArtifactAgentWork}, Produces: []ArtifactType{ArtifactAgentWork}},
+	// jira.issue.transitioned is the neutral name for today's
+	// pr-upkeep.jira.transitioned.<status> facts (the jira.* renames are
+	// t37's under deviation d1); the reaction to a jira.transition action.
+	{Name: "jira.issue.transitioned", Version: 1, Consumes: []ArtifactType{ArtifactJiraIssue}, Produces: []ArtifactType{ArtifactJiraIssue}},
 	{Name: "node.expired", Version: 1, Consumes: []ArtifactType{ArtifactNode}, Produces: []ArtifactType{ArtifactNode}},
 	{Name: "action.failed", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},
 	{Name: "action.timed_out", Version: 1, Consumes: []ArtifactType{ArtifactActionResult}, Produces: []ArtifactType{ArtifactActionResult}},

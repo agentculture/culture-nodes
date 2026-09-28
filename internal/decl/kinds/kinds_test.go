@@ -33,7 +33,7 @@ func checkSignature(t *testing.T, category string, kind Kind, artifacts map[Arti
 
 func TestClosedVersionedVocabulary(t *testing.T) {
 	wantActions := []string{"agent.work", "discord.post", "github.comment", "github.review_reply", "jira.comment", "jira.transition", "jira.create", "code.run", "human.ask", "activate"}
-	wantTriggers := []string{"github.pr.approved", "github.pr.created", "jira.issue.created", "jira.comment", "human.decision", "code.result", "node.expired", "action.failed", "action.timed_out", "action.rejected", "action.capacity_exhausted", "action.budget_exhausted", "timer", "declaration.proposed", "declaration.overlap"}
+	wantTriggers := []string{"github.pr.approved", "github.pr.created", "jira.issue.created", "jira.comment", "human.decision", "code.result", "pr-upkeep.pr", "agent.result", "jira.issue.transitioned", "node.expired", "action.failed", "action.timed_out", "action.rejected", "action.capacity_exhausted", "action.budget_exhausted", "timer", "declaration.proposed", "declaration.overlap"}
 	assertNames(t, "action", wantActions, Actions())
 	assertNames(t, "trigger", wantTriggers, Triggers())
 }

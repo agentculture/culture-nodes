@@ -1,16 +1,8 @@
 {
   "name": "pr-upkeep-stamp-pr",
   "trigger": {
-    "kind": "timer",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "intake-orphan",
-          "outcome": "issue_created",
-          "when": null
-        }
-      ]
-    },
+    "kind": "jira.issue.created",
+    "reentry_limit": 0,
     "hop_limit": 10
   },
   "condition": "true",
@@ -20,23 +12,24 @@
       "graph_workflow": "workflow.yaml",
       "graph_node": "stamp-pr",
       "graph_kind": "agent",
-      "legacy": {
-        "kind": "agent",
+      "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "input": {
+        "instruction": "A Jira ticket was just created for the pull request described\nby `pr` below (repository and number), because the PR had no\nticket. Its key is bound as `ticket`.\n\nAdd one line to the PR BODY, at the top, of exactly this form:\n\n    Jira: <ticket>\n\nUse the GitHub REST API (PATCH /repos/{{owner}/{{repo}/pulls/{{n}\nwith the existing body plus the new line) or `gh pr edit\n--body`. Do not change anything else about the PR, do not push\ncommits, do not comment. If the body already names that key,\nchange nothing and say so.\n\nReport the PR you edited and the line you added.\n",
+        "ticket": "{id}",
+        "source": "{pr-upkeep-route:source}",
+        "repository": "{pr-upkeep-route:repository}",
+        "number": "{pr-upkeep-route:number}",
+        "head_sha": "{pr-upkeep-route:head_sha:}",
+        "work_item": "{pr-upkeep-route:work_item}",
+        "findings": "{pr-upkeep-route:findings}"
+      },
+      "timeout": "30m",
+      "graph_config": {
         "ownerRef": "team/developer-experience",
-        "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
         "ledger": {
           "propose": [
             "claim"
           ]
-        },
-        "input": {
-          "bindings": {
-            "instruction": {
-              "literal": "A Jira ticket was just created for the pull request described\nby `pr` below (repository and number), because the PR had no\nticket. Its key is bound as `ticket`.\n\nAdd one line to the PR BODY, at the top, of exactly this form:\n\n    Jira: <ticket>\n\nUse the GitHub REST API (PATCH /repos/{owner}/{repo}/pulls/{n}\nwith the existing body plus the new line) or `gh pr edit\n--body`. Do not change anything else about the PR, do not push\ncommits, do not comment. If the body already names that key,\nchange nothing and say so.\n\nReport the PR you edited and the line you added.\n"
-            },
-            "ticket": "/nodes/intake-orphan/output/issue",
-            "pr": "/run/input"
-          }
         },
         "contract": {
           "outcomes": {
@@ -56,23 +49,19 @@
           }
         },
         "policy": {
-          "timeout": "30m",
           "retry": {
             "maxAttempts": 1
           }
         }
-      },
-      "variables": {
-        "ticket": "{pr-upkeep-intake-orphan:issue:}"
       }
     }
   },
   "start_node": {
-    "name": "stamp-pr-ready",
-    "deadline": "none"
+    "name": "pr-upkeep-intake-orphan-done",
+    "deadline": "168h"
   },
   "landing_node": {
-    "name": "stamp-pr-done",
+    "name": "pr-upkeep-stamp-pr-done",
     "deadline": "168h"
   }
 }

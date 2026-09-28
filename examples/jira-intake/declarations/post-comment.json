@@ -1,42 +1,30 @@
 {
   "name": "jira-intake-post-comment",
   "trigger": {
-    "kind": "timer",
-    "with": {
-      "legacy_reactions": [
-        {
-          "from": "intake",
-          "outcome": "intake_drafted",
-          "when": null
-        }
-      ]
-    },
+    "kind": "agent.result",
+    "reentry_limit": 0,
     "hop_limit": 9
   },
-  "condition": "true",
+  "condition": "event.outcome == \"intake_drafted\"",
   "action": {
     "kind": "jira.comment",
     "with": {
       "graph_workflow": "workflow.yaml",
       "graph_node": "post-comment",
       "graph_kind": "agent",
-      "legacy": {
-        "kind": "agent",
+      "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "verb": "post_comment",
+        "issue": "{jira-intake-intake:id}",
+        "comment": "{jira-intake-intake:summary}"
+      },
+      "timeout": "10m",
+      "graph_config": {
         "ownerRef": "team/platform-ai",
-        "uses": "actor://company/jira-comment@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "ledger": {
           "propose": [
             "claim"
           ]
-        },
-        "input": {
-          "bindings": {
-            "verb": {
-              "literal": "post_comment"
-            },
-            "issue": "/run/input/id",
-            "comment": "/nodes/intake/output/summary"
-          }
         },
         "contract": {
           "outcomes": {
@@ -52,24 +40,19 @@
           }
         },
         "policy": {
-          "timeout": "10m",
           "retry": {
             "maxAttempts": 1
           }
         }
-      },
-      "variables": {
-        "issue": "{id}",
-        "comment": "{jira-intake-intake:summary:}"
       }
     }
   },
   "start_node": {
-    "name": "post-comment-ready",
-    "deadline": "none"
+    "name": "jira-intake-intake-done",
+    "deadline": "2h"
   },
   "landing_node": {
-    "name": "post-comment-done",
+    "name": "jira-intake-post-comment-done",
     "deadline": "2h"
   }
 }

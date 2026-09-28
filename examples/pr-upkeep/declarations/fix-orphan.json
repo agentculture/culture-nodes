@@ -1,11 +1,11 @@
 {
-  "name": "pr-upkeep-fix",
+  "name": "pr-upkeep-fix-orphan",
   "trigger": {
-    "kind": "jira.comment",
+    "kind": "agent.result",
     "reentry_limit": 0,
     "hop_limit": 10
   },
-  "condition": "true",
+  "condition": "event.outcome == \"packaged\" && lineage[\"pr-upkeep-route\"].work_item.startsWith(\"gh:\")",
   "action": {
     "kind": "agent.work",
     "with": {
@@ -15,7 +15,7 @@
       "uses": "actor://company/developer@sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "input": {
         "instruction": "Take the FIRST entry of the `packages` list bound below and\nwork only that package. `pr` names the repository, the pull\nrequest number and the head sha to work against.\n\nA package is one rule in one file, and every finding id in it\nis answered by ONE change — thirteen instances of a literal\nduplication are one constant, not thirteen commits. Do not\nre-rank the packages, do not merge two of them, and do not\ntouch findings outside the one you took: the analysis already\ndecided that the rest of this file waits for the re-scan after\nyour push, when their line numbers are current again.\n\nImplement the fix on a branch and open or update a pull request\nfor it. NEVER merge anything: this graph's merge step is a\nseparate human-approval node, and an agent merging here would\nbypass it.\n\nIf the package is not actually a defect — a false positive, or\none whose fix would be wrong — say so plainly and submit\n`no_change` with the reason. A stated non-fix is a better\noutcome than a manufactured one.\n\nReport which package you took, what you changed, and the PR you\nopened or updated.\n",
-        "package": "{pr-upkeep-analyse:packages}",
+        "package": "{pr-upkeep-analyse-orphan:packages}",
         "source": "{pr-upkeep-route:source}",
         "repository": "{pr-upkeep-route:repository}",
         "number": "{pr-upkeep-route:number}",
@@ -69,7 +69,7 @@
     }
   },
   "start_node": {
-    "name": "pr-upkeep-stage-dispatch-done",
+    "name": "pr-upkeep-analyse-done",
     "deadline": "168h"
   },
   "landing_node": {

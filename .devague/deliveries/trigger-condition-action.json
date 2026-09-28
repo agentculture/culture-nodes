@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T16:47:11Z",
+  "updated": "2026-09-28T16:57:56Z",
   "deviations": [
     {
       "id": "d1",
@@ -165,7 +165,7 @@
       "reason": "Live in 'after': the sweep re-posts open Jira issues every tick and declhook passes duplicates through, so six events were re-evaluated every 5 minutes forever, a sensitivity-blocked firing silently retried, and a newly activated version could fire on an old event.",
       "affects": [],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 13
     },
@@ -176,7 +176,7 @@
       "reason": "Live test: the pending list came from a stale edge copy and a second 'approved' was appended to an already-approved task.",
       "affects": [],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 14
     },
@@ -187,7 +187,7 @@
       "reason": "Cloudflare answers urllib's default Python-urllib agent with 403 (error 1010) in front of nodes.culture.dev, so every CLI call through Access failed.",
       "affects": [],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 15
     },
@@ -201,7 +201,7 @@
         "t33"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "needs-follow-up",
       "seq": 16
     },
@@ -212,7 +212,7 @@
       "reason": "Every five-minute sweep run posted run.created/run.completed to Discord; the owner asked to toggle them off.",
       "affects": [],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 17
     },
@@ -225,7 +225,7 @@
         "t31"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 18
     }

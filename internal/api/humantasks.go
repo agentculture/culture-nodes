@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/agentculture/culture-nodes/internal/engine"
 )
@@ -54,6 +56,9 @@ type decideHumanTaskRequest struct {
 	Response              json.RawMessage `json:"response"`
 	ExpectedLedgerVersion int64           `json:"expected_ledger_version"`
 	RecordIDs             []string        `json:"record_ids"`
+	// Note is the decider's optional reason (task t46). Trimmed; blank
+	// means none. Longer than engine.MaxDecisionNoteRunes is refused 400.
+	Note string `json:"note"`
 }
 
 // handleDecideHumanTask is POST /v1alpha1/human-tasks/{id}/decision. Unlike
@@ -91,6 +96,12 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 	if req.DeciderActorID == "" {
 		return badRequest("decider_actor_id is required", "decider_actor_id must not be empty")
 	}
+	req.Note = strings.TrimSpace(req.Note)
+	if n := utf8.RuneCountInString(req.Note); n > engine.MaxDecisionNoteRunes {
+		return badRequest(
+			fmt.Sprintf("shorten the note to at most %d characters", engine.MaxDecisionNoteRunes),
+			"note is %d characters, over the %d limit", n, engine.MaxDecisionNoteRunes)
+	}
 
 	result, err := s.Engine.DecideHumanTask(r.Context(), engine.HumanTaskDecisionRequest{
 		HumanTaskID:           id,
@@ -99,11 +110,14 @@ func (s *Server) handleDecideHumanTask(w http.ResponseWriter, r *http.Request) e
 		DeciderActorID:        req.DeciderActorID,
 		ExpectedLedgerVersion: req.ExpectedLedgerVersion,
 		RecordIDs:             req.RecordIDs,
+		Note:                  req.Note,
 	})
 	if err != nil {
 		return classify(err)
 	}
-	writeJSONWithWarning(w, http.StatusOK, humanTaskDecisionResultOut(id, result), warning)
+	out := humanTaskDecisionResultOut(id, result)
+	out.Note = req.Note
+	writeJSONWithWarning(w, http.StatusOK, out, warning)
 	return nil
 }
 

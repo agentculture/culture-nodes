@@ -24,6 +24,7 @@ vi.mock("./api/client", async (importOriginal) => {
     listWorkflows: vi.fn(pending),
     listHumanTasks: vi.fn(pending),
     listPendingDecisions: vi.fn(pending),
+    listReviewedRecords: vi.fn(pending),
     listActors: vi.fn(pending),
     listPlanImports: vi.fn(pending),
     getVersion: vi.fn(pending),
@@ -58,7 +59,7 @@ describe("titleForPath", () => {
   it.each([
     ["/runs", "Runs · Culture Nodes"],
     ["/inbox", "Inbox · Culture Nodes"],
-    ["/decisions", "Decisions · Culture Nodes"],
+    ["/decisions", "Inbox · Culture Nodes"],
     ["/mesh", "Mesh · Culture Nodes"],
     ["/stats", "Statistics · Culture Nodes"],
     ["/design", "Design · Culture Nodes"],
@@ -153,7 +154,7 @@ const ROUTE_WALK: ReadonlyArray<readonly [string, string]> = [
   ["/runs/01M0RUN", "/runs/01M0RUN"],
   ["/runs/01M0RUN/ledger", "/runs/01M0RUN/ledger"],
   ["/inbox", "/inbox"],
-  ["/decisions", "/decisions"],
+  ["/decisions", "/inbox?tab=review"],
   ["/mesh", "/mesh"],
   ["/stats", "/stats"],
   ["/design", "/design"],
@@ -207,7 +208,7 @@ describe("RouteWatcher wiring", () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(document.title).toBe("Decisions · Culture Nodes"),
+      expect(document.title).toBe("Inbox · Culture Nodes"),
     );
   });
 

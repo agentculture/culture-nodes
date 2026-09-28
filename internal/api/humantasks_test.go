@@ -161,6 +161,7 @@ type decideHumanTaskReq struct {
 	Response              json.RawMessage `json:"response,omitempty"`
 	ExpectedLedgerVersion int64           `json:"expected_ledger_version"`
 	RecordIDs             []string        `json:"record_ids,omitempty"`
+	Note                  string          `json:"note,omitempty"`
 }
 
 // authedDecide sends the decision request with the given bearer token

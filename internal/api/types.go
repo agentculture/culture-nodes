@@ -467,8 +467,12 @@ type HumanTaskOut struct {
 	// choose. Request stays the verbatim stored payload.
 	AllowedOutcomes []string        `json:"allowed_outcomes"`
 	Response        json.RawMessage `json:"response,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
+	// Note is the decider's optional reason (task t46), lifted out of
+	// Response (where the engine stores it) so a reader need not know that
+	// payload's shape. Absent when the decision carried none.
+	Note       string     `json:"note,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 	// ResolvedContext is request.context_refs resolved for display (issue
 	// #332): one entry per ref, `from` first then bindings by name. The raw
 	// refs stay in Request verbatim. See humantaskcontext.go for what a
@@ -487,6 +491,7 @@ func humanTaskOut(t engine.HumanTask) HumanTaskOut {
 		Request:         t.Request,
 		AllowedOutcomes: humanTaskAllowedOutcomes(t.Kind, t.Request),
 		Response:        nonNullJSON(t.Response),
+		Note:            decisionNote(t.Response),
 		CreatedAt:       t.CreatedAt,
 	}
 	if !t.ResolvedAt.IsZero() {
@@ -494,6 +499,21 @@ func humanTaskOut(t engine.HumanTask) HumanTaskOut {
 		out.ResolvedAt = &resolvedAt
 	}
 	return out
+}
+
+// decisionNote reads the `note` a decided task's stored response carries
+// (engine humanTaskResponse); "" for none or an unreadable payload.
+func decisionNote(response json.RawMessage) string {
+	if len(response) == 0 {
+		return ""
+	}
+	var stored struct {
+		Note string `json:"note"`
+	}
+	if err := json.Unmarshal(response, &stored); err != nil {
+		return ""
+	}
+	return stored.Note
 }
 
 // humanTaskAllowedOutcomes is HumanTaskOut.AllowedOutcomes: the engine's
@@ -523,6 +543,8 @@ type HumanTaskDecisionResultOut struct {
 	NextHumanTaskID string          `json:"next_human_task_id,omitempty"`
 	RunState        string          `json:"run_state"`
 	RunOutput       json.RawMessage `json:"run_output,omitempty"`
+	// Note echoes the recorded note (task t46); absent when none was sent.
+	Note string `json:"note,omitempty"`
 }
 
 func humanTaskDecisionResultOut(humanTaskID string, result engine.CompletionResult) HumanTaskDecisionResultOut {

@@ -3,7 +3,14 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Inbox from "./Inbox";
-import { ApiError, getLedger, getWhoami, listHumanTasks } from "../api/client";
+import {
+  ApiError,
+  getLedger,
+  getWhoami,
+  listHumanTasks,
+  listPendingDecisions,
+  listReviewedRecords,
+} from "../api/client";
 import {
   BAD_DEADLINE_TASK,
   BLOCKED_TASK,
@@ -92,12 +99,21 @@ class FakeEventSource {
  */
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, listHumanTasks: vi.fn(), getLedger: vi.fn(), getWhoami: vi.fn() };
+  return {
+    ...actual,
+    listHumanTasks: vi.fn(),
+    listPendingDecisions: vi.fn(),
+    listReviewedRecords: vi.fn(),
+    getLedger: vi.fn(),
+    getWhoami: vi.fn(),
+  };
 });
 
 const mockListHumanTasks = vi.mocked(listHumanTasks);
 const mockGetLedger = vi.mocked(getLedger);
 const mockGetWhoami = vi.mocked(getWhoami);
+const mockListPendingDecisions = vi.mocked(listPendingDecisions);
+const mockListReviewedRecords = vi.mocked(listReviewedRecords);
 
 /** Renders at the fixture clock (INBOX_NOW) so the deadline split is fixed. */
 function renderInbox(entry = "/inbox") {
@@ -167,6 +183,11 @@ beforeEach(() => {
   mockGetLedger.mockReset();
   mockGetWhoami.mockReset();
   mockGetWhoami.mockResolvedValue(WHOAMI_BOUND);
+  // The review half of the page (task t46) is empty unless a test says so.
+  mockListPendingDecisions.mockReset();
+  mockListPendingDecisions.mockResolvedValue({ items: [], record_count: 0 });
+  mockListReviewedRecords.mockReset();
+  mockListReviewedRecords.mockResolvedValue({ items: [] });
   resetWhoamiForTests();
   resetAgentState();
 });
@@ -186,7 +207,7 @@ describe("Inbox loading/empty/error", () => {
     resolveFixture({ pending: [], decided: [] });
     renderInbox();
     expect(
-      await screen.findByText(/No human tasks yet\./),
+      await screen.findByText(/Nothing to act on\./),
     ).toBeInTheDocument();
   });
 
@@ -490,18 +511,18 @@ describe("Inbox decision submission", () => {
     );
   });
 
-  // Task t12 replaced the hand-rolled form — free-text JSON payload, note and
-  // all — with the shared OutcomeButtons, so there is no longer a field a
-  // decider can put unparseable JSON into. The response is derived from the
-  // task's own decision schema instead, as it already was on the other two
-  // decision surfaces.
-  it("offers no free-text payload or note field at all", async () => {
+  // Task t12 replaced the hand-rolled form — free-text JSON payload and all —
+  // with the shared OutcomeButtons, so there is no field a decider can put
+  // unparseable JSON into; the response is derived from the task's own
+  // decision schema. Task t46 (owner decision d19) added back ONE field: an
+  // optional plain-text note, recorded with the decision.
+  it("offers one optional note field and no free-text payload", async () => {
     resolveFixture();
     renderInbox();
     const card = await findPendingCard();
     expect(within(card).queryByLabelText(/Decision payload/)).toBeNull();
-    expect(within(card).queryByLabelText(/^Note/)).toBeNull();
-    expect(card.querySelectorAll("textarea, input")).toHaveLength(0);
+    expect(within(card).getByLabelText(/^Note \(optional/)).toBeInTheDocument();
+    expect(card.querySelectorAll("textarea, input")).toHaveLength(1);
   });
 
   it("holds every outcome until the run's ledger version has been read", async () => {
@@ -558,7 +579,7 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
   it("refetches on a human-task event, staying stale-while-revalidate: no loading regression, no nulled list", async () => {
     resolveFixture();
     renderInbox();
-    await screen.findByRole("button", { name: /^Open/ });
+    await screen.findByRole("button", { name: /^To act/ });
     await waitFor(() => expect(getAgentState().status).toBe("ready"));
 
     const source = FakeEventSource.instances[0];
@@ -601,7 +622,7 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
   it("debounces a burst of simultaneous events into a single refetch", async () => {
     resolveFixture();
     renderInbox();
-    await screen.findByRole("button", { name: /^Open/ });
+    await screen.findByRole("button", { name: /^To act/ });
 
     const source = FakeEventSource.instances[0];
     act(() => source.open());
@@ -621,7 +642,7 @@ describe("Inbox auto-refresh (issue #46, task t30)", () => {
   it("ignores an event type this view did not subscribe to", async () => {
     resolveFixture();
     renderInbox();
-    await screen.findByRole("button", { name: /^Open/ });
+    await screen.findByRole("button", { name: /^To act/ });
 
     const source = FakeEventSource.instances[0];
     act(() => source.open());
@@ -657,7 +678,7 @@ describe("Inbox tabs (task t44)", () => {
     );
   }
 
-  function tabButton(name: "Open" | "Waiting" | "Decided") {
+  function tabButton(name: "To act" | "To review" | "Waiting" | "Decided") {
     return screen.getByRole("button", { name: new RegExp(`^${name}`) });
   }
 
@@ -665,7 +686,7 @@ describe("Inbox tabs (task t44)", () => {
     resolveFixture(ALL);
     renderInbox();
     await screen.findByText(PENDING_TASK.id);
-    expect(tabButton("Open")).toHaveAttribute("aria-pressed", "true");
+    expect(tabButton("To act")).toHaveAttribute("aria-pressed", "true");
     expect(renderedIds()).toEqual([
       PENDING_TASK.id,
       PENDING_TASK_MINIMAL.id,
@@ -680,9 +701,10 @@ describe("Inbox tabs (task t44)", () => {
     resolveFixture(ALL);
     renderInbox();
     await screen.findByText(PENDING_TASK.id);
-    const count = (name: "Open" | "Waiting" | "Decided") =>
+    const count = (name: "To act" | "To review" | "Waiting" | "Decided") =>
       tabButton(name).querySelector(".inbox-tab__count")?.textContent;
-    expect(count("Open")).toBe("3");
+    expect(count("To act")).toBe("3");
+    expect(count("To review")).toBe("0");
     expect(count("Waiting")).toBe("1");
     expect(count("Decided")).toBe("2");
   });
@@ -723,7 +745,7 @@ describe("Inbox tabs (task t44)", () => {
     await user.click(tabButton("Waiting"));
     expect(tabButton("Waiting")).toHaveAttribute("aria-pressed", "true");
     expect(renderedIds()).toEqual([WAITING_TASK.id]);
-    await user.click(tabButton("Open"));
+    await user.click(tabButton("To act"));
     expect(renderedIds()).toContain(PENDING_TASK.id);
   });
 
@@ -731,14 +753,14 @@ describe("Inbox tabs (task t44)", () => {
     resolveFixture(ALL);
     renderInbox("/inbox?tab=bogus");
     await screen.findByText(PENDING_TASK.id);
-    expect(tabButton("Open")).toHaveAttribute("aria-pressed", "true");
+    expect(tabButton("To act")).toHaveAttribute("aria-pressed", "true");
     expect(renderedIds()).not.toContain(WAITING_TASK.id);
   });
 
   it("says so when a tab is empty", async () => {
     resolveFixture({ pending: [WAITING_TASK], decided: [], expired: [] });
     renderInbox();
-    expect(await screen.findByText("Nothing open.")).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing to act on\./)).toBeInTheDocument();
     expect(renderedIds()).toEqual([]);
   });
 });
@@ -794,7 +816,7 @@ describe("Inbox notices (task t45)", () => {
       screen
         .getByRole("button", { name: new RegExp(`^${name}`) })
         .querySelector(".inbox-tab__count")?.textContent;
-    expect(count("Open")).toBe("1");
+    expect(count("To act")).toBe("1");
     expect(count("Waiting")).toBe("1");
 
     const user = userEvent.setup();

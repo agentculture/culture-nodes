@@ -143,7 +143,7 @@ export function Home() {
             ? "One run has work waiting on a person but records no ticket key"
             : `${data.untickedRuns} runs have work waiting on a person but record no ticket key`}
           , so they have no ticket page. Decide them in the{" "}
-          <Link to="/decisions">decision queue</Link>.
+          <Link to="/inbox">Inbox</Link>.
         </p>
       ) : null}
 
@@ -151,7 +151,7 @@ export function Home() {
         <p className="muted" data-testid="home-unread">
           {data.unread} more {data.unread === 1 ? "run is" : "runs are"} waiting
           beyond the {RUN_BUDGET} this page reads. The{" "}
-          <Link to="/decisions">decision queue</Link> lists every one.
+          <Link to="/inbox">Inbox</Link> lists every one.
         </p>
       ) : null}
 

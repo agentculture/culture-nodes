@@ -51,11 +51,12 @@ test("Runs uses the shared segmented control", async ({ page }) => {
   await expect(page.locator("#runs-toggle")).toHaveClass(/segmented-toggle/);
 });
 
-test("Decisions uses the shared segmented control", async ({ page }) => {
+test("the one decision page uses the shared segmented control", async ({ page }) => {
   await mockDecisionsApi(page);
   await page.goto("/decisions");
-  const toggle = page.getByRole("group", { name: "Decision views" });
+  const toggle = page.getByRole("group", { name: "Inbox filter" });
   await expect(toggle).toHaveClass(/segmented-toggle/);
-  await expect(toggle.locator(":scope > button")).toHaveCount(2);
+  // To act, To review, Waiting, Decided (task t46).
+  await expect(toggle.locator(":scope > button")).toHaveCount(4);
   await expect(page.locator(".decisions-tabs")).toHaveCount(0);
 });

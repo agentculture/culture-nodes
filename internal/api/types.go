@@ -59,6 +59,7 @@ type WorkflowVersionListOut struct {
 // which is always present (even when every field inside it is zero — see
 // UsageOut's doc comment for what that zero state means).
 type RunOut struct {
+	Firing         *FiringOut      `json:"firing,omitempty"`
 	ID             string          `json:"id"`
 	WorkflowDigest string          `json:"workflow_digest"`
 	WorkflowKey    string          `json:"workflow_key,omitempty"`
@@ -358,6 +359,7 @@ type RunViewOut struct {
 	Run      RunOut       `json:"run"`
 	Tokens   []TokenOut   `json:"tokens"`
 	NodeRuns []NodeRunOut `json:"node_runs"`
+	Firings  []FiringOut  `json:"firings,omitempty"`
 }
 
 // NodeRunListItemOut is one row of GET /v1alpha1/node-runs — the cross-run
@@ -377,6 +379,7 @@ type RunViewOut struct {
 // RunOut's is on run detail — see UsageOut's doc comment for what its zero
 // state means.
 type NodeRunListItemOut struct {
+	Firing      *FiringOut `json:"firing,omitempty"`
 	ID          string     `json:"id"`
 	RunID       string     `json:"run_id"`
 	NodeID      string     `json:"node_id"`
@@ -449,6 +452,7 @@ type ReviewCommitResultOut struct {
 // outcomes, context refs, audit) — carried verbatim, never re-derived,
 // because it is a record of what the human was actually shown.
 type HumanTaskOut struct {
+	Firing          *FiringOut      `json:"firing,omitempty"`
 	ID              string          `json:"id"`
 	RunID           string          `json:"run_id"`
 	NodeRunID       string          `json:"node_run_id,omitempty"`

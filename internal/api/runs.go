@@ -208,7 +208,19 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	writeJSON(w, http.StatusOK, RunViewOut{Run: runOut(run, usage, meta), Tokens: tokens, NodeRuns: nodeRuns})
+	out := RunViewOut{Run: runOut(run, usage, meta), Tokens: tokens, NodeRuns: nodeRuns}
+	firings, err := s.firingsForRuns(ctx, []string{id})
+	if err != nil {
+		return internalError(err)
+	}
+	if firing, ok := firings[id]; ok {
+		out.Run.Firing = &firing
+		out.Firings, err = s.lineageFirings(ctx, firing)
+		if err != nil {
+			return internalError(err)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 

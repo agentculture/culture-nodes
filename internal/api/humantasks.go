@@ -38,7 +38,12 @@ func (s *Server) handleGetHumanTask(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return classify(err)
 	}
-	writeJSON(w, http.StatusOK, humanTaskOut(task))
+	out := humanTaskOut(task)
+	tasks := []HumanTaskOut{out}
+	if err := s.enrichHumanTasks(r.Context(), tasks); err != nil {
+		return internalError(err)
+	}
+	writeJSON(w, http.StatusOK, tasks[0])
 	return nil
 }
 

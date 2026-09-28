@@ -163,6 +163,17 @@ func workerFiring(t *testing.T, authority ledger.Authority) (*postgres.Store, st
 func TestPostgresFiringThroughExistingWorker(t *testing.T) {
 	db, firing, e, version, ns := workerFiring(t, ledger.AuthorityProposed)
 	ctx := context.Background()
+	// The notifier consumes the same run lifecycle vocabulary for a
+	// declaration's execution run as for graph runs.
+	var created, completed int
+	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FILTER (WHERE event_type='dev.culture.nodes.run.created'),
+		count(*) FILTER (WHERE event_type='dev.culture.nodes.run.completed')
+		FROM events WHERE namespace_id=$1 AND aggregate_id=$2`, ns, firing).Scan(&created, &completed); err != nil {
+		t.Fatal(err)
+	}
+	if created != 1 || completed != 1 {
+		t.Fatalf("firing lifecycle events created=%d completed=%d, want one each", created, completed)
+	}
 	var nodes int
 	if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_nodes WHERE namespace_id=$1 AND opening_firing_id=$2 AND node_name='waiting' AND state='open' AND deadline IS NOT NULL`, ns, firing).Scan(&nodes); err != nil || nodes != 1 {
 		t.Fatalf("landing nodes=%d err=%v", nodes, err)

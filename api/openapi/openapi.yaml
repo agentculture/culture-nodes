@@ -4705,10 +4705,48 @@ components:
             `GET /v1alpha1/runs?work_item=<key>` and the gh: form no longer
             finds it.
 
+    Firing:
+      type: object
+      description: A declaration dispatch, with its immutable version and causal lineage.
+      required: [id, lineage_id, canonical_firing_id, event_id, declaration_id, declaration_name, declaration_version, version_digest, trigger_digest, condition_digest, action_digest, created_at]
+      properties:
+        id:
+          type: string
+        lineage_id:
+          type: string
+        canonical_firing_id:
+          type: string
+        event_id:
+          type: string
+        declaration_id:
+          type: string
+        declaration_name:
+          type: string
+        declaration_version:
+          type: string
+        version_digest:
+          type: string
+        trigger_digest:
+          type: string
+        condition_digest:
+          type: string
+        action_digest:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        node_runs:
+          type: array
+          description: Execution attempts for this firing, present in a run detail lineage.
+          items:
+            $ref: '#/components/schemas/NodeRun'
+
     Run:
       type: object
       required: [id, workflow_digest, state, created_at, updated_at]
       properties:
+        firing:
+          $ref: '#/components/schemas/Firing'
         id:
           type: string
         workflow_digest:
@@ -5301,6 +5339,8 @@ components:
         attempts).
       required: [id, run_id, node_id, state, created_at, updated_at, usage]
       properties:
+        firing:
+          $ref: '#/components/schemas/Firing'
         id:
           type: string
         run_id:
@@ -5350,6 +5390,11 @@ components:
         run itself, every token, and every node run with its attempts
         nested — one round trip for the whole graph position and history.
       properties:
+        firings:
+          type: array
+          description: All physical firings in this run's causal lineage, when this is a declaration execution.
+          items:
+            $ref: '#/components/schemas/Firing'
         run:
           $ref: '#/components/schemas/Run'
         tokens:
@@ -5539,6 +5584,8 @@ components:
       type: object
       required: [run_id, ledger_version, records]
       properties:
+        firing:
+          $ref: '#/components/schemas/Firing'
         run_id:
           type: string
         ledger_version:
@@ -6108,6 +6155,8 @@ components:
         engine stored it, so a reader sees precisely what the human was
         shown.
       properties:
+        firing:
+          $ref: '#/components/schemas/Firing'
         id:
           type: string
         run_id:

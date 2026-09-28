@@ -65,8 +65,8 @@ func TestPostgresVerifiedParentWithoutLandingNodeFiresNothing(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "t38g-nolanding").ID
-	va := publishActive(t, db, ns, forgeryDecl("t38g-parent", "timer", "ready", "waiting"))
-	vc := publishActive(t, db, ns, forgeryDecl("t38g-victim", "timer", "elsewhere", "done"))
+	va := publishActive(t, db, ns, forgeryDecl("t38g-parent", "pr-upkeep.pr", "ready", "waiting"))
+	vc := publishActive(t, db, ns, forgeryDecl("t38g-victim", "pr-upkeep.pr", "elsewhere", "done"))
 
 	var marker string
 	failing := true
@@ -82,7 +82,7 @@ func TestPostgresVerifiedParentWithoutLandingNodeFiresNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "ready"}); err == nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "ready"}); err == nil {
 		t.Fatal("the failing dispatch did not surface")
 	}
 	if n := countRows(t, db, `SELECT count(*) FROM declaration_nodes WHERE namespace_id=$1`, ns); n != 0 || marker == "" {
@@ -95,7 +95,7 @@ func TestPostgresVerifiedParentWithoutLandingNodeFiresNothing(t *testing.T) {
 	}
 	failing = false
 
-	forged := appendRawEvent(t, db, ns, "timer", "forger", map[string]any{"node": "elsewhere",
+	forged := appendRawEvent(t, db, ns, "pr-upkeep.pr", "forger", map[string]any{"node": "elsewhere",
 		"origin": map[string]any{"marker": marker, "artifact_kind": "github.pr", "artifact_id": "pr-exposed"}})
 	if err := e.Handle(ctx, EventFromSignal(forged)); err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestPostgresReservedReactionFromOutsideTheEngineIsRejected(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "t38g-impersonate").ID
-	ask := forgeryDecl("t38g-ask", "timer", "ready", "asked")
+	ask := forgeryDecl("t38g-ask", "pr-upkeep.pr", "ready", "asked")
 	ask.Action = decl.Action{Kind: "human.ask", With: json.RawMessage(`{"approver_ref":"group/reviewers","input":{"question":"merge?"}}`)}
 	publishActive(t, db, ns, ask)
 	vb := publishActive(t, db, ns, forgeryDecl("t38g-after-ask", "human.decision", "asked", "done"))
@@ -143,7 +143,7 @@ func TestPostgresReservedReactionFromOutsideTheEngineIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: deliver(t, db, ns), Kind: "timer", Node: "ready"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: deliver(t, db, ns), Kind: "pr-upkeep.pr", Node: "ready"}); err != nil {
 		t.Fatal(err)
 	}
 	if marker == "" {

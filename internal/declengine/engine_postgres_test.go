@@ -39,7 +39,7 @@ func publishActive(t *testing.T, db *postgres.Store, ns string, d decl.Declarati
 
 func deliver(t *testing.T, db *postgres.Store, ns string) string {
 	t.Helper()
-	ev, err := db.DeliverSignalEvent(context.Background(), postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Emitter: "test"})
+	ev, err := db.DeliverSignalEvent(context.Background(), postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Emitter: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func workerFiring(t *testing.T, authority ledger.Authority) (*postgres.Store, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev := Event{NamespaceID: ns.ID, ID: eventID, Kind: "timer", Node: "ready", Variables: map[string]any{"key": "CHAIN"}}
+	ev := Event{NamespaceID: ns.ID, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"key": "CHAIN"}}
 	// Delivered twice: acceptance 5, one firing and one actor invocation.
 	for i := 0; i < 2; i++ {
 		if err := e.Handle(ctx, ev); err != nil {
@@ -288,7 +288,7 @@ func TestPostgresThreeDeclarationChain(t *testing.T) {
 	// 'b must appear after a': an unmarked event on b's start node has no a
 	// in its lineage, so b does not fire, and the evaluation says why.
 	orphan := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: orphan, Kind: "timer", Node: "pr-open"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: orphan, Kind: "pr-upkeep.pr", Node: "pr-open"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := outcomes(t, db, ns, orphan, vb.DeclarationID); strings.Join(got, ",") != OutcomeMatched+","+OutcomeLineageMissing {
@@ -314,13 +314,13 @@ func TestPostgresThreeDeclarationChain(t *testing.T) {
 		}
 		id := deliver(t, db, ns)
 		origin := OriginEvent{Marker: "cn1:" + prev.ID + ":github.pr:" + nonce + ":" + mac, ArtifactKind: "github.pr", ArtifactID: "artifact-" + prev.ID}
-		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: id, Kind: "timer", Node: node, Origin: origin}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: id, Kind: "pr-upkeep.pr", Node: node, Origin: origin}); err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "intake", Variables: map[string]any{"issue": "SCRUM-1"}}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "intake", Variables: map[string]any{"issue": "SCRUM-1"}}); err != nil {
 		t.Fatal(err)
 	}
 	fa := firingOf(first, va.DeclarationID)
@@ -342,7 +342,7 @@ func TestPostgresThreeDeclarationChain(t *testing.T) {
 	upgraded.Condition = "event.issue != ''"
 	va2 := publishActive(t, db, ns, upgraded)
 	next := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: next, Kind: "timer", Node: "intake", Variables: map[string]any{"issue": "SCRUM-2"}}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: next, Kind: "pr-upkeep.pr", Node: "intake", Variables: map[string]any{"issue": "SCRUM-2"}}); err != nil {
 		t.Fatal(err)
 	}
 	fa2 := firingOf(next, va.DeclarationID)
@@ -426,7 +426,7 @@ func TestPostgresSubjectConcurrencyDefersAndDrains(t *testing.T) {
 	}
 	fire := func(eventID string) {
 		t.Helper()
-		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "ready", Subject: "ISSUE-1", Variables: map[string]any{"priority": "High"}}); err != nil {
+		if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready", Subject: "ISSUE-1", Variables: map[string]any{"priority": "High"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -547,7 +547,7 @@ func BenchmarkPostgresLineage10000(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	_, err = db.Pool().Exec(ctx, `INSERT INTO signal_events(id,namespace_id,name,emitter) SELECT $1||'event-'||n::text,$2,'timer','benchmark' FROM generate_series(1,10000) n`, prefix, ns.ID)
+	_, err = db.Pool().Exec(ctx, `INSERT INTO signal_events(id,namespace_id,name,emitter) SELECT $1||'event-'||n::text,$2,'pr-upkeep.pr','benchmark' FROM generate_series(1,10000) n`, prefix, ns.ID)
 	if err != nil {
 		b.Fatal(err)
 	}

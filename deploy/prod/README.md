@@ -1379,6 +1379,23 @@ is the daemon's entire exactly-once-across-restarts guarantee
 (`internal/notifier/cursor.go`), so it must survive a `docker compose ...
 up -d` container recreate, not just an in-process restart.
 
+**Skip-list** (task t40f, #328): `NODES_NOTIFIER_SKIP_WORKFLOWS` names
+workflows whose run-lifecycle events are never posted — comma-separated,
+each entry matching a workflow key exactly or, when it ends in `*`, as a
+prefix. Every lifecycle event of a matching run (created, completed,
+failed, cancelled, bounded) is consumed — the cursor advances past it —
+and logged as `outcome=skipped`, never posted. Compose defaults it to
+`pr-upkeep-sweep-cycle,pr-upkeep-sweep`, so the five-minute pr-upkeep sweep
+no longer floods the channel after a plain `deploy.sh thor`, on either lane.
+A run a declaration fired is matched by its **declaration name** (the run
+view's `run.firing.declaration_name`, which is also what the notification
+shows), not by its one-node envelope workflow, which is why the declaration
+sweep is listed as `pr-upkeep-sweep` (`pr-upkeep-sweep*` would also mute
+`pr-upkeep-sweep-failed`). An empty value does **not** unmute — compose's
+`:-` substitutes the default for empty too — so to post every workflow
+set a value naming none, e.g. `none`. The key is optional to
+`audit-credentials.sh` by construction (it carries a non-empty default).
+
 **Secrets**: `CULTURE_NODES_WEBHOOK_URL` (checked first) or
 `DISCORD_WEBHOOK_URL` (fallback) — read by `internal/notify.ResolveWebhook`
 inside the container, never passed as a flag (the URL embeds a bearer

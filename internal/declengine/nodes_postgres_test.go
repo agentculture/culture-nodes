@@ -65,8 +65,8 @@ func TestPostgresNodeExpiryExactlyOnceAndLateReactionRecorded(t *testing.T) {
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-expiry").ID
 
-	a := declFor("exp-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`)
-	b := declFor("exp-b", "waiting", "none", "done", "1h", "timer", `{"uses":"actor://test"}`)              // late reaction vehicle
+	a := declFor("exp-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
+	b := declFor("exp-b", "waiting", "none", "done", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)       // late reaction vehicle
 	c := declFor("exp-c", "waiting", "none", "closed-out", "1h", "node.expired", `{"uses":"actor://test"}`) // proves node.expired is a usable trigger
 	va := publishActive(t, db, ns, a)
 	publishActive(t, db, ns, b)
@@ -80,7 +80,7 @@ func TestPostgresNodeExpiryExactlyOnceAndLateReactionRecorded(t *testing.T) {
 	}
 
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	fa := firingByEventDecl(t, db, ns, first, va.DeclarationID)
@@ -141,9 +141,9 @@ func TestPostgresNodeExpiryExactlyOnceAndLateReactionRecorded(t *testing.T) {
 
 	// c82: a late reaction against the now-closed node is recorded, never
 	// fired -- b, whose start node is "waiting" and whose trigger kind is
-	// "timer", would have matched had the node still been open.
+	// "pr-upkeep.pr", would have matched had the node still been open.
 	late := deliver(t, db, ns)
-	if err := e.Handle(ctx, reactEvent(t, db, ns, late, fa, "timer", nil)); err != nil {
+	if err := e.Handle(ctx, reactEvent(t, db, ns, late, fa, "pr-upkeep.pr", nil)); err != nil {
 		t.Fatal(err)
 	}
 	var bFired int
@@ -173,8 +173,8 @@ func TestPostgresNodeConsumedAndOrphanedByUpgrade(t *testing.T) {
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-orphan").ID
 
-	a := declFor("orph-a", "intake", "none", "pr-open", "1h", "timer", `{"uses":"actor://test"}`)
-	b := declFor("orph-b", "pr-open", "none", "done", "1h", "timer", `{"uses":"actor://test"}`)
+	a := declFor("orph-a", "intake", "none", "pr-open", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
+	b := declFor("orph-b", "pr-open", "none", "done", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	va := publishActive(t, db, ns, a)
 	vb := publishActive(t, db, ns, b)
 
@@ -188,7 +188,7 @@ func TestPostgresNodeConsumedAndOrphanedByUpgrade(t *testing.T) {
 
 	// --- consumed ---
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	fa1 := firingByEventDecl(t, db, ns, first, va.DeclarationID)
@@ -200,7 +200,7 @@ func TestPostgresNodeConsumedAndOrphanedByUpgrade(t *testing.T) {
 		t.Fatalf("node1 reactor=%+v, want %s/%s", node1, vb.DeclarationID, vb.ID)
 	}
 	react1 := deliver(t, db, ns)
-	if err := e.Handle(ctx, reactEvent(t, db, ns, react1, fa1, "timer", nil)); err != nil {
+	if err := e.Handle(ctx, reactEvent(t, db, ns, react1, fa1, "pr-upkeep.pr", nil)); err != nil {
 		t.Fatal(err)
 	}
 	consumed, found, err := backend.NodeByFiring(ctx, ns, fa1.ID)
@@ -210,7 +210,7 @@ func TestPostgresNodeConsumedAndOrphanedByUpgrade(t *testing.T) {
 
 	// --- orphaned by upgrade ---
 	second := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: second, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: second, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	fa2 := firingByEventDecl(t, db, ns, second, va.DeclarationID)
@@ -221,14 +221,14 @@ func TestPostgresNodeConsumedAndOrphanedByUpgrade(t *testing.T) {
 
 	// Upgrade b: same declaration, a new version whose start node no
 	// longer names "pr-open" -- it can never again react to node2.
-	upgraded := declFor("orph-b", "elsewhere", "none", "done", "1h", "timer", `{"uses":"actor://test"}`)
+	upgraded := declFor("orph-b", "elsewhere", "none", "done", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	vb2 := publishActive(t, db, ns, upgraded)
 	if vb2.DeclarationID != vb.DeclarationID || vb2.ID == vb.ID {
 		t.Fatalf("upgrade did not land a new version of the same declaration: %+v vs %+v", vb2, vb)
 	}
 
 	react2 := deliver(t, db, ns)
-	if err := e.Handle(ctx, reactEvent(t, db, ns, react2, fa2, "timer", nil)); err != nil {
+	if err := e.Handle(ctx, reactEvent(t, db, ns, react2, fa2, "pr-upkeep.pr", nil)); err != nil {
 		t.Fatal(err)
 	}
 	orphaned, found, err := backend.NodeStatus(ctx, ns, node2.ID)
@@ -275,7 +275,7 @@ func actionResultFixture(t *testing.T, handler http.HandlerFunc) (*postgres.Stor
 		}
 	}
 
-	d := declFor("act-f", "ready", "none", "waiting", "1h", "timer", `{"uses":"actor://test/worker@sha256:aaaaaa","input":{"text":"hello"}}`)
+	d := declFor("act-f", "ready", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test/worker@sha256:aaaaaa","input":{"text":"hello"}}`)
 	version := publishActive(t, db, ns.ID, d)
 	eventID := deliver(t, db, ns.ID)
 
@@ -284,7 +284,7 @@ func actionResultFixture(t *testing.T, handler http.HandlerFunc) (*postgres.Stor
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Handle(ctx, Event{NamespaceID: ns.ID, ID: eventID, Kind: "timer", Node: "ready"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns.ID, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready"}); err != nil {
 		t.Fatal(err)
 	}
 	firing := firingByEventDecl(t, db, ns.ID, eventID, version.DeclarationID)

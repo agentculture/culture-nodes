@@ -96,16 +96,30 @@ func (r *reactionHarness) must(from, to postgres.DeclarationVersion) {
 	}
 }
 
-// start delivers the timer event that fires the chain's first declaration.
+// scheduleTick obtains a timer from a real schedule row and FireSchedule.
+func (r *reactionHarness) scheduleTick(payload json.RawMessage, declarations postgres.DeliveredEventHandler) postgres.SignalDelivery {
+	r.t.Helper()
+	now := time.Now().UTC()
+	sc, err := r.db.CreateSchedule(r.ctx, postgres.CreateScheduleInput{NamespaceID: r.ns,
+		Name: "conformance-" + store.NewULID(), EventName: "timer", Payload: payload,
+		Interval: 5 * time.Minute, FirstFireAt: now.Add(-time.Second)})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	res, err := r.db.FireSchedule(r.ctx, postgres.FireScheduleInput{ScheduleID: sc.ID, Now: now, Declarations: declarations})
+	if err != nil || !res.Fired {
+		r.t.Fatalf("FireSchedule: fired=%v err=%v", res.Fired, err)
+	}
+	return res.Delivery
+}
+
+// start delivers a real schedule-fired timer for the chain's first declaration.
 func (r *reactionHarness) start(node string) {
 	t := r.t
 	t.Helper()
-	ev, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: "timer", Emitter: "conformance"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	ev := r.scheduleTick(json.RawMessage(`{"subject":"SCRUM-7","note":"rendered-from-event"}`), nil)
 	if err := r.engine.Handle(r.ctx, declengine.Event{NamespaceID: r.ns, ID: ev.Event.ID, Kind: "timer", Node: node,
-		Variables: map[string]any{"subject": "SCRUM-7", "note": "rendered-from-event"}}); err != nil {
+		Emitter: ev.Event.Emitter, Variables: map[string]any{"subject": "SCRUM-7", "note": "rendered-from-event"}}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 }

@@ -475,12 +475,19 @@ func (h *declHarness) fire(kind string, with string) string {
 		t.Fatal(err)
 	}
 	h.approveWidenings(v, d)
-	ev, err := h.db.DeliverSignalEvent(h.ctx, postgres.DeliverSignalEventInput{NamespaceID: h.ns, Name: "timer", Emitter: "conformance"})
+	sc, err := h.db.CreateSchedule(h.ctx, postgres.CreateScheduleInput{NamespaceID: h.ns, Name: "conformance-action-timer",
+		EventName: "timer", Payload: json.RawMessage(`{"subject":"SCRUM-7","note":"rendered-from-event"}`),
+		Interval: 5 * time.Minute, FirstFireAt: time.Now().UTC().Add(-time.Second)})
 	if err != nil {
 		t.Fatal(err)
 	}
+	fired, err := h.db.FireSchedule(h.ctx, postgres.FireScheduleInput{ScheduleID: sc.ID, Now: time.Now().UTC()})
+	if err != nil || !fired.Fired {
+		t.Fatalf("FireSchedule: fired=%v err=%v", fired.Fired, err)
+	}
+	ev := fired.Delivery
 	if err := h.engine.Handle(h.ctx, declengine.Event{NamespaceID: h.ns, ID: ev.Event.ID, Kind: "timer", Node: "ready",
-		Variables: map[string]any{"subject": "SCRUM-7", "note": "rendered-from-event"}}); err != nil {
+		Emitter: ev.Event.Emitter, Variables: map[string]any{"subject": "SCRUM-7", "note": "rendered-from-event"}}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	var firing string

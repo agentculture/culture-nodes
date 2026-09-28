@@ -38,7 +38,7 @@ func (artifactDispatcher) Dispatch(_ context.Context, r declengine.DispatchReque
 
 func chainDecl(name, start, landing string) decl.Declaration {
 	return decl.Declaration{Name: name, Condition: "true",
-		Trigger:     decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
+		Trigger:     decl.Trigger{Kind: "pr-upkeep.pr", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
 		Action:      decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test"}`)},
 		StartNode:   decl.Node{Name: start, Deadline: "none"},
 		LandingNode: decl.Node{Name: landing, Deadline: "1h"}}
@@ -108,7 +108,7 @@ func TestDeclarationSwitchRouteFreezesAndReplaysThroughEventDelivery(t *testing.
 	}
 
 	// The event route offers the delivery to the declaration engine.
-	first := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{}})
+	first := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "pr-upkeep.pr", "payload": map[string]any{}})
 	var firingID string
 	if err := s.Pool().QueryRow(ctx, `SELECT id FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2 AND declaration_id=$3`, nsID, first.Event.ID, va.DeclarationID).Scan(&firingID); err != nil {
 		t.Fatalf("POST /v1alpha1/events did not reach the declaration engine: %v", err)
@@ -137,7 +137,7 @@ func TestDeclarationSwitchRouteFreezesAndReplaysThroughEventDelivery(t *testing.
 	if err := s.Pool().QueryRow(ctx, `SELECT nonce,mac FROM declaration_minted_markers WHERE namespace_id=$1 AND firing_id=$2`, nsID, firingID).Scan(&nonce, &mac); err != nil {
 		t.Fatal(err)
 	}
-	reaction := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{"origin": map[string]string{
+	reaction := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "pr-upkeep.pr", "payload": map[string]any{"origin": map[string]string{
 		"marker": "cn1:" + firingID + ":github.pr:" + nonce + ":" + mac, "artifact_kind": "github.pr", "artifact_id": "artifact-" + firingID}}})
 	var evaluations, stored int
 	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_evaluations WHERE namespace_id=$1 AND event_id=$2`, nsID, reaction.Event.ID).Scan(&evaluations); err != nil || evaluations != 0 {

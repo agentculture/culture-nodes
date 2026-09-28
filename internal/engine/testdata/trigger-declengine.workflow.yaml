@@ -1,4 +1,4 @@
-# Task t38 (#328): the trigger-subject fixture triggered by `timer`, a
+# Task t38 (#328): the trigger-subject fixture triggered by `pr-upkeep.pr` (was `timer`, reserved by t40d), a
 # registered declaration trigger kind, so ONE delivered event is offered to
 # both engines and a test can compare them under each switch mode.
 apiVersion: nodes.culture.dev/v1alpha1
@@ -21,7 +21,7 @@ spec:
         type: object
 
   triggers:
-    - onEvent: timer
+    - onEvent: pr-upkeep.pr
 
   limits:
     maxDuration: 1h

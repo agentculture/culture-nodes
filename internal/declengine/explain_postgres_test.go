@@ -44,7 +44,7 @@ func TestExplainFired(t *testing.T) {
 	e := newExplainEngine(t, db, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) {
 		return DispatchResult{Variables: map[string]any{"pr": "1"}}, nil
 	}))
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "ready"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestExplainConditionFalse(t *testing.T) {
 		t.Fatal("dispatched despite a false condition")
 		return DispatchResult{}, nil
 	}))
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "Low"}}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "Low"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +111,7 @@ func TestExplainLineageMissing(t *testing.T) {
 	// An unmarked event on downstream's start node has no upstream firing
 	// in its lineage: 'must' refuses it.
 	eventID := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "gate"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "gate"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,13 +141,13 @@ func TestExplainLoopLimited(t *testing.T) {
 		return DispatchResult{ArtifactID: "artifact-" + r.Firing.ID}, nil
 	}))
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "loop"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "loop"}); err != nil {
 		t.Fatal(err)
 	}
 	firstFiring := firingByEventDecl(t, db, ns, first, version.DeclarationID)
 
 	second := deliver(t, db, ns)
-	if err := e.Handle(ctx, reactEvent(t, db, ns, second, firstFiring, "timer", nil)); err != nil {
+	if err := e.Handle(ctx, reactEvent(t, db, ns, second, firstFiring, "pr-upkeep.pr", nil)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,10 +171,10 @@ func TestExplainDeferred(t *testing.T) {
 		return DispatchResult{}, nil
 	}))
 	first, second := deliver(t, db, ns), deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "ready", Subject: "ISSUE-9"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "ready", Subject: "ISSUE-9"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: second, Kind: "timer", Node: "ready", Subject: "ISSUE-9"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: second, Kind: "pr-upkeep.pr", Node: "ready", Subject: "ISSUE-9"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +207,7 @@ func TestExplainShadow(t *testing.T) {
 		return DispatchResult{}, nil
 	})}
 	e := newExplainEngine(t, db, gate)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "ready"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "ready"}); err != nil {
 		t.Fatal(err)
 	}
 	if underlyingCalls != 0 {
@@ -275,7 +275,7 @@ func TestExplainNotFoundForUnmatchedOrUnknown(t *testing.T) {
 		t.Fatal("dispatched a declaration whose trigger never matched")
 		return DispatchResult{}, nil
 	}))
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "some-other-node"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "some-other-node"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := (PostgresBackend{db}).Explain(ctx, ns, eventID, d.Name); err != nil || found {

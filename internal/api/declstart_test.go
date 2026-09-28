@@ -57,7 +57,7 @@ func TestPostedEventWithoutAVerifiedMarkerArrivesAtRoot(t *testing.T) {
 		return count(`SELECT count(*) FROM declaration_evaluations WHERE namespace_id=$1 AND event_id=$2 AND declaration_id=$3`, eventID, declarationID)
 	}
 
-	first := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{}})
+	first := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "pr-upkeep.pr", "payload": map[string]any{}})
 	var firingID string
 	if err := s.Pool().QueryRow(ctx, `SELECT id FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2 AND declaration_id=$3`, nsID, first.Event.ID, va.DeclarationID).Scan(&firingID); err != nil {
 		t.Fatalf("the root event did not fire st-a: %v", err)
@@ -66,7 +66,7 @@ func TestPostedEventWithoutAVerifiedMarkerArrivesAtRoot(t *testing.T) {
 	// No marker: the payload names st-b's start node, which is open, and
 	// the event still arrives at root -- st-a (root) matches it, st-b does
 	// not even see it.
-	unmarked := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{"node": "waiting"}})
+	unmarked := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "pr-upkeep.pr", "payload": map[string]any{"node": "waiting"}})
 	if n := evaluations(unmarked.Event.ID, vb.DeclarationID); n != 0 {
 		t.Fatalf("an unmarked event naming node 'waiting' was evaluated %d times by st-b, want 0", n)
 	}
@@ -83,7 +83,7 @@ func TestPostedEventWithoutAVerifiedMarkerArrivesAtRoot(t *testing.T) {
 	}
 
 	// A rejected marker (the MAC altered) is no better than none.
-	forged := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{"node": "waiting", "origin": origin(strings.Repeat("0", 64))}})
+	forged := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "pr-upkeep.pr", "payload": map[string]any{"node": "waiting", "origin": origin(strings.Repeat("0", 64))}})
 	if n := evaluations(forged.Event.ID, vb.DeclarationID); n != 0 {
 		t.Fatalf("an event with a rejected marker naming node 'waiting' was evaluated %d times by st-b, want 0", n)
 	}
@@ -93,7 +93,7 @@ func TestPostedEventWithoutAVerifiedMarkerArrivesAtRoot(t *testing.T) {
 
 	// The verified marker from the firing that landed on 'waiting' fires
 	// st-b -- from the landing node, not from what its payload names.
-	verified := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "timer", "payload": map[string]any{"node": "somewhere-else", "origin": origin(mac)}})
+	verified := postEventAccess(t, srv, eventTokenSecret, map[string]any{"name": "pr-upkeep.pr", "payload": map[string]any{"node": "somewhere-else", "origin": origin(mac)}})
 	if n := firings(verified.Event.ID, vb.DeclarationID); n != 1 {
 		t.Fatalf("the verified reaction fired st-b %d times, want 1", n)
 	}

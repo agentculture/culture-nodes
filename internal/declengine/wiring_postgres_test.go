@@ -46,9 +46,9 @@ func TestPostgresDrainOnCloseReplaysDeferredSubject(t *testing.T) {
 			ctx := context.Background()
 			ns := pgtest.MustNamespace(t, db, "tca-drain-close").ID
 
-			a := declFor("dc-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`)
+			a := declFor("dc-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 			a.Trigger.MaxConcurrentSubject = 1
-			b := declFor("dc-b", "waiting", "none", "done", "none", "timer", `{"uses":"actor://test"}`)
+			b := declFor("dc-b", "waiting", "none", "done", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 			va := publishActive(t, db, ns, a)
 			vb := publishActive(t, db, ns, b)
 
@@ -59,7 +59,7 @@ func TestPostgresDrainOnCloseReplaysDeferredSubject(t *testing.T) {
 				t.Fatal(err)
 			}
 			fresh := func(id string) Event {
-				return Event{NamespaceID: ns, ID: id, Kind: "timer", Node: "intake", Subject: "ISSUE-1"}
+				return Event{NamespaceID: ns, ID: id, Kind: "pr-upkeep.pr", Node: "intake", Subject: "ISSUE-1"}
 			}
 			first, second := deliver(t, db, ns), deliver(t, db, ns)
 			if err := e.Handle(ctx, fresh(first)); err != nil {
@@ -83,16 +83,16 @@ func TestPostgresDrainOnCloseReplaysDeferredSubject(t *testing.T) {
 				}
 			case "consumed":
 				react := deliver(t, db, ns)
-				if err := e.Handle(ctx, reactEvent(t, db, ns, react, fa, "timer", nil)); err != nil {
+				if err := e.Handle(ctx, reactEvent(t, db, ns, react, fa, "pr-upkeep.pr", nil)); err != nil {
 					t.Fatal(err)
 				}
 			case "orphaned":
 				// b reacted when the node opened; upgrading it so it no
 				// longer starts on "waiting" orphans the node on the next
 				// reaction.
-				publishActive(t, db, ns, declFor("dc-b", "elsewhere", "none", "done", "none", "timer", `{"uses":"actor://test"}`))
+				publishActive(t, db, ns, declFor("dc-b", "elsewhere", "none", "done", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 				react := deliver(t, db, ns)
-				if err := e.Handle(ctx, reactEvent(t, db, ns, react, fa, "timer", nil)); err != nil {
+				if err := e.Handle(ctx, reactEvent(t, db, ns, react, fa, "pr-upkeep.pr", nil)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -143,7 +143,7 @@ func TestPostgresWorkerDispatcherRefusesAnActorThatDoesNotStamp(t *testing.T) {
 	// not. The refusal must read the current revision, and name it.
 	register(1, `{"stamping":{"marker":"cn1","version":1}}`)
 	register(2, `{"preflight":{"enabled":true}}`)
-	d := declFor("stamp-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test/bridge@sha256:bbbbbb","input":{"text":"x"}}`)
+	d := declFor("stamp-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test/bridge@sha256:bbbbbb","input":{"text":"x"}}`)
 	v := publishActive(t, db, ns, d)
 	t.Setenv("TCA_STAMPING_KEY", strings.Repeat("s", 32))
 	e, err := New(Config{MarkerKeyEnv: "TCA_STAMPING_KEY"}, PostgresBackend{db}, PostgresMarkerStore{db}, WorkerDispatcher{Store: db, ProducerActorID: producer})
@@ -152,7 +152,7 @@ func TestPostgresWorkerDispatcherRefusesAnActorThatDoesNotStamp(t *testing.T) {
 	}
 
 	refused := deliver(t, db, ns)
-	err = e.Handle(ctx, Event{NamespaceID: ns, ID: refused, Kind: "timer", Node: "intake"})
+	err = e.Handle(ctx, Event{NamespaceID: ns, ID: refused, Kind: "pr-upkeep.pr", Node: "intake"})
 	var refusal *StampingRefusal
 	if !errors.As(err, &refusal) || refusal.ActorKey != "test/bridge" || refusal.Revision != 2 {
 		t.Fatalf("Handle err = %v, want a StampingRefusal for test/bridge revision 2", err)
@@ -170,7 +170,7 @@ func TestPostgresWorkerDispatcherRefusesAnActorThatDoesNotStamp(t *testing.T) {
 	// A new revision that advertises stamping: the next event dispatches.
 	register(3, `{"stamping":{"marker":"cn1","version":1}}`)
 	accepted := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: accepted, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: accepted, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := terminalOutcome(t, db, ns, accepted, v.DeclarationID); got != OutcomeFired {
@@ -192,7 +192,7 @@ func TestPostgresUnregisteredProducerFailsTheFirstFiringLoudly(t *testing.T) {
 	if _, err := db.Pool().Exec(ctx, `INSERT INTO actors(id,namespace_id,actor_key,revision,kind,protocol,capabilities) VALUES($1,$2,'test/bridge',1,'agent','http','{"stamping":{"marker":"cn1"}}')`, store.NewULID(), ns); err != nil {
 		t.Fatal(err)
 	}
-	v := publishActive(t, db, ns, declFor("prod-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test/bridge"}`))
+	v := publishActive(t, db, ns, declFor("prod-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test/bridge"}`))
 	t.Setenv("TCA_PRODUCER_KEY", strings.Repeat("p", 32))
 	missing := "engine_unregistered_" + store.NewULID()
 	e, err := New(Config{MarkerKeyEnv: "TCA_PRODUCER_KEY"}, PostgresBackend{db}, PostgresMarkerStore{db}, WorkerDispatcher{Store: db, ProducerActorID: missing})
@@ -200,7 +200,7 @@ func TestPostgresUnregisteredProducerFailsTheFirstFiringLoudly(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventID := deliver(t, db, ns)
-	err = e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "timer", Node: "intake"})
+	err = e.Handle(ctx, Event{NamespaceID: ns, ID: eventID, Kind: "pr-upkeep.pr", Node: "intake"})
 	if !errors.Is(err, ErrProducerNotRegistered) {
 		t.Fatalf("Handle err = %v, want ErrProducerNotRegistered", err)
 	}
@@ -237,8 +237,8 @@ func TestPostgresRouterBeforeStoresFrozenAndDriverReplays(t *testing.T) {
 			db := pgtest.RequireStore(t, markerTestStore)
 			ctx := context.Background()
 			ns := pgtest.MustNamespace(t, db, "tca-router-freeze").ID
-			va := publishActive(t, db, ns, declFor("rf-a", RootNode, "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
-			vb := publishActive(t, db, ns, declFor("rf-b", "waiting", "none", "done", "none", "timer", `{"uses":"actor://test"}`))
+			va := publishActive(t, db, ns, declFor("rf-a", RootNode, "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
+			vb := publishActive(t, db, ns, declFor("rf-b", "waiting", "none", "done", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 
 			sw := PostgresSwitchStore{Store: db}
 			fb := PostgresBackend{db}
@@ -251,7 +251,7 @@ func TestPostgresRouterBeforeStoresFrozenAndDriverReplays(t *testing.T) {
 			router := Router{Engine: e, Switch: sw}
 			deliverVia := func(payload json.RawMessage) postgres.SignalDelivery {
 				t.Helper()
-				d, err := db.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Payload: payload, Emitter: "test", Declarations: router})
+				d, err := db.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Payload: payload, Emitter: "test", Declarations: router})
 				if err != nil || d.DeclarationErr != nil {
 					t.Fatalf("deliver: err=%v declarationErr=%v", err, d.DeclarationErr)
 				}
@@ -275,7 +275,7 @@ func TestPostgresRouterBeforeStoresFrozenAndDriverReplays(t *testing.T) {
 
 			// 'before', a reaction to the frozen node: stored, not evaluated.
 			reactID := store.NewULID() // placeholder id only to build the origin
-			reaction := deliverVia(originPayload(t, reactEvent(t, db, ns, reactID, fa, "timer", nil)))
+			reaction := deliverVia(originPayload(t, reactEvent(t, db, ns, reactID, fa, "pr-upkeep.pr", nil)))
 			node, _, err := fb.NodeByFiring(ctx, ns, fa.ID)
 			if err != nil || node.State != NodeStateFrozen {
 				t.Fatalf("node=%+v err=%v, want frozen", node, err)
@@ -329,7 +329,7 @@ func TestPostgresDriverExpiresOnTheCallersClockPerMode(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-driver-expiry").ID
-	va := publishActive(t, db, ns, declFor("dx-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`))
+	va := publishActive(t, db, ns, declFor("dx-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 	sw := PostgresSwitchStore{Store: db}
 	fb := PostgresBackend{db}
 	t.Setenv("TCA_DRIVER_KEY", strings.Repeat("v", 32))
@@ -342,7 +342,7 @@ func TestPostgresDriverExpiresOnTheCallersClockPerMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	fa := firingByEventDecl(t, db, ns, first, va.DeclarationID)

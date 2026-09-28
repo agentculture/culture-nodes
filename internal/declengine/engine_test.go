@@ -51,7 +51,7 @@ func TestDecidedOutcomeSkipsReevaluation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev := Event{NamespaceID: "test", ID: "event-decided", Kind: "timer", Node: "ready"}
+	ev := Event{NamespaceID: "test", ID: "event-decided", Kind: "pr-upkeep.pr", Node: "ready"}
 	if err := e.Handle(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func (f dispatchFunc) Dispatch(c context.Context, r DispatchRequest) (DispatchRe
 	return f(c, r)
 }
 func active(name string) ActiveDeclaration {
-	return ActiveDeclaration{ID: name, VersionID: name + "-v1", Declaration: decl.Declaration{Name: name, Trigger: decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"}, Condition: "event.priority == 'High'", Action: decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test","input":{"text":"{1:x}|{2:y}|{A:z:absent}"}}`)}, StartNode: decl.Node{Name: "ready", Deadline: "none"}, LandingNode: decl.Node{Name: "waiting", Deadline: "1h"}}}
+	return ActiveDeclaration{ID: name, VersionID: name + "-v1", Declaration: decl.Declaration{Name: name, Trigger: decl.Trigger{Kind: "pr-upkeep.pr", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"}, Condition: "event.priority == 'High'", Action: decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test","input":{"text":"{1:x}|{2:y}|{A:z:absent}"}}`)}, StartNode: decl.Node{Name: "ready", Deadline: "none"}, LandingNode: decl.Node{Name: "waiting", Deadline: "1h"}}}
 }
 func newTestEngine(t *testing.T, m *memoryBackend, d Dispatcher) *Engine {
 	t.Helper()
@@ -173,7 +173,7 @@ func TestFiringPipelineAndDuplicate(t *testing.T) {
 		}
 		return DispatchResult{Variables: map[string]any{"pr": "42"}}, nil
 	}))
-	event := Event{NamespaceID: "ns", ID: "event", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	event := Event{NamespaceID: "ns", ID: "event", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	for i := 0; i < 2; i++ {
 		if err := e.Handle(context.Background(), event); err != nil {
 			t.Fatal(err)
@@ -212,7 +212,7 @@ func TestInvalidLandingDeadlineRefusedBeforeDispatch(t *testing.T) {
 		t.Fatal("dispatched without a valid landing node")
 		return DispatchResult{}, nil
 	}))
-	err := e.Handle(context.Background(), Event{NamespaceID: "ns", ID: "e", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}})
+	err := e.Handle(context.Background(), Event{NamespaceID: "ns", ID: "e", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}})
 	if err == nil || len(m.claims) != 0 || m.steps[len(m.steps)-1].Outcome != OutcomeEvaluationError {
 		t.Fatalf("err=%v claims=%d steps=%+v", err, len(m.claims), m.steps)
 	}
@@ -242,7 +242,7 @@ func TestMustCanAndLineageTemplates(t *testing.T) {
 				}))
 				// The marker verifier is independently covered; exercise matching on the
 				// resolved causal ancestry, never on all rows sharing a lineage ID.
-				err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}, a, "parent", m.ancestors)
+				err := e.evaluate(context.Background(), Event{NamespaceID: "ns", ID: "e", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}, a, "parent", m.ancestors)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -266,7 +266,7 @@ func TestLiveUpgradePinsComponents(t *testing.T) {
 	a.Declaration.Trigger.AllowSelfRetrigger = true
 	m := &memoryBackend{active: []ActiveDeclaration{a}}
 	e := newTestEngine(t, m, dispatchFunc(func(context.Context, DispatchRequest) (DispatchResult, error) { return DispatchResult{}, nil }))
-	ev := Event{NamespaceID: "ns", ID: "one", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	ev := Event{NamespaceID: "ns", ID: "one", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	if err := e.Handle(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}

@@ -14,10 +14,10 @@ func TestPostgresDecidedEventRedelivery(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-redelivery").ID
-	falseDecl := declFor("redelivery-false", RootNode, "none", "waiting", "none", "timer", `{"uses":"actor://test"}`)
+	falseDecl := declFor("redelivery-false", RootNode, "none", "waiting", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	falseDecl.Condition = "false"
 	fv := publishActive(t, db, ns, falseDecl)
-	trueDecl := declFor("redelivery-fired", RootNode, "none", "waiting", "none", "timer", `{"uses":"actor://test"}`)
+	trueDecl := declFor("redelivery-fired", RootNode, "none", "waiting", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	trueDecl.Condition = "true"
 	tv := publishActive(t, db, ns, trueDecl)
 	sw := PostgresSwitchStore{Store: db}
@@ -31,7 +31,7 @@ func TestPostgresDecidedEventRedelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := Router{Engine: e, Switch: sw}
-	in := postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Emitter: "test", SourceKey: "redelivery-event", Watermark: json.RawMessage(`1`), Declarations: router}
+	in := postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Emitter: "test", SourceKey: "redelivery-event", Watermark: json.RawMessage(`1`), Declarations: router}
 	deliver := func() postgres.SignalDelivery {
 		t.Helper()
 		d, err := db.DeliverSignalEvent(ctx, in)
@@ -116,7 +116,7 @@ func TestPostgresUndecidedEventRedelivery(t *testing.T) {
 	db := pgtest.RequireStore(t, markerTestStore)
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-redelivery-crash").ID
-	v := publishActive(t, db, ns, declFor("redelivery-crash", RootNode, "none", "waiting", "none", "timer", `{"uses":"actor://test"}`))
+	v := publishActive(t, db, ns, declFor("redelivery-crash", RootNode, "none", "waiting", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`))
 	sw := PostgresSwitchStore{Store: db}
 	if _, err := sw.Flip(ctx, ns, ModeAfter, "human:ops", "test"); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestPostgresUndecidedEventRedelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Emitter: "test", SourceKey: "crash-event", Watermark: json.RawMessage(`1`)}
+	in := postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Emitter: "test", SourceKey: "crash-event", Watermark: json.RawMessage(`1`)}
 	first, err := db.DeliverSignalEvent(ctx, in)
 	if err != nil {
 		t.Fatal(err)

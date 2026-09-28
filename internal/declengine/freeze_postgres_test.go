@@ -21,8 +21,8 @@ func TestPostgresFreezeStoresRedeliveryDedupsAndReplayFiresOnce(t *testing.T) {
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-freeze").ID
 
-	a := declFor("frz-a", "intake", "none", "waiting", "none", "timer", `{"uses":"actor://test"}`)
-	b := declFor("frz-b", "waiting", "none", "done", "none", "timer", `{"uses":"actor://test"}`)
+	a := declFor("frz-a", "intake", "none", "waiting", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`)
+	b := declFor("frz-b", "waiting", "none", "done", "none", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	va := publishActive(t, db, ns, a)
 	vb := publishActive(t, db, ns, b)
 
@@ -42,7 +42,7 @@ func TestPostgresFreezeStoresRedeliveryDedupsAndReplayFiresOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	fa := firingByEventDecl(t, db, ns, first, va.DeclarationID)
@@ -63,7 +63,7 @@ func TestPostgresFreezeStoresRedeliveryDedupsAndReplayFiresOnce(t *testing.T) {
 
 	// An event arriving for the frozen node is stored, not fired.
 	react1 := deliver(t, db, ns)
-	event1 := reactEvent(t, db, ns, react1, fa, "timer", map[string]any{"x": float64(1)})
+	event1 := reactEvent(t, db, ns, react1, fa, "pr-upkeep.pr", map[string]any{"x": float64(1)})
 	if err := e.Handle(ctx, event1); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestPostgresFreezeStoresRedeliveryDedupsAndReplayFiresOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stored) != 1 || stored[0].ID != react1 || stored[0].Kind != "timer" {
+	if len(stored) != 1 || stored[0].ID != react1 || stored[0].Kind != "pr-upkeep.pr" {
 		t.Fatalf("frozen events = %+v, want exactly one for %s", stored, react1)
 	}
 
@@ -149,7 +149,7 @@ func TestPostgresFreezePausesDeadlineAndExcludesFromExpiry(t *testing.T) {
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, db, "tca-freeze-deadline").ID
 
-	a := declFor("frzd-a", "intake", "none", "waiting", "1h", "timer", `{"uses":"actor://test"}`)
+	a := declFor("frzd-a", "intake", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`)
 	va := publishActive(t, db, ns, a)
 
 	dispatcher := &chainDispatcher{rendered: map[string]string{}, vars: map[string]map[string]any{}}
@@ -166,7 +166,7 @@ func TestPostgresFreezePausesDeadlineAndExcludesFromExpiry(t *testing.T) {
 	}
 
 	first := deliver(t, db, ns)
-	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "timer", Node: "intake"}); err != nil {
+	if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "intake"}); err != nil {
 		t.Fatal(err)
 	}
 	fa := firingByEventDecl(t, db, ns, first, va.DeclarationID)

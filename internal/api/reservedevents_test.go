@@ -15,7 +15,7 @@ import (
 	storepg "github.com/agentculture/culture-nodes/internal/store/postgres"
 )
 
-var reservedEventNames = []string{"human.decision", "code.result", "agent.result", "node.expired",
+var reservedEventNames = []string{"timer", "human.decision", "code.result", "agent.result", "node.expired",
 	"action.failed", "action.timed_out", "action.rejected", "action.capacity_exhausted", "action.budget_exhausted"}
 
 func signalEventCount(t *testing.T, f *fixture) int {
@@ -36,16 +36,19 @@ func TestDeliverEventRefusesTheControlPlanesReservedNamesAndEmitter(t *testing.T
 			t.Errorf("POST %s: %d %s, want 403 naming the reserved kind", name, resp.StatusCode, body)
 		}
 	}
-	resp, body := postEvent(t, f, eventTokenSecret, deliverEventReq{Name: "timer", Emitter: "engine_declaration_engine"}, nil)
+	resp, body := postEvent(t, f, eventTokenSecret, deliverEventReq{Name: "ordinary", Emitter: "engine_declaration_engine"}, nil)
 	if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "engine_declaration_engine") {
 		t.Errorf("POST timer as the engine's emitter: %d %s, want 403 naming the emitter", resp.StatusCode, body)
 	}
 	if n := signalEventCount(t, f); n != 0 {
 		t.Fatalf("refused deliveries appended %d signal events, want 0", n)
 	}
+	if resp, body := postEvent(t, f, eventTokenSecret, deliverEventReq{Name: "ordinary", Emitter: "schedule:forged"}, nil); resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "schedule:forged") {
+		t.Errorf("POST forged schedule emitter: %d %s, want 403", resp.StatusCode, body)
+	}
 	// An ordinary event is still delivered.
-	if resp, body := postEvent(t, f, eventTokenSecret, deliverEventReq{Name: "timer", Emitter: "human-inbox"}, nil); resp.StatusCode != http.StatusCreated {
-		t.Fatalf("POST timer: %d %s, want 201", resp.StatusCode, body)
+	if resp, body := postEvent(t, f, eventTokenSecret, deliverEventReq{Name: "ordinary", Emitter: "human-inbox"}, nil); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST ordinary: %d %s, want 201", resp.StatusCode, body)
 	}
 }
 
@@ -59,10 +62,16 @@ func TestStoreDeliveryAndSchedulesRefuseReservedEvents(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("DeliverSignalEvent %s: err = %v, want the reserved-name refusal", name, err)
 		}
+		if name == "timer" {
+			continue
+		}
 		resp, _ := createSchedule(t, f, map[string]any{"name": "s-" + strings.ReplaceAll(name, ".", "-"), "event_name": name, "interval_seconds": 60})
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("POST /schedules event_name=%s: %d, want 400", name, resp.StatusCode)
 		}
+	}
+	if resp, body := createSchedule(t, f, map[string]any{"name": "timer-check", "event_name": "timer", "interval_seconds": 60}); resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST timer schedule: %d %+v, want 201", resp.StatusCode, body)
 	}
 	if _, err := f.store.DeliverSignalEvent(context.Background(), storepg.DeliverSignalEventInput{NamespaceID: f.nsID, Name: "timer", Emitter: "engine_declaration_engine"}); err == nil {
 		t.Error("DeliverSignalEvent accepted the engine's own emitter from outside the engine")

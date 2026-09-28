@@ -105,6 +105,9 @@ func (w WorkerDispatcher) Dispatch(ctx context.Context, r DispatchRequest) (Disp
 	if err != nil {
 		return DispatchResult{}, err
 	}
+	// This engine creates the declaration action's one-node envelope by
+	// explicit dispatch. It does not route graph workflow triggers, so the
+	// graph NewRunGate must not prevent declaration actions in `after`.
 	eng, err := engine.New(es)
 	if err != nil {
 		return DispatchResult{}, err

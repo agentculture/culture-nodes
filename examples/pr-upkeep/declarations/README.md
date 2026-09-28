@@ -83,6 +83,17 @@ fields it receives. The existing exposure approvals below still apply.
 
 These gaps are recorded, not hidden. Shadow parity (t32) will show each one:
 
+- **The timer entry needs the operator's schedule row.** `pr-upkeep-sweep`
+  fires only when the second 300-second row emits `timer` with payload
+  `{"schedule":"pr-upkeep-sweep-5m"}`. External ingress cannot assert this
+  reserved kind or claim a `schedule:` emitter. See the cutover runbook in
+  `docs/operations/pr-upkeep-lane.md` before disabling the legacy row.
+- **Technical dispatch refusal is visible through the action result.** A
+  missing runner registry entry, digest mismatch, or missing environment grant
+  fails the dispatch run. It produces no `code.result`, so neither `swept`
+  nor `sweep-failed` fires; the sweep landing node expires after one hour.
+  Inspect `action.*` results and declaration evaluations in that case.
+
 - **Reaction kinds registered by t31b.** t31b registered `pr-upkeep.pr`,
   `agent.result` and `jira.issue.transitioned` in `internal/decl/kinds`.
   t31c emits `jira.issue.transitioned`. Since t38e the control plane's

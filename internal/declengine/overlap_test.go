@@ -59,8 +59,8 @@ func TestDetectOverlapsUndecidableIsPossiblyOverlapping(t *testing.T) {
 		"event.priority.startsWith('H')", // function call
 		"lineage.x == 'y'",               // not an event field
 	} {
-		a := overlapCandidate("decl-a", "ready", "timer", source)
-		b := overlapCandidate("decl-b", "ready", "timer", "event.priority == 'High'")
+		a := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", source)
+		b := overlapCandidate("decl-b", "ready", "pr-upkeep.pr", "event.priority == 'High'")
 		pairs := DetectOverlaps([]ActiveDeclaration{a, b})
 		if len(pairs) != 1 {
 			t.Fatalf("source %q: got %d pairs, want 1", source, len(pairs))
@@ -72,8 +72,8 @@ func TestDetectOverlapsUndecidableIsPossiblyOverlapping(t *testing.T) {
 }
 
 func TestDetectOverlapsRequiresSameNodeAndTrigger(t *testing.T) {
-	base := overlapCandidate("decl-a", "ready", "timer", "true")
-	diffNode := overlapCandidate("decl-b", "other", "timer", "true")
+	base := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "true")
+	diffNode := overlapCandidate("decl-b", "other", "pr-upkeep.pr", "true")
 	diffTrigger := overlapCandidate("decl-c", "ready", "jira.issue.created", "true")
 	if pairs := DetectOverlaps([]ActiveDeclaration{base, diffNode}); len(pairs) != 0 {
 		t.Fatalf("declarations on different nodes must not pair: %+v", pairs)
@@ -84,8 +84,8 @@ func TestDetectOverlapsRequiresSameNodeAndTrigger(t *testing.T) {
 }
 
 func TestDetectOverlapsUnconditionalDeclarationsAlwaysOverlap(t *testing.T) {
-	a := overlapCandidate("decl-a", "ready", "timer", "true")
-	b := overlapCandidate("decl-b", "ready", "timer", "true")
+	a := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "true")
+	b := overlapCandidate("decl-b", "ready", "pr-upkeep.pr", "true")
 	pairs := DetectOverlaps([]ActiveDeclaration{a, b})
 	if len(pairs) != 1 || pairs[0].Status != OverlapConfirmed {
 		t.Fatalf("two unconditional declarations on the same node/trigger must be a confirmed overlap: %+v", pairs)
@@ -93,8 +93,8 @@ func TestDetectOverlapsUnconditionalDeclarationsAlwaysOverlap(t *testing.T) {
 }
 
 func TestDetectOverlapsLiteralFalseNeverOverlaps(t *testing.T) {
-	a := overlapCandidate("decl-a", "ready", "timer", "false")
-	b := overlapCandidate("decl-b", "ready", "timer", "true")
+	a := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "false")
+	b := overlapCandidate("decl-b", "ready", "pr-upkeep.pr", "true")
 	pairs := DetectOverlaps([]ActiveDeclaration{a, b})
 	if len(pairs) != 0 {
 		t.Fatalf("a declaration whose condition is literally false can never overlap: %+v", pairs)
@@ -102,8 +102,8 @@ func TestDetectOverlapsLiteralFalseNeverOverlaps(t *testing.T) {
 }
 
 func TestDetectOverlapsPairOrderingIsStable(t *testing.T) {
-	a := overlapCandidate("decl-z", "ready", "timer", "true")
-	b := overlapCandidate("decl-a", "ready", "timer", "true")
+	a := overlapCandidate("decl-z", "ready", "pr-upkeep.pr", "true")
+	b := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "true")
 	pairs1 := DetectOverlaps([]ActiveDeclaration{a, b})
 	pairs2 := DetectOverlaps([]ActiveDeclaration{b, a})
 	if len(pairs1) != 1 || len(pairs2) != 1 {
@@ -121,7 +121,7 @@ func TestDetectOverlapsIgnoresSelfPairing(t *testing.T) {
 	// Defensive: Active() never returns two rows for the same
 	// declaration_id, but DetectOverlaps must not pair a declaration with
 	// itself if it ever did.
-	a := overlapCandidate("decl-a", "ready", "timer", "true")
+	a := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "true")
 	dup := a
 	pairs := DetectOverlaps([]ActiveDeclaration{a, dup})
 	if len(pairs) != 0 {
@@ -148,8 +148,8 @@ func TestFormatOverlapReportIsReadable(t *testing.T) {
 // -- the one case where two "!=" conjunctions on the same field ARE decided
 // unsatisfiable rather than assumed compatible.
 func TestDetectOverlapsBoolDomainExhaustedIsDecidedNonOverlap(t *testing.T) {
-	a := overlapCandidate("decl-a", "ready", "timer", "event.done != true")
-	b := overlapCandidate("decl-b", "ready", "timer", "event.done != false")
+	a := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "event.done != true")
+	b := overlapCandidate("decl-b", "ready", "pr-upkeep.pr", "event.done != false")
 	pairs := DetectOverlaps([]ActiveDeclaration{a, b})
 	if len(pairs) != 0 {
 		t.Fatalf("excluding both bool values leaves no satisfying assignment: %+v", pairs)
@@ -159,8 +159,8 @@ func TestDetectOverlapsBoolDomainExhaustedIsDecidedNonOverlap(t *testing.T) {
 func TestDetectOverlapsStringDomainNeqNeqOverlaps(t *testing.T) {
 	// String domain is treated as open: excluding two different strings
 	// still leaves room, so this is a decided overlap.
-	a := overlapCandidate("decl-a", "ready", "timer", "event.priority != 'Low'")
-	b := overlapCandidate("decl-b", "ready", "timer", "event.priority != 'Medium'")
+	a := overlapCandidate("decl-a", "ready", "pr-upkeep.pr", "event.priority != 'Low'")
+	b := overlapCandidate("decl-b", "ready", "pr-upkeep.pr", "event.priority != 'Medium'")
 	pairs := DetectOverlaps([]ActiveDeclaration{a, b})
 	if len(pairs) != 1 || pairs[0].Status != OverlapConfirmed {
 		t.Fatalf("two open-domain != constraints on the same field should decide overlap: %+v", pairs)

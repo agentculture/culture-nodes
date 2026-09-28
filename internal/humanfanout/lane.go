@@ -52,6 +52,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/agentculture/culture-nodes/internal/actors"
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
 	"github.com/agentculture/culture-nodes/internal/worker"
@@ -263,7 +264,8 @@ func (l *Lane) engineFor(namespaceID string) (*engine.Engine, error) {
 	if eng, ok := l.engines[namespaceID]; ok {
 		return eng, nil
 	}
-	eng, err := postgres.NewEngine(l.store, namespaceID)
+	eng, err := postgres.NewEngine(l.store, namespaceID,
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: l.store}}))
 	if err != nil {
 		return nil, fmt.Errorf("humanfanout: build engine for namespace %s: %w", namespaceID, err)
 	}

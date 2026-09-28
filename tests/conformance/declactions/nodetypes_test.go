@@ -240,10 +240,9 @@ func TestStartFromNeverMatchesRoot(t *testing.T) {
 	bd := jiraDecl("sf-root", "timer", declengine.RootNode, "done")
 	bd.StartFrom = &decl.StartFrom{Any: true}
 	b := r.publish(bd)
-	d, err := r.db.DeliverSignalEvent(r.ctx, postgres.DeliverSignalEventInput{NamespaceID: r.ns, Name: "timer", Payload: json.RawMessage(`{"node":"root"}`),
-		Emitter: "conformance", Declarations: declengine.Router{Engine: r.engine, Switch: r.sw}})
-	if err != nil || d.DeclarationErr != nil {
-		t.Fatalf("deliver: err=%v declarationErr=%v", err, d.DeclarationErr)
+	d := r.scheduleTick(json.RawMessage(`{"node":"root"}`), declengine.Router{Engine: r.engine, Switch: r.sw})
+	if d.DeclarationErr != nil {
+		t.Fatalf("deliver: declarationErr=%v", d.DeclarationErr)
 	}
 	if fs := r.firings(b); len(fs) != 0 {
 		t.Fatalf("start_from any fired from root: %+v", fs)

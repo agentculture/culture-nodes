@@ -405,6 +405,9 @@ func fakeControlPlane(t *testing.T, versions []workflowVersion, schedules []map[
 	mux.HandleFunc("/v1alpha1/schedules", func(w http.ResponseWriter, _ *http.Request) {
 		writeFixtureJSON(t, w, map[string]any{"items": schedules})
 	})
+	mux.HandleFunc("/v1alpha1/declarations/grants", func(w http.ResponseWriter, _ *http.Request) {
+		writeFixtureJSON(t, w, map[string]any{"items": []any{}})
+	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server.URL
@@ -473,6 +476,32 @@ func TestGrantCheckPassesWhenEveryReachableRefIsGranted(t *testing.T) {
 	}
 	if backups := backupsOf(t, runnerSecretsPath(t, c, thorFake)); len(backups) != 0 {
 		t.Errorf("the grant check wrote %v; a read-only lane has nothing to back up", backups)
+	}
+}
+
+func TestGrantCheckRefusesMissingActivatedDeclarationGrant(t *testing.T) {
+	c := newFakeCluster(t)
+	grantedHost(t, c, thorFake, fiveKeyRunnerSecrets())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1alpha1/workflows", func(w http.ResponseWriter, _ *http.Request) {
+		writeFixtureJSON(t, w, map[string]any{"items": []any{}})
+	})
+	mux.HandleFunc("/v1alpha1/schedules", func(w http.ResponseWriter, _ *http.Request) {
+		writeFixtureJSON(t, w, map[string]any{"items": []any{}})
+	})
+	mux.HandleFunc("/v1alpha1/declarations/grants", func(w http.ResponseWriter, _ *http.Request) {
+		writeFixtureJSON(t, w, map[string]any{"items": []any{map[string]any{
+			"name": "pr-upkeep-sweep", "environment_refs": []string{"DECLARATION_ONLY_TOKEN"},
+		}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	_, stderr, code := runGrantCheck(t, c, thorFake, server.URL)
+	if code == 0 || !strings.Contains(stderr, "DECLARATION_ONLY_TOKEN") || !strings.Contains(stderr, "pr-upkeep-sweep") {
+		t.Fatalf("missing activated declaration grant: exit %d, stderr %s", code, stderr)
+	}
+	if strings.Contains(stderr, fixtureGitHubToken) {
+		t.Fatal("grant value leaked")
 	}
 }
 
@@ -611,6 +640,7 @@ func rawControlPlane(t *testing.T, workflows, schedules string) string {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1alpha1/workflows", body(workflows))
 	mux.HandleFunc("/v1alpha1/schedules", body(schedules))
+	mux.HandleFunc("/v1alpha1/declarations/grants", body(`{"items":[]}`))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server.URL

@@ -250,7 +250,7 @@ func TestDrainSubjectReplaysOldestQueuedEntry(t *testing.T) {
 	if calls != 0 {
 		t.Fatal("drained with nothing queued")
 	}
-	ev := Event{NamespaceID: "ns", ID: "queued", Kind: "timer", Node: "ready", Variables: map[string]any{"priority": "High"}}
+	ev := Event{NamespaceID: "ns", ID: "queued", Kind: "pr-upkeep.pr", Node: "ready", Variables: map[string]any{"priority": "High"}}
 	if err := m.DeferSubject(context.Background(), DeferSubjectInput{NamespaceID: "ns", DeclarationID: "A", Subject: "ISSUE-1", Event: ev}); err != nil {
 		t.Fatal(err)
 	}

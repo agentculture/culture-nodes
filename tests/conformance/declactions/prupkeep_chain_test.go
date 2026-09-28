@@ -62,6 +62,99 @@ func runnableHere(t *testing.T, d decl.Declaration) decl.Declaration {
 	return d
 }
 
+func TestPRUpkeepSweepTimerChain(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		exit    int
+		target  string
+		outcome string
+	}{
+		{"passed", 0, "swept.json", "passed"},
+		{"failed", 1, "sweep-failed.json", "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sweep := realDeclaration(t, "sweep.json")
+			passed := realDeclaration(t, "swept.json")
+			failed := realDeclaration(t, "sweep-failed.json")
+			if sweep.Trigger.Kind != "timer" || passed.StartNode.Name != sweep.LandingNode.Name || failed.StartNode.Name != sweep.LandingNode.Name {
+				t.Fatal("real sweep declarations do not form the timer chain")
+			}
+			r := newReactionHarness(t)
+			r.runner.exitCode = tc.exit
+			a := r.publishReal(runnableHere(t, sweep))
+			b := r.publishReal(runnableHere(t, passed))
+			c := r.publishReal(runnableHere(t, failed))
+			manifestBytes, err := os.ReadFile(filepath.Join(prUpkeepDeclarations, "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest struct {
+				Links []struct{ From, To, Kind string } `json:"links"`
+			}
+			if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			versions := map[string]postgres.DeclarationVersion{sweep.Name: a, passed.Name: b, failed.Name: c}
+			linked := 0
+			for _, link := range manifest.Links {
+				from, okFrom := versions[link.From]
+				to, okTo := versions[link.To]
+				if !okFrom || !okTo {
+					continue
+				}
+				if err := r.db.LinkDeclarations(r.ctx, r.ns, from.DeclarationID, to.DeclarationID, link.Kind); err != nil {
+					t.Fatal(err)
+				}
+				linked++
+			}
+			if linked < 2 {
+				t.Fatalf("manifest supplied %d sweep links, want both branches", linked)
+			}
+			d := r.scheduleTick(json.RawMessage(`{"schedule":"pr-upkeep-sweep-5m"}`), declengine.Router{Engine: r.engine, Switch: r.sw})
+			if d.DeclarationErr != nil {
+				t.Fatal(d.DeclarationErr)
+			}
+			fa := r.onlyFiring(a)
+			if state := r.settle(fa.id, false); state != "completed" {
+				t.Fatalf("sweep run state %s", state)
+			}
+			r.drive()
+			var target postgres.DeclarationVersion
+			if tc.target == "swept.json" {
+				target = b
+			} else {
+				target = c
+			}
+			child := r.assertContinues(fa, target, "code.result", tc.outcome, r.runner.operations()[0].OperationID)
+			if child.lineage != fa.lineage {
+				t.Fatal("sweep reaction lost lineage")
+			}
+			other := c
+			if target.ID == c.ID {
+				other = b
+			}
+			if firings := r.firings(other); len(firings) != 0 {
+				t.Fatalf("wrong branch fired: %+v", firings)
+			}
+		})
+	}
+}
+
+func TestPRUpkeepSweepIgnoresTimerWithoutSchedule(t *testing.T) {
+	r := newReactionHarness(t)
+	sweep := r.publishReal(runnableHere(t, realDeclaration(t, "sweep.json")))
+	d := r.scheduleTick(json.RawMessage(`{}`), declengine.Router{Engine: r.engine, Switch: r.sw})
+	if d.DeclarationErr != nil {
+		t.Fatal(d.DeclarationErr)
+	}
+	if got := r.lastOutcome(d.Event.ID, sweep); got != declengine.OutcomeConditionFalse {
+		t.Fatalf("outcome %s", got)
+	}
+	if fs := r.firings(sweep); len(fs) != 0 {
+		t.Fatalf("empty timer fired: %+v", fs)
+	}
+}
+
 // publishReal publishes and activates d as authored (no default rewriting,
 // and its own exposes list) and approves every listed entry, as the owner
 // would.

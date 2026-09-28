@@ -342,6 +342,47 @@ Three properties follow from where the write lives:
 
 ## Reading a tick
 
+### Declaration sweep cutover (operator runbook)
+
+Production is already in declaration mode `after`. Do these steps in order;
+the timer row is an operator-authenticated configuration change, not a repo
+deploy action.
+
+0. Verify `GET /v1alpha1/schedules`: record both row names, event names,
+   enabled state and next fire times. Confirm `pr-upkeep-sweep` is activated.
+   On **each worker host**, inspect only the `name` fields in its
+   `NODES_RUNNER_SERVICES_FILE` (often `~/.culture-nodes/runners/services.json`):
+   `runner://headspace/pr-upkeep-sweep@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc`
+   and `runner://headspace/docker@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de`
+   must be registered. The sweep entry's `image_digest` must match the
+   operation image (`sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de`).
+   Registry entries are maintained by hand on each worker host. On each
+   runner host, compare the **key names only** in `runner.env` and
+   `runner-secrets.env` with `GET /v1alpha1/declarations/grants`, especially
+   `GITHUB_TOKEN`, `SONAR_TOKEN`, and `NODES_EVENT_TOKEN`. Do not print values.
+1. With operator authentication, `POST /v1alpha1/schedules`:
+
+   ```json
+   {"name":"pr-upkeep-sweep-timer","event_name":"timer","payload":{"schedule":"pr-upkeep-sweep-5m"},"interval_seconds":300}
+   ```
+
+   Confirm its next fire and a declaration evaluation for `pr-upkeep-sweep`.
+   Until the gate deploy, both the old graph sweep and declaration sweep may
+   execute on a tick; watermarks deduplicate the emitted facts.
+2. Deploy the gate build. Its scheduler, worker and expiry engines refuse new
+   graph runs in `after` while completing already open runs. Confirm a timer
+   evaluation and `code.result` reaction on a successful declaration run.
+3. Watch `GET /v1alpha1/declaration-engine/open-runs` until the open graph run
+   count is zero. Inspect `action.*` results and declaration evaluations for
+   rejected dispatches: a technical dispatch refusal fails the run, emits no
+   `code.result`, and therefore fires neither `swept` nor `sweep-failed`.
+   Its landing node expires after one hour. The old schedule suppression
+   probe no longer has a newly minted graph run to watch.
+4. Disable the old `pr-upkeep.sweep.due` schedule row by its ID using the
+   schedules PATCH endpoint (`{"enabled":false}`). Keep the timer row enabled.
+   If rollback is needed, re-enable the old row before reverting the gate
+   deploy; the temporary double sweep is cursor deduplicated.
+
 The tick's own report is JSON on the code node's stdout:
 
 ```json
@@ -350,6 +391,7 @@ The tick's own report is JSON on the code node's stdout:
   "emitted": 3,
   "skipped_findings": ["pr267-qodo-1"],
   "worked_findings": ["pr267-qodo-4"],
+  "dedupe_complete": true,
   "deferred_findings": ["pr267-qodo-3"],
   "pushbacks": [
     {"id": "pr267-qodo-2", "reason": "the owner replied that the hint line is deliberately absent from --json", "run_id": "01M19YG9ZJ"}
@@ -364,6 +406,7 @@ Read the lists as five different states, because they are:
 | `emitted` | facts appended this tick (PR findings **and** Jira facts) | nothing; the triggers took it from here |
 | `skipped_findings` | held by a **running** run — in flight, possibly parked on a human. A finding is held when its **package** is held: one member in flight holds the file | decide the approval, or leave it |
 | `worked_findings` | already dispatched **at this head SHA**; that run has ended (`no_change`, a rejected fix, a failure) | nothing until the PR moves — a push re-opens them all |
+| `dedupe_complete` | whether every discovery source supplied a complete cursor for this tick | investigate a false value before trusting absence of new findings |
 | `deferred_findings` | read, outranked this tick, **emittable next tick** | nothing; it is taking its turn |
 | `pushbacks` | a **person** declined this finding on the PR thread, and `analyse` recorded it with their reason | tell the source surface — dismiss the Sonar issue, resolve the thread — or the loop reads it again next tick |
 

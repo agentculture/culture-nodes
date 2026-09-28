@@ -55,7 +55,7 @@ func TestTickDrivesDeclarationsAtTheSchedulersClockAndOffersScheduleFires(t *tes
 	sch := scheduler.New(s, scheduler.Options{Now: clock.now, Declarations: fake})
 
 	sc := mustSchedule(t, s, postgres.CreateScheduleInput{
-		NamespaceID: ns.ID, Name: "decl-timer", EventName: "timer", Emitter: "schedule",
+		NamespaceID: ns.ID, Name: "decl-timer", EventName: "timer",
 		Payload: json.RawMessage(`{}`), Interval: time.Hour, FirstFireAt: clock.at,
 	})
 	if err := sch.Tick(ctx); err != nil {
@@ -115,7 +115,7 @@ func TestTickExpiresDeclarationNodesOnTheSchedulersClock(t *testing.T) {
 	ctx := context.Background()
 	ns := pgtest.MustNamespace(t, s, "sched-decl-expiry").ID
 	d := decl.Declaration{Name: "expiring", Condition: "true",
-		Trigger:     decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
+		Trigger:     decl.Trigger{Kind: "pr-upkeep.pr", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
 		Action:      decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test"}`)},
 		StartNode:   decl.Node{Name: declengine.RootNode, Deadline: "none"},
 		LandingNode: decl.Node{Name: "waiting", Deadline: "1h"}}
@@ -141,7 +141,7 @@ func TestTickExpiresDeclarationNodesOnTheSchedulersClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := declengine.Driver{Engine: eng, Store: s}
-	ev, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "timer", Emitter: "test", Declarations: driver})
+	ev, err := s.DeliverSignalEvent(ctx, postgres.DeliverSignalEventInput{NamespaceID: ns, Name: "pr-upkeep.pr", Emitter: "test", Declarations: driver})
 	if err != nil || ev.DeclarationErr != nil {
 		t.Fatalf("deliver: err=%v declarationErr=%v", err, ev.DeclarationErr)
 	}

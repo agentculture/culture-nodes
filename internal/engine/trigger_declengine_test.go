@@ -46,7 +46,7 @@ func TestDeliveryReachesDeclarationEngineUnderTheSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := decl.Declaration{Name: "on-timer", Condition: "true",
-		Trigger:     decl.Trigger{Kind: "timer", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
+		Trigger:     decl.Trigger{Kind: "pr-upkeep.pr", ReentryLimit: 3, HopLimit: 20, RateCeiling: "30/h"},
 		Action:      decl.Action{Kind: "agent.work", With: json.RawMessage(`{"uses":"actor://test/worker@sha256:aaaaaa","input":{"text":"hi"}}`)},
 		StartNode:   decl.Node{Name: declengine.RootNode, Deadline: "none"},
 		LandingNode: decl.Node{Name: "waiting", Deadline: "1h"}}
@@ -71,7 +71,7 @@ func TestDeliveryReachesDeclarationEngineUnderTheSwitch(t *testing.T) {
 
 	deliver := func(withDeclarations bool) storepg.SignalDelivery {
 		t.Helper()
-		in := storepg.DeliverSignalEventInput{NamespaceID: f.ns.ID, Name: "timer", Payload: json.RawMessage(`{}`), Emitter: "test",
+		in := storepg.DeliverSignalEventInput{NamespaceID: f.ns.ID, Name: "pr-upkeep.pr", Payload: json.RawMessage(`{}`), Emitter: "test",
 			Pickup: f.engine, Trigger: f.engine}
 		if withDeclarations {
 			in.Declarations = router

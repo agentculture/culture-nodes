@@ -371,6 +371,19 @@ services:
       NODES_NOTIFIER_API_BASE: http://api:8080
       NODES_NOTIFIER_CURSOR_FILE: /var/lib/nodes-notifier/cursor.json
       NODES_NOTIFIER_DASHBOARD_BASE: ${NODES_NOTIFIER_DASHBOARD_BASE:-http://thor:18080}
+      # Workflows whose run-lifecycle events are never posted (task t40f,
+      # #328): the pr-upkeep sweep runs every five minutes and its
+      # run.created/run.completed flooded the channel, so the default mutes
+      # both sweep lanes and a deploy alone turns the flood off: the graph
+      # sweep (`pr-upkeep-sweep-cycle`) and the declaration sweep. A run a
+      # DECLARATION fired is matched by its declaration name
+      # (`pr-upkeep-sweep`), not its envelope workflow. Comma-separated; an
+      # entry matches a workflow key exactly, or as a prefix when it ends in
+      # `*` (`pr-upkeep-sweep*` would also mute `pr-upkeep-sweep-failed`).
+      # An EMPTY value in prod.env does not unmute: `:-` substitutes the
+      # default for empty as well as unset. To post every workflow again,
+      # set a value that names no workflow, e.g. `none`.
+      NODES_NOTIFIER_SKIP_WORKFLOWS: ${NODES_NOTIFIER_SKIP_WORKFLOWS:-pr-upkeep-sweep-cycle,pr-upkeep-sweep}
       # internal/notify.ResolveWebhook reads exactly these two names, in
       # this priority order (CULTURE_NODES_WEBHOOK_URL first) — see
       # cmd/nodes-notifier/main.go's own usage text. Neither has a flag on

@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	"github.com/agentculture/culture-nodes/internal/clifmt"
+	"github.com/agentculture/culture-nodes/internal/declengine"
 	"github.com/agentculture/culture-nodes/internal/engine"
 	"github.com/agentculture/culture-nodes/internal/humanfanout"
 	"github.com/agentculture/culture-nodes/internal/store/postgres"
@@ -132,7 +133,8 @@ func cmdExpireApprovals(args []string, jsonMode bool) (int, error) {
 	}
 	defer db.Close()
 
-	eng, err := postgres.NewEngine(db, namespace)
+	eng, err := postgres.NewEngine(db, namespace,
+		engine.WithNewRunGate(declengine.DrainGate{Switch: declengine.PostgresSwitchStore{Store: db}}))
 	if err != nil {
 		return 0, &clifmt.CliError{
 			Code:        clifmt.ExitEnvError,

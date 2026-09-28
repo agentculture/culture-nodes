@@ -207,3 +207,21 @@ credential bound to a human actor may do two things on these routes, for
 when Access is down: deactivate a declaration, and flip the engine switch to
 `before`. It cannot publish, link, alias or activate. The owner accepts this
 for now and may revisit it.
+
+### Three reaction kinds for the migrated chains (d7, task t31b)
+
+The migrated pr-upkeep and jira-intake declarations chain on three trigger
+kinds added to the closed vocabulary:
+
+- `pr-upkeep.pr`: the live sweep's work-item fact, under its existing name,
+  so the pr-upkeep entry triggers on what the graph workflow triggers on.
+- `agent.result`: the outcome of a completed `agent.work` run, as the agent
+  reported it. It is a proposed claim, never evidence. `agent.work` now also
+  produces `agent_work`; `github.pr` stays its first product, which the
+  marker is minted for.
+- `jira.issue.transitioned`: the neutral reaction to a `jira.transition`
+  action, replacing the per-status `pr-upkeep.jira.transitioned.*` names
+  (renamed under t37).
+
+`agent.result` and `jira.issue.transitioned` have no emitter yet, so
+declarations triggered on them do not fire until t38d adds one.

@@ -2,7 +2,7 @@
   "plan_slug": "trigger-condition-action",
   "schema_version": 2,
   "created": "2026-09-27T19:40:19Z",
-  "updated": "2026-09-28T03:42:51Z",
+  "updated": "2026-09-28T04:25:55Z",
   "deviations": [
     {
       "id": "d1",
@@ -84,6 +84,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 6
+    },
+    {
+      "id": "d7",
+      "what": "Three trigger kinds join the closed vocabulary (t31b): pr-upkeep.pr (the live sweep fact, unrenamed), agent.result (a completed agent.work run's outcome, a proposed claim never evidence; agent.work also produces agent_work), jira.issue.transitioned (the neutral reaction to jira.transition). agent.result and jira.issue.transitioned have no emitter yet; t38d adds them.",
+      "task_ref": "t31",
+      "reason": "t31's migrated declarations could not chain with the registered kinds: no trigger carried a completed agent run's outcome, the live pr-upkeep entry fact had no kind, and the jira transition reaction had only legacy per-status names. Owner approved 2026-09-28.",
+      "affects": [
+        "t32",
+        "t38d"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 7
     }
   ],
   "evidence": [],

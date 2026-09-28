@@ -16,11 +16,22 @@ person-facing half, for someone who only ever sees a Jira ticket, is
 
 ## The loop, in one picture
 
+**Production state (2026-09-28, #328).** The sweep runs on the
+**declaration engine**. The schedule row `pr-upkeep-sweep-timer` (event
+`timer`, payload `{"schedule":"pr-upkeep-sweep-5m"}`, 300 s) fires the
+`pr-upkeep-sweep` declaration. Its `code.result` reaction fires `swept` or
+`sweep-failed`. The old graph row `pr-upkeep-sweep-5m` (`pr-upkeep.sweep.due`)
+is **disabled**, and every graph engine is drain-gated in `after`. The picture
+below is the sweep's work; read "schedule → sweep-cycle" as "timer →
+`pr-upkeep-sweep`". The graph form is kept for reference until t37 retires it.
+Decisions reach a person in the web inbox (`/inbox`, one place to decide),
+and Discord posts come from the notification declarations in `examples/notify`.
+
 ```text
-schedule (pr-upkeep-sweep-5m, interval_seconds: 300)
-    │  pr-upkeep.sweep.due
+schedule (pr-upkeep-sweep-timer → timer; graph row pr-upkeep-sweep-5m disabled)
+    │  timer {"schedule":"pr-upkeep-sweep-5m"}
     ▼
-sweep-cycle.workflow.yaml ── one code node ── sweep.py + pr_upkeep_jira.py
+pr-upkeep-sweep declaration ── code.run ── sweep.py + pr_upkeep_jira.py
     │                                              + pr_upkeep_emit.py
     │                                              + pr_upkeep_github.py
     │  pr-upkeep.pr          (one PR, one finding, one work_item)
@@ -356,6 +367,22 @@ Three properties follow from where the write lives:
 ## Reading a tick
 
 ### Declaration sweep cutover (operator runbook)
+
+**Done in production on 2026-09-28** (#328). Kept as the recipe for
+another namespace. Lessons from doing it:
+
+- **Create the timer row BEFORE deploying the gate.** Deploying the gate first
+  left no sweep at all for about 25 minutes.
+- **Export the LAN `NODES_API_URL` for every deploy.** Left unset, `deploy.sh`
+  writes the default `http://thor:18080` into `runner.env`, which does not
+  resolve inside the sweep container. Every sweep then exits 1 with
+  `URLError … Name or service not known`. The runner keeps no stderr; the
+  message is in the run's stdout artifact.
+- **The runner-registry key is not already present.** The graph sweep
+  resolved by node key (`pr-upkeep-sweep-cycle/sweep`), so the
+  `runner://headspace/pr-upkeep-sweep@…` entry had to be added on **both**
+  thor and orin (it points at thor's runner). Worker hosts hot-reload the
+  file.
 
 Production is already in declaration mode `after`. Do these steps in order;
 the timer row is an operator-authenticated configuration change, not a repo

@@ -199,6 +199,21 @@ to say something that is not an answer to any particular question.
 
 ### A pending decision → options, Pending, and Discord
 
+> **Since 2026-09-28 (declarations, #328):** decisions have one home, the
+> web inbox at `https://nodes.culture.dev/inbox`. It has four tabs:
+>
+> - **To act** holds tasks that move a chain.
+> - **To review** holds agent claims to confirm or reject.
+> - **Waiting** holds overdue or undecidable tasks.
+> - **Decided** holds everything already answered.
+>
+> Every decision takes an optional note. A card leads with the question and
+> links to the PR, the ticket, the file and the run. When an agent reports
+> `blocked`, its task offers **Retry**, **Abandon** or **Acknowledge**.
+> Discord posts now come from notification declarations
+> (`examples/notify`): muting one means deactivating that declaration. The
+> ticket page flow below still describes graph-era runs.
+
 When a run reaches a point only a person can settle, culture-nodes does not
 wait quietly on a page nobody visits. It fans the decision out three ways at
 once:

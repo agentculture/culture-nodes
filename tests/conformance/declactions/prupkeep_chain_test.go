@@ -14,6 +14,8 @@ package declactions_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -389,8 +391,40 @@ func usesOf(t *testing.T, d decl.Declaration) string {
 	return with.Uses
 }
 
-// The fake actor's HTTP body is the bridge's §13.2 shape after Claude's
-// final JSON answer is parsed: outcome and output are passed through.
+// Claude's real final answer can end in a JSON declaration after prose. The
+// fake bridge derives its §13.2 response from that final text.
+func TestFakeClaudeFinalMapsProseAndTrailingJSON(t *testing.T) {
+	b := &fakeBridge{key: "culture/developer"}
+	b.replyClaudeFinal("The only GitHub credential returned 401.\n\n" +
+		`{"outcome":"blocked","output":{"reason":"No usable GitHub write credential."}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/invoke", strings.NewReader(`{"input":{}}`))
+	req.Header.Set("Authorization", "Bearer "+bridgeToken)
+	w := httptest.NewRecorder()
+	b.invoke(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("fake Claude bridge status %d: %s", w.Code, w.Body.String())
+	}
+	var result actors.InvocationResult
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(result.Output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != "blocked" || output["summary"] != "The only GitHub credential returned 401." {
+		t.Fatalf("fake Claude final mapped to outcome %q, output %+v", result.Outcome, output)
+	}
+}
+
+func TestPRUpkeepBlockedDeclarationIsHumanAsk(t *testing.T) {
+	analyse := realDeclaration(t, "analyse.json")
+	blocked := realDeclaration(t, "blocked-analyse.json")
+	if blocked.StartNode.Name != analyse.LandingNode.Name || blocked.Trigger.Kind != "agent.result" || blocked.Condition != `event.outcome == "blocked"` || blocked.Action.Kind != "human.ask" {
+		t.Fatalf("blocked route no longer leads from agent.result to human.ask: %+v", blocked)
+	}
+}
+
 func TestPRUpkeepBlockedAgentRoutesToHuman(t *testing.T) {
 	routeSrc := realDeclaration(t, "route.json")
 	analyseSrc := realDeclaration(t, "analyse.json")
@@ -401,7 +435,8 @@ func TestPRUpkeepBlockedAgentRoutesToHuman(t *testing.T) {
 	}
 	r := newReactionHarness(t)
 	developer := r.addBridge(actors.ActorKeyOf(usesOf(t, analyseSrc)))
-	developer.replyClaudeFinal("blocked", map[string]any{"reason": "GitHub token returned 401", "summary": "Could not read the PR"})
+	developer.replyClaudeFinal("The only GitHub credential available is rejected with `401 Bad credentials`.\nEvidence:\n- The PR edit received 401.\n\n" +
+		`{"outcome":"blocked","output":{"reason":"GitHub token returned 401","pr":"agentculture/culture-nodes#329"}}`)
 	versions := map[string]postgres.DeclarationVersion{
 		routeSrc.Name:   r.publishReal(runnableHere(t, routeSrc)),
 		analyseSrc.Name: r.publishReal(analyseSrc),
@@ -459,7 +494,7 @@ func TestPRUpkeepBlockedAgentRoutesToHuman(t *testing.T) {
 	if err := r.db.Pool().QueryRow(r.ctx, `SELECT input FROM runs WHERE namespace_id=$1 AND id=$2`, r.ns, fh.id).Scan(&input); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(input), "GitHub token returned 401") || !strings.Contains(string(input), "agentculture/culture-nodes") || !strings.Contains(string(input), "analyse") {
+	if !strings.Contains(string(input), "GitHub token returned 401") || !strings.Contains(string(input), "401 Bad credentials") || !strings.Contains(string(input), "agentculture/culture-nodes") || !strings.Contains(string(input), "analyse") {
 		t.Fatalf("human input missing context: %s", input)
 	}
 	var humanInput map[string]any

@@ -86,10 +86,11 @@ var bridgeKeys = []string{"culture/codex-thor", "culture/notify", "culture/githu
 // bridge's stamping contract does: read `input[MarkerInputKey]`, refuse a
 // malformed one, and report {artifact_id, marker} for what it "created".
 type fakeBridge struct {
-	mu     sync.Mutex
-	key    string
-	inputs []map[string]any
-	server *httptest.Server
+	mu            sync.Mutex
+	key           string
+	inputs        []map[string]any
+	postedContent []string // the notify bridge stamps cn1 into webhook content
+	server        *httptest.Server
 	// outcome is the domain outcome every invocation reports ("completed"
 	// when empty); output is merged into what it reports (task t38e).
 	outcome string
@@ -147,8 +148,76 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if b.key == "culture/notify" && (req.ProtocolVersion != "1.0" || r.Header.Get("Idempotency-Key") == "" || r.Header.Get("Idempotency-Key") != req.AttemptID) {
+		http.Error(w, `{"error":"notify protocol_version or Idempotency-Key invalid"}`, http.StatusBadRequest)
+		return
+	}
 	var input map[string]any
 	_ = json.Unmarshal(req.Input, &input)
+	if b.key == "culture/notify" {
+		if raw, exists := input[declengine.MarkerInputKey]; exists && raw != nil {
+			marker, ok := raw.(string)
+			if !ok || !cn1Marker.MatchString(marker) {
+				http.Error(w, `{"error":"invalid cn1 marker"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		for _, key := range []string{"content", "title", "description"} {
+			if v, exists := input[key]; exists {
+				if _, ok := v.(string); !ok {
+					http.Error(w, `{"error":"notify text must be string"}`, http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		content, _ := input["content"].(string)
+		title, _ := input["title"].(string)
+		description, _ := input["description"].(string)
+		if strings.TrimSpace(content+title+description) == "" {
+			http.Error(w, `{"error":"notify message is empty"}`, http.StatusBadRequest)
+			return
+		}
+		if _, ok := input["require_delivery"].(bool); input["require_delivery"] != nil && !ok {
+			http.Error(w, `{"error":"require_delivery must be boolean"}`, http.StatusBadRequest)
+			return
+		}
+		if input["fields"] != nil {
+			fields, ok := input["fields"].([]any)
+			if !ok {
+				http.Error(w, `{"error":"fields must be array"}`, http.StatusBadRequest)
+				return
+			}
+			for _, value := range fields {
+				field, ok := value.(map[string]any)
+				if !ok {
+					http.Error(w, `{"error":"field must be object"}`, http.StatusBadRequest)
+					return
+				}
+				name, nameOK := field["name"].(string)
+				text, textOK := field["value"].(string)
+				if !nameOK || !textOK || strings.TrimSpace(name) == "" || strings.TrimSpace(text) == "" {
+					http.Error(w, `{"error":"field requires name and value"}`, http.StatusBadRequest)
+					return
+				}
+				if inline, exists := field["inline"]; exists {
+					if _, ok := inline.(bool); !ok {
+						http.Error(w, `{"error":"inline must be boolean"}`, http.StatusBadRequest)
+						return
+					}
+				}
+			}
+		}
+		if marker, ok := input[declengine.MarkerInputKey].(string); ok && cn1Marker.MatchString(marker) {
+			if strings.TrimSpace(content) == "" {
+				content = marker
+			} else {
+				content = strings.TrimSpace(content) + "\n\n" + marker
+			}
+		}
+		b.mu.Lock()
+		b.postedContent = append(b.postedContent, content)
+		b.mu.Unlock()
+	}
 	b.mu.Lock()
 	b.inputs = append(b.inputs, input)
 	outcome := b.outcome
@@ -189,6 +258,15 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 	if outcome == "" {
 		outcome = "completed"
 	}
+	if b.key == "culture/notify" {
+		if outcome == "completed" {
+			outcome = "sent"
+		} // bridge default is fail-open
+		output = map[string]any{"delivered": outcome == "sent", "status_code": 200} // Discord returned a message id
+		if outcome == "delivery_failed" {
+			output["status_code"] = nil
+		}
+	}
 	// stamping.read_marker: absent -> nothing to stamp; present and
 	// malformed -> 400; present and well formed -> stamp and report.
 	if raw, present := input[declengine.MarkerInputKey]; present && raw != nil {
@@ -197,7 +275,7 @@ func (b *fakeBridge) invoke(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"invalid cn1 marker","class":"actor_rejected_input"}`, http.StatusBadRequest)
 			return
 		}
-		if !verbatimOutput {
+		if !verbatimOutput && !(b.key == "culture/notify" && outcome == "delivery_failed") {
 			output["artifact_id"] = "artifact-" + strings.ReplaceAll(b.key, "/", "-")
 			b.mu.Lock()
 			if len(b.artifacts) > 0 {
@@ -591,7 +669,7 @@ type bridgeCase struct {
 // shaped like that bridge's verb, with a template rendered from the event.
 var bridgeCases = []bridgeCase{
 	{"agent.work", "culture/codex-thor", "github.pr", map[string]any{"instruction": "fix {0:subject}", "note": "{0:note}"}},
-	{"discord.post", "culture/notify", "discord.message", map[string]any{"channel": "ops", "content": "{0:subject} moved", "note": "{0:note}"}},
+	{"discord.post", "culture/notify", "discord.message", map[string]any{"content": "{0:subject} moved", "description": "{0:note}", "require_delivery": false}},
 	{"github.comment", "culture/github", "github.comment", map[string]any{"repository": "agentculture/culture-nodes", "pr": 328, "comment": "{0:subject} looks good", "note": "{0:note}"}},
 	{"github.review_reply", "culture/github", "github.comment", map[string]any{"repository": "agentculture/culture-nodes", "pr": 328, "comment": "addressed", "note": "{0:note}"}},
 	{"jira.comment", "culture/jira", "jira.comment", map[string]any{"issue": "{0:subject}", "body": "picked up", "note": "{0:note}"}},
@@ -620,7 +698,9 @@ func TestDeclActionKindsDispatchThroughRealRegistry(t *testing.T) {
 				}
 			}
 			got := h.bridges[c.uses].received()[0]
-			if got["note"] != "rendered-from-event" {
+			if c.kind == "discord.post" && got["description"] != "rendered-from-event" {
+				t.Errorf("notify description lost the rendered template: %v", got)
+			} else if c.kind != "discord.post" && got["note"] != "rendered-from-event" {
 				t.Errorf("bridge input lost the rendered template: %v", got)
 			}
 			marker, _ := got[declengine.MarkerInputKey].(string)
@@ -629,8 +709,31 @@ func TestDeclActionKindsDispatchThroughRealRegistry(t *testing.T) {
 					declengine.MarkerInputKey, marker, firing, c.artifact, got)
 			}
 			artifactID := "artifact-" + strings.ReplaceAll(c.uses, "/", "-")
-			h.assertResultInFiring(firing, marker, c.artifact, artifactID, map[string]any{"artifact_id": artifactID, "bridge": c.uses, "subject": "SCRUM-7"})
+			want := map[string]any{"artifact_id": artifactID, "bridge": c.uses, "subject": "SCRUM-7"}
+			if c.kind == "discord.post" {
+				want = map[string]any{"artifact_id": artifactID, "delivered": true, "status_code": float64(200), "subject": "SCRUM-7"}
+				if posted := h.bridges[c.uses].postedContent; len(posted) != 1 || !strings.Contains(posted[0], marker) {
+					t.Fatalf("notify webhook content %v does not include cn1 marker", posted)
+				}
+			}
+			h.assertResultInFiring(firing, marker, c.artifact, artifactID, want)
 		})
+	}
+}
+
+func TestNotifyDeliveryFailedIsDomainOutcomeWithoutActionLoop(t *testing.T) {
+	h := newDeclHarness(t)
+	h.bridges["culture/notify"].reply("delivery_failed", nil)
+	firing := h.fire("discord.post", `{"uses":"actor://culture/notify@sha256:`+strings.Repeat("a", 64)+`","input":{"content":"delivery test","require_delivery":true}}`)
+	if _, err := h.engine.EmitActionResults(h.ctx, h.ns, 10); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := h.db.Pool().QueryRow(h.ctx, `SELECT count(*) FROM signal_events WHERE namespace_id=$1 AND run_id=$2 AND name LIKE 'action.%'`, h.ns, firing).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("delivery_failed generated %d technical action events", n)
 	}
 }
 

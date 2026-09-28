@@ -208,7 +208,7 @@ func TestNotifierSkipsTheSweepByDefault(t *testing.T) {
 	if !ok {
 		t.Fatal("notifier environment has no NODES_NOTIFIER_SKIP_WORKFLOWS")
 	}
-	if want := "${NODES_NOTIFIER_SKIP_WORKFLOWS:-pr-upkeep-sweep-cycle,pr-upkeep-sweep}"; got != want {
+	if want := "${NODES_NOTIFIER_SKIP_WORKFLOWS:-pr-upkeep-sweep-cycle,pr-upkeep-sweep,notify-*}"; got != want {
 		t.Errorf("NODES_NOTIFIER_SKIP_WORKFLOWS = %q, want %q", got, want)
 	}
 }

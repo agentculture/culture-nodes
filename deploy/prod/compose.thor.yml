@@ -383,7 +383,7 @@ services:
       # An EMPTY value in prod.env does not unmute: `:-` substitutes the
       # default for empty as well as unset. To post every workflow again,
       # set a value that names no workflow, e.g. `none`.
-      NODES_NOTIFIER_SKIP_WORKFLOWS: ${NODES_NOTIFIER_SKIP_WORKFLOWS:-pr-upkeep-sweep-cycle,pr-upkeep-sweep}
+      NODES_NOTIFIER_SKIP_WORKFLOWS: ${NODES_NOTIFIER_SKIP_WORKFLOWS:-pr-upkeep-sweep-cycle,pr-upkeep-sweep,notify-*}
       # internal/notify.ResolveWebhook reads exactly these two names, in
       # this priority order (CULTURE_NODES_WEBHOOK_URL first) — see
       # cmd/nodes-notifier/main.go's own usage text. Neither has a flag on

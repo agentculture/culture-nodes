@@ -1,0 +1,56 @@
+{
+  "name": "notify-merge-deadline",
+  "trigger": {
+    "kind": "node.expired",
+    "reentry_limit": 0,
+    "hop_limit": 8
+  },
+  "condition": "true",
+  "action": {
+    "kind": "discord.post",
+    "with": {
+      "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "title": "PR merge deadline passed",
+        "description": "Node {node_name}",
+        "require_delivery": false
+      },
+      "graph_config": {
+        "ownerRef": "team/platform-ai",
+        "contract": {
+          "outcomes": {
+            "sent": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "delivered",
+                  "status_code"
+                ]
+              }
+            },
+            "delivery_failed": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "delivered",
+                  "status_code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "pr-upkeep-human-merges-pr-done",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "notify-merge-deadline-done",
+    "deadline": "5m"
+  },
+  "exposes": [
+    "node_name"
+  ]
+}

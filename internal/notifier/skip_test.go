@@ -64,6 +64,34 @@ var allLifecycleEvents = []string{
 	"dev.culture.nodes.run.bounded",
 }
 
+// The compose default mutes a notification declaration's own one-node
+// envelope run while leaving unrelated declaration runs visible.
+func TestDaemonSkipsNotifyEnvelopeRuns(t *testing.T) {
+	t.Setenv(envPrimary, "")
+	fcp := newFakeControlPlane(t)
+	wc := newWebhookCapture(t)
+	t.Setenv(envPrimary, wc.server.URL)
+	fcp.setWorkflow("notification-run", "sha256:notify-envelope")
+	fcp.setFiring("notification-run", "notify-action-failed-pr-upkeep-fix")
+	fcp.setWorkflow("ordinary-run", "sha256:ordinary-envelope")
+	fcp.setFiring("ordinary-run", "pr-upkeep-fix")
+	fcp.addEvent("00001", "dev.culture.nodes.run.created", "notification-run")
+	fcp.addEvent("00002", "dev.culture.nodes.run.completed", "notification-run")
+	fcp.addEvent("00003", "dev.culture.nodes.run.completed", "ordinary-run")
+	cursor := filepath.Join(t.TempDir(), "cursor.json")
+	d := newSkippingDaemon(t, fcp, cursor, []string{"notify-*"}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	waitFor(t, 3*time.Second, func() bool { return wc.count() >= 1 })
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+	if posts := wc.snapshot(); len(posts) != 1 || posts[0].RunID != "ordinary-run" {
+		t.Fatalf("posts = %+v, want only ordinary-run", posts)
+	}
+}
+
 // TestDaemonSkipsEveryLifecycleEventOfASkippedWorkflow: an exact-match
 // entry mutes all five lifecycle event types of that workflow's run, a
 // different workflow still posts, every skipped event is journaled as

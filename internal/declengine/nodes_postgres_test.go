@@ -44,6 +44,65 @@ func reactEvent(t *testing.T, db *postgres.Store, ns, eventID string, prev postg
 		Origin: OriginEvent{Marker: "cn1:" + prev.ID + ":github.pr:" + nonce + ":" + mac, ArtifactKind: "github.pr", ArtifactID: "artifact-" + prev.ID}}
 }
 
+// A notification on the reactor's kind co-fires in one Handle call. An
+// earlier, different stamped kind consumes the node and starves the reactor;
+// this is why the notification manifest forbids such a placement.
+func TestNotificationCoFiringAndDifferentKindStarvation(t *testing.T) {
+	for _, tc := range []struct {
+		name, notifyKind string
+		wantReal         bool
+	}{
+		{"co-kind", "pr-upkeep.pr", true}, {"different-kind", "jira.comment", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := pgtest.RequireStore(t, markerTestStore)
+			ctx := context.Background()
+			ns := pgtest.MustNamespace(t, db, "tca-notify-cofire").ID
+			a := publishActive(t, db, ns, declFor("cofire-open", "root", "none", "waiting", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
+			b := publishActive(t, db, ns, declFor("cofire-real", "waiting", "none", "real-done", "1h", "pr-upkeep.pr", `{"uses":"actor://test"}`))
+			n := publishActive(t, db, ns, declFor("cofire-notify", "waiting", "none", "notify-done", "5m", tc.notifyKind, `{"uses":"actor://test"}`))
+			t.Setenv("TCA_COFIRE_KEY", strings.Repeat("c", 32))
+			e, err := New(Config{MarkerKeyEnv: "TCA_COFIRE_KEY"}, PostgresBackend{db}, PostgresMarkerStore{db}, &chainDispatcher{rendered: map[string]string{}, vars: map[string]map[string]any{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := deliver(t, db, ns)
+			if err := e.Handle(ctx, Event{NamespaceID: ns, ID: first, Kind: "pr-upkeep.pr", Node: "root"}); err != nil {
+				t.Fatal(err)
+			}
+			fa := firingByEventDecl(t, db, ns, first, a.DeclarationID)
+			if !tc.wantReal {
+				early := deliver(t, db, ns)
+				if err := e.Handle(ctx, reactEvent(t, db, ns, early, fa, "jira.comment", nil)); err != nil {
+					t.Fatal(err)
+				}
+				_ = firingByEventDecl(t, db, ns, early, n.DeclarationID)
+			}
+			reaction := deliver(t, db, ns)
+			if err := e.Handle(ctx, reactEvent(t, db, ns, reaction, fa, "pr-upkeep.pr", nil)); err != nil {
+				t.Fatal(err)
+			}
+			var real, notify int
+			if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2 AND declaration_id=$3`, ns, reaction, b.DeclarationID).Scan(&real); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Pool().QueryRow(ctx, `SELECT count(*) FROM declaration_firings WHERE namespace_id=$1 AND event_id=$2 AND declaration_id=$3`, ns, reaction, n.DeclarationID).Scan(&notify); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantReal && (real != 1 || notify != 1) {
+				t.Fatalf("real=%d notification=%d, want both", real, notify)
+			}
+			if !tc.wantReal && real != 0 {
+				t.Fatalf("real fired after notification consumed node: %d", real)
+			}
+			node, _, err := (PostgresBackend{db}).NodeByFiring(ctx, ns, fa.ID)
+			if err != nil || node.ClosedReason != NodeReasonConsumed {
+				t.Fatalf("node=%+v err=%v", node, err)
+			}
+		})
+	}
+}
+
 func firingByEventDecl(t *testing.T, db *postgres.Store, ns, eventID, declarationID string) postgres.DeclarationFiring {
 	t.Helper()
 	var f postgres.DeclarationFiring

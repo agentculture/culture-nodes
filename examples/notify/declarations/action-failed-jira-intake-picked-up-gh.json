@@ -1,0 +1,56 @@
+{
+  "name": "notify-action-failed-jira-intake-picked-up-gh",
+  "trigger": {
+    "kind": "action.failed",
+    "reentry_limit": 0,
+    "hop_limit": 8
+  },
+  "condition": "true",
+  "action": {
+    "kind": "discord.post",
+    "with": {
+      "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "title": "Action failed: picked-up-gh",
+        "description": "Class {class}",
+        "require_delivery": false
+      },
+      "graph_config": {
+        "ownerRef": "team/platform-ai",
+        "contract": {
+          "outcomes": {
+            "sent": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "delivered",
+                  "status_code"
+                ]
+              }
+            },
+            "delivery_failed": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "delivered",
+                  "status_code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "start_node": {
+    "name": "jira-intake-picked-up-done",
+    "deadline": "none"
+  },
+  "landing_node": {
+    "name": "notify-action-failed-jira-intake-picked-up-gh-done",
+    "deadline": "5m"
+  },
+  "exposes": [
+    "class"
+  ]
+}

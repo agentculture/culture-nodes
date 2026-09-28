@@ -21,6 +21,7 @@ const ControlPlaneEmitter = "engine_declaration_engine"
 var controlPlaneEvents = map[string]bool{
 	"timer":                       true,
 	string(ArtifactHumanDecision): true,
+	"human.requested":             true,
 	string(ArtifactCodeResult):    true,
 	"agent.result":                true,
 	"node.expired":                true,

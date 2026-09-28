@@ -59,7 +59,13 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
+from culture_nodes import __version__
 from culture_nodes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, CliError
+
+# nodes.culture.dev sits behind Cloudflare, which answers urllib's default
+# "Python-urllib/3.x" User-Agent with 403 (error 1010) before Access ever
+# sees the request. Naming the client keeps every CLI call reachable.
+_USER_AGENT = f"culture-nodes/{__version__}"
 
 #: Path prefix every operation in api/openapi/openapi.yaml lives under.
 API_PREFIX = "/v1alpha1"
@@ -217,6 +223,7 @@ class ApiClient:
             data = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
             hdrs.setdefault("Content-Type", "application/json")
         hdrs.setdefault("Accept", "application/json")
+        hdrs.setdefault("User-Agent", _USER_AGENT)
         return urllib.request.Request(url, data=data, method=method, headers=hdrs)
 
     def _open(self, req: urllib.request.Request, timeout: float | None) -> http.client.HTTPResponse:

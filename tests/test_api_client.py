@@ -178,3 +178,33 @@ def test_request_sends_custom_headers(fake_api) -> None:
     client = ApiClient(fake_api.base_url, timeout=5.0)
     client.request("GET", "/v1alpha1/echo", headers={"Authorization": "Bearer s3cr3t"})
     assert seen["auth"] == "Bearer s3cr3t"
+
+
+def test_request_names_the_cli_in_its_user_agent(fake_api) -> None:
+    # Cloudflare in front of nodes.culture.dev refuses urllib's default
+    # "Python-urllib/3.x" agent with 403 (error 1010).
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["ua"] = h.headers.get("User-Agent")
+        h.send_json(200, {"ok": True})
+
+    fake_api.route("GET", r"/v1alpha1/echo", handler)
+    fake_api.start()
+    ApiClient(fake_api.base_url, timeout=5.0).request("GET", "/v1alpha1/echo")
+    assert seen["ua"].startswith("culture-nodes/")
+    assert "Python-urllib" not in seen["ua"]
+
+
+def test_request_keeps_a_caller_user_agent(fake_api) -> None:
+    seen = {}
+
+    def handler(h, m, q, b):
+        seen["ua"] = h.headers.get("User-Agent")
+        h.send_json(200, {"ok": True})
+
+    fake_api.route("GET", r"/v1alpha1/echo", handler)
+    fake_api.start()
+    client = ApiClient(fake_api.base_url, timeout=5.0)
+    client.request("GET", "/v1alpha1/echo", headers={"User-Agent": "probe/1"})
+    assert seen["ua"] == "probe/1"

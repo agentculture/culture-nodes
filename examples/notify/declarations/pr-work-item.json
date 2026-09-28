@@ -11,8 +11,8 @@
     "with": {
       "uses": "actor://company/notify-discord@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "input": {
-        "title": "PR upkeep work item",
-        "description": "Work item {work_item}",
+        "title": "New finding on PR #{number} ({repository})",
+        "description": "The pr-upkeep sweep found work on **[{repository} PR #{number}](https://github.com/{repository}/pull/{number})** and is routing it: a Jira ticket if the PR has none, then analysis and a fix.",
         "require_delivery": false
       },
       "graph_config": {
@@ -51,6 +51,7 @@
     "deadline": "5m"
   },
   "exposes": [
-    "work_item"
+    "repository",
+    "number"
   ]
 }

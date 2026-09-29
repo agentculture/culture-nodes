@@ -211,3 +211,4 @@ issue,bucket,disposition,evidence_pointer
 330,operator-lane enablers,verify the configured jira_bot_account_id on the next bridge comment,#328 t32
 331,large bets,"Owner-led redesign of agent/bridge set-up (login per engine account, registration drift, capability re-registration, config file ownership); details from the owner in a dedicated session",#254 #328 live-test hand-turns
 332,bug tail,"Inbox cards show context_refs paths and audit ids instead of resolved content and links (PR, ticket, file, run); owner could not decide","owner 2026-09-28, task 01M278CXQZM6M6F0J7H1WHT0FV"
+333,finish work,TCA live-test follow-ups found in production on 2026-09-28 and 29,#328 comments
